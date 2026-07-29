@@ -27,7 +27,8 @@ http://127.0.0.1:4100
 ```
 
 Docker Compose uses an in-memory store so local tests leave no machines, tokens, or audit data
-behind. For persistent development, connect the repository to Convex and run:
+behind. State is lost whenever the Server restarts, so this is not a production self-hosting
+configuration. For persistent development, connect the repository to Convex and run:
 
 ```bash
 pnpm convex:dev
@@ -79,4 +80,5 @@ Keep one Railway replica for now because active Client connections are held by t
 process. The future web app can use Clerk with Convex directly for human identity without changing
 the agent-token or machine-identity protocols.
 
+[Self-hosting guide](../../docs/self-hosting.md) ·
 [Back to Odyshell](../../README.md)

@@ -84,6 +84,9 @@ pnpm install:ods
 docker compose up -d --build
 ```
 
+This starts a disposable development Server with in-memory state. Machines, tokens, sessions, and
+audit data are lost when it restarts. It is not the production self-hosting setup.
+
 Connect the CLI:
 
 ```bash
@@ -118,6 +121,14 @@ Check that the complete path to a machine is working:
 ```bash
 ods ping my-machine
 ```
+
+## Self-hosting
+
+Odyshell can run with the Server and Convex backend on infrastructure you control. The Clients
+still use outbound-only connections and do not expose ports.
+
+See the [minimal self-hosting guide](./docs/self-hosting.md) for the current setup and production
+security checklist.
 
 ## Give an agent access
 
