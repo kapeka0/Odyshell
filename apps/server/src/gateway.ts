@@ -71,6 +71,14 @@ export class ClientGateway {
     return true;
   }
 
+  disconnect(machineId: string, reason = "Machine access revoked"): boolean {
+    const socket = this.connections.get(machineId);
+    if (!socket) return false;
+    this.connections.delete(machineId);
+    socket.close(4004, reason);
+    return true;
+  }
+
   async ping(machineId: string, timeoutMilliseconds = 5_000): Promise<number> {
     const pingId = randomUUID();
     const startedAt = performance.now();
@@ -119,7 +127,7 @@ export class ClientGateway {
   ): Promise<void> {
     if (message.protocolVersion !== PROTOCOL_VERSION) throw new Error("Unsupported protocol version");
     const result = await this.db.query<{ public_key: string }>(
-      "SELECT public_key FROM machines WHERE id = $1",
+      "SELECT public_key FROM machines WHERE id = $1 AND revoked_at IS NULL",
       [message.machineId],
     );
     const machine = result.rows[0];
@@ -156,7 +164,9 @@ export class ClientGateway {
     switch (message.type) {
       case "heartbeat":
         await this.db.query(
-          `UPDATE machines SET status = 'online', last_seen_at = now() WHERE id = $1`,
+          `UPDATE machines
+           SET status = 'online', last_seen_at = now()
+           WHERE id = $1 AND revoked_at IS NULL`,
           [message.machineId],
         );
         break;
@@ -168,7 +178,7 @@ export class ClientGateway {
           const result = await this.db.query<{ principal_id: string }>(
             `UPDATE sessions
              SET status = 'ready', updated_at = now(), error = NULL
-             WHERE id = $1
+             WHERE id = $1 AND status = 'opening'
              RETURNING principal_id`,
             [message.sessionId],
           );
@@ -184,7 +194,7 @@ export class ClientGateway {
           const result = await this.db.query<{ principal_id: string }>(
             `UPDATE sessions
              SET status = 'failed', updated_at = now(), error = $2
-             WHERE id = $1
+             WHERE id = $1 AND status = 'opening'
              RETURNING principal_id`,
             [message.sessionId, message.error],
           );
@@ -203,7 +213,7 @@ export class ClientGateway {
             `UPDATE sessions
              SET status = CASE WHEN expires_at <= now() THEN 'expired' ELSE 'closed' END,
                  updated_at = now()
-             WHERE id = $1
+             WHERE id = $1 AND status IN ('opening', 'ready', 'closing')
              RETURNING principal_id, status`,
             [message.sessionId],
           );
@@ -219,7 +229,9 @@ export class ClientGateway {
         break;
       case "operation.started":
         await this.db.query(
-          `UPDATE operations SET status = 'running', updated_at = now() WHERE id = $1`,
+          `UPDATE operations
+           SET status = 'running', updated_at = now()
+           WHERE id = $1 AND status IN ('queued', 'delivered')`,
           [message.operationId],
         );
         this.events.emit(`operation:${message.operationId}`);
@@ -243,7 +255,7 @@ export class ClientGateway {
           const result = await this.db.query<{ principal_id: string }>(
             `UPDATE operations
              SET status = $2, exit_code = $3, error = $4, output_truncated = $5, updated_at = now()
-             WHERE id = $1
+             WHERE id = $1 AND status IN ('queued', 'delivered', 'running')
              RETURNING principal_id`,
             [
               message.operationId,

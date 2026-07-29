@@ -7,6 +7,7 @@ import type {
 } from "@odyshell/protocol";
 import type { StoredConfig } from "./config.js";
 import { ExpectedError, ServerConnectionError } from "./errors.js";
+import { resolveMachineReference } from "./machines.js";
 
 export type Machine = {
   id: string;
@@ -16,6 +17,10 @@ export type Machine = {
   runtime?: ClientRuntimeInfo | null;
   lastSeenAt: string | null;
   enrolledAt: string;
+};
+
+export type AdminMachine = Machine & {
+  revokedAt: string | null;
 };
 
 export type Session = {
@@ -114,40 +119,43 @@ export class OdyshellApi {
     return response.data;
   }
 
+  async adminMachines(): Promise<AdminMachine[]> {
+    const response = await this.request<{ data: AdminMachine[] }>("/v1/admin/machines", {
+      admin: true,
+    });
+    return response.data;
+  }
+
   async ping(machineId: string): Promise<{ reply: "pong"; machineId: string; latencyMs: number }> {
     return this.request(`/v1/machines/${machineId}/ping`, { method: "POST" });
   }
 
   async resolveMachine(reference: string): Promise<Machine> {
-    const machines = await this.machines();
-    const exact = machines.find((machine) => machine.id === reference);
-    const named = machines.filter(
-      (machine) => machine.name.toLocaleLowerCase() === reference.toLocaleLowerCase(),
-    );
-    const onlineNamed = named.filter((machine) => machine.online);
-    const machine =
-      exact ??
-      (onlineNamed.length === 1
-        ? onlineNamed[0]
-        : named.length === 1
-          ? named[0]
-          : undefined);
-    if (!machine) {
-      if (onlineNamed.length > 1 || named.length > 1) {
-        throw new ExpectedError(
-          `Machine name "${reference}" is ambiguous; use its ID`,
-          "machine_ambiguous",
-        );
-      }
-      throw new ExpectedError(`Machine "${reference}" was not found`, "machine_not_found");
-    }
-    if (!machine.online) {
-      throw new ExpectedError(
-        `Machine "${machine.name}" is enrolled, but its Odyshell Client is not connected to the Server.`,
-        "machine_offline",
-      );
-    }
-    return machine;
+    return resolveMachineReference(await this.machines(), reference, { requireOnline: true });
+  }
+
+  async resolveAdminMachineIds(references: string[]): Promise<string[]> {
+    const machines = await this.adminMachines();
+    return [
+      ...new Set(
+        references.map((reference) => resolveMachineReference(machines, reference).id),
+      ),
+    ];
+  }
+
+  async revokeMachine(machineId: string): Promise<{
+    id: string;
+    name: string;
+    status: "revoked";
+    revokedAt: string;
+    cancelledOperations: number;
+    closedSessions: number;
+    disconnected: boolean;
+  }> {
+    return this.request(`/v1/admin/machines/${machineId}`, {
+      method: "DELETE",
+      admin: true,
+    });
   }
 
   async sessions(): Promise<Session[]> {

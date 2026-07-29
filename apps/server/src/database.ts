@@ -21,6 +21,7 @@ export async function migrate(db: Database): Promise<void> {
     );
 
     ALTER TABLE machines ADD COLUMN IF NOT EXISTS runtime_info jsonb;
+    ALTER TABLE machines ADD COLUMN IF NOT EXISTS revoked_at timestamptz;
 
     CREATE TABLE IF NOT EXISTS enrollment_tokens (
       token_hash text PRIMARY KEY,

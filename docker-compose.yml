@@ -20,6 +20,7 @@ services:
       context: .
       dockerfile: apps/server/Dockerfile
     environment:
+      NODE_ENV: development
       PORT: 4100
       HOST: 0.0.0.0
       DATABASE_URL: postgres://odyshell:odyshell@postgres:5432/odyshell

@@ -12,7 +12,9 @@ export function printJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
-export function printMachines(machines: Machine[]): void {
+export function printMachines(
+  machines: Array<Machine & { revokedAt?: string | null }>,
+): void {
   if (machines.length === 0) {
     console.log(pc.dim("No machines enrolled."));
     return;
@@ -21,7 +23,11 @@ export function printMachines(machines: Machine[]): void {
     ["NAME", "STATUS", "PLATFORM", "RUNNER", "ID", "LAST SEEN"],
     machines.map((machine) => [
       machine.name,
-      machine.online ? pc.green("online") : pc.dim("offline"),
+      machine.revokedAt
+        ? pc.red("revoked")
+        : machine.online
+          ? pc.green("online")
+          : pc.dim("offline"),
       machine.runtime
         ? `${machine.runtime.hostPlatform}/${machine.runtime.architecture}`
         : pc.dim("unknown"),

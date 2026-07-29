@@ -234,15 +234,39 @@ program
     }
   });
 
-program
+const machine = program
   .command("machines")
   .alias("machine")
   .description("list enrolled machines")
-  .action(async (_options, command: Command) => {
+  .option("--admin", "use administrator access and include revoked machines")
+  .action(async (machineOptions: { admin?: boolean }, command: Command) => {
     const options = globals(command);
-    const machines = await (await apiFor(command)).machines();
+    const api = await apiFor(command);
+    const machines = machineOptions.admin ? await api.adminMachines() : await api.machines();
     if (options.json) printJson({ data: machines });
     else printMachines(machines);
+  });
+
+machine
+  .command("revoke <machine>")
+  .description("revoke a machine identity and close its active access")
+  .action(async (machineReference: string, _options, command: Command) => {
+    const global = globals(command);
+    const api = await apiFor(command);
+    const [machineId] = await api.resolveAdminMachineIds([machineReference]);
+    if (!machineId) {
+      throw new ExpectedError(`Machine "${machineReference}" was not found`, "machine_not_found");
+    }
+    const result = await api.revokeMachine(machineId);
+    if (global.json) printJson(result);
+    else {
+      console.log(`${pc.green("âœ“")} Revoked ${result.name} (${result.id})`);
+      console.log(
+        pc.dim(
+          `  closed ${result.closedSessions} session(s), cancelled ${result.cancelledOperations} operation(s)`,
+        ),
+      );
+    }
   });
 
 program
@@ -301,7 +325,7 @@ agent
 agent
   .command("create <name>")
   .description("create a scoped agent token")
-  .requiredOption("--machines <ids>", "comma-separated machine IDs")
+  .requiredOption("--machines <references>", "comma-separated machine names or IDs")
   .requiredOption("--allow <capabilities>", "comma-separated capabilities")
   .option("--for <duration>", "access lifetime", "1h")
   .option("--ttl <duration>", "access lifetime (alias for --for)")
@@ -312,13 +336,18 @@ agent
       command: Command,
     ) => {
       const global = globals(command);
-      const machineIds = [...new Set(options.machines.split(",").map((id) => id.trim()))].filter(
-        Boolean,
-      );
-      if (machineIds.length === 0) {
-        throw new ExpectedError("At least one machine ID is required", "machine_ids_required");
+      const machineReferences = [
+        ...new Set(options.machines.split(",").map((reference) => reference.trim())),
+      ].filter(Boolean);
+      if (machineReferences.length === 0) {
+        throw new ExpectedError(
+          "At least one machine name or ID is required",
+          "machine_references_required",
+        );
       }
-      const result = await (await apiFor(command)).createAgentToken(
+      const api = await apiFor(command);
+      const machineIds = await api.resolveAdminMachineIds(machineReferences);
+      const result = await api.createAgentToken(
         name,
         machineIds,
         parseCapabilities(options.allow),

@@ -211,6 +211,27 @@ try {
   }
   e2eMachineId = machine.id;
 
+  const adminMachines = JSON.parse(
+    await run(process.execPath, [
+      tsxCli,
+      odsEntry,
+      "--server",
+      apiUrl,
+      "--admin-key",
+      adminKey,
+      "--json",
+      "machines",
+      "--admin",
+    ]),
+  );
+  if (
+    !adminMachines.data.some(
+      (item) => item.id === machine.id && item.name === machine.name && item.revokedAt === null,
+    )
+  ) {
+    throw new Error("Administrator machine list did not include the enrolled client");
+  }
+
   const scopedAgent = JSON.parse(
     await run(process.execPath, [
       tsxCli,
@@ -224,7 +245,7 @@ try {
       "create",
       "e2e-exec-agent",
       "--machines",
-      machine.id,
+      machine.name,
       "--allow",
       "process.exec",
       "--ttl",
@@ -627,6 +648,49 @@ try {
     "session cleanup",
   );
 
+  const revokedMachine = JSON.parse(
+    await run(process.execPath, [
+      tsxCli,
+      odsEntry,
+      "--server",
+      apiUrl,
+      "--admin-key",
+      adminKey,
+      "--json",
+      "machine",
+      "revoke",
+      machine.name,
+    ]),
+  );
+  if (
+    revokedMachine.status !== "revoked" ||
+    revokedMachine.id !== machine.id ||
+    !revokedMachine.disconnected
+  ) {
+    throw new Error("Machine revocation did not disconnect the active identity");
+  }
+  const revokedAdminList = JSON.parse(
+    await run(process.execPath, [
+      tsxCli,
+      odsEntry,
+      "--server",
+      apiUrl,
+      "--admin-key",
+      adminKey,
+      "--json",
+      "machines",
+      "--admin",
+    ]),
+  );
+  const revokedInAdminList = revokedAdminList.data.find((item) => item.id === machine.id);
+  if (!revokedInAdminList?.revokedAt || revokedInAdminList.online) {
+    throw new Error("Revoked machine state was not preserved for administrator audit");
+  }
+  const visibleAfterRevocation = await api("/v1/machines");
+  if (visibleAfterRevocation.data.some((item) => item.id === machine.id)) {
+    throw new Error("Revoked machine remained visible to agents");
+  }
+
   console.log(
     JSON.stringify(
       {
@@ -656,6 +720,9 @@ try {
           traversalRejected: true,
           cancellation: true,
           sessionDestroyed: true,
+          administratorMachineList: true,
+          machineNamesInAgentScopes: true,
+          machineAccessRevoked: true,
         },
       },
       null,

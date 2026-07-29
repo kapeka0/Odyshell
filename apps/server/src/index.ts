@@ -222,6 +222,86 @@ app.get("/v1/admin/agent-tokens", { preHandler: requireAdmin }, async () => {
   return { data: result.rows };
 });
 
+app.get("/v1/admin/machines", { preHandler: requireAdmin }, async () => {
+  const result = await db.query(
+    `SELECT id, name, status, runtime_info AS runtime,
+            last_seen_at AS "lastSeenAt", enrolled_at AS "enrolledAt",
+            revoked_at AS "revokedAt"
+     FROM machines
+     ORDER BY enrolled_at`,
+  );
+  return {
+    data: result.rows.map((row) => ({
+      ...row,
+      online: row.revokedAt === null && gateway.isOnline(row.id as string),
+    })),
+  };
+});
+
+app.delete<{ Params: { machineId: string } }>(
+  "/v1/admin/machines/:machineId",
+  { preHandler: requireAdmin },
+  async (request, reply) => {
+    const machineResult = await db.query<{ id: string; name: string; revoked_at: Date }>(
+      `UPDATE machines
+       SET revoked_at = now(), status = 'offline'
+       WHERE id = $1 AND revoked_at IS NULL
+       RETURNING id, name, revoked_at`,
+      [request.params.machineId],
+    );
+    const machine = machineResult.rows[0];
+    if (!machine) return reply.code(404).send({ error: "active_machine_not_found" });
+
+    const operations = await db.query<{ id: string }>(
+      `UPDATE operations AS operation
+       SET status = 'cancelled', error = 'machine_revoked', updated_at = now()
+       FROM sessions AS session
+       WHERE operation.session_id = session.id
+         AND session.machine_id = $1
+         AND operation.status IN ('queued', 'delivered', 'running')
+       RETURNING operation.id`,
+      [machine.id],
+    );
+    for (const operation of operations.rows) {
+      gateway.send(machine.id, { type: "operation.cancel", operationId: operation.id });
+      gateway.events.emit(`operation:${operation.id}`);
+    }
+
+    const sessions = await db.query<{ id: string }>(
+      `UPDATE sessions
+       SET status = 'closed', error = 'machine_revoked', updated_at = now()
+       WHERE machine_id = $1 AND status IN ('opening', 'ready', 'closing')
+       RETURNING id`,
+      [machine.id],
+    );
+    for (const session of sessions.rows) {
+      gateway.send(machine.id, {
+        type: "session.close",
+        sessionId: session.id,
+        reason: "machine_revoked",
+      });
+      gateway.events.emit(`session:${session.id}`);
+    }
+    const disconnected = gateway.disconnect(machine.id);
+    await audit(db, "admin", "machine.revoked", "machine", machine.id, {
+      name: machine.name,
+      revokedAt: machine.revoked_at.toISOString(),
+      cancelledOperations: operations.rowCount ?? 0,
+      closedSessions: sessions.rowCount ?? 0,
+      disconnected,
+    });
+    return {
+      id: machine.id,
+      name: machine.name,
+      status: "revoked",
+      revokedAt: machine.revoked_at.toISOString(),
+      cancelledOperations: operations.rowCount ?? 0,
+      closedSessions: sessions.rowCount ?? 0,
+      disconnected,
+    };
+  },
+);
+
 app.post("/v1/admin/agent-tokens", { preHandler: requireAdmin }, async (request, reply) => {
   const parsed = agentTokenRequestSchema.safeParse(request.body);
   if (!parsed.success) {
@@ -232,7 +312,7 @@ app.post("/v1/admin/agent-tokens", { preHandler: requireAdmin }, async (request,
   const uniqueMachineIds = [...new Set(input.machineIds)];
   const uniqueCapabilities = [...new Set(input.capabilities)];
   const machines = await db.query<{ id: string }>(
-    `SELECT id FROM machines WHERE id = ANY($1::uuid[])`,
+    `SELECT id FROM machines WHERE id = ANY($1::uuid[]) AND revoked_at IS NULL`,
     [uniqueMachineIds],
   );
   if (machines.rowCount !== uniqueMachineIds.length) {
@@ -356,12 +436,14 @@ app.get("/v1/machines", { preHandler: requireAgent }, async (request) => {
       ? await db.query(
           `SELECT id, name, status, runtime_info AS runtime,
                   last_seen_at AS "lastSeenAt", enrolled_at AS "enrolledAt"
-           FROM machines ORDER BY enrolled_at`,
+           FROM machines WHERE revoked_at IS NULL ORDER BY enrolled_at`,
         )
       : await db.query(
           `SELECT id, name, status, runtime_info AS runtime,
                   last_seen_at AS "lastSeenAt", enrolled_at AS "enrolledAt"
-           FROM machines WHERE id = ANY($1::uuid[]) ORDER BY enrolled_at`,
+           FROM machines
+           WHERE id = ANY($1::uuid[]) AND revoked_at IS NULL
+           ORDER BY enrolled_at`,
           [[...principal.machineIds]],
         );
   return {

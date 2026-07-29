@@ -36,6 +36,10 @@ ods agent create coding-agent --machines <machine-id> --allow process.exec,fs.re
 Sessions cannot outlive the agent token that created them. Revoking a token also closes its active
 sessions.
 
+Administrators can list all machine identities with `ods machines --admin` and revoke an identity
+with `ods machine revoke <name-or-id>`. Revocation disconnects the Client while retaining its
+history for audit.
+
 The Server is published on `127.0.0.1` by default. To test from another device, bind it to a
 specific reachable host interface:
 
