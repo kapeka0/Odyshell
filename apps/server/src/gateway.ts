@@ -187,7 +187,7 @@ export class ClientGateway {
           const principalId = result?.principalId;
           if (principalId) {
             await audit(this.db, principalId, "session.open_failed", "session", message.sessionId, {
-              error: message.error,
+              reason: "client_rejected",
             });
           }
           this.events.emit(`session:${message.sessionId}`);

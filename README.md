@@ -4,7 +4,7 @@
 
 <h1 align="center">Odyshell</h1>
 
-<p align="center"><strong>A simple way for AI agents to work with private machines.</strong></p>
+<p align="center"><strong>Controlled execution for AI agents on private machines.</strong></p>
 
 AI agents can use APIs and cloud services easily. Working with a real machine is still awkward:
 it usually means sharing SSH credentials, exposing inbound ports, configuring a VPN, or
@@ -44,7 +44,8 @@ Odyshell treats every remote task as untrusted:
 - Agent permissions and local machine policy must both allow an operation.
 - Filesystem operations stay inside the configured workspace.
 - Process execution, shell access, filesystem writes, and Docker access are separate capabilities.
-- Every session and operation is identified, bounded, and audited.
+- Every session and operation is identified and bounded.
+- Durable control events contain lifecycle metadata, not command or output recordings.
 
 Host execution is intentionally direct: it can do anything available to the user running the
 Client. Use a dedicated operating-system user and grant that user only the files and services an
@@ -84,8 +85,8 @@ pnpm install:ods
 docker compose up -d --build
 ```
 
-This starts a disposable development Server with in-memory state. Machines, tokens, sessions, and
-audit data are lost when it restarts. It is not the production self-hosting setup.
+This starts the development Server and PostgreSQL. State persists in a Docker volume. The bundled
+credentials are only for local development and must not be exposed to the internet.
 
 Connect the CLI:
 
@@ -170,6 +171,14 @@ Odyshell currently supports typed process, shell, filesystem, and Docker log ope
 host execution is the default. Docker sandboxes remain an optional execution profile.
 
 The Server keeps machine identities, temporary access, operations, and audit history in PostgreSQL
-through Kysely. Local Docker tests use an isolated database and never appear in a real workspace.
+through Kysely. Operation payloads are retained for one hour by default; content-minimal control
+events are retained for 30 days. Odyshell does not provide session recording by default.
 
 It is an early development MVP. The default local credentials are only intended for development.
+
+## Product documents
+
+- [MVP scope and current behavior](./docs/mvp.md)
+- [Privacy and event data](./docs/privacy.md)
+- [Business model](./docs/business-model.md)
+- [Self-hosting](./docs/self-hosting.md)

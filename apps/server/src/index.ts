@@ -18,6 +18,7 @@ import {
 } from "./access.js";
 import { audit, createDatabase } from "./database.js";
 import { ClientGateway } from "./gateway.js";
+import { dataRetentionPolicy } from "./privacy.js";
 
 const port = Number(process.env.PORT ?? 4100);
 const host = process.env.HOST ?? "127.0.0.1";
@@ -31,6 +32,18 @@ await app.register(websocket, { options: { maxPayload: 2 * 1024 * 1024 } });
 
 const db = createDatabase(process.env);
 await db.initialize();
+const retention = dataRetentionPolicy(process.env);
+const purgeExpiredData = async (): Promise<void> => {
+  const now = Date.now();
+  const purged = await db.purgeExpiredData({
+    operationDataBefore: now - retention.operationDataMilliseconds,
+    auditBefore: now - retention.auditMilliseconds,
+  });
+  if (purged.operations + purged.sessions + purged.auditEvents > 0) {
+    app.log.info(purged, "Expired retained operation and audit data");
+  }
+};
+await purgeExpiredData();
 const gateway = new ClientGateway(db);
 gateway.register(app);
 
@@ -113,46 +126,7 @@ function canAccessMachine(principal: AgentPrincipal, machineId: string): boolean
 }
 
 function operationAuditMetadata(action: OperationAction): Record<string, unknown> {
-  switch (action.kind) {
-    case "process.exec":
-      return {
-        kind: action.kind,
-        program: action.program,
-        args: action.args,
-        cwd: action.cwd,
-        environmentKeys: Object.keys(action.env),
-      };
-    case "process.shell":
-      return {
-        kind: action.kind,
-        command: action.command,
-        cwd: action.cwd,
-        environmentKeys: Object.keys(action.env),
-      };
-    case "fs.write":
-      return {
-        kind: action.kind,
-        path: action.path,
-        bytes: Buffer.from(action.contentBase64, "base64").length,
-        createParents: action.createParents,
-      };
-    case "fs.search":
-      return {
-        kind: action.kind,
-        path: action.path,
-        query: action.query,
-        maxResults: action.maxResults,
-      };
-    case "docker.logs":
-      return {
-        kind: action.kind,
-        container: action.container,
-        tail: action.tail,
-        timestamps: action.timestamps,
-      };
-    default:
-      return { ...action };
-  }
+  return { kind: action.kind };
 }
 
 async function expireAgentSessions(principalId: string, reason: string): Promise<number> {
@@ -753,8 +727,15 @@ const expiryTimer = setInterval(() => {
   })().catch((error: unknown) => app.log.error(error, "Session expiry sweep failed"));
 }, 60_000);
 
+const retentionTimer = setInterval(() => {
+  void purgeExpiredData().catch((error: unknown) =>
+    app.log.error(error, "Data retention sweep failed"),
+  );
+}, 15 * 60_000);
+
 app.addHook("onClose", async () => {
   clearInterval(expiryTimer);
+  clearInterval(retentionTimer);
   await db.close();
 });
 

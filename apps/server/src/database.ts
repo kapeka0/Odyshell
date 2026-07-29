@@ -22,6 +22,7 @@ const DATABASE_SCHEMA = "odyshell";
 const ACTIVE_SESSION_STATUSES = ["opening", "ready"] as const;
 const CLOSABLE_SESSION_STATUSES = ["opening", "ready", "closing"] as const;
 const ACTIVE_OPERATION_STATUSES = ["queued", "delivered", "running"] as const;
+const RETAINED_SESSION_STATUSES = ["opening", "ready", "closing"] as const;
 
 type Json<T> = ColumnType<T, string, string>;
 
@@ -494,11 +495,36 @@ async function migrateInitialSchema(db: Kysely<DatabaseSchema>): Promise<void> {
     .execute();
 }
 
+async function redactHistoricalAuditMetadata(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    update ${sql.table(`${DATABASE_SCHEMA}.audit_events`)}
+    set metadata = jsonb_strip_nulls(
+      jsonb_build_object(
+        'sessionId', metadata -> 'sessionId',
+        'operation', jsonb_build_object(
+          'kind', metadata #> '{operation,kind}'
+        )
+      )
+    )
+    where action = 'operation.created'
+  `.execute(db);
+  await sql`
+    update ${sql.table(`${DATABASE_SCHEMA}.audit_events`)}
+    set metadata = '{"reason":"client_rejected"}'::jsonb
+    where action = 'session.open_failed'
+  `.execute(db);
+}
+
 const migrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
     return {
       "001_initial_schema": {
         up: migrateInitialSchema,
+      },
+      "002_privacy_defaults": {
+        up: redactHistoricalAuditMetadata,
       },
     };
   },
@@ -1156,6 +1182,54 @@ export class PostgresDatabase {
         metadata: JSON.stringify(metadata),
       })
       .execute();
+  }
+
+  async purgeExpiredData(input: {
+    operationDataBefore: number;
+    auditBefore: number;
+  }): Promise<{
+    operations: number;
+    sessions: number;
+    auditEvents: number;
+  }> {
+    return await this.db.transaction().execute(async (transaction) => {
+      const operationDataBefore = new Date(input.operationDataBefore);
+      const auditBefore = new Date(input.auditBefore);
+      const deletedOperations = await transaction
+        .deleteFrom("operations")
+        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+        .where("status", "not in", ACTIVE_OPERATION_STATUSES)
+        .where("updatedAt", "<", operationDataBefore)
+        .returning("id")
+        .execute();
+      const deletedSessions = await transaction
+        .deleteFrom("sessions")
+        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+        .where("status", "not in", RETAINED_SESSION_STATUSES)
+        .where("updatedAt", "<", operationDataBefore)
+        .where(({ not, exists, selectFrom }) =>
+          not(
+            exists(
+              selectFrom("operations")
+                .select("operations.id")
+                .whereRef("operations.sessionId", "=", "sessions.id"),
+            ),
+          ),
+        )
+        .returning("id")
+        .execute();
+      const deletedAuditEvents = await transaction
+        .deleteFrom("auditEvents")
+        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+        .where("createdAt", "<", auditBefore)
+        .returning("id")
+        .execute();
+      return {
+        operations: deletedOperations.length,
+        sessions: deletedSessions.length,
+        auditEvents: deletedAuditEvents.length,
+      };
+    });
   }
 
   async expireSessions(): Promise<Array<{ id: string; machineId: string }>> {

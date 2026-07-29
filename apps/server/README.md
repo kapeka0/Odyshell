@@ -48,11 +48,15 @@ A production deployment needs:
 - `HOST=0.0.0.0`.
 
 Railway supplies `PORT` automatically. PostgreSQL stores machine identities, scoped tokens,
-temporary sessions, operations, and audit events. Database credentials belong only to the Server;
-agents and Clients never receive them.
+temporary sessions, operations, and content-minimal control events. Operation payloads expire
+after one hour and control events after 30 days by default. Configure these windows with
+`ODYSHELL_OPERATION_RETENTION_SECONDS` and `ODYSHELL_AUDIT_RETENTION_DAYS`.
+
+Database credentials belong only to the Server; agents and Clients never receive them.
 
 Keep one Server replica for the MVP because active Client connections are held by the running
 process. The future frontend will call the Odyshell API and will not access PostgreSQL directly.
 
 [Self-hosting guide](../../docs/self-hosting.md) ·
+[Privacy and event data](../../docs/privacy.md) ·
 [Back to Odyshell](../../README.md)

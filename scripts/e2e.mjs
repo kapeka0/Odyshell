@@ -653,6 +653,17 @@ try {
   ) {
     throw new Error("Administrator audit did not include scoped agent activity");
   }
+  const operationCreatedAudit = adminAudit.data.find(
+    (event) =>
+      event.principalId === scopedAgent.id &&
+      event.action === "operation.created",
+  );
+  if (
+    !operationCreatedAudit ||
+    Object.keys(operationCreatedAudit.metadata.operation ?? {}).join(",") !== "kind"
+  ) {
+    throw new Error("Durable audit metadata retained operation content");
+  }
 
   const boundedSessionResponse = await fetch(new URL("/v1/sessions", apiUrl), {
     method: "POST",
@@ -762,6 +773,87 @@ try {
     throw new Error("Revoked machine remained visible to agents");
   }
 
+  await compose([
+    "exec",
+    "-T",
+    "postgres",
+    "psql",
+    "-U",
+    "odyshell",
+    "-d",
+    "odyshell",
+    "-v",
+    "ON_ERROR_STOP=1",
+    "-c",
+    [
+      "update odyshell.operations",
+      "set updated_at = now() - interval '2 hours'",
+      "where status not in ('queued', 'delivered', 'running');",
+      "update odyshell.sessions",
+      "set updated_at = now() - interval '2 hours'",
+      "where status not in ('opening', 'ready', 'closing');",
+      "update odyshell.audit_events",
+      "set created_at = now() - interval '31 days';",
+    ].join(" "),
+  ]);
+  await compose(["restart", "server"]);
+  const restartedPublished = (await compose(["port", "server", "4100"]))
+    .trim()
+    .split(/\r?\n/)[0];
+  if (!restartedPublished) throw new Error("Restarted Server port was not published");
+  const restartedSeparator = restartedPublished.lastIndexOf(":");
+  if (restartedSeparator <= 0) {
+    throw new Error(`Could not parse restarted Server address: ${restartedPublished}`);
+  }
+  const restartedRawHost = restartedPublished
+    .slice(0, restartedSeparator)
+    .replace(/^\[|\]$/g, "");
+  const restartedPort = restartedPublished.slice(restartedSeparator + 1);
+  const restartedHost =
+    restartedRawHost === "0.0.0.0" || restartedRawHost === "::"
+      ? "127.0.0.1"
+      : restartedRawHost;
+  apiUrl = `http://${restartedHost.includes(":") ? `[${restartedHost}]` : restartedHost}:${restartedPort}`;
+  try {
+    await waitUntil(
+      () => api("/health").catch(() => ({ status: "starting" })),
+      (value) => value.status === "ok",
+      "server restart after privacy retention setup",
+    );
+  } catch (error) {
+    const serverLogs = await compose(["logs", "--no-color", "--tail", "100", "server"]);
+    throw new Error(`${error.message}\n${serverLogs}`);
+  }
+  const retainedRows = (
+    await compose([
+      "exec",
+      "-T",
+      "postgres",
+      "psql",
+      "-U",
+      "odyshell",
+      "-d",
+      "odyshell",
+      "-tA",
+      "-c",
+      [
+        "select",
+        "(select count(*) from odyshell.operations",
+        "where status not in ('queued', 'delivered', 'running')",
+        "and updated_at < now() - interval '1 hour'),",
+        "(select count(*) from odyshell.operation_events),",
+        "(select count(*) from odyshell.sessions",
+        "where status not in ('opening', 'ready', 'closing')",
+        "and updated_at < now() - interval '1 hour'),",
+        "(select count(*) from odyshell.audit_events",
+        "where created_at < now() - interval '30 days');",
+      ].join(" "),
+    ])
+  ).trim();
+  if (retainedRows !== "0|0|0|0") {
+    throw new Error(`Privacy retention left expired rows: ${retainedRows}`);
+  }
+
   console.log(
     JSON.stringify(
       {
@@ -782,6 +874,7 @@ try {
           clientPolicyDenied: true,
           auditTrail: true,
           administratorAudit: true,
+          contentMinimalAudit: true,
           sandboxPolicy: true,
           readOnlyWorkspaceByDefault: true,
           ipcIsolated: true,
@@ -791,6 +884,7 @@ try {
           traversalRejected: true,
           enrollmentReplayRejected: true,
           idempotencyReplaySafe: true,
+          privacyRetention: true,
           cancellation: true,
           sessionDestroyed: true,
           administratorMachineList: true,

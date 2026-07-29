@@ -39,6 +39,8 @@ HOST=0.0.0.0
 PORT=4100
 DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<database>?sslmode=verify-full
 ODYSHELL_ADMIN_KEY=<strong-random-admin-key>
+ODYSHELL_OPERATION_RETENTION_SECONDS=3600
+ODYSHELL_AUDIT_RETENTION_DAYS=30
 ```
 
 Start the Server:
@@ -92,6 +94,8 @@ ods ping my-machine
 ## Production checklist
 
 - Back up PostgreSQL and require TLS.
+- Set operation and control-event retention deliberately; remember that backups have independent
+  retention.
 - Keep the admin key and database credentials outside the repository.
 - Expose the Server through HTTPS/WSS.
 - Run each Client as a dedicated operating-system user with least privilege.
