@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   boundedSessionExpiry,
   developmentCredentialsEnabled,
+  serverAdminKey,
 } from "../apps/server/src/access.js";
 import { parseDuration } from "../apps/cli/src/duration.js";
 
@@ -28,6 +29,25 @@ describe("temporary access", () => {
         ODYSHELL_ALLOW_DEV_CREDENTIALS: "true",
       }),
     ).toBe(true);
+  });
+
+  it("requires an explicit secure admin key in production", () => {
+    expect(serverAdminKey({ NODE_ENV: "development" })).toBe("dev-admin-key");
+    expect(
+      serverAdminKey({
+        NODE_ENV: "production",
+        ODYSHELL_ADMIN_KEY: "production-secret",
+      }),
+    ).toBe("production-secret");
+    expect(() => serverAdminKey({ NODE_ENV: "production" })).toThrow(
+      /ODYSHELL_ADMIN_KEY/,
+    );
+    expect(() =>
+      serverAdminKey({
+        NODE_ENV: "production",
+        ODYSHELL_ADMIN_KEY: "dev-admin-key",
+      }),
+    ).toThrow(/ODYSHELL_ADMIN_KEY/);
   });
 
   it("accepts human durations while keeping bare seconds compatible", () => {

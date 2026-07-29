@@ -10,7 +10,11 @@ import {
   type Capability,
   type OperationAction,
 } from "@odyshell/protocol";
-import { boundedSessionExpiry, developmentCredentialsEnabled } from "./access.js";
+import {
+  boundedSessionExpiry,
+  developmentCredentialsEnabled,
+  serverAdminKey,
+} from "./access.js";
 import { audit, createDatabase, migrate } from "./database.js";
 import { ClientGateway } from "./gateway.js";
 
@@ -18,7 +22,7 @@ const port = Number(process.env.PORT ?? 4100);
 const host = process.env.HOST ?? "127.0.0.1";
 const databaseUrl =
   process.env.DATABASE_URL ?? "postgres://odyshell:odyshell@127.0.0.1:55432/odyshell";
-const adminKey = process.env.ODYSHELL_ADMIN_KEY ?? "dev-admin-key";
+const adminKey = serverAdminKey(process.env);
 const developmentAgentKey = developmentCredentialsEnabled(process.env)
   ? (process.env.ODYSHELL_AGENT_KEY ?? "dev-agent-key")
   : undefined;

@@ -51,4 +51,16 @@ docker compose up -d --build
 Publishing the Server makes its port reachable through that interface. Keep development
 credentials private and use a host firewall appropriate for your test environment.
 
+## Deploy for testing
+
+The repository includes a Railway configuration for the Server. A production deployment needs:
+
+- `DATABASE_URL` pointing to PostgreSQL, such as Neon.
+- `ODYSHELL_ADMIN_KEY` set to a strong, private value.
+- `HOST=0.0.0.0`.
+
+Railway supplies `PORT` automatically. The Server runs database migrations during startup and
+reports readiness at `/health`. Keep one replica for now because active Client connections are
+held by the running Server process.
+
 [Back to Odyshell](../../README.md)
