@@ -8,6 +8,7 @@ import {
   operationRequestSchema,
   sessionRequestSchema,
   type Capability,
+  type OperationAction,
 } from "@odyshell/protocol";
 import { audit, createDatabase, migrate } from "./database.js";
 import { ClientGateway } from "./gateway.js";
@@ -108,6 +109,49 @@ function principalFor(request: FastifyRequest): AgentPrincipal {
 
 function canAccessMachine(principal: AgentPrincipal, machineId: string): boolean {
   return principal.machineIds === null || principal.machineIds.has(machineId);
+}
+
+function operationAuditMetadata(action: OperationAction): Record<string, unknown> {
+  switch (action.kind) {
+    case "process.exec":
+      return {
+        kind: action.kind,
+        program: action.program,
+        args: action.args,
+        cwd: action.cwd,
+        environmentKeys: Object.keys(action.env),
+      };
+    case "process.shell":
+      return {
+        kind: action.kind,
+        command: action.command,
+        cwd: action.cwd,
+        environmentKeys: Object.keys(action.env),
+      };
+    case "fs.write":
+      return {
+        kind: action.kind,
+        path: action.path,
+        bytes: Buffer.from(action.contentBase64, "base64").length,
+        createParents: action.createParents,
+      };
+    case "fs.search":
+      return {
+        kind: action.kind,
+        path: action.path,
+        query: action.query,
+        maxResults: action.maxResults,
+      };
+    case "docker.logs":
+      return {
+        kind: action.kind,
+        container: action.container,
+        tail: action.tail,
+        timestamps: action.timestamps,
+      };
+    default:
+      return { ...action };
+  }
 }
 
 app.get("/health", async () => {
@@ -455,7 +499,7 @@ app.post<{ Params: { sessionId: string } }>(
     }
     await audit(db, principal.id, "operation.created", "operation", operationId, {
       sessionId: request.params.sessionId,
-      kind: parsed.data.action.kind,
+      operation: operationAuditMetadata(parsed.data.action),
     });
     return reply.code(202).send({ id: operationId, status: sent ? "delivered" : "queued" });
   },
@@ -563,6 +607,30 @@ app.get<{ Params: { operationId: string }; Querystring: { after?: string } }>(
     gateway.events.on(`operation:${request.params.operationId}`, onEvent);
     request.raw.on("close", cleanup);
     await emitRows();
+  },
+);
+
+app.get<{ Querystring: { limit?: string } }>(
+  "/v1/admin/audit",
+  { preHandler: requireAdmin },
+  async (request) => {
+    const requestedLimit = Number(request.query.limit ?? 50);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 200)
+      : 50;
+    const result = await db.query(
+      `SELECT id, principal_id AS "principalId", action,
+              target_type AS "targetType", target_id AS "targetId",
+              metadata, created_at AS "createdAt"
+       FROM audit_events
+       ORDER BY created_at DESC
+       LIMIT $1`,
+      [limit],
+    );
+    return {
+      principal: { id: "admin", name: "All agents" },
+      data: result.rows,
+    };
   },
 );
 

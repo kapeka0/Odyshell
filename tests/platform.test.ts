@@ -5,6 +5,10 @@ import {
   hostPlatform,
 } from "../apps/client/src/platform.js";
 import { parseDockerRuntime } from "../apps/client/src/docker-runner.js";
+import {
+  linuxUserServicePath,
+  renderLinuxUserService,
+} from "../apps/client/src/service.js";
 import { cliConfigPathFor } from "../apps/cli/src/config.js";
 
 describe("client platform support", () => {
@@ -50,5 +54,21 @@ describe("client platform support", () => {
     expect(() => parseDockerRuntime("windows\tx86_64\t28.1.0\tDocker Desktop")).toThrow(
       "Linux container engine",
     );
+  });
+
+  it("renders a restartable Linux user service without relying on PATH", () => {
+    expect(linuxUserServicePath("/home/ada", {})).toBe(
+      "/home/ada/.config/systemd/user/odyshell-client.service",
+    );
+    const unit = renderLinuxUserService({
+      nodePath: "/usr/bin/node",
+      cliPath: "/opt/odyshell/dist/index.js",
+      configPath: "/home/ada/.config/odyshell/client.json",
+    });
+    expect(unit).toContain(
+      'ExecStart="/usr/bin/node" "/opt/odyshell/dist/index.js" client start --config "/home/ada/.config/odyshell/client.json"',
+    );
+    expect(unit).toContain("Restart=always");
+    expect(unit).toContain("NoNewPrivileges=true");
   });
 });

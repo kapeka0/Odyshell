@@ -170,6 +170,8 @@ try {
         workspace,
         "--allow",
         clientCapabilities.join(","),
+        "--runner",
+        "docker",
         "--config",
         configPath,
       ],
@@ -486,6 +488,31 @@ try {
   if (!cliAudit.data.some((event) => event.action === "operation.completed")) {
     throw new Error("ods audit did not return the scoped agent history");
   }
+  const adminAudit = JSON.parse(
+    await run(process.execPath, [
+      tsxCli,
+      odsEntry,
+      "--server",
+      apiUrl,
+      "--admin-key",
+      adminKey,
+      "--json",
+      "audit",
+      "--all",
+      "--limit",
+      "200",
+    ]),
+  );
+  if (
+    adminAudit.principal.id !== "admin" ||
+    !adminAudit.data.some(
+      (event) =>
+        event.principalId === scopedAgent.id &&
+        event.action === "operation.completed",
+    )
+  ) {
+    throw new Error("Administrator audit did not include scoped agent activity");
+  }
 
   await api(`/v1/sessions/${session.id}`, { method: "DELETE" });
   await waitUntil(
@@ -509,6 +536,7 @@ try {
           capabilityScopeDenied: true,
           clientPolicyDenied: true,
           auditTrail: true,
+          administratorAudit: true,
           sandboxPolicy: true,
           readOnlyWorkspaceByDefault: true,
           ipcIsolated: true,

@@ -17,13 +17,25 @@ import WebSocket from "ws";
 import {
   DockerRunner,
   inspectDockerRuntime,
-  type RunningOperation,
-  type RunningSession,
 } from "./docker-runner.js";
+import type {
+  OperationExecutor,
+  RunningOperation,
+  RunningSession,
+} from "./executor.js";
+import { HostExecutor } from "./host-executor.js";
 import { OperationJournal, type JournalResult } from "./journal.js";
 import { defaultClientConfigPath, hostPlatform } from "./platform.js";
 
 export { defaultClientConfigPath } from "./platform.js";
+export {
+  clientServiceStatus,
+  installLinuxUserService,
+  linuxUserServicePath,
+  removeLinuxUserService,
+  renderLinuxUserService,
+  stopLinuxUserService,
+} from "./service.js";
 
 export type EnrollClientOptions = {
   serverUrl: string;
@@ -32,6 +44,7 @@ export type EnrollClientOptions = {
   workspaceRoot: string;
   configPath: string;
   allowedCapabilities: Capability[];
+  runner?: "host" | "docker";
   image?: string;
 };
 
@@ -61,6 +74,27 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
   const body = (await response.json()) as { machineId?: string; error?: string };
   if (!response.ok || !body.machineId) throw new Error(body.error ?? `Enrollment failed: ${response.status}`);
 
+  const runner = options.runner ?? "host";
+  const profile =
+    runner === "docker"
+      ? {
+          runner,
+          workspaceRoot,
+          image: options.image ?? "alpine:3.22",
+          network: "none" as const,
+          maxSessionTtlSeconds: 1800,
+          maxConcurrentSessions: 2,
+          maxOutputBytes: 1024 * 1024,
+          capabilities: parsedCapabilities.data,
+        }
+      : {
+          runner,
+          workspaceRoot,
+          maxSessionTtlSeconds: 1800,
+          maxConcurrentSessions: 2,
+          maxOutputBytes: 1024 * 1024,
+          capabilities: parsedCapabilities.data,
+        };
   const config: ClientConfig = {
     serverUrl,
     machineId: body.machineId,
@@ -68,16 +102,7 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
     privateKeyPem: privateKey,
     stateDirectory: resolve(dirname(configPath), "state"),
     profiles: {
-      workspace: {
-        runner: "docker",
-        workspaceRoot,
-        image: options.image ?? "alpine:3.22",
-        network: "none",
-        maxSessionTtlSeconds: 1800,
-        maxConcurrentSessions: 2,
-        maxOutputBytes: 1024 * 1024,
-        capabilities: parsedCapabilities.data,
-      },
+      workspace: profile,
     },
   };
   await mkdir(dirname(configPath), { recursive: true });
@@ -85,18 +110,33 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
   return { machineId: body.machineId, configPath };
 }
 
-export async function inspectClientRuntime(): Promise<ClientRuntimeInfo> {
-  const docker = await inspectDockerRuntime();
-  return {
+export async function inspectClientRuntime(
+  runners: Array<"host" | "docker"> = ["host"],
+): Promise<ClientRuntimeInfo> {
+  const uniqueRunners = [...new Set(runners)];
+  const runtime: ClientRuntimeInfo = {
     hostPlatform: hostPlatform(),
     architecture: process.arch,
     nodeVersion: process.version,
-    containerEngine: "docker",
-    containerOs: docker.os,
-    containerArchitecture: docker.architecture,
-    containerEngineVersion: docker.version,
+    executionRunners: uniqueRunners,
   };
+  if (uniqueRunners.includes("docker")) {
+    const docker = await inspectDockerRuntime();
+    return {
+      ...runtime,
+      containerEngine: "docker",
+      containerOs: docker.os,
+      containerArchitecture: docker.architecture,
+      containerEngineVersion: docker.version,
+    };
+  }
+  return runtime;
 }
+
+type ActiveSession = {
+  session: RunningSession;
+  executor: OperationExecutor;
+};
 
 export class Client {
   private socket: WebSocket | undefined;
@@ -104,20 +144,26 @@ export class Client {
   private reconnectTimer: NodeJS.Timeout | undefined;
   private reconnectDelay = 1_000;
   private stopped = false;
-  private readonly sessions = new Map<string, RunningSession>();
+  private readonly sessions = new Map<string, ActiveSession>();
   private readonly operations = new Map<string, RunningOperation>();
-  private readonly runner: DockerRunner;
+  private readonly executors = new Map<"host" | "docker", OperationExecutor>();
   private readonly journal: OperationJournal;
   private runtime: ClientRuntimeInfo | undefined;
 
   constructor(private readonly config: ClientConfig) {
-    this.runner = new DockerRunner(config.machineId);
+    const runners = new Set(
+      Object.values(config.profiles).map((profile) => profile.runner),
+    );
+    if (runners.has("host")) this.executors.set("host", new HostExecutor());
+    if (runners.has("docker")) {
+      this.executors.set("docker", new DockerRunner(config.machineId));
+    }
     this.journal = new OperationJournal(resolve(config.stateDirectory, "operations.sqlite"));
   }
 
   async start(): Promise<void> {
-    this.runtime = await inspectClientRuntime();
-    await this.runner.cleanupOrphans();
+    this.runtime = await inspectClientRuntime([...this.executors.keys()]);
+    await Promise.all([...this.executors.values()].map((executor) => executor.cleanupOrphans()));
     await this.connect();
   }
 
@@ -127,7 +173,9 @@ export class Client {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.socket?.close();
     for (const operation of this.operations.values()) await operation.cancel();
-    for (const session of this.sessions.values()) await this.runner.closeSession(session);
+    for (const active of this.sessions.values()) {
+      await active.executor.closeSession(active.session);
+    }
     this.journal.close();
   }
 
@@ -218,22 +266,28 @@ export class Client {
     try {
       const profile = this.config.profiles[message.profile];
       if (!profile) throw new Error(`Unknown local profile: ${message.profile}`);
-      const activeForProfile = [...this.sessions.values()].filter((item) => item.profile === profile).length;
+      const activeForProfile = [...this.sessions.values()].filter(
+        (item) => item.session.profile === profile,
+      ).length;
       if (activeForProfile >= profile.maxConcurrentSessions) {
         throw new Error("Local concurrent session limit reached");
       }
-      const session = await this.runner.openSession(
+      const executor = this.executors.get(profile.runner);
+      if (!executor) throw new Error(`Executor ${profile.runner} is unavailable`);
+      const session = await executor.openSession(
         message.sessionId,
         profile,
         message.capabilities,
         new Date(message.expiresAt),
         () => void this.closeSession(message.sessionId, "expired"),
       );
-      this.sessions.set(message.sessionId, session);
+      this.sessions.set(message.sessionId, { session, executor });
       this.send({
         type: "session.opened",
         sessionId: message.sessionId,
-        containerId: session.containerId,
+        runner: session.runner,
+        runtimeId: session.runtimeId,
+        ...(session.containerId ? { containerId: session.containerId } : {}),
       });
     } catch (error) {
       this.send({
@@ -245,9 +299,9 @@ export class Client {
   }
 
   private async closeSession(sessionId: string, reason: string): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (session) {
-      await this.runner.closeSession(session);
+    const active = this.sessions.get(sessionId);
+    if (active) {
+      await active.executor.closeSession(active.session);
       this.sessions.delete(sessionId);
     }
     this.send({ type: "session.closed", sessionId, reason });
@@ -264,8 +318,8 @@ export class Client {
     }
     if (receipt !== "new") return;
 
-    const session = this.sessions.get(message.sessionId);
-    if (!session) {
+    const active = this.sessions.get(message.sessionId);
+    if (!active) {
       const result: JournalResult = {
         status: "failed",
         exitCode: null,
@@ -282,7 +336,7 @@ export class Client {
     let outputTruncated = false;
     let timedOut = false;
     let cancelled = false;
-    const maximum = Math.min(message.maxOutputBytes, session.profile.maxOutputBytes);
+    const maximum = Math.min(message.maxOutputBytes, active.session.profile.maxOutputBytes);
     const emit = (stream: "stdout" | "stderr" | "result", data: Buffer): void => {
       if (outputTruncated) return;
       const remaining = maximum - outputBytes;
@@ -305,11 +359,16 @@ export class Client {
     try {
       this.journal.markRunning(message.operationId);
       this.send({ type: "operation.started", operationId: message.operationId, at: new Date().toISOString() });
-      const running = await this.runner.execute(message.operationId, session, message.action, {
+      const running = await active.executor.execute(
+        message.operationId,
+        active.session,
+        message.action,
+        {
         stdout: (data) => emit("stdout", data),
         stderr: (data) => emit("stderr", data),
         result: (data) => emit("result", data),
-      });
+        },
+      );
       const originalCancel = running.cancel;
       running.cancel = async () => {
         cancelled = true;

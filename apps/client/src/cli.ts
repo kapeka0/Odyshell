@@ -30,6 +30,10 @@ function requiredCapabilities(name: string, fallback?: string): Capability[] {
 
 const command = process.argv[2];
 if (command === "enroll") {
+  const runner = option("runner", "host");
+  if (runner !== "host" && runner !== "docker") {
+    throw new Error("--runner must be host or docker");
+  }
   const result = await enrollClient({
     serverUrl: requiredOption("server", process.env.ODYSHELL_SERVER_URL),
     token: requiredOption("token", process.env.ODYSHELL_ENROLLMENT_TOKEN),
@@ -37,13 +41,18 @@ if (command === "enroll") {
     workspaceRoot: requiredOption("workspace", process.cwd()),
     allowedCapabilities: requiredCapabilities("allow", process.env.ODYSHELL_ALLOWED_CAPABILITIES),
     configPath: option("config", defaultClientConfigPath())!,
+    runner,
     image: option("image", "alpine:3.22") ?? "alpine:3.22",
   });
   console.log(JSON.stringify({ enrolled: true, ...result }, null, 2));
 } else if (command === "start") {
   await runClient(option("config", defaultClientConfigPath())!);
 } else if (command === "doctor") {
-  console.log(JSON.stringify(await inspectClientRuntime(), null, 2));
+  const runner = option("runner", "host");
+  if (runner !== "host" && runner !== "docker") {
+    throw new Error("--runner must be host or docker");
+  }
+  console.log(JSON.stringify(await inspectClientRuntime([runner]), null, 2));
 } else {
   console.error("Usage: ods-client <doctor|enroll|start> [options]");
   process.exitCode = 1;

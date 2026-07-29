@@ -28,6 +28,24 @@ describe("protocol validation", () => {
     ).toBe(true);
   });
 
+  it("accepts structured filesystem search and Docker log operations", () => {
+    expect(
+      operationRequestSchema.safeParse({
+        action: { kind: "fs.search", path: ".", query: "package", maxResults: 50 },
+      }).success,
+    ).toBe(true);
+    expect(
+      operationRequestSchema.safeParse({
+        action: { kind: "docker.logs", container: "api", tail: 100, timestamps: true },
+      }).success,
+    ).toBe(true);
+    expect(
+      operationRequestSchema.safeParse({
+        action: { kind: "docker.logs", container: "api; rm -rf /" },
+      }).success,
+    ).toBe(false);
+  });
+
   it("rejects excessive session leases", () => {
     expect(
       sessionRequestSchema.safeParse({
@@ -84,6 +102,28 @@ describe("protocol validation", () => {
         ...config,
         profiles: {
           workspace: { ...config.profiles.workspace, network: "none" },
+        },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("accepts direct host execution as an explicit local profile", () => {
+    expect(
+      clientConfigSchema.safeParse({
+        serverUrl: "https://api.odyshell.test",
+        machineId: "2dc24de7-ec0e-45b3-88c1-acbb900e51f8",
+        machineName: "linux-server",
+        privateKeyPem: "private-key",
+        stateDirectory: "/home/odyshell/.local/state/odyshell",
+        profiles: {
+          workspace: {
+            runner: "host",
+            workspaceRoot: "/srv/app",
+            maxSessionTtlSeconds: 1800,
+            maxConcurrentSessions: 2,
+            maxOutputBytes: 1024 * 1024,
+            capabilities: ["process.exec", "fs.read", "fs.write"],
+          },
         },
       }).success,
     ).toBe(true);

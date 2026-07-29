@@ -6,8 +6,8 @@
 
 <p align="center"><strong>The lightweight connection from a private machine to Odyshell.</strong></p>
 
-The Client runs on Linux, macOS, or Windows. It creates an outbound connection to the Odyshell
-Server, receives approved tasks, and executes them inside temporary Linux containers.
+The Client creates an outbound connection to the Odyshell Server, receives approved typed
+operations, and delegates them to process, filesystem, or Docker subsystems on the machine.
 
 The machine does not need an inbound port, public IP, SSH account, or access from the agent to its
 private network.
@@ -20,28 +20,34 @@ Create an enrollment token on the administrator machine:
 ods token create
 ```
 
-Then, on the private machine:
+Then, on the private Linux machine:
 
 ```bash
-ods client doctor
-ods client enroll --token <token> --name raspberry --workspace ./workspace --allow process.exec,fs.stat,fs.list,fs.read
-ods client start
+ods up \
+  --server <server-url> \
+  --token <token> \
+  --name raspberry \
+  --workspace /srv/my-app \
+  --allow process.exec,fs.stat,fs.list,fs.search,fs.read,fs.write
 ```
 
-The workspace and `--allow` list form the local policy. The Server and remote agents cannot grant
-themselves capabilities that the Client has not explicitly allowed.
+`ods up` enrolls the machine and starts a restartable systemd user service. The workspace,
+operating-system user, and `--allow` list form the local policy. The Server and remote agents
+cannot grant themselves capabilities that the Client has not explicitly allowed.
 
 ## Security baseline
 
 - Client configuration is validated locally and fails closed.
-- Containers have no network, host credentials, or access to the host Docker socket.
-- The container root filesystem is read-only and runs without Linux capabilities.
-- The workspace mount is read-only unless a write capability is granted.
-- Sessions have CPU, memory, process, output, and time limits and are deleted when closed.
+- Filesystem operations cannot leave the configured workspace.
+- Every requested capability must be allowed both remotely and locally.
+- Commands have time and output limits and can be cancelled.
+- A durable local journal prevents silent duplicate execution after reconnects.
 
-Process execution can read the selected workspace. Do not place credentials inside that directory.
-This MVP uses hardened containers and does not claim the microVM isolation of Docker Sandboxes.
+Host processes have the permissions of the user running the Client. For real deployments, use a
+dedicated user without root, sudo, or Docker access, then grant only the workspace permissions it
+needs. `docker.logs` is an explicit high-trust capability because access to Docker is sensitive.
 
-Docker and Node.js 24 or newer are required.
+Docker is only required when using Docker operations or the optional `--runner docker` profile.
+Node.js 24 or newer is required.
 
 [Back to Odyshell](../../README.md)

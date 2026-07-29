@@ -7,10 +7,12 @@ export const capabilitySchema = z.enum([
   "process.shell",
   "fs.stat",
   "fs.list",
+  "fs.search",
   "fs.read",
   "fs.write",
   "fs.mkdir",
   "fs.remove",
+  "docker.logs",
 ]);
 export type Capability = z.infer<typeof capabilitySchema>;
 
@@ -19,10 +21,12 @@ export const allCapabilities: Capability[] = [
   "process.shell",
   "fs.stat",
   "fs.list",
+  "fs.search",
   "fs.read",
   "fs.write",
   "fs.mkdir",
   "fs.remove",
+  "docker.logs",
 ];
 
 export const sessionRequestSchema = z.object({
@@ -67,6 +71,12 @@ export const operationActionSchema = z.discriminatedUnion("kind", [
   }),
   z.object({ kind: z.literal("fs.stat"), path: relativePathSchema }),
   z.object({ kind: z.literal("fs.list"), path: relativePathSchema.default(".") }),
+  z.object({
+    kind: z.literal("fs.search"),
+    path: relativePathSchema.default("."),
+    query: z.string().min(1).max(256),
+    maxResults: z.number().int().min(1).max(1_000).default(100),
+  }),
   z.object({ kind: z.literal("fs.read"), path: relativePathSchema }),
   z.object({
     kind: z.literal("fs.write"),
@@ -76,6 +86,16 @@ export const operationActionSchema = z.discriminatedUnion("kind", [
   }),
   z.object({ kind: z.literal("fs.mkdir"), path: relativePathSchema, recursive: z.boolean().default(true) }),
   z.object({ kind: z.literal("fs.remove"), path: relativePathSchema, recursive: z.boolean().default(false) }),
+  z.object({
+    kind: z.literal("docker.logs"),
+    container: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/, "Invalid container name or ID"),
+    tail: z.number().int().min(1).max(10_000).default(200),
+    timestamps: z.boolean().default(false),
+  }),
 ]);
 export type OperationAction = z.infer<typeof operationActionSchema>;
 
@@ -102,23 +122,41 @@ export type ClientRuntimeInfo = {
   hostPlatform: HostPlatform;
   architecture: string;
   nodeVersion: string;
-  containerEngine: "docker";
-  containerOs: "linux";
-  containerArchitecture: string;
-  containerEngineVersion: string;
+  executionRunners?: Array<"host" | "docker">;
+  containerEngine?: "docker";
+  containerOs?: "linux";
+  containerArchitecture?: string;
+  containerEngineVersion?: string;
 };
 
-export const clientProfileSchema = z.object({
-  runner: z.literal("docker"),
+const profilePolicySchema = z.object({
   workspaceRoot: z.string().min(1).max(4096),
-  image: z.string().min(1).max(512),
-  network: z.literal("none"),
   maxSessionTtlSeconds: z.number().int().min(10).max(3600),
   maxConcurrentSessions: z.number().int().min(1).max(32),
   maxOutputBytes: z.number().int().min(1024).max(16 * 1024 * 1024),
   capabilities: z.array(capabilitySchema).min(1),
 });
+
+export const hostClientProfileSchema = profilePolicySchema.extend({
+  runner: z.literal("host"),
+});
+
+export const dockerClientProfileSchema = profilePolicySchema.extend({
+  runner: z.literal("docker"),
+  image: z.string().min(1).max(512),
+  network: z.literal("none"),
+});
+
+export const clientProfileSchema = z
+  .discriminatedUnion("runner", [hostClientProfileSchema, dockerClientProfileSchema])
+  .refine(
+    (profile) =>
+      profile.runner !== "docker" || !profile.capabilities.includes("docker.logs"),
+    "docker.logs is only available through the host runner",
+  );
 export type ClientProfile = z.infer<typeof clientProfileSchema>;
+export type HostClientProfile = z.infer<typeof hostClientProfileSchema>;
+export type DockerClientProfile = z.infer<typeof dockerClientProfileSchema>;
 
 export const clientConfigSchema = z.object({
   serverUrl: z.string().url(),
@@ -162,7 +200,14 @@ export type ClientToServerMessage =
       runtime?: ClientRuntimeInfo;
     }
   | { type: "heartbeat"; machineId: string; at: string }
-  | { type: "session.opened"; sessionId: string; containerId: string }
+  | {
+      type: "session.opened";
+      sessionId: string;
+      runner?: "host" | "docker";
+      runtimeId?: string;
+      /** @deprecated Kept for protocol v1 Docker clients. */
+      containerId?: string;
+    }
   | { type: "session.open_failed"; sessionId: string; error: string }
   | { type: "session.closed"; sessionId: string; reason: string }
   | { type: "operation.started"; operationId: string; at: string }

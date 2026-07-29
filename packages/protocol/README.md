@@ -7,8 +7,8 @@
 <p align="center"><strong>The shared contract between the Server, Client, and CLI.</strong></p>
 
 `@odyshell/protocol` contains the TypeScript types and validation rules used across Odyshell. It
-defines capabilities, session requests, filesystem and process operations, and messages exchanged
-between the Server and Client.
+defines capabilities, session requests, typed process, filesystem and Docker operations, and
+messages exchanged between the Server and Client.
 
 The package keeps both sides aligned without containing transport, authentication, or execution
 logic.

@@ -16,6 +16,7 @@ access tokens.
 ods login --server <server-url> --agent-token <agent-token>
 ods machines
 ods exec raspberry -- uname -a
+ods fs search raspberry package.json
 ods fs read raspberry notes/status.txt
 ods audit
 ```
@@ -28,11 +29,12 @@ ods --json exec raspberry -- uname -a
 
 ## Main commands
 
-- `ods exec`, `ods shell`, and `ods fs` perform temporary tasks.
+- `ods up`, `ods status`, and `ods down` manage the outbound Client.
+- `ods exec`, `ods shell`, `ods fs`, and `ods docker` perform typed operations.
 - `ods session` manages longer-lived temporary sessions.
 - `ods agent create` creates scoped agent tokens.
 - `ods client` configures the client running on a private machine.
-- `ods audit` shows actions performed by the current agent.
+- `ods audit` shows actions performed by the current agent; `--all` uses administrator access.
 
 From the monorepo root, build and install the CLI with:
 

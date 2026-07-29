@@ -1,6 +1,7 @@
 import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import pc from "picocolors";
 import {
@@ -11,9 +12,12 @@ import {
 } from "@odyshell/protocol";
 import {
   defaultClientConfigPath,
+  clientServiceStatus,
   enrollClient,
   inspectClientRuntime,
+  installLinuxUserService,
   runClient,
+  stopLinuxUserService,
 } from "@odyshell/client";
 import { OdyshellApi, type Operation } from "./api.js";
 import { ExpectedError, printCliError } from "./errors.js";
@@ -39,7 +43,7 @@ const program = new Command();
 program
   .name("ods")
   .description("Agent-first access to private machines")
-  .version("0.7.1")
+  .version("0.8.0")
   .option("-j, --json", "emit stable JSON output")
   .option("--server <url>", "override the Odyshell server URL")
   .option("--agent-token <token>", "override the scoped agent token")
@@ -112,6 +116,19 @@ function parseCapabilities(value: string): Capability[] {
     );
   }
   return parsed.data;
+}
+
+function parseRunner(value: string): "host" | "docker" {
+  if (value === "host" || value === "docker") return value;
+  throw new ExpectedError("--runner must be host or docker", "invalid_runner");
+}
+
+function requiredValue(value: string | undefined, flag: string): string {
+  if (value) return value;
+  throw new ExpectedError(
+    `${flag} is required when enrolling a new machine`,
+    "enrollment_option_required",
+  );
 }
 
 async function finishOperation(
@@ -197,10 +214,19 @@ program
   .action(async (_options, command: Command) => {
     const options = globals(command);
     const api = await apiFor(command);
-    const [health, machines] = await Promise.all([api.health(), api.machines()]);
-    if (options.json) printJson({ serverUrl: api.serverUrl, health, machines });
+    const [health, machines, localClient] = await Promise.all([
+      api.health(),
+      api.machines(),
+      clientServiceStatus(),
+    ]);
+    if (options.json) printJson({ serverUrl: api.serverUrl, health, machines, localClient });
     else {
       console.log(`${pc.green("●")} ${pc.bold(api.serverUrl)}  protocol v${health.protocol}`);
+      if (localClient.installed) {
+        console.log(
+          `Local Client  ${localClient.active ? pc.green("running") : pc.dim("stopped")}`,
+        );
+      }
       printMachines(machines);
     }
   });
@@ -278,11 +304,12 @@ agent
 
 program
   .command("audit")
-  .description("show recent actions for the current agent")
+  .description("show recent agent actions")
   .option("--limit <count>", "number of events", "50")
-  .action(async (options: { limit: string }, command: Command) => {
+  .option("--all", "show all agents using administrator access")
+  .action(async (options: { limit: string; all?: boolean }, command: Command) => {
     const global = globals(command);
-    const result = await (await apiFor(command)).audit(Number(options.limit));
+    const result = await (await apiFor(command)).audit(Number(options.limit), options.all ?? false);
     if (global.json) printJson(result);
     else printAudit(result.principal, result.data);
   });
@@ -434,6 +461,33 @@ fsCommand
   );
 
 fsCommand
+  .command("search <machine> <query> [path]")
+  .description("find files and directories by name")
+  .option("--limit <count>", "maximum results", "100")
+  .action(
+    async (
+      machine: string,
+      query: string,
+      path: string | undefined,
+      options: { limit: string },
+      command: Command,
+    ) =>
+      runInTemporarySession(
+        command,
+        machine,
+        "fs.search",
+        {
+          kind: "fs.search",
+          path: path ?? ".",
+          query,
+          maxResults: Number(options.limit),
+        },
+        300,
+        120,
+      ),
+  );
+
+fsCommand
   .command("write <machine> <path>")
   .description("write a file through a disposable session")
   .option("--content <text>", "text to write")
@@ -475,27 +529,157 @@ fsCommand
     },
   );
 
+const dockerCommand = program.command("docker").description("access Docker through typed operations");
+dockerCommand
+  .command("logs <machine> <container>")
+  .description("read logs from a container on the host")
+  .option("--tail <lines>", "number of lines", "200")
+  .option("--timestamps", "include Docker timestamps")
+  .action(
+    async (
+      machine: string,
+      container: string,
+      options: { tail: string; timestamps?: boolean },
+      command: Command,
+    ) =>
+      runInTemporarySession(
+        command,
+        machine,
+        "docker.logs",
+        {
+          kind: "docker.logs",
+          container,
+          tail: Number(options.tail),
+          timestamps: options.timestamps ?? false,
+        },
+        300,
+        120,
+      ),
+  );
+
+program
+  .command("up")
+  .description("enroll this machine if needed and start its background Client")
+  .option("--token <token>", "one-time enrollment token")
+  .option("--name <name>", "machine name")
+  .option("--workspace <path>", "workspace available to operations")
+  .option("--allow <capabilities>", "comma-separated local capabilities")
+  .option("--runner <runner>", "host or docker", "host")
+  .option("--image <image>", "Docker profile image", "alpine:3.22")
+  .option("--config <path>", "client configuration", defaultClientConfigPath())
+  .action(
+    async (
+      options: {
+        token?: string;
+        name?: string;
+        workspace?: string;
+        allow?: string;
+        runner: string;
+        image: string;
+        config: string;
+      },
+      command: Command,
+    ) => {
+      const global = globals(command);
+      const configPath = resolve(options.config);
+      const configFound = await access(configPath).then(
+        () => true,
+        () => false,
+      );
+      let enrollment:
+        | { machineId: string; configPath: string }
+        | undefined;
+      if (!configFound) {
+        const apiConfig = await resolveConfig(global);
+        enrollment = await enrollClient({
+          serverUrl: apiConfig.serverUrl,
+          token: requiredValue(options.token, "--token"),
+          machineName: requiredValue(options.name, "--name"),
+          workspaceRoot: requiredValue(options.workspace, "--workspace"),
+          allowedCapabilities: parseCapabilities(requiredValue(options.allow, "--allow")),
+          runner: parseRunner(options.runner),
+          image: options.image,
+          configPath,
+        });
+      }
+      let service;
+      try {
+        service = await installLinuxUserService({
+          nodePath: process.execPath,
+          cliPath: fileURLToPath(import.meta.url),
+          configPath,
+        });
+      } catch (error) {
+        throw new ExpectedError(
+          `Could not start the Odyshell Client service: ${error instanceof Error ? error.message : String(error)}`,
+          "client_service_start_failed",
+        );
+      }
+      const result = {
+        running: true,
+        enrolled: Boolean(enrollment),
+        ...(enrollment ?? {}),
+        servicePath: service.servicePath,
+        lingering: service.lingering,
+      };
+      if (global.json) printJson(result);
+      else {
+        console.log(`${pc.green("✓")} Odyshell Client is running`);
+        if (enrollment) console.log(`  machine  ${enrollment.machineId}`);
+        console.log(`  config   ${configPath}`);
+        if (service.lingering === false) {
+          console.log(
+            pc.yellow(
+              '  warning  Enable user lingering to reconnect after reboot: loginctl enable-linger "$USER"',
+            ),
+          );
+        }
+      }
+    },
+  );
+
+program
+  .command("down")
+  .description("stop and disable this machine's background Client")
+  .action(async (_options, command: Command) => {
+    const global = globals(command);
+    try {
+      await stopLinuxUserService();
+    } catch (error) {
+      throw new ExpectedError(
+        `Could not stop the Odyshell Client service: ${error instanceof Error ? error.message : String(error)}`,
+        "client_service_stop_failed",
+      );
+    }
+    if (global.json) printJson({ running: false });
+    else console.log(`${pc.green("✓")} Odyshell Client stopped`);
+  });
+
 const client = program.command("client").description("manage the private-machine client");
 client
   .command("doctor")
   .description("check this host for client compatibility")
   .option("--config <path>", "client configuration", defaultClientConfigPath())
-  .action(async (options: { config: string }, command: Command) => {
+  .option("--runner <runner>", "host or docker", "host")
+  .action(async (options: { config: string; runner: string }, command: Command) => {
     const global = globals(command);
     const configPath = resolve(options.config);
     const configFound = await access(configPath).then(
       () => true,
       () => false,
     );
-    const runtime = await inspectClientRuntime();
+    const runtime = await inspectClientRuntime([parseRunner(options.runner)]);
     const report = { compatible: true, configPath, configFound, runtime };
     if (global.json) printJson(report);
     else {
       console.log(`${pc.green("✓")} ${runtime.hostPlatform}/${runtime.architecture}`);
       console.log(`  Node    ${runtime.nodeVersion}`);
-      console.log(
-        `  Docker  ${runtime.containerEngineVersion} (${runtime.containerOs}/${runtime.containerArchitecture})`,
-      );
+      console.log(`  Runner  ${runtime.executionRunners?.join(", ") ?? "host"}`);
+      if (runtime.containerEngineVersion) {
+        console.log(
+          `  Docker  ${runtime.containerEngineVersion} (${runtime.containerOs}/${runtime.containerArchitecture})`,
+        );
+      }
       console.log(`  Config  ${configFound ? configPath : `${configPath} (not enrolled)`}`);
     }
   });
@@ -507,6 +691,7 @@ client
   .requiredOption("--name <name>", "machine name")
   .requiredOption("--workspace <path>", "workspace exposed to sessions")
   .requiredOption("--allow <capabilities>", "comma-separated capabilities allowed by this machine")
+  .option("--runner <runner>", "host or docker", "host")
   .option("--image <image>", "sandbox image", "alpine:3.22")
   .option("--config <path>", "client configuration", defaultClientConfigPath())
   .action(
@@ -516,6 +701,7 @@ client
         name: string;
         workspace: string;
         allow: string;
+        runner: string;
         image: string;
         config: string;
       },
@@ -529,6 +715,7 @@ client
         machineName: options.name,
         workspaceRoot: options.workspace,
         allowedCapabilities: parseCapabilities(options.allow),
+        runner: parseRunner(options.runner),
         image: options.image,
         configPath: options.config,
       });
@@ -540,6 +727,23 @@ client
       }
     },
   );
+
+client
+  .command("status")
+  .description("show the local background Client status")
+  .action(async (_options, command: Command) => {
+    const global = globals(command);
+    const status = await clientServiceStatus();
+    if (global.json) printJson(status);
+    else {
+      console.log(
+        status.active
+          ? `${pc.green("●")} Odyshell Client is running`
+          : `${pc.dim("●")} Odyshell Client is stopped`,
+      );
+      if (status.servicePath) console.log(`  service  ${status.servicePath}`);
+    }
+  });
 
 client
   .command("start")

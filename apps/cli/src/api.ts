@@ -225,11 +225,14 @@ export class OdyshellApi {
     });
   }
 
-  async audit(limit: number): Promise<{
+  async audit(limit: number, allAgents = false): Promise<{
     principal: { id: string; name: string };
     data: AuditEvent[];
   }> {
-    return this.request(`/v1/audit?limit=${encodeURIComponent(String(limit))}`);
+    return this.request(
+      `${allAgents ? "/v1/admin/audit" : "/v1/audit"}?limit=${encodeURIComponent(String(limit))}`,
+      allAgents ? { admin: true } : {},
+    );
   }
 
   private async request<T>(

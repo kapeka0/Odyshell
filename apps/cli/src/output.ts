@@ -11,13 +11,15 @@ export function printMachines(machines: Machine[]): void {
     return;
   }
   printTable(
-    ["NAME", "STATUS", "PLATFORM", "ID", "LAST SEEN"],
+    ["NAME", "STATUS", "PLATFORM", "RUNNER", "ID", "LAST SEEN"],
     machines.map((machine) => [
       machine.name,
       machine.online ? pc.green("online") : pc.dim("offline"),
       machine.runtime
         ? `${machine.runtime.hostPlatform}/${machine.runtime.architecture}`
         : pc.dim("unknown"),
+      machine.runtime?.executionRunners?.join(",") ??
+        (machine.runtime?.containerEngine ? "docker" : pc.dim("unknown")),
       machine.id,
       machine.lastSeenAt ? new Date(machine.lastSeenAt).toLocaleString() : "never",
     ]),
@@ -50,9 +52,10 @@ export function printAudit(
     return;
   }
   printTable(
-    ["TIME", "ACTION", "TARGET", "DETAILS"],
+    ["TIME", "AGENT", "ACTION", "TARGET", "DETAILS"],
     events.map((event) => [
       new Date(event.createdAt).toLocaleString(),
+      event.principalId,
       event.action,
       `${event.targetType}:${event.targetId}`,
       Object.keys(event.metadata).length > 0 ? JSON.stringify(event.metadata) : "",
