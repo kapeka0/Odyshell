@@ -15,7 +15,8 @@ import {
   inspectClientRuntime,
   runClient,
 } from "@odyshell/client";
-import { ApiError, OdyshellApi, type Operation } from "./api.js";
+import { OdyshellApi, type Operation } from "./api.js";
+import { printCliError } from "./errors.js";
 import {
   defaultConfigPath,
   loadStoredConfig,
@@ -38,7 +39,7 @@ const program = new Command();
 program
   .name("ods")
   .description("Agent-first access to private machines")
-  .version("0.6.0")
+  .version("0.7.0")
   .option("-j, --json", "emit stable JSON output")
   .option("--server <url>", "override the Odyshell server URL")
   .option("--agent-token <token>", "override the scoped agent token")
@@ -537,11 +538,6 @@ client
   });
 
 await program.parseAsync(normalizeGlobalOptions(process.argv)).catch((error: unknown) => {
-  if (error instanceof ApiError) {
-    console.error(pc.red(`Error: ${error.code} (${error.status})`));
-    if (error.details) console.error(JSON.stringify(error.details, null, 2));
-  } else {
-    console.error(pc.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
-  }
+  printCliError(error, process.argv.includes("--json") || process.argv.includes("-j"));
   process.exitCode = 1;
 });

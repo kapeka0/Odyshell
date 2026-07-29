@@ -26,7 +26,7 @@ services:
       ODYSHELL_ADMIN_KEY: ${ODYSHELL_ADMIN_KEY:-dev-admin-key}
       ODYSHELL_AGENT_KEY: ${ODYSHELL_AGENT_KEY:-dev-agent-key}
     ports:
-      - "127.0.0.1:4100:4100"
+      - "${ODYSHELL_BIND_ADDRESS:-127.0.0.1}:4100:4100"
     depends_on:
       postgres:
         condition: service_healthy

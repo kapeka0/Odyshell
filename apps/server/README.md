@@ -33,4 +33,19 @@ created with explicit machine and capability scopes:
 ods agent create coding-agent --machines <machine-id> --allow process.exec,fs.read --ttl 86400
 ```
 
+The Server is published on `127.0.0.1` by default. To test from another device, bind it to a
+specific reachable host interface:
+
+```bash
+ODYSHELL_BIND_ADDRESS=<host-ip> docker compose up -d --build
+```
+
+```powershell
+$env:ODYSHELL_BIND_ADDRESS="<host-ip>"
+docker compose up -d --build
+```
+
+Publishing the Server makes its port reachable through that interface. Keep development
+credentials private and use a host firewall appropriate for your test environment.
+
 [Back to Odyshell](../../README.md)

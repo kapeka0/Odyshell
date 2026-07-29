@@ -6,6 +6,7 @@ import type {
   OperationStatus,
 } from "@odyshell/protocol";
 import type { StoredConfig } from "./config.js";
+import { ServerConnectionError } from "./errors.js";
 
 export type Machine = {
   id: string;
@@ -75,6 +76,7 @@ export class ApiError extends Error {
     readonly details?: unknown,
   ) {
     super(`${status} ${code}`);
+    this.name = "ApiError";
   }
 }
 
@@ -236,19 +238,24 @@ export class OdyshellApi {
         `No ${options.admin ? "admin key" : "agent token"} configured. Run "ods login" or set the corresponding environment variable.`,
       );
     }
-    const response = await fetch(new URL(path, this.config.serverUrl), {
-      method: options.method ?? "GET",
-      headers: {
-        ...(options.body === undefined ? {} : { "content-type": "application/json" }),
-        ...(authenticated
-          ? options.admin
-            ? { "x-odyshell-admin-key": credential! }
-            : { authorization: `Bearer ${credential!}` }
-          : {}),
-        ...options.headers,
-      },
-      ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
-    });
+    let response: Response;
+    try {
+      response = await fetch(new URL(path, this.config.serverUrl), {
+        method: options.method ?? "GET",
+        headers: {
+          ...(options.body === undefined ? {} : { "content-type": "application/json" }),
+          ...(authenticated
+            ? options.admin
+              ? { "x-odyshell-admin-key": credential! }
+              : { authorization: `Bearer ${credential!}` }
+            : {}),
+          ...options.headers,
+        },
+        ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+      });
+    } catch (error) {
+      throw new ServerConnectionError(this.config.serverUrl, error);
+    }
     const text = await response.text();
     const body = (text ? JSON.parse(text) : {}) as T & { error?: string; details?: unknown };
     if (!response.ok) {

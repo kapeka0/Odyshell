@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import process from "node:process";
 
 const root = process.cwd();
-const apiUrl = process.env.ODYSHELL_E2E_URL ?? "http://127.0.0.1:4100";
+let apiUrl = process.env.ODYSHELL_E2E_URL;
 const agentKey = process.env.ODYSHELL_AGENT_KEY ?? "dev-agent-key";
 const adminKey = process.env.ODYSHELL_ADMIN_KEY ?? "dev-admin-key";
 const configDirectory = resolve(root, ".odyshell/e2e");
@@ -67,6 +67,20 @@ function run(command, args, options = {}) {
 }
 
 await run("docker", ["compose", "up", "-d", "--build", "--remove-orphans"]);
+
+if (!apiUrl) {
+  const publishedAddresses = (await run("docker", ["compose", "port", "server", "4100"]))
+    .trim()
+    .split(/\r?\n/);
+  const published = publishedAddresses[0];
+  if (!published) throw new Error("Docker Compose did not publish the Server port");
+  const separator = published.lastIndexOf(":");
+  if (separator <= 0) throw new Error(`Could not parse published Server address: ${published}`);
+  const rawHost = published.slice(0, separator).replace(/^\[|\]$/g, "");
+  const port = published.slice(separator + 1);
+  const host = rawHost === "0.0.0.0" || rawHost === "::" ? "127.0.0.1" : rawHost;
+  apiUrl = `http://${host.includes(":") ? `[${host}]` : host}:${port}`;
+}
 
 for (let attempt = 0; attempt < 60; attempt++) {
   try {
