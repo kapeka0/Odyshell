@@ -96,12 +96,6 @@ Keep the connector running. In another terminal:
 ods exec my-machine -- uname -a
 ```
 
-To test with devices in the same Tailscale network, follow the short
-[tailnet testing guide](deploy/tailscale/README.md).
-
-Tailscale is only used to keep the current development server private while testing. It is not
-part of the core Odyshell model.
-
 ## MVP status
 
 Odyshell currently supports Linux machines, shell commands, filesystem operations, Docker
