@@ -7,12 +7,21 @@ import {
   allCapabilities,
   parseServerMessage,
   type ConnectorConfig,
+  type ConnectorRuntimeInfo,
   type ConnectorToServerMessage,
   type ServerToConnectorMessage,
 } from "@odyshell/protocol";
 import WebSocket from "ws";
-import { DockerRunner, type RunningOperation, type RunningSession } from "./docker-runner.js";
+import {
+  DockerRunner,
+  inspectDockerRuntime,
+  type RunningOperation,
+  type RunningSession,
+} from "./docker-runner.js";
 import { OperationJournal, type JournalResult } from "./journal.js";
+import { defaultConnectorConfigPath, hostPlatform } from "./platform.js";
+
+export { defaultConnectorConfigPath } from "./platform.js";
 
 export type EnrollConnectorOptions = {
   serverUrl: string;
@@ -66,6 +75,19 @@ export async function enrollConnector(options: EnrollConnectorOptions): Promise<
   return { machineId: body.machineId, configPath };
 }
 
+export async function inspectConnectorRuntime(): Promise<ConnectorRuntimeInfo> {
+  const docker = await inspectDockerRuntime();
+  return {
+    hostPlatform: hostPlatform(),
+    architecture: process.arch,
+    nodeVersion: process.version,
+    containerEngine: "docker",
+    containerOs: docker.os,
+    containerArchitecture: docker.architecture,
+    containerEngineVersion: docker.version,
+  };
+}
+
 export class Connector {
   private socket: WebSocket | undefined;
   private heartbeat?: NodeJS.Timeout;
@@ -76,6 +98,7 @@ export class Connector {
   private readonly operations = new Map<string, RunningOperation>();
   private readonly runner: DockerRunner;
   private readonly journal: OperationJournal;
+  private runtime: ConnectorRuntimeInfo | undefined;
 
   constructor(private readonly config: ConnectorConfig) {
     this.runner = new DockerRunner(config.machineId);
@@ -83,7 +106,7 @@ export class Connector {
   }
 
   async start(): Promise<void> {
-    await this.runner.preflight();
+    this.runtime = await inspectConnectorRuntime();
     await this.runner.cleanupOrphans();
     await this.connect();
   }
@@ -146,6 +169,7 @@ export class Connector {
           machineId: this.config.machineId,
           protocolVersion: PROTOCOL_VERSION,
           signature,
+          ...(this.runtime ? { runtime: this.runtime } : {}),
         });
         break;
       }
@@ -328,7 +352,9 @@ export class Connector {
   }
 }
 
-export async function runConnector(configPathInput: string): Promise<Connector> {
+export async function runConnector(
+  configPathInput = defaultConnectorConfigPath(),
+): Promise<Connector> {
   const configPath = resolve(configPathInput);
   const config = JSON.parse(await readFile(configPath, "utf8")) as ConnectorConfig;
   const connector = new Connector(config);

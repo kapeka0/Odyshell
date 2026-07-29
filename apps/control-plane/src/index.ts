@@ -120,7 +120,8 @@ app.post("/v1/connectors/enroll", async (request, reply) => {
 
 app.get("/v1/machines", { preHandler: requireAgent }, async () => {
   const result = await db.query(
-    `SELECT id, name, status, last_seen_at AS "lastSeenAt", enrolled_at AS "enrolledAt"
+    `SELECT id, name, status, runtime_info AS runtime,
+            last_seen_at AS "lastSeenAt", enrolled_at AS "enrolledAt"
      FROM machines ORDER BY enrolled_at`,
   );
   return {

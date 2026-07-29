@@ -1,5 +1,5 @@
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, posix, resolve, win32 } from "node:path";
 import process from "node:process";
 import { homedir } from "node:os";
 
@@ -17,12 +17,34 @@ export type GlobalOptions = {
   json?: boolean;
 };
 
+export function clientConfigPathFor(
+  platform: "linux" | "darwin" | "win32",
+  home: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
+  if (platform === "win32") {
+    return win32.join(
+      environment.APPDATA ?? win32.join(home, "AppData", "Roaming"),
+      "Odyshell",
+      "config.json",
+    );
+  }
+  if (platform === "darwin") {
+    return posix.join(home, "Library", "Application Support", "Odyshell", "config.json");
+  }
+  return posix.join(
+    environment.XDG_CONFIG_HOME ?? posix.join(home, ".config"),
+    "odyshell",
+    "config.json",
+  );
+}
+
 export function defaultConfigPath(): string {
   if (process.env.ODS_CONFIG_FILE) return resolve(process.env.ODS_CONFIG_FILE);
-  if (process.platform === "win32" && process.env.APPDATA) {
-    return join(process.env.APPDATA, "odyshell", "config.json");
-  }
-  return join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "odyshell", "config.json");
+  return clientConfigPathFor(
+    process.platform as "linux" | "darwin" | "win32",
+    homedir(),
+  );
 }
 
 export async function loadStoredConfig(path = defaultConfigPath()): Promise<StoredConfig | undefined> {

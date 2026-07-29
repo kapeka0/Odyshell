@@ -17,6 +17,7 @@ import {
   type ConnectorProfile,
   type OperationAction,
 } from "@odyshell/protocol";
+import { containerUser } from "./platform.js";
 
 export type RunningSession = {
   id: string;
@@ -55,6 +56,45 @@ async function dockerCapture(args: string[], input?: Buffer): Promise<string> {
     if (input) child.stdin.end(input);
     else child.stdin.end();
   });
+}
+
+export type DockerRuntime = {
+  os: "linux";
+  architecture: string;
+  version: string;
+  operatingSystem: string;
+};
+
+export function parseDockerRuntime(raw: string): DockerRuntime {
+  const [os, architecture, version, operatingSystem] = raw.split("\t");
+  if (os !== "linux") {
+    throw new Error(
+      "Odyshell requires Docker's Linux container engine. On Windows, switch Docker Desktop to Linux containers.",
+    );
+  }
+  if (!architecture || !version) throw new Error("Docker returned incomplete runtime information");
+  return {
+    os,
+    architecture,
+    version,
+    operatingSystem: operatingSystem ?? "Docker",
+  };
+}
+
+export async function inspectDockerRuntime(): Promise<DockerRuntime> {
+  let raw: string;
+  try {
+    raw = await dockerCapture([
+      "info",
+      "--format",
+      "{{.OSType}}\t{{.Architecture}}\t{{.ServerVersion}}\t{{.OperatingSystem}}",
+    ]);
+  } catch (error) {
+    throw new Error(
+      `Docker is unavailable. Start Docker Engine or Docker Desktop and try again. ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return parseDockerRuntime(raw);
 }
 
 function containerWorkspacePath(relativePath: string): string {
@@ -104,9 +144,8 @@ async function resolveWorkspacePath(
 export class DockerRunner {
   constructor(private readonly machineId: string) {}
 
-  async preflight(): Promise<void> {
-    const osType = await dockerCapture(["info", "--format", "{{.OSType}}"]);
-    if (osType !== "linux") throw new Error("Odyshell requires a Linux Docker engine");
+  async preflight(): Promise<DockerRuntime> {
+    return inspectDockerRuntime();
   }
 
   async cleanupOrphans(): Promise<void> {
@@ -167,7 +206,7 @@ export class DockerRunner {
       "--cpus",
       "1",
       "--user",
-      `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
+      containerUser(),
       "--mount",
       `type=bind,source=${mountSource},target=/workspace`,
       "--workdir",

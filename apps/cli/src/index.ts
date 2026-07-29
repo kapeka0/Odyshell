@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import process from "node:process";
 import { Command } from "commander";
@@ -8,7 +8,12 @@ import {
   type Capability,
   type OperationAction,
 } from "@odyshell/protocol";
-import { enrollConnector, runConnector } from "@odyshell/connector";
+import {
+  defaultConnectorConfigPath,
+  enrollConnector,
+  inspectConnectorRuntime,
+  runConnector,
+} from "@odyshell/connector";
 import { ApiError, OdyshellApi, type Operation } from "./api.js";
 import {
   defaultConfigPath,
@@ -31,7 +36,7 @@ const program = new Command();
 program
   .name("ods")
   .description("Agent-first access to private machines")
-  .version("0.2.0")
+  .version("0.3.0")
   .option("-j, --json", "emit stable JSON output")
   .option("--server <url>", "override the Odyshell server URL")
   .option("--agent-key <key>", "override the agent API key")
@@ -395,13 +400,37 @@ fsCommand
 
 const connector = program.command("connector").description("manage the private-machine connector");
 connector
+  .command("doctor")
+  .description("check this host for connector compatibility")
+  .option("--config <path>", "connector configuration", defaultConnectorConfigPath())
+  .action(async (options: { config: string }, command: Command) => {
+    const global = globals(command);
+    const configPath = resolve(options.config);
+    const configFound = await access(configPath).then(
+      () => true,
+      () => false,
+    );
+    const runtime = await inspectConnectorRuntime();
+    const report = { compatible: true, configPath, configFound, runtime };
+    if (global.json) printJson(report);
+    else {
+      console.log(`${pc.green("✓")} ${runtime.hostPlatform}/${runtime.architecture}`);
+      console.log(`  Node    ${runtime.nodeVersion}`);
+      console.log(
+        `  Docker  ${runtime.containerEngineVersion} (${runtime.containerOs}/${runtime.containerArchitecture})`,
+      );
+      console.log(`  Config  ${configFound ? configPath : `${configPath} (not enrolled)`}`);
+    }
+  });
+
+connector
   .command("enroll")
   .description("enroll this machine with an Odyshell control plane")
   .requiredOption("--token <token>", "one-time enrollment token")
   .requiredOption("--name <name>", "machine name")
   .requiredOption("--workspace <path>", "workspace exposed to sessions")
   .option("--image <image>", "sandbox image", "alpine:3.22")
-  .option("--config <path>", "connector configuration", ".odyshell/connector.json")
+  .option("--config <path>", "connector configuration", defaultConnectorConfigPath())
   .action(
     async (
       options: { token: string; name: string; workspace: string; image: string; config: string },
@@ -429,7 +458,7 @@ connector
 connector
   .command("start")
   .description("start the outbound connector in the foreground")
-  .option("--config <path>", "connector configuration", ".odyshell/connector.json")
+  .option("--config <path>", "connector configuration", defaultConnectorConfigPath())
   .action(async (options: { config: string }) => {
     await runConnector(options.config);
   });

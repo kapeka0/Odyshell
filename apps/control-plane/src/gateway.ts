@@ -119,8 +119,12 @@ export class ConnectorGateway {
     state.machineId = message.machineId;
     this.connections.set(message.machineId, socket);
     await this.db.query(
-      `UPDATE machines SET status = 'online', last_seen_at = now() WHERE id = $1`,
-      [message.machineId],
+      `UPDATE machines
+       SET status = 'online',
+           last_seen_at = now(),
+           runtime_info = COALESCE($2::jsonb, runtime_info)
+       WHERE id = $1`,
+      [message.machineId, message.runtime ? JSON.stringify(message.runtime) : null],
     );
     this.sendSocket(socket, { type: "authenticated", machineId: message.machineId });
     this.events.emit("machine.online", message.machineId);

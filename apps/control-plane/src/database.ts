@@ -15,9 +15,12 @@ export async function migrate(db: Database): Promise<void> {
       name text NOT NULL,
       public_key text NOT NULL,
       status text NOT NULL DEFAULT 'offline',
+      runtime_info jsonb,
       last_seen_at timestamptz,
       enrolled_at timestamptz NOT NULL DEFAULT now()
     );
+
+    ALTER TABLE machines ADD COLUMN IF NOT EXISTS runtime_info jsonb;
 
     CREATE TABLE IF NOT EXISTS enrollment_tokens (
       token_hash text PRIMARY KEY,

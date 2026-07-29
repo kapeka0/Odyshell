@@ -75,22 +75,24 @@ const tsxCli = resolve(root, "node_modules/tsx/dist/cli.mjs");
 const connectorEntry = resolve(root, "apps/connector/src/cli.ts");
 const odsEntry = resolve(root, "apps/cli/src/index.ts");
 
-await run(
-  process.execPath,
-  [
-    tsxCli,
-    connectorEntry,
-    "enroll",
-    "--server",
-    apiUrl,
-    "--name",
-    "e2e-docker",
-    "--workspace",
-    workspace,
-    "--config",
-    configPath,
-  ],
-  { env: { ...process.env, ODYSHELL_ENROLLMENT_TOKEN: enrollment.token } },
+const enrolled = JSON.parse(
+  await run(
+    process.execPath,
+    [
+      tsxCli,
+      connectorEntry,
+      "enroll",
+      "--server",
+      apiUrl,
+      "--name",
+      "e2e-docker",
+      "--workspace",
+      workspace,
+      "--config",
+      configPath,
+    ],
+    { env: { ...process.env, ODYSHELL_ENROLLMENT_TOKEN: enrollment.token } },
+  ),
 );
 
 const connector = spawn(
@@ -141,11 +143,21 @@ async function operation(sessionId, action, expectedStatus = "succeeded") {
 try {
   const machines = await waitUntil(
     () => api("/v1/machines"),
-    (value) => value.data.some((machine) => machine.id === enrollment.machineId || machine.online),
+    (value) =>
+      value.data.some((machine) => machine.id === enrolled.machineId && machine.online),
     "connector authentication",
   );
-  const machine = machines.data.find((item) => item.name === "e2e-docker" && item.online);
+  const machine = machines.data.find(
+    (item) => item.id === enrolled.machineId && item.online,
+  );
   if (!machine) throw new Error("Enrolled connector did not come online");
+  if (
+    !["linux", "macos", "windows"].includes(machine.runtime?.hostPlatform) ||
+    !machine.runtime?.architecture ||
+    machine.runtime?.containerOs !== "linux"
+  ) {
+    throw new Error("Connector runtime metadata was not reported");
+  }
   e2eMachineId = machine.id;
 
   const cliMachines = JSON.parse(
@@ -306,6 +318,7 @@ try {
         checks: {
           outboundConnector: true,
           ed25519Authentication: true,
+          runtimeMetadata: `${machine.runtime.hostPlatform}/${machine.runtime.architecture}`,
           odsCli: true,
           sandboxPolicy: true,
           sandboxedExec: execResult.output.trim(),

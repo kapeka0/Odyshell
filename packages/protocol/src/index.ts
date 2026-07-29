@@ -88,6 +88,18 @@ export type OperationStatus =
   | "timed_out"
   | "execution_unknown";
 
+export type HostPlatform = "linux" | "macos" | "windows";
+
+export type ConnectorRuntimeInfo = {
+  hostPlatform: HostPlatform;
+  architecture: string;
+  nodeVersion: string;
+  containerEngine: "docker";
+  containerOs: "linux";
+  containerArchitecture: string;
+  containerEngineVersion: string;
+};
+
 export type ConnectorProfile = {
   runner: "docker";
   workspaceRoot: string;
@@ -135,6 +147,7 @@ export type ConnectorToServerMessage =
       machineId: string;
       protocolVersion: number;
       signature: string;
+      runtime?: ConnectorRuntimeInfo;
     }
   | { type: "heartbeat"; machineId: string; at: string }
   | { type: "session.opened"; sessionId: string; containerId: string }

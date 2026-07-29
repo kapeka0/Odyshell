@@ -7,7 +7,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "node scripts/e2e.mjs",
-    "install:ods": "pnpm --filter @odyshell/cli build && npm install --global ./apps/cli",
+    "install:ods": "pnpm --filter @odyshell/connector build && pnpm --filter @odyshell/cli build && npm install --global ./apps/cli",
     "dev:control": "pnpm --filter @odyshell/control-plane dev",
     "connector": "pnpm --filter @odyshell/connector start",
     "cli": "pnpm --filter @odyshell/cli start",

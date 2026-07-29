@@ -11,10 +11,13 @@ export function printMachines(machines: Machine[]): void {
     return;
   }
   printTable(
-    ["NAME", "STATUS", "ID", "LAST SEEN"],
+    ["NAME", "STATUS", "PLATFORM", "ID", "LAST SEEN"],
     machines.map((machine) => [
       machine.name,
       machine.online ? pc.green("online") : pc.dim("offline"),
+      machine.runtime
+        ? `${machine.runtime.hostPlatform}/${machine.runtime.architecture}`
+        : pc.dim("unknown"),
       machine.id,
       machine.lastSeenAt ? new Date(machine.lastSeenAt).toLocaleString() : "never",
     ]),

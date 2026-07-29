@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type { Capability, OperationAction, OperationStatus } from "@odyshell/protocol";
+import type {
+  Capability,
+  ConnectorRuntimeInfo,
+  OperationAction,
+  OperationStatus,
+} from "@odyshell/protocol";
 import type { StoredConfig } from "./config.js";
 
 export type Machine = {
@@ -7,6 +12,7 @@ export type Machine = {
   name: string;
   status: string;
   online: boolean;
+  runtime?: ConnectorRuntimeInfo | null;
   lastSeenAt: string | null;
   enrolledAt: string;
 };
