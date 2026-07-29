@@ -1,0 +1,16 @@
+{
+  "name": "@odyshell/connector",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "build": "tsup"
+  },
+  "dependencies": {
+    "@odyshell/protocol": "workspace:*",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.0"
+  }
+}

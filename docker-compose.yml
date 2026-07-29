@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: odyshell
+      POSTGRES_USER: odyshell
+      POSTGRES_PASSWORD: odyshell
+    ports:
+      - "55432:5432"
+    volumes:
+      - odyshell-postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U odyshell"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  control-plane:
+    build:
+      context: .
+      dockerfile: apps/control-plane/Dockerfile
+    environment:
+      PORT: 4100
+      HOST: 0.0.0.0
+      DATABASE_URL: postgres://odyshell:odyshell@postgres:5432/odyshell
+      ODYSHELL_ADMIN_KEY: ${ODYSHELL_ADMIN_KEY:-dev-admin-key}
+      ODYSHELL_AGENT_KEY: ${ODYSHELL_AGENT_KEY:-dev-agent-key}
+    ports:
+      - "4100:4100"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4100/health').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+volumes:
+  odyshell-postgres:

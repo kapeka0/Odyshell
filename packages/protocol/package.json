@@ -1,0 +1,12 @@
+{
+  "name": "@odyshell/protocol",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts"
+  },
+  "dependencies": {
+    "zod": "^4.0.0"
+  }
+}
