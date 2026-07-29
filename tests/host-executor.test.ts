@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import process from "node:process";
@@ -53,7 +53,9 @@ describe("HostExecutor", () => {
     );
 
     expect((await running.done).exitCode).toBe(0);
-    expect(Buffer.concat(output).toString()).toBe(resolve(workspace));
+    expect(await realpath(Buffer.concat(output).toString())).toBe(
+      await realpath(resolve(workspace)),
+    );
   });
 
   it("delegates typed filesystem write, read, and search operations", async () => {
