@@ -5,7 +5,7 @@ import {
   printCliError,
   ServerConnectionError,
 } from "../apps/cli/src/errors.js";
-import { ApiError } from "../apps/cli/src/api.js";
+import { ApiError } from "../packages/sdk/src/errors.js";
 
 afterEach(() => {
   vi.restoreAllMocks();

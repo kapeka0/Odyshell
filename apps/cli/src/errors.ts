@@ -1,4 +1,10 @@
 import pc from "picocolors";
+import {
+  ExpectedError,
+  ServerConnectionError,
+} from "@odyshell/sdk";
+
+export { ExpectedError, ServerConnectionError };
 
 export type ErrorReport = {
   name: string;
@@ -13,33 +19,6 @@ export type ErrorReport = {
   details?: unknown;
   cause?: ErrorReport;
 };
-
-export class ExpectedError extends Error {
-  readonly expected = true;
-
-  constructor(
-    message: string,
-    readonly code: string,
-    options?: ErrorOptions,
-  ) {
-    super(message, options);
-    this.name = "Error";
-  }
-}
-
-export class ServerConnectionError extends ExpectedError {
-  constructor(
-    readonly serverUrl: string,
-    cause: unknown,
-  ) {
-    super(
-      `Unable to reach the Odyshell Server at ${serverUrl}.`,
-      "server_unreachable",
-      { cause },
-    );
-    this.name = "ServerConnectionError";
-  }
-}
 
 export function errorReport(
   error: unknown,

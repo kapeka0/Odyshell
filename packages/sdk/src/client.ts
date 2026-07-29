@@ -5,9 +5,80 @@ import type {
   OperationAction,
   OperationStatus,
 } from "@odyshell/protocol";
-import type { StoredConfig } from "./config.js";
-import { ExpectedError, ServerConnectionError } from "./errors.js";
+import { ApiError, ExpectedError, ServerConnectionError } from "./errors.js";
 import { resolveMachineReference } from "./machines.js";
+
+export type OdyshellConfig = {
+  serverUrl: string;
+  agentToken?: string;
+  adminKey?: string;
+  fetch?: typeof globalThis.fetch;
+};
+
+export type OperationOptions = {
+  ttlSeconds?: number;
+  timeoutSeconds?: number;
+  maxOutputBytes?: number;
+  onEvent?: (event: OperationEvent) => void;
+};
+
+export type OperationResult = {
+  operation: Operation;
+  stdout: string;
+  stderr: string;
+  result: unknown;
+  resultText: string;
+};
+
+type MachineOperation = OperationOptions & {
+  machine: string;
+};
+
+export type ProcessExecInput = MachineOperation & {
+  program: string;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+};
+
+export type ProcessShellInput = MachineOperation & {
+  command: string;
+  cwd?: string;
+  env?: Record<string, string>;
+};
+
+export type FilesystemPathInput = MachineOperation & {
+  path: string;
+};
+
+export type FilesystemListInput = MachineOperation & {
+  path?: string;
+};
+
+export type FilesystemSearchInput = MachineOperation & {
+  path?: string;
+  query: string;
+  maxResults?: number;
+};
+
+export type FilesystemWriteInput = FilesystemPathInput & {
+  content: string | Uint8Array;
+  createParents?: boolean;
+};
+
+export type FilesystemMkdirInput = FilesystemPathInput & {
+  recursive?: boolean;
+};
+
+export type FilesystemRemoveInput = FilesystemPathInput & {
+  recursive?: boolean;
+};
+
+export type DockerLogsInput = MachineOperation & {
+  container: string;
+  tail?: number;
+  timestamps?: boolean;
+};
 
 export type Machine = {
   id: string;
@@ -85,26 +156,115 @@ export type AuditEvent = {
   createdAt: string;
 };
 
-export class ApiError extends ExpectedError {
-  constructor(
-    readonly status: number,
-    code: string,
-    readonly details?: unknown,
-  ) {
-    super(apiErrorMessage(status, code), code);
-    this.name = "ApiError";
-  }
-}
+export class Odyshell {
+  private readonly fetcher: typeof globalThis.fetch;
 
-function apiErrorMessage(status: number, code: string): string {
-  if (code === "machine_ping_timeout") {
-    return "The machine is connected, but its Odyshell Client did not answer the ping.";
-  }
-  return `${status} ${code}`;
-}
+  readonly process = {
+    exec: (input: ProcessExecInput): Promise<OperationResult> =>
+      this.execute(
+        input.machine,
+        "process.exec",
+        {
+          kind: "process.exec",
+          program: input.program,
+          args: input.args ?? [],
+          cwd: input.cwd ?? ".",
+          env: input.env ?? {},
+        },
+        input,
+      ),
+    shell: (input: ProcessShellInput): Promise<OperationResult> =>
+      this.execute(
+        input.machine,
+        "process.shell",
+        {
+          kind: "process.shell",
+          command: input.command,
+          cwd: input.cwd ?? ".",
+          env: input.env ?? {},
+        },
+        input,
+      ),
+  };
 
-export class OdyshellApi {
-  constructor(private readonly config: StoredConfig) {}
+  readonly fs = {
+    stat: (input: FilesystemPathInput): Promise<OperationResult> =>
+      this.execute(input.machine, "fs.stat", { kind: "fs.stat", path: input.path }, input),
+    list: (input: FilesystemListInput): Promise<OperationResult> =>
+      this.execute(
+        input.machine,
+        "fs.list",
+        { kind: "fs.list", path: input.path ?? "." },
+        input,
+      ),
+    search: (input: FilesystemSearchInput): Promise<OperationResult> =>
+      this.execute(
+        input.machine,
+        "fs.search",
+        {
+          kind: "fs.search",
+          path: input.path ?? ".",
+          query: input.query,
+          maxResults: input.maxResults ?? 100,
+        },
+        input,
+      ),
+    read: (input: FilesystemPathInput): Promise<OperationResult> =>
+      this.execute(input.machine, "fs.read", { kind: "fs.read", path: input.path }, input),
+    write: (input: FilesystemWriteInput): Promise<OperationResult> =>
+      this.execute(
+        input.machine,
+        "fs.write",
+        {
+          kind: "fs.write",
+          path: input.path,
+          contentBase64: Buffer.from(input.content).toString("base64"),
+          createParents: input.createParents ?? false,
+        },
+        input,
+      ),
+    mkdir: (input: FilesystemMkdirInput): Promise<OperationResult> =>
+      this.execute(
+        input.machine,
+        "fs.mkdir",
+        {
+          kind: "fs.mkdir",
+          path: input.path,
+          recursive: input.recursive ?? true,
+        },
+        input,
+      ),
+    remove: (input: FilesystemRemoveInput): Promise<OperationResult> =>
+      this.execute(
+        input.machine,
+        "fs.remove",
+        {
+          kind: "fs.remove",
+          path: input.path,
+          recursive: input.recursive ?? false,
+        },
+        input,
+      ),
+  };
+
+  readonly docker = {
+    logs: (input: DockerLogsInput): Promise<OperationResult> =>
+      this.execute(
+        input.machine,
+        "docker.logs",
+        {
+          kind: "docker.logs",
+          container: input.container,
+          tail: input.tail ?? 200,
+          timestamps: input.timestamps ?? false,
+        },
+        input,
+      ),
+  };
+
+  constructor(private readonly config: OdyshellConfig) {
+    this.fetcher = config.fetch ?? globalThis.fetch;
+  }
 
   get serverUrl(): string {
     return this.config.serverUrl;
@@ -234,6 +394,34 @@ export class OdyshellApi {
     }
   }
 
+  async execute(
+    machineReference: string,
+    capability: Capability,
+    action: OperationAction,
+    options: OperationOptions = {},
+  ): Promise<OperationResult> {
+    const machine = await this.resolveMachine(machineReference);
+    const created = await this.createSession(
+      machine.id,
+      [capability],
+      options.ttlSeconds ?? 600,
+    );
+    const session = await this.waitForSession(created.id);
+    try {
+      const operation = await this.createOperation(
+        session.id,
+        action,
+        options.timeoutSeconds ?? 120,
+        options.maxOutputBytes ?? 1024 * 1024,
+      );
+      return decodeOperation(
+        await this.waitForOperation(operation.id, options.onEvent),
+      );
+    } finally {
+      await this.closeSession(session.id).catch(() => undefined);
+    }
+  }
+
   async createEnrollmentToken(ttlSeconds: number): Promise<{ token: string; expiresAt: string }> {
     return this.request("/v1/admin/enrollment-tokens", {
       method: "POST",
@@ -305,7 +493,7 @@ export class OdyshellApi {
     }
     let response: Response;
     try {
-      response = await fetch(new URL(path, this.config.serverUrl), {
+      response = await this.fetcher(new URL(path, this.config.serverUrl), {
         method: options.method ?? "GET",
         headers: {
           ...(options.body === undefined ? {} : { "content-type": "application/json" }),
@@ -327,6 +515,31 @@ export class OdyshellApi {
       throw new ApiError(response.status, body.error ?? response.statusText, body.details);
     }
     return body;
+  }
+}
+
+export { Odyshell as OdyshellApi };
+
+export function decodeOperation(operation: Operation): OperationResult {
+  const decoded = { stdout: "", stderr: "", result: "" };
+  for (const event of operation.events) {
+    decoded[event.stream] += Buffer.from(event.dataBase64, "base64").toString("utf8");
+  }
+  return {
+    operation,
+    stdout: decoded.stdout,
+    stderr: decoded.stderr,
+    result: parseResult(decoded.result),
+    resultText: decoded.result,
+  };
+}
+
+function parseResult(value: string): unknown {
+  if (!value) return undefined;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
   }
 }
 

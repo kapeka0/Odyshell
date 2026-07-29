@@ -19,7 +19,7 @@ import {
   runClient,
   stopLinuxUserService,
 } from "@odyshell/client";
-import { OdyshellApi, type Operation } from "./api.js";
+import { OdyshellApi, type Operation } from "@odyshell/sdk";
 import { parseDuration } from "./duration.js";
 import { ExpectedError, printCliError } from "./errors.js";
 import {

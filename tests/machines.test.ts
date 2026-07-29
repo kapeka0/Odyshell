@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveMachineReference } from "../apps/cli/src/machines.js";
+import { resolveMachineReference } from "../packages/sdk/src/machines.js";
 
 const machines = [
   { id: "active-id", name: "raspberry", online: true, revokedAt: null },

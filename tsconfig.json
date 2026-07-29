@@ -12,7 +12,8 @@
     "baseUrl": ".",
     "paths": {
       "@odyshell/client": ["apps/client/src/index.ts"],
-      "@odyshell/protocol": ["packages/protocol/src/index.ts"]
+      "@odyshell/protocol": ["packages/protocol/src/index.ts"],
+      "@odyshell/sdk": ["packages/sdk/src/index.ts"]
     },
     "types": ["node", "vitest/globals"]
   },
