@@ -20,65 +20,39 @@ From the monorepo root:
 docker compose up -d --build
 ```
 
-The development Server is then available at:
+The development Server is available at `http://127.0.0.1:4100`. Compose starts PostgreSQL and
+stores its data in a named volume, so local state survives Server restarts.
 
-```text
-http://127.0.0.1:4100
-```
-
-Docker Compose uses an in-memory store so local tests leave no machines, tokens, or audit data
-behind. State is lost whenever the Server restarts, so this is not a production self-hosting
-configuration. For persistent development, connect the repository to Convex and run:
-
-```bash
-pnpm convex:dev
-pnpm dev:server
-```
-
-The local defaults are intended only for development. Agent access should use expiring tokens:
+The bundled database password and Odyshell keys are development defaults. Agent access should use
+expiring, scoped tokens:
 
 ```bash
 ods agent create coding-agent --machines <machine-id> --allow process.exec,fs.read --for 1h
 ```
 
-Sessions cannot outlive the agent token that created them. Revoking a token also closes its active
+Sessions cannot outlive the token that created them. Revoking a token also closes its active
 sessions.
 
-Administrators can list all machine identities with `ods machines --admin` and revoke an identity
-with `ods machine revoke <name-or-id>`. Revocation disconnects the Client while retaining its
-history for audit.
-
-The Server is published on `127.0.0.1` by default. To test from another device, bind it to a
-specific reachable host interface:
+To test from another device, bind the development Server to a specific reachable host interface:
 
 ```bash
 ODYSHELL_BIND_ADDRESS=<host-ip> docker compose up -d --build
 ```
 
-```powershell
-$env:ODYSHELL_BIND_ADDRESS="<host-ip>"
-docker compose up -d --build
-```
+## Deploy
 
-Publishing the Server makes its port reachable through that interface. Keep development
-credentials private and use a host firewall appropriate for your test environment.
+A production deployment needs:
 
-## Deploy for testing
-
-The repository includes a Railway configuration for the Server. A production deployment needs:
-
-- `CONVEX_URL` pointing to the production Convex deployment.
-- `ODYSHELL_CONVEX_SERVICE_KEY` matching the secret stored in Convex.
+- `DATABASE_URL` pointing to PostgreSQL with TLS enabled.
 - `ODYSHELL_ADMIN_KEY` set to a strong, private value.
 - `HOST=0.0.0.0`.
 
-Railway supplies `PORT` automatically. Convex stores machines, scoped tokens, temporary sessions,
-operations, and audit events. The service key is only for the Railway Server; agents and Clients
-never receive it.
+Railway supplies `PORT` automatically. PostgreSQL stores machine identities, scoped tokens,
+temporary sessions, operations, and audit events. Database credentials belong only to the Server;
+agents and Clients never receive them.
 
-Keep one Railway replica for now because active Client connections are held by the running Server
-process. The future web app can use Clerk with Convex directly for human identity without changing
-the agent-token or machine-identity protocols.
+Keep one Server replica for the MVP because active Client connections are held by the running
+process. The future frontend will call the Odyshell API and will not access PostgreSQL directly.
 
 [Self-hosting guide](../../docs/self-hosting.md) ·
 [Back to Odyshell](../../README.md)

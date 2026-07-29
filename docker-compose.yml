@@ -1,4 +1,20 @@
 services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: odyshell
+      POSTGRES_USER: odyshell
+      POSTGRES_PASSWORD: odyshell
+    ports:
+      - "127.0.0.1:${ODYSHELL_POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - odyshell-postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U odyshell"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
   server:
     build:
       context: .
@@ -7,12 +23,15 @@ services:
       NODE_ENV: development
       PORT: 4100
       HOST: 0.0.0.0
-      ODYSHELL_STORAGE: memory
+      DATABASE_URL: postgres://odyshell:odyshell@postgres:5432/odyshell
       ODYSHELL_ADMIN_KEY: ${ODYSHELL_ADMIN_KEY:-dev-admin-key}
       ODYSHELL_AGENT_KEY: ${ODYSHELL_AGENT_KEY:-dev-agent-key}
       ODYSHELL_ALLOW_DEV_CREDENTIALS: "true"
     ports:
       - "${ODYSHELL_BIND_ADDRESS:-127.0.0.1}:${ODYSHELL_SERVER_PORT:-4100}:4100"
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -24,3 +43,6 @@ services:
       interval: 3s
       timeout: 2s
       retries: 20
+
+volumes:
+  odyshell-postgres:

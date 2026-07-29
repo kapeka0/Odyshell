@@ -1,11 +1,130 @@
-import { ConvexHttpClient } from "convex/browser";
-import { makeFunctionReference } from "convex/server";
 import { randomUUID } from "node:crypto";
 import type { Capability, OperationAction } from "@odyshell/protocol";
-import { MemoryDatabase } from "./memory-database.js";
+import {
+  CamelCasePlugin,
+  Kysely,
+  PostgresDialect,
+  sql,
+  type ColumnType,
+  type Generated,
+  type Selectable,
+} from "kysely";
+import {
+  Migrator,
+  type Migration,
+  type MigrationProvider,
+} from "kysely/migration";
+import pg from "pg";
 
-const readFunction = makeFunctionReference<"query">("store:read");
-const writeFunction = makeFunctionReference<"mutation">("store:write");
+const { Pool } = pg;
+const DEFAULT_WORKSPACE_ID = "default";
+const DATABASE_SCHEMA = "odyshell";
+const ACTIVE_SESSION_STATUSES = ["opening", "ready"] as const;
+const CLOSABLE_SESSION_STATUSES = ["opening", "ready", "closing"] as const;
+const ACTIVE_OPERATION_STATUSES = ["queued", "delivered", "running"] as const;
+
+type Json<T> = ColumnType<T, string, string>;
+
+interface WorkspaceTable {
+  id: string;
+  slug: string;
+  name: string;
+  createdAt: Generated<Date>;
+}
+
+interface MachineTable {
+  workspaceId: string;
+  id: string;
+  name: string;
+  publicKey: string;
+  status: string;
+  runtime: Json<unknown> | null;
+  lastSeenAt: Date | null;
+  enrolledAt: Generated<Date>;
+  revokedAt: Date | null;
+}
+
+interface EnrollmentTokenTable {
+  workspaceId: string;
+  tokenHash: string;
+  expiresAt: Date;
+  usedAt: Date | null;
+  createdAt: Generated<Date>;
+}
+
+interface AgentTokenTable {
+  workspaceId: string;
+  id: string;
+  name: string;
+  tokenHash: string;
+  machineIds: Json<string[]>;
+  capabilities: Json<Capability[]>;
+  expiresAt: Date;
+  revokedAt: Date | null;
+  createdAt: Generated<Date>;
+}
+
+interface SessionTable {
+  workspaceId: string;
+  id: string;
+  machineId: string;
+  principalId: string;
+  profile: string;
+  capabilities: Json<Capability[]>;
+  status: string;
+  expiresAt: Date;
+  error: string | null;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+interface OperationTable {
+  workspaceId: string;
+  id: string;
+  sessionId: string;
+  principalId: string;
+  action: Json<OperationAction>;
+  status: string;
+  timeoutSeconds: number;
+  maxOutputBytes: number;
+  exitCode: number | null;
+  error: string | null;
+  outputTruncated: Generated<boolean>;
+  idempotencyKey: string | null;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+interface OperationEventTable {
+  workspaceId: string;
+  operationId: string;
+  sequence: number;
+  stream: string;
+  data: Buffer;
+  createdAt: Generated<Date>;
+}
+
+interface AuditEventTable {
+  workspaceId: string;
+  id: string;
+  principalId: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  metadata: Json<Record<string, unknown>>;
+  createdAt: Generated<Date>;
+}
+
+interface DatabaseSchema {
+  workspaces: WorkspaceTable;
+  machines: MachineTable;
+  enrollmentTokens: EnrollmentTokenTable;
+  agentTokens: AgentTokenTable;
+  sessions: SessionTable;
+  operations: OperationTable;
+  operationEvents: OperationEventTable;
+  auditEvents: AuditEventTable;
+}
 
 type Timestamped = {
   createdAt: number;
@@ -77,63 +196,433 @@ export type AuditRecord = {
   createdAt: number;
 };
 
-type RpcInput = Record<string, unknown>;
+function timestamp(value: Date): number;
+function timestamp(value: Date | null): number | undefined;
+function timestamp(value: Date | null): number | undefined {
+  return value?.getTime();
+}
 
-export class ConvexDatabase {
-  private readonly client: ConvexHttpClient;
+function machineRecord(machine: Selectable<MachineTable>): MachineRecord {
+  return {
+    id: machine.id,
+    name: machine.name,
+    publicKey: machine.publicKey,
+    status: machine.status,
+    ...(machine.runtime === null ? {} : { runtime: machine.runtime }),
+    ...(machine.lastSeenAt === null ? {} : { lastSeenAt: timestamp(machine.lastSeenAt) }),
+    enrolledAt: timestamp(machine.enrolledAt),
+    ...(machine.revokedAt === null ? {} : { revokedAt: timestamp(machine.revokedAt) }),
+  };
+}
 
-  constructor(
-    convexUrl: string,
-    private readonly serviceKey: string,
-  ) {
-    this.client = new ConvexHttpClient(convexUrl);
-  }
+function agentTokenRecord(token: Selectable<AgentTokenTable>): AgentTokenRecord {
+  return {
+    id: token.id,
+    name: token.name,
+    tokenHash: token.tokenHash,
+    machineIds: token.machineIds,
+    capabilities: token.capabilities,
+    expiresAt: timestamp(token.expiresAt),
+    ...(token.revokedAt === null ? {} : { revokedAt: timestamp(token.revokedAt) }),
+    createdAt: timestamp(token.createdAt),
+  };
+}
 
-  private async read<T>(operation: string, input: RpcInput = {}): Promise<T> {
-    return (await this.client.query(readFunction, {
-      serviceKey: this.serviceKey,
-      operation,
-      input,
-    })) as T;
-  }
+function sessionRecord(
+  session: Selectable<SessionTable>,
+  machineName?: string,
+): SessionRecord {
+  return {
+    id: session.id,
+    machineId: session.machineId,
+    ...(machineName === undefined ? {} : { machineName }),
+    principalId: session.principalId,
+    profile: session.profile,
+    capabilities: session.capabilities,
+    status: session.status,
+    expiresAt: timestamp(session.expiresAt),
+    ...(session.error === null ? {} : { error: session.error }),
+    createdAt: timestamp(session.createdAt),
+    updatedAt: timestamp(session.updatedAt),
+  };
+}
 
-  private async write<T>(operation: string, input: RpcInput = {}): Promise<T> {
-    return (await this.client.mutation(writeFunction, {
-      serviceKey: this.serviceKey,
-      operation,
-      input,
-    })) as T;
+function operationRecord(operation: Selectable<OperationTable>): OperationRecord {
+  return {
+    id: operation.id,
+    sessionId: operation.sessionId,
+    principalId: operation.principalId,
+    action: operation.action,
+    status: operation.status,
+    timeoutSeconds: operation.timeoutSeconds,
+    maxOutputBytes: operation.maxOutputBytes,
+    ...(operation.exitCode === null ? {} : { exitCode: operation.exitCode }),
+    ...(operation.error === null ? {} : { error: operation.error }),
+    outputTruncated: operation.outputTruncated,
+    ...(operation.idempotencyKey === null
+      ? {}
+      : { idempotencyKey: operation.idempotencyKey }),
+    createdAt: timestamp(operation.createdAt),
+    updatedAt: timestamp(operation.updatedAt),
+  };
+}
+
+function operationEventRecord(
+  event: Selectable<OperationEventTable>,
+): OperationEventRecord {
+  return {
+    operationId: event.operationId,
+    sequence: event.sequence,
+    stream: event.stream,
+    dataBase64: event.data.toString("base64"),
+    createdAt: timestamp(event.createdAt),
+  };
+}
+
+function auditRecord(event: Selectable<AuditEventTable>): AuditRecord {
+  return {
+    id: event.id,
+    principalId: event.principalId,
+    action: event.action,
+    targetType: event.targetType,
+    targetId: event.targetId,
+    metadata: event.metadata,
+    createdAt: timestamp(event.createdAt),
+  };
+}
+
+async function migrateInitialSchema(db: Kysely<DatabaseSchema>): Promise<void> {
+  await sql`create schema if not exists ${sql.id(DATABASE_SCHEMA)}`.execute(db);
+  const schema = db.schema.withSchema(DATABASE_SCHEMA);
+
+  await schema
+    .createTable("workspaces")
+    .ifNotExists()
+    .addColumn("id", "text", (column) => column.primaryKey())
+    .addColumn("slug", "text", (column) => column.notNull().unique())
+    .addColumn("name", "text", (column) => column.notNull())
+    .addColumn("created_at", "timestamptz", (column) =>
+      column.notNull().defaultTo(sql`now()`),
+    )
+    .execute();
+
+  await schema
+    .createTable("machines")
+    .ifNotExists()
+    .addColumn("workspace_id", "text", (column) =>
+      column.notNull().references(`${DATABASE_SCHEMA}.workspaces.id`),
+    )
+    .addColumn("id", "text", (column) => column.primaryKey())
+    .addColumn("name", "text", (column) => column.notNull())
+    .addColumn("public_key", "text", (column) => column.notNull())
+    .addColumn("status", "text", (column) => column.notNull().defaultTo("offline"))
+    .addColumn("runtime", "jsonb")
+    .addColumn("last_seen_at", "timestamptz")
+    .addColumn("enrolled_at", "timestamptz", (column) =>
+      column.notNull().defaultTo(sql`now()`),
+    )
+    .addColumn("revoked_at", "timestamptz")
+    .execute();
+
+  await schema
+    .createTable("enrollment_tokens")
+    .ifNotExists()
+    .addColumn("workspace_id", "text", (column) =>
+      column.notNull().references(`${DATABASE_SCHEMA}.workspaces.id`),
+    )
+    .addColumn("token_hash", "text", (column) => column.primaryKey())
+    .addColumn("expires_at", "timestamptz", (column) => column.notNull())
+    .addColumn("used_at", "timestamptz")
+    .addColumn("created_at", "timestamptz", (column) =>
+      column.notNull().defaultTo(sql`now()`),
+    )
+    .execute();
+
+  await schema
+    .createTable("agent_tokens")
+    .ifNotExists()
+    .addColumn("workspace_id", "text", (column) =>
+      column.notNull().references(`${DATABASE_SCHEMA}.workspaces.id`),
+    )
+    .addColumn("id", "text", (column) => column.primaryKey())
+    .addColumn("name", "text", (column) => column.notNull())
+    .addColumn("token_hash", "text", (column) => column.notNull().unique())
+    .addColumn("machine_ids", "jsonb", (column) => column.notNull())
+    .addColumn("capabilities", "jsonb", (column) => column.notNull())
+    .addColumn("expires_at", "timestamptz", (column) => column.notNull())
+    .addColumn("revoked_at", "timestamptz")
+    .addColumn("created_at", "timestamptz", (column) =>
+      column.notNull().defaultTo(sql`now()`),
+    )
+    .execute();
+
+  await schema
+    .createTable("sessions")
+    .ifNotExists()
+    .addColumn("workspace_id", "text", (column) =>
+      column.notNull().references(`${DATABASE_SCHEMA}.workspaces.id`),
+    )
+    .addColumn("id", "text", (column) => column.primaryKey())
+    .addColumn("machine_id", "text", (column) =>
+      column.notNull().references(`${DATABASE_SCHEMA}.machines.id`),
+    )
+    .addColumn("principal_id", "text", (column) => column.notNull())
+    .addColumn("profile", "text", (column) => column.notNull())
+    .addColumn("capabilities", "jsonb", (column) => column.notNull())
+    .addColumn("status", "text", (column) => column.notNull())
+    .addColumn("expires_at", "timestamptz", (column) => column.notNull())
+    .addColumn("error", "text")
+    .addColumn("created_at", "timestamptz", (column) =>
+      column.notNull().defaultTo(sql`now()`),
+    )
+    .addColumn("updated_at", "timestamptz", (column) =>
+      column.notNull().defaultTo(sql`now()`),
+    )
+    .execute();
+
+  await schema
+    .createTable("operations")
+    .ifNotExists()
+    .addColumn("workspace_id", "text", (column) =>
+      column.notNull().references(`${DATABASE_SCHEMA}.workspaces.id`),
+    )
+    .addColumn("id", "text", (column) => column.primaryKey())
+    .addColumn("session_id", "text", (column) =>
+      column.notNull().references(`${DATABASE_SCHEMA}.sessions.id`),
+    )
+    .addColumn("principal_id", "text", (column) => column.notNull())
+    .addColumn("action", "jsonb", (column) => column.notNull())
+    .addColumn("status", "text", (column) => column.notNull())
+    .addColumn("timeout_seconds", "integer", (column) => column.notNull())
+    .addColumn("max_output_bytes", "integer", (column) => column.notNull())
+    .addColumn("exit_code", "integer")
+    .addColumn("error", "text")
+    .addColumn("output_truncated", "boolean", (column) =>
+      column.notNull().defaultTo(false),
+    )
+    .addColumn("idempotency_key", "text")
+    .addColumn("created_at", "timestamptz", (column) =>
+      column.notNull().defaultTo(sql`now()`),
+    )
+    .addColumn("updated_at", "timestamptz", (column) =>
+      column.notNull().defaultTo(sql`now()`),
+    )
+    .addUniqueConstraint("operations_principal_idempotency_unique", [
+      "principal_id",
+      "idempotency_key",
+    ])
+    .execute();
+
+  await schema
+    .createTable("operation_events")
+    .ifNotExists()
+    .addColumn("workspace_id", "text", (column) =>
+      column.notNull().references(`${DATABASE_SCHEMA}.workspaces.id`),
+    )
+    .addColumn("operation_id", "text", (column) =>
+      column
+        .notNull()
+        .references(`${DATABASE_SCHEMA}.operations.id`)
+        .onDelete("cascade"),
+    )
+    .addColumn("sequence", "integer", (column) => column.notNull())
+    .addColumn("stream", "text", (column) => column.notNull())
+    .addColumn("data", "bytea", (column) => column.notNull())
+    .addColumn("created_at", "timestamptz", (column) =>
+      column.notNull().defaultTo(sql`now()`),
+    )
+    .addPrimaryKeyConstraint("operation_events_primary_key", [
+      "operation_id",
+      "sequence",
+    ])
+    .execute();
+
+  await schema
+    .createTable("audit_events")
+    .ifNotExists()
+    .addColumn("workspace_id", "text", (column) =>
+      column.notNull().references(`${DATABASE_SCHEMA}.workspaces.id`),
+    )
+    .addColumn("id", "text", (column) => column.primaryKey())
+    .addColumn("principal_id", "text", (column) => column.notNull())
+    .addColumn("action", "text", (column) => column.notNull())
+    .addColumn("target_type", "text", (column) => column.notNull())
+    .addColumn("target_id", "text", (column) => column.notNull())
+    .addColumn("metadata", "jsonb", (column) =>
+      column.notNull().defaultTo(sql`'{}'::jsonb`),
+    )
+    .addColumn("created_at", "timestamptz", (column) =>
+      column.notNull().defaultTo(sql`now()`),
+    )
+    .execute();
+
+  await schema
+    .createIndex("machines_workspace_enrolled_idx")
+    .ifNotExists()
+    .on("machines")
+    .columns(["workspace_id", "enrolled_at"])
+    .execute();
+  await schema
+    .createIndex("sessions_principal_created_idx")
+    .ifNotExists()
+    .on("sessions")
+    .columns(["principal_id", "created_at"])
+    .execute();
+  await schema
+    .createIndex("sessions_machine_status_idx")
+    .ifNotExists()
+    .on("sessions")
+    .columns(["machine_id", "status"])
+    .execute();
+  await schema
+    .createIndex("operations_session_created_idx")
+    .ifNotExists()
+    .on("operations")
+    .columns(["session_id", "created_at"])
+    .execute();
+  await schema
+    .createIndex("audit_events_workspace_created_idx")
+    .ifNotExists()
+    .on("audit_events")
+    .columns(["workspace_id", "created_at"])
+    .execute();
+  await schema
+    .createIndex("audit_events_principal_created_idx")
+    .ifNotExists()
+    .on("audit_events")
+    .columns(["principal_id", "created_at"])
+    .execute();
+}
+
+const migrationProvider: MigrationProvider = {
+  async getMigrations(): Promise<Record<string, Migration>> {
+    return {
+      "001_initial_schema": {
+        up: migrateInitialSchema,
+      },
+    };
+  },
+};
+
+export class PostgresDatabase {
+  private readonly root: Kysely<DatabaseSchema>;
+  private readonly db: Kysely<DatabaseSchema>;
+
+  constructor(connectionString: string) {
+    this.root = new Kysely<DatabaseSchema>({
+      dialect: new PostgresDialect({
+        pool: new Pool({
+          connectionString,
+          max: 10,
+          connectionTimeoutMillis: 10_000,
+        }),
+      }),
+      plugins: [new CamelCasePlugin()],
+    });
+    this.db = this.root.withSchema(DATABASE_SCHEMA);
   }
 
   async initialize(): Promise<void> {
-    await this.write("initialize");
+    const migrator = new Migrator({
+      db: this.root,
+      provider: migrationProvider,
+      migrationTableSchema: DATABASE_SCHEMA,
+    });
+    await sql`create schema if not exists ${sql.id(DATABASE_SCHEMA)}`.execute(this.root);
+    const { error, results } = await migrator.migrateToLatest();
+    for (const result of results ?? []) {
+      if (result.status === "Error") {
+        throw new Error(`Database migration ${result.migrationName} failed`);
+      }
+    }
+    if (error) throw error;
+
+    await this.db
+      .insertInto("workspaces")
+      .values({
+        id: DEFAULT_WORKSPACE_ID,
+        slug: "default",
+        name: "Default workspace",
+      })
+      .onConflict((conflict) => conflict.column("id").doNothing())
+      .execute();
+    await this.db
+      .updateTable("machines")
+      .set({ status: "offline" })
+      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("status", "!=", "offline")
+      .execute();
+  }
+
+  async close(): Promise<void> {
+    await this.root.destroy();
   }
 
   async health(): Promise<void> {
-    await this.read("health");
+    await sql`select 1`.execute(this.db);
   }
 
   async findAgentByTokenHash(tokenHash: string): Promise<AgentTokenRecord | null> {
-    return await this.read("agentByTokenHash", { tokenHash });
+    const token = await this.db
+      .selectFrom("agentTokens")
+      .selectAll()
+      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("tokenHash", "=", tokenHash)
+      .where("revokedAt", "is", null)
+      .where("expiresAt", ">", new Date())
+      .executeTakeFirst();
+    return token ? agentTokenRecord(token) : null;
   }
 
   async createEnrollmentToken(tokenHash: string, expiresAt: number): Promise<void> {
-    await this.write("createEnrollmentToken", { tokenHash, expiresAt });
+    await this.db
+      .insertInto("enrollmentTokens")
+      .values({
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        tokenHash,
+        expiresAt: new Date(expiresAt),
+        usedAt: null,
+      })
+      .execute();
   }
 
   async listAgentTokens(): Promise<AgentTokenRecord[]> {
-    return await this.read("listAgentTokens");
+    const tokens = await this.db
+      .selectFrom("agentTokens")
+      .selectAll()
+      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .orderBy("createdAt", "desc")
+      .limit(200)
+      .execute();
+    return tokens.map(agentTokenRecord);
   }
 
   async listMachines(options: {
     includeRevoked?: boolean;
     machineIds?: string[];
   } = {}): Promise<MachineRecord[]> {
-    return await this.read("listMachines", options);
+    let query = this.db
+      .selectFrom("machines")
+      .selectAll()
+      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID);
+    if (!options.includeRevoked) query = query.where("revokedAt", "is", null);
+    if (options.machineIds) {
+      if (options.machineIds.length === 0) return [];
+      query = query.where("id", "in", options.machineIds);
+    }
+    return (await query.orderBy("enrolledAt", "asc").execute()).map(machineRecord);
   }
 
   async activeMachinesExist(machineIds: string[]): Promise<boolean> {
-    return await this.read("activeMachinesExist", { machineIds });
+    if (machineIds.length === 0) return true;
+    const result = await this.db
+      .selectFrom("machines")
+      .select(({ fn }) => fn.countAll<number>().as("count"))
+      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("id", "in", machineIds)
+      .where("revokedAt", "is", null)
+      .executeTakeFirstOrThrow();
+    return Number(result.count) === new Set(machineIds).size;
   }
 
   async createAgentToken(input: {
@@ -144,17 +633,42 @@ export class ConvexDatabase {
     capabilities: Capability[];
     expiresAt: number;
   }): Promise<void> {
-    await this.write("createAgentToken", input);
+    await this.db
+      .insertInto("agentTokens")
+      .values({
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        ...input,
+        machineIds: JSON.stringify(input.machineIds),
+        capabilities: JSON.stringify(input.capabilities),
+        expiresAt: new Date(input.expiresAt),
+        revokedAt: null,
+      })
+      .execute();
   }
 
   async revokeAgentToken(tokenId: string): Promise<AgentTokenRecord | null> {
-    return await this.write("revokeAgentToken", { tokenId });
+    const now = new Date();
+    const token = await this.db
+      .updateTable("agentTokens")
+      .set({ revokedAt: sql`coalesce(revoked_at, ${now})` })
+      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("id", "=", tokenId)
+      .returningAll()
+      .executeTakeFirst();
+    return token ? agentTokenRecord(token) : null;
   }
 
   async expireAgentSessions(
     principalId: string,
   ): Promise<Array<{ id: string; machineId: string }>> {
-    return await this.write("expireAgentSessions", { principalId });
+    return await this.db
+      .updateTable("sessions")
+      .set({ status: "expired", updatedAt: new Date() })
+      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("principalId", "=", principalId)
+      .where("status", "in", ACTIVE_SESSION_STATUSES)
+      .returning(["id", "machineId"])
+      .execute();
   }
 
   async enrollMachine(input: {
@@ -163,23 +677,89 @@ export class ConvexDatabase {
     name: string;
     publicKey: string;
   }): Promise<{ machineId: string; name: string } | null> {
-    return await this.write("enrollMachine", input);
+    return await this.db.transaction().execute(async (transaction) => {
+      const enrollment = await transaction
+        .selectFrom("enrollmentTokens")
+        .selectAll()
+        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+        .where("tokenHash", "=", input.tokenHash)
+        .forUpdate()
+        .executeTakeFirst();
+      const now = new Date();
+      if (
+        !enrollment ||
+        enrollment.usedAt !== null ||
+        enrollment.expiresAt <= now
+      ) {
+        return null;
+      }
+      await transaction
+        .updateTable("enrollmentTokens")
+        .set({ usedAt: now })
+        .where("tokenHash", "=", input.tokenHash)
+        .execute();
+      await transaction
+        .insertInto("machines")
+        .values({
+          workspaceId: DEFAULT_WORKSPACE_ID,
+          id: input.machineId,
+          name: input.name,
+          publicKey: input.publicKey,
+          status: "offline",
+          runtime: null,
+          lastSeenAt: null,
+          revokedAt: null,
+          enrolledAt: now,
+        })
+        .execute();
+      return { machineId: input.machineId, name: input.name };
+    });
   }
 
   async machinePublicKey(machineId: string): Promise<string | null> {
-    return await this.read("machinePublicKey", { machineId });
+    const machine = await this.db
+      .selectFrom("machines")
+      .select("publicKey")
+      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("id", "=", machineId)
+      .where("revokedAt", "is", null)
+      .executeTakeFirst();
+    return machine?.publicKey ?? null;
   }
 
   async setMachineOffline(machineId: string): Promise<void> {
-    await this.write("machineOffline", { machineId });
+    await this.db
+      .updateTable("machines")
+      .set({ status: "offline" })
+      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("id", "=", machineId)
+      .execute();
   }
 
   async setMachineOnline(machineId: string, runtime?: unknown): Promise<boolean> {
-    return await this.write("machineOnline", { machineId, runtime });
+    const update = {
+      status: "online",
+      lastSeenAt: new Date(),
+      ...(runtime === undefined ? {} : { runtime: JSON.stringify(runtime) }),
+    };
+    const result = await this.db
+      .updateTable("machines")
+      .set(update)
+      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("id", "=", machineId)
+      .where("revokedAt", "is", null)
+      .executeTakeFirst();
+    return Number(result.numUpdatedRows) === 1;
   }
 
   async heartbeat(machineId: string): Promise<void> {
-    await this.write("heartbeat", { machineId });
+    await this.db
+      .updateTable("machines")
+      .set({ status: "online", lastSeenAt: new Date() })
+      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("id", "=", machineId)
+      .where("revokedAt", "is", null)
+      .execute();
   }
 
   async revokeMachine(machineId: string): Promise<{
@@ -189,11 +769,61 @@ export class ConvexDatabase {
     operationIds: string[];
     sessionIds: string[];
   } | null> {
-    return await this.write("revokeMachine", { machineId });
+    return await this.db.transaction().execute(async (transaction) => {
+      const now = new Date();
+      const machine = await transaction
+        .updateTable("machines")
+        .set({ status: "offline", revokedAt: now })
+        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+        .where("id", "=", machineId)
+        .where("revokedAt", "is", null)
+        .returning(["id", "name"])
+        .executeTakeFirst();
+      if (!machine) return null;
+
+      const sessions = await transaction
+        .updateTable("sessions")
+        .set({ status: "closed", error: "machine_revoked", updatedAt: now })
+        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+        .where("machineId", "=", machineId)
+        .where("status", "in", CLOSABLE_SESSION_STATUSES)
+        .returning("id")
+        .execute();
+      const sessionIds = sessions.map((session) => session.id);
+      const operations =
+        sessionIds.length === 0
+          ? []
+          : await transaction
+              .updateTable("operations")
+              .set({ status: "cancelled", error: "machine_revoked", updatedAt: now })
+              .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+              .where("sessionId", "in", sessionIds)
+              .where("status", "in", ACTIVE_OPERATION_STATUSES)
+              .returning("id")
+              .execute();
+      return {
+        ...machine,
+        revokedAt: timestamp(now),
+        sessionIds,
+        operationIds: operations.map((operation) => operation.id),
+      };
+    });
   }
 
   async listSessions(principalId: string): Promise<SessionRecord[]> {
-    return await this.read("listSessions", { principalId });
+    const sessions = await this.db
+      .selectFrom("sessions")
+      .leftJoin("machines", "machines.id", "sessions.machineId")
+      .selectAll("sessions")
+      .select("machines.name as machineName")
+      .where("sessions.workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("sessions.principalId", "=", principalId)
+      .orderBy("sessions.createdAt", "desc")
+      .limit(100)
+      .execute();
+    return sessions.map((session) =>
+      sessionRecord(session, session.machineName ?? "Unknown machine"),
+    );
   }
 
   async createSession(input: {
@@ -204,53 +834,126 @@ export class ConvexDatabase {
     capabilities: Capability[];
     expiresAt: number;
   }): Promise<void> {
-    await this.write("createSession", input);
+    await this.db
+      .insertInto("sessions")
+      .values({
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        ...input,
+        capabilities: JSON.stringify(input.capabilities),
+        status: "opening",
+        expiresAt: new Date(input.expiresAt),
+        error: null,
+      })
+      .execute();
   }
 
   async getSession(sessionId: string, principalId: string): Promise<SessionRecord | null> {
-    return await this.read("session", { sessionId, principalId });
+    const session = await this.db
+      .selectFrom("sessions")
+      .selectAll()
+      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("id", "=", sessionId)
+      .where("principalId", "=", principalId)
+      .executeTakeFirst();
+    return session ? sessionRecord(session) : null;
   }
 
   async getActiveSession(
     sessionId: string,
     principalId: string,
   ): Promise<SessionRecord | null> {
-    return await this.read("activeSession", { sessionId, principalId });
+    const session = await this.db
+      .selectFrom("sessions")
+      .selectAll()
+      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("id", "=", sessionId)
+      .where("principalId", "=", principalId)
+      .where("status", "in", ACTIVE_SESSION_STATUSES)
+      .executeTakeFirst();
+    return session ? sessionRecord(session) : null;
   }
 
   async markSessionClosing(sessionId: string): Promise<void> {
-    await this.write("markSessionClosing", { sessionId });
+    await this.db
+      .updateTable("sessions")
+      .set({ status: "closing", updatedAt: new Date() })
+      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("id", "=", sessionId)
+      .execute();
   }
 
   async markSessionOpened(sessionId: string): Promise<{ principalId: string } | null> {
-    return await this.write("sessionOpened", { sessionId });
+    return (
+      (await this.db
+        .updateTable("sessions")
+        .set({ status: "ready", updatedAt: new Date(), error: null })
+        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+        .where("id", "=", sessionId)
+        .where("status", "=", "opening")
+        .returning("principalId")
+        .executeTakeFirst()) ?? null
+    );
   }
 
   async markSessionOpenFailed(
     sessionId: string,
     error: string,
   ): Promise<{ principalId: string } | null> {
-    return await this.write("sessionOpenFailed", { sessionId, error });
+    return (
+      (await this.db
+        .updateTable("sessions")
+        .set({ status: "failed", updatedAt: new Date(), error })
+        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+        .where("id", "=", sessionId)
+        .where("status", "=", "opening")
+        .returning("principalId")
+        .executeTakeFirst()) ?? null
+    );
   }
 
   async markSessionClosed(
     sessionId: string,
   ): Promise<{ principalId: string; status: string } | null> {
-    return await this.write("sessionClosed", { sessionId });
+    return await this.db.transaction().execute(async (transaction) => {
+      const session = await transaction
+        .selectFrom("sessions")
+        .select(["principalId", "expiresAt"])
+        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+        .where("id", "=", sessionId)
+        .where("status", "in", CLOSABLE_SESSION_STATUSES)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!session) return null;
+      const status = session.expiresAt <= new Date() ? "expired" : "closed";
+      await transaction
+        .updateTable("sessions")
+        .set({ status, updatedAt: new Date() })
+        .where("id", "=", sessionId)
+        .execute();
+      return { principalId: session.principalId, status };
+    });
   }
 
   async findOperationByIdempotency(
     principalId: string,
     idempotencyKey: string,
   ): Promise<Pick<OperationRecord, "id" | "status"> | null> {
-    return await this.read("operationByIdempotency", { principalId, idempotencyKey });
+    return (
+      (await this.db
+        .selectFrom("operations")
+        .select(["id", "status"])
+        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+        .where("principalId", "=", principalId)
+        .where("idempotencyKey", "=", idempotencyKey)
+        .executeTakeFirst()) ?? null
+    );
   }
 
   async sessionForOperation(
     sessionId: string,
     principalId: string,
   ): Promise<SessionRecord | null> {
-    return await this.read("sessionForOperation", { sessionId, principalId });
+    return await this.getSession(sessionId, principalId);
   }
 
   async createOperation(input: {
@@ -261,16 +964,47 @@ export class ConvexDatabase {
     timeoutSeconds: number;
     maxOutputBytes: number;
     idempotencyKey?: string;
-  }): Promise<void> {
-    await this.write("createOperation", input);
+  }): Promise<boolean> {
+    const result = await this.db
+      .insertInto("operations")
+      .values({
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        ...input,
+        action: JSON.stringify(input.action),
+        status: "queued",
+        exitCode: null,
+        error: null,
+        outputTruncated: false,
+        idempotencyKey: input.idempotencyKey ?? null,
+      })
+      .onConflict((conflict) =>
+        conflict
+          .columns(["principalId", "idempotencyKey"])
+          .doNothing(),
+      )
+      .returning("id")
+      .executeTakeFirst();
+    return result !== undefined;
   }
 
   async markOperationDelivered(operationId: string): Promise<void> {
-    await this.write("markOperationDelivered", { operationId });
+    await this.db
+      .updateTable("operations")
+      .set({ status: "delivered", updatedAt: new Date() })
+      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("id", "=", operationId)
+      .where("status", "=", "queued")
+      .execute();
   }
 
   async markOperationStarted(operationId: string): Promise<void> {
-    await this.write("operationStarted", { operationId });
+    await this.db
+      .updateTable("operations")
+      .set({ status: "running", updatedAt: new Date() })
+      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("id", "=", operationId)
+      .where("status", "in", ["queued", "delivered"])
+      .execute();
   }
 
   async addOperationEvent(input: {
@@ -279,7 +1013,19 @@ export class ConvexDatabase {
     stream: string;
     dataBase64: string;
   }): Promise<void> {
-    await this.write("operationEvent", input);
+    await this.db
+      .insertInto("operationEvents")
+      .values({
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        operationId: input.operationId,
+        sequence: input.sequence,
+        stream: input.stream,
+        data: Buffer.from(input.dataBase64, "base64"),
+      })
+      .onConflict((conflict) =>
+        conflict.columns(["operationId", "sequence"]).doNothing(),
+      )
+      .execute();
   }
 
   async markOperationCompleted(input: {
@@ -289,40 +1035,106 @@ export class ConvexDatabase {
     error?: string;
     outputTruncated: boolean;
   }): Promise<{ principalId: string } | null> {
-    return await this.write("operationCompleted", input);
+    return (
+      (await this.db
+        .updateTable("operations")
+        .set({
+          status: input.status,
+          exitCode: input.exitCode,
+          error: input.error ?? null,
+          outputTruncated: input.outputTruncated,
+          updatedAt: new Date(),
+        })
+        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+        .where("id", "=", input.operationId)
+        .where("status", "in", ACTIVE_OPERATION_STATUSES)
+        .returning("principalId")
+        .executeTakeFirst()) ?? null
+    );
   }
 
   async getOperation(
     operationId: string,
     principalId: string,
   ): Promise<(OperationRecord & { events: OperationEventRecord[] }) | null> {
-    return await this.read("operation", { operationId, principalId });
+    const operation = await this.db
+      .selectFrom("operations")
+      .selectAll()
+      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("id", "=", operationId)
+      .where("principalId", "=", principalId)
+      .executeTakeFirst();
+    if (!operation) return null;
+    const events = await this.listOperationEvents(operationId, -1);
+    return { ...operationRecord(operation), events };
   }
 
   async getOperationTarget(
     operationId: string,
     principalId: string,
   ): Promise<{ machineId: string; status: string } | null> {
-    return await this.read("operationTarget", { operationId, principalId });
+    return (
+      (await this.db
+        .selectFrom("operations")
+        .innerJoin("sessions", "sessions.id", "operations.sessionId")
+        .select(["sessions.machineId", "operations.status"])
+        .where("operations.workspaceId", "=", DEFAULT_WORKSPACE_ID)
+        .where("operations.id", "=", operationId)
+        .where("operations.principalId", "=", principalId)
+        .executeTakeFirst()) ?? null
+    );
   }
 
   async operationExists(operationId: string, principalId: string): Promise<boolean> {
-    return await this.read("operationExists", { operationId, principalId });
+    return Boolean(
+      await this.db
+        .selectFrom("operations")
+        .select("id")
+        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+        .where("id", "=", operationId)
+        .where("principalId", "=", principalId)
+        .executeTakeFirst(),
+    );
   }
 
   async listOperationEvents(
     operationId: string,
     afterSequence: number,
   ): Promise<OperationEventRecord[]> {
-    return await this.read("operationEvents", { operationId, afterSequence });
+    return (
+      await this.db
+        .selectFrom("operationEvents")
+        .selectAll()
+        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+        .where("operationId", "=", operationId)
+        .where("sequence", ">", afterSequence)
+        .orderBy("sequence", "asc")
+        .execute()
+    ).map(operationEventRecord);
   }
 
   async operationStatus(operationId: string): Promise<string | null> {
-    return await this.read("operationStatus", { operationId });
+    return (
+      (
+        await this.db
+          .selectFrom("operations")
+          .select("status")
+          .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+          .where("id", "=", operationId)
+          .executeTakeFirst()
+      )?.status ?? null
+    );
   }
 
   async listAudit(limit: number, principalId?: string): Promise<AuditRecord[]> {
-    return await this.read("audit", { limit, principalId });
+    let query = this.db
+      .selectFrom("auditEvents")
+      .selectAll()
+      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID);
+    if (principalId !== undefined) query = query.where("principalId", "=", principalId);
+    return (await query.orderBy("createdAt", "desc").limit(limit).execute()).map(
+      auditRecord,
+    );
   }
 
   async audit(
@@ -332,35 +1144,55 @@ export class ConvexDatabase {
     targetId: string,
     metadata: Record<string, unknown> = {},
   ): Promise<void> {
-    await this.write("audit", {
-      id: randomUUID(),
-      principalId,
-      action,
-      targetType,
-      targetId,
-      metadata,
-    });
+    await this.db
+      .insertInto("auditEvents")
+      .values({
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        id: randomUUID(),
+        principalId,
+        action,
+        targetType,
+        targetId,
+        metadata: JSON.stringify(metadata),
+      })
+      .execute();
   }
 
   async expireSessions(): Promise<Array<{ id: string; machineId: string }>> {
-    return await this.write("expireSessions");
+    const now = new Date();
+    return await this.db
+      .updateTable("sessions")
+      .set({ status: "expired", updatedAt: now })
+      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("status", "in", ACTIVE_SESSION_STATUSES)
+      .where((expression) =>
+        expression.or([
+          expression("sessions.expiresAt", "<=", now),
+          expression.exists(
+            expression
+              .selectFrom("agentTokens")
+              .select("agentTokens.id")
+              .whereRef("agentTokens.id", "=", "sessions.principalId")
+              .where((token) =>
+                token.or([
+                  token("agentTokens.expiresAt", "<=", now),
+                  token("agentTokens.revokedAt", "is not", null),
+                ]),
+              ),
+          ),
+        ]),
+      )
+      .returning(["id", "machineId"])
+      .execute();
   }
 }
 
-export type Database = Pick<ConvexDatabase, keyof ConvexDatabase>;
+export type Database = PostgresDatabase;
 
 export function createDatabase(environment: NodeJS.ProcessEnv): Database {
-  if (environment.ODYSHELL_STORAGE === "memory") {
-    if (environment.NODE_ENV === "production") {
-      throw new Error("ODYSHELL_STORAGE=memory is forbidden in production");
-    }
-    return new MemoryDatabase();
-  }
-  const convexUrl = environment.CONVEX_URL;
-  const serviceKey = environment.ODYSHELL_CONVEX_SERVICE_KEY;
-  if (!convexUrl) throw new Error("CONVEX_URL is required");
-  if (!serviceKey) throw new Error("ODYSHELL_CONVEX_SERVICE_KEY is required");
-  return new ConvexDatabase(convexUrl, serviceKey);
+  const connectionString = environment.DATABASE_URL;
+  if (!connectionString) throw new Error("DATABASE_URL is required");
+  return new PostgresDatabase(connectionString);
 }
 
 export async function audit(

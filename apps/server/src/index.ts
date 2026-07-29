@@ -568,7 +568,7 @@ app.post<{ Params: { sessionId: string } }>(
     }
 
     const operationId = randomUUID();
-    await db.createOperation({
+    const created = await db.createOperation({
       id: operationId,
       sessionId: request.params.sessionId,
       principalId: principal.id,
@@ -577,6 +577,11 @@ app.post<{ Params: { sessionId: string } }>(
       maxOutputBytes: parsed.data.maxOutputBytes,
       ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
     });
+    if (!created && idempotencyKey) {
+      const existing = await db.findOperationByIdempotency(principal.id, idempotencyKey);
+      if (existing) return reply.code(200).send({ id: existing.id, status: existing.status });
+      throw new Error("Idempotency conflict did not resolve to an operation");
+    }
     const sent = gateway.send(session.machineId, {
       type: "operation.start",
       operationId,
@@ -750,6 +755,7 @@ const expiryTimer = setInterval(() => {
 
 app.addHook("onClose", async () => {
   clearInterval(expiryTimer);
+  await db.close();
 });
 
 await app.listen({ port, host });

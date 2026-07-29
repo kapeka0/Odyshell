@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { generateKeyPairSync } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import process from "node:process";
@@ -12,6 +13,7 @@ const composeEnvironment = {
   ...process.env,
   ODYSHELL_BIND_ADDRESS: "127.0.0.1",
   ODYSHELL_SERVER_PORT: "0",
+  ODYSHELL_POSTGRES_PORT: "0",
   ODYSHELL_AGENT_KEY: agentKey,
   ODYSHELL_ADMIN_KEY: adminKey,
   ODYSHELL_ALLOW_DEV_CREDENTIALS: "true",
@@ -146,6 +148,36 @@ try {
     headers: { "x-odyshell-admin-key": adminKey },
     body: JSON.stringify({ expiresInSeconds: 600 }),
   });
+
+  const replayEnrollment = await api("/v1/admin/enrollment-tokens", {
+    method: "POST",
+    headers: { "x-odyshell-admin-key": adminKey },
+    body: JSON.stringify({ expiresInSeconds: 600 }),
+  });
+  const replayPublicKey = generateKeyPairSync("ed25519").publicKey
+    .export({ type: "spki", format: "pem" })
+    .toString();
+  const enrollmentAttempts = await Promise.all(
+    ["enrollment-race-a", "enrollment-race-b"].map((name) =>
+      fetch(new URL("/v1/clients/enroll", apiUrl), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          token: replayEnrollment.token,
+          name,
+          publicKey: replayPublicKey,
+        }),
+      }),
+    ),
+  );
+  if (
+    enrollmentAttempts
+      .map((response) => response.status)
+      .sort((left, right) => left - right)
+      .join(",") !== "201,401"
+  ) {
+    throw new Error("Concurrent enrollment replay was not rejected atomically");
+  }
 
   const tsxCli = resolve(root, "node_modules/tsx/dist/cli.mjs");
   const clientEntry = resolve(root, "apps/client/src/cli.ts");
@@ -440,6 +472,46 @@ try {
   );
   if (session.status !== "ready") throw new Error(`Sandbox failed: ${session.error}`);
 
+  const idempotencyKey = crypto.randomUUID();
+  const idempotentRequest = () =>
+    fetch(new URL(`/v1/sessions/${session.id}/operations`, apiUrl), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-agent-key": agentKey,
+        "idempotency-key": idempotencyKey,
+      },
+      body: JSON.stringify({
+        action: {
+          kind: "process.exec",
+          program: "printf",
+          args: ["idempotent"],
+          cwd: ".",
+          env: {},
+        },
+        timeoutSeconds: 10,
+        maxOutputBytes: 1024,
+      }),
+    });
+  const idempotentResponses = await Promise.all([
+    idempotentRequest(),
+    idempotentRequest(),
+  ]);
+  if (idempotentResponses.some((response) => !response.ok)) {
+    throw new Error("Concurrent idempotent operation request failed");
+  }
+  const idempotentOperations = await Promise.all(
+    idempotentResponses.map((response) => response.json()),
+  );
+  if (new Set(idempotentOperations.map((operation) => operation.id)).size !== 1) {
+    throw new Error("Concurrent idempotent requests created multiple operations");
+  }
+  await waitUntil(
+    () => api(`/v1/operations/${idempotentOperations[0].id}`),
+    (value) => value.status === "succeeded",
+    "idempotent operation",
+  );
+
   const containerId = (
     await run("docker", ["ps", "-q", "--filter", `label=odyshell.session=${session.id}`])
   ).trim();
@@ -717,6 +789,8 @@ try {
           filesystemRoundTrip: readResult.output,
           networkBlocked: networkResult.status === "failed",
           traversalRejected: true,
+          enrollmentReplayRejected: true,
+          idempotencyReplaySafe: true,
           cancellation: true,
           sessionDestroyed: true,
           administratorMachineList: true,

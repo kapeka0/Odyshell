@@ -124,7 +124,7 @@ ods ping my-machine
 
 ## Self-hosting
 
-Odyshell can run with the Server and Convex backend on infrastructure you control. The Clients
+Odyshell can run with the Server and PostgreSQL on infrastructure you control. The Clients
 still use outbound-only connections and do not expose ports.
 
 See the [minimal self-hosting guide](./docs/self-hosting.md) for the current setup and production
@@ -169,8 +169,7 @@ administrators can use `ods audit --all`, `ods agent list`, and `ods agent revok
 Odyshell currently supports typed process, shell, filesystem, and Docker log operations. Direct
 host execution is the default. Docker sandboxes remain an optional execution profile.
 
-The Server keeps machine identities, temporary access, operations, and audit history in Convex.
-Railway remains the connection gateway; Convex does not connect to private machines. Local Docker
-tests use an ephemeral store and do not appear in a real workspace.
+The Server keeps machine identities, temporary access, operations, and audit history in PostgreSQL
+through Kysely. Local Docker tests use an isolated database and never appear in a real workspace.
 
 It is an early development MVP. The default local credentials are only intended for development.
