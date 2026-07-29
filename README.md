@@ -1,184 +1,110 @@
 # Odyshell
 
-Odyshell is an agent-first remote execution control plane. An agent requests a short-lived
-session on a private machine, submits structured operations, and receives results without SSH,
-a VPN, inbound ports, or direct access to the machine's network.
+**A simple way for AI agents to work with private Linux machines.**
 
-This repository contains a runnable MVP:
+AI agents can use APIs and cloud services easily. Working with a real machine is still awkward:
+it usually means sharing SSH credentials, exposing inbound ports, configuring a VPN, or
+installing a complete coding agent on the machine.
 
-- TypeScript control plane with PostgreSQL persistence
-- Outbound WebSocket connector with Ed25519 authentication
-- One-time machine enrollment
-- Locally enforced execution profiles and session TTLs
-- Ephemeral Docker session sandboxes
-- Structured process, shell, and filesystem operations
-- Output streaming, cancellation, audit records, and idempotency keys
-- Connector-local SQLite operation journal
-- Agent/admin CLI
+Odyshell provides a smaller abstraction. A private machine runs a lightweight connector, and
+that connector establishes an outbound connection to Odyshell. An agent can then request a
+temporary session, perform a task, receive the result, and disconnect.
 
-## Quick test
+The agent never needs SSH credentials or direct access to the private network.
 
-Prerequisites:
+## How it works
 
-- Node.js 24 or newer
-- pnpm
-- Docker with a Linux engine
+```mermaid
+flowchart LR
+    A["AI agent"] -->|"Request a task"| O["Odyshell"]
+    M["Private Linux machine"] -->|"Outbound connector"| O
+    O -->|"Use existing connection"| M
+    M --> D["Temporary Docker session"]
+    D -->|"Output"| M
+    M -->|"Return result"| O
+    O -->|"Result"| A
+```
 
-Run:
+The machine decides which directory and capabilities are available. Tasks run in temporary
+Docker sessions and results are returned through the connector's existing connection.
 
-```powershell
+Odyshell is not an SSH client, VPN, or full coding agent. It is the infrastructure layer between
+agents and private machines.
+
+## What using it looks like
+
+Agents can use the Odyshell API directly. The `ods` CLI is the quickest way to try the same
+workflow:
+
+```bash
+ods machines
+ods exec raspberry -- uname -a
+ods shell raspberry "pwd && id"
+ods fs write raspberry notes/hello.txt --content "Hello from an agent"
+ods fs read raspberry notes/hello.txt
+```
+
+Commands can also return structured output:
+
+```bash
+ods --json exec raspberry -- uname -a
+```
+
+## Try it locally
+
+You need Node.js 24+, pnpm, and Docker.
+
+Install Odyshell and start the server:
+
+```bash
 pnpm install
 pnpm install:ods
-pnpm test
-pnpm test:e2e
-```
-
-The end-to-end test builds and starts PostgreSQL and the control plane with Docker Compose,
-enrolls a temporary connector, opens an isolated session, exercises command and filesystem
-operations, verifies that network access and path traversal are blocked, and removes the
-session container.
-
-The control-plane containers remain running so you can inspect and use them:
-
-```powershell
-docker compose ps
-docker compose logs -f control-plane
-```
-
-Stop them with:
-
-```powershell
-docker compose down
-```
-
-## Manual test
-
-Start the control plane:
-
-```powershell
 docker compose up -d --build
 ```
 
-Configure the CLI:
+Connect the CLI:
 
-```powershell
-ods login --server http://127.0.0.1:4100 --agent-key dev-agent-key --admin-key dev-admin-key
-ods status
+```bash
+ods login \
+  --server http://127.0.0.1:4100 \
+  --agent-key dev-agent-key \
+  --admin-key dev-admin-key
 ```
 
 Create a one-time enrollment token:
 
-```powershell
+```bash
 ods token create
 ```
 
-Enroll the connector. Replace `<token>` with the returned token and choose the directory that
-agents may access:
+Choose a workspace, enroll the machine, and start its connector:
 
-```powershell
-ods connector enroll --token <token> --name my-machine --workspace C:\path\to\workspace
-```
+```bash
+mkdir odyshell-workspace
 
-Start the outbound connector:
+ods connector enroll \
+  --token <token> \
+  --name my-machine \
+  --workspace ./odyshell-workspace
 
-```powershell
 ods connector start
 ```
 
-In another terminal, list machines:
+Keep the connector running. In another terminal:
 
-```powershell
-ods machines
+```bash
+ods exec my-machine -- uname -a
 ```
 
-Run a command using either the machine name or ID. Odyshell creates and removes a disposable
-session automatically:
+To test with devices in the same Tailscale network, follow the short
+[tailnet testing guide](deploy/tailscale/README.md).
 
-```powershell
-ods exec my-machine printf "hello from Odyshell\n"
-ods shell my-machine "pwd && id"
-ods fs write my-machine notes/hello.txt --content "written by an agent"
-ods fs read my-machine notes/hello.txt
-```
+Tailscale is only used to keep the current development server private while testing. It is not
+part of the core Odyshell model.
 
-For a persistent session:
+## MVP status
 
-```powershell
-ods session create my-machine --ttl 600
-ods session exec <session-id> printf "hello\n"
-ods session inspect <session-id>
-ods session close <session-id>
-```
+Odyshell currently supports Linux machines, shell commands, filesystem operations, Docker
+sandboxes, and temporary sessions.
 
-Every data-producing command supports JSON for autonomous clients:
-
-```powershell
-ods machines --json
-ods --json exec my-machine -- uname -a
-```
-
-## Tailnet-only deployment
-
-To make the local control plane available to your Tailscale devices with HTTPS and WSS:
-
-```powershell
-tailscale serve --bg --yes http://127.0.0.1:4100
-tailscale serve status
-```
-
-Use the generated HTTPS URL with `ods login` and with connectors on other devices. This is
-Tailscale Serve, not Funnel, so the service remains private to the tailnet. See
-`deploy/tailscale/README.md` for the complete workflow.
-
-## API
-
-The agent API uses `x-odyshell-agent-key`. Important endpoints:
-
-```text
-GET    /v1/machines
-GET    /v1/sessions
-POST   /v1/sessions
-GET    /v1/sessions/:sessionId
-DELETE /v1/sessions/:sessionId
-POST   /v1/sessions/:sessionId/operations
-GET    /v1/operations/:operationId
-POST   /v1/operations/:operationId/cancel
-GET    /v1/operations/:operationId/events
-```
-
-Operation event streams use Server-Sent Events. Connector traffic uses the versioned protocol
-in `packages/protocol`.
-
-## Security boundary
-
-The default `workspace` profile:
-
-- Runs commands in an ephemeral Linux container
-- Mounts only the configured workspace
-- Uses no network
-- Does not mount the Docker socket
-- Uses a read-only root filesystem and writable `/tmp`
-- Drops all Linux capabilities
-- Enables `no-new-privileges`
-- Applies CPU, memory, PID, TTL, and output limits
-
-Filesystem operations are constrained to relative paths below the configured workspace. Writes
-are atomic and writing through symlinks is denied.
-
-This MVP is for development, not an internet-facing production deployment. The Compose defaults
-use known development API keys and unencrypted local HTTP. Before deployment, provide unique
-keys, terminate TLS in front of the control plane, require `wss://` connectors, use rootless
-Docker on the target, and review the local connector policy.
-
-## Repository layout
-
-```text
-apps/control-plane   HTTP API, persistence, connector gateway
-apps/connector       Outbound connector and Docker sandbox runner
-apps/cli             Admin and agent command-line client
-packages/protocol    Shared schemas, capabilities, and wire messages
-deploy/systemd       Linux connector service template
-deploy/tailscale      Tailnet-only HTTPS/WSS deployment guide
-scripts/e2e.mjs      Full live integration test
-tests                Protocol and policy tests
-```
+It is an early development MVP. The default local credentials are only intended for testing.
