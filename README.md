@@ -1,6 +1,10 @@
-# Odyshell
+<p align="center">
+  <img src="./assets/odyshell-square-light.svg" alt="Odyshell logo" width="96">
+</p>
 
-**A simple way for AI agents to work with private machines.**
+<h1 align="center">Odyshell</h1>
+
+<p align="center"><strong>A simple way for AI agents to work with private machines.</strong></p>
 
 AI agents can use APIs and cloud services easily. Working with a real machine is still awkward:
 it usually means sharing SSH credentials, exposing inbound ports, configuring a VPN, or
