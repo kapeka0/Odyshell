@@ -10,6 +10,7 @@ import {
   type Capability,
   type OperationAction,
 } from "@odyshell/protocol";
+import { boundedSessionExpiry, developmentCredentialsEnabled } from "./access.js";
 import { audit, createDatabase, migrate } from "./database.js";
 import { ClientGateway } from "./gateway.js";
 
@@ -18,7 +19,9 @@ const host = process.env.HOST ?? "127.0.0.1";
 const databaseUrl =
   process.env.DATABASE_URL ?? "postgres://odyshell:odyshell@127.0.0.1:55432/odyshell";
 const adminKey = process.env.ODYSHELL_ADMIN_KEY ?? "dev-admin-key";
-const developmentAgentKey = process.env.ODYSHELL_AGENT_KEY ?? "dev-agent-key";
+const developmentAgentKey = developmentCredentialsEnabled(process.env)
+  ? (process.env.ODYSHELL_AGENT_KEY ?? "dev-agent-key")
+  : undefined;
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
 await app.register(websocket, { options: { maxPayload: 2 * 1024 * 1024 } });
@@ -34,12 +37,13 @@ type AgentPrincipal = {
   name: string;
   machineIds: Set<string> | null;
   capabilities: Set<Capability>;
+  expiresAt: Date | null;
 };
 
 const requestPrincipals = new WeakMap<FastifyRequest, AgentPrincipal>();
 
-function matchesSecret(actual: string | undefined, expected: string): boolean {
-  if (!actual) return false;
+function matchesSecret(actual: string | undefined, expected: string | undefined): boolean {
+  if (!actual || !expected) return false;
   const actualDigest = createHash("sha256").update(actual).digest();
   const expectedDigest = createHash("sha256").update(expected).digest();
   return timingSafeEqual(actualDigest, expectedDigest);
@@ -66,6 +70,7 @@ async function requireAgent(request: FastifyRequest, reply: FastifyReply): Promi
       name: "Development agent",
       machineIds: null,
       capabilities: new Set(allCapabilities),
+      expiresAt: null,
     });
     return;
   }
@@ -76,8 +81,9 @@ async function requireAgent(request: FastifyRequest, reply: FastifyReply): Promi
       name: string;
       machine_ids: string[];
       capabilities: Capability[];
+      expires_at: Date;
     }>(
-      `SELECT id, name, machine_ids, capabilities
+      `SELECT id, name, machine_ids, capabilities, expires_at
        FROM agent_tokens
        WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()`,
       [hashToken(token)],
@@ -89,6 +95,7 @@ async function requireAgent(request: FastifyRequest, reply: FastifyReply): Promi
         name: principal.name,
         machineIds: new Set(principal.machine_ids),
         capabilities: new Set(principal.capabilities),
+        expiresAt: principal.expires_at,
       });
       return;
     }
@@ -154,6 +161,23 @@ function operationAuditMetadata(action: OperationAction): Record<string, unknown
   }
 }
 
+async function expireAgentSessions(principalId: string, reason: string): Promise<number> {
+  const expired = await db.query<{ id: string; machine_id: string }>(
+    `UPDATE sessions SET status = 'expired', updated_at = now()
+     WHERE principal_id = $1 AND status IN ('opening', 'ready')
+     RETURNING id, machine_id`,
+    [principalId],
+  );
+  for (const session of expired.rows) {
+    gateway.send(session.machine_id, {
+      type: "session.close",
+      sessionId: session.id,
+      reason,
+    });
+  }
+  return expired.rowCount ?? 0;
+}
+
 app.get("/health", async () => {
   await db.query("SELECT 1");
   return { status: "ok", protocol: 1 };
@@ -175,6 +199,23 @@ app.post(
     return reply.code(201).send({ token, expiresAt: expiresAt.toISOString() });
   },
 );
+
+app.get("/v1/admin/agent-tokens", { preHandler: requireAdmin }, async () => {
+  const result = await db.query(
+    `SELECT id, name, machine_ids AS "machineIds", capabilities,
+            expires_at AS "expiresAt", revoked_at AS "revokedAt",
+            created_at AS "createdAt",
+            CASE
+              WHEN revoked_at IS NOT NULL THEN 'revoked'
+              WHEN expires_at <= now() THEN 'expired'
+              ELSE 'active'
+            END AS status
+     FROM agent_tokens
+     ORDER BY created_at DESC
+     LIMIT 200`,
+  );
+  return { data: result.rows };
+});
 
 app.post("/v1/admin/agent-tokens", { preHandler: requireAdmin }, async (request, reply) => {
   const parsed = agentTokenRequestSchema.safeParse(request.body);
@@ -224,6 +265,36 @@ app.post("/v1/admin/agent-tokens", { preHandler: requireAdmin }, async (request,
     expiresAt: expiresAt.toISOString(),
   });
 });
+
+app.delete<{ Params: { tokenId: string } }>(
+  "/v1/admin/agent-tokens/:tokenId",
+  { preHandler: requireAdmin },
+  async (request, reply) => {
+    const result = await db.query<{ id: string; name: string; revoked_at: Date }>(
+      `UPDATE agent_tokens
+       SET revoked_at = COALESCE(revoked_at, now())
+       WHERE id = $1
+       RETURNING id, name, revoked_at`,
+      [request.params.tokenId],
+    );
+    const token = result.rows[0];
+    if (!token) return reply.code(404).send({ error: "agent_token_not_found" });
+
+    const closedSessions = await expireAgentSessions(token.id, "agent_token_revoked");
+    await audit(db, "admin", "agent_token.revoked", "agent_token", token.id, {
+      name: token.name,
+      revokedAt: token.revoked_at.toISOString(),
+      closedSessions,
+    });
+    return {
+      id: token.id,
+      name: token.name,
+      status: "revoked",
+      revokedAt: token.revoked_at.toISOString(),
+      closedSessions,
+    };
+  },
+);
 
 app.post("/v1/clients/enroll", async (request, reply) => {
   const body = request.body as { token?: string; name?: string; publicKey?: string };
@@ -293,6 +364,32 @@ app.get("/v1/machines", { preHandler: requireAgent }, async (request) => {
   };
 });
 
+app.post<{ Params: { machineId: string } }>(
+  "/v1/machines/:machineId/ping",
+  { preHandler: requireAgent },
+  async (request, reply) => {
+    const principal = principalFor(request);
+    if (!canAccessMachine(principal, request.params.machineId)) {
+      await audit(db, principal.id, "machine.ping_denied", "machine", request.params.machineId, {
+        reason: "machine_scope",
+      });
+      return reply.code(403).send({ error: "machine_denied" });
+    }
+    if (!gateway.isOnline(request.params.machineId)) {
+      return reply.code(409).send({ error: "machine_offline" });
+    }
+    try {
+      const latencyMs = await gateway.ping(request.params.machineId);
+      await audit(db, principal.id, "machine.ping", "machine", request.params.machineId, {
+        latencyMs,
+      });
+      return { reply: "pong", machineId: request.params.machineId, latencyMs };
+    } catch {
+      return reply.code(504).send({ error: "machine_ping_timeout" });
+    }
+  },
+);
+
 app.get("/v1/sessions", { preHandler: requireAgent }, async (request) => {
   const principal = principalFor(request);
   const result = await db.query(
@@ -338,7 +435,10 @@ app.post("/v1/sessions", { preHandler: requireAgent }, async (request, reply) =>
     return reply.code(409).send({ error: "machine_offline" });
   }
   const sessionId = randomUUID();
-  const expiresAt = new Date(Date.now() + input.ttlSeconds * 1000);
+  const expiresAt = boundedSessionExpiry(new Date(), input.ttlSeconds, principal.expiresAt);
+  if (expiresAt.getTime() <= Date.now()) {
+    return reply.code(401).send({ error: "invalid_or_expired_agent_token" });
+  }
   await db.query(
     `INSERT INTO sessions
        (id, machine_id, principal_id, profile, capabilities, status, expires_at)
@@ -363,6 +463,7 @@ app.post("/v1/sessions", { preHandler: requireAgent }, async (request, reply) =>
     machineId: input.machineId,
     profile: input.profile,
     capabilities: input.capabilities,
+    expiresAt: expiresAt.toISOString(),
   });
   return reply.code(202).send({
     id: sessionId,
@@ -663,9 +764,17 @@ app.get<{ Querystring: { limit?: string } }>(
 const expiryTimer = setInterval(() => {
   void (async () => {
     const expired = await db.query<{ id: string; machine_id: string }>(
-      `UPDATE sessions SET status = 'expired', updated_at = now()
-       WHERE status IN ('opening', 'ready') AND expires_at <= now()
-       RETURNING id, machine_id`,
+      `UPDATE sessions AS session SET status = 'expired', updated_at = now()
+       WHERE status IN ('opening', 'ready')
+         AND (
+           expires_at <= now()
+           OR EXISTS (
+             SELECT 1 FROM agent_tokens AS token
+             WHERE token.id::text = session.principal_id
+               AND (token.expires_at <= now() OR token.revoked_at IS NOT NULL)
+           )
+         )
+       RETURNING session.id, session.machine_id`,
     );
     for (const session of expired.rows) {
       gateway.send(session.machine_id, {

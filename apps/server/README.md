@@ -30,8 +30,11 @@ The local defaults are intended only for development. Agent access should use ex
 created with explicit machine and capability scopes:
 
 ```bash
-ods agent create coding-agent --machines <machine-id> --allow process.exec,fs.read --ttl 86400
+ods agent create coding-agent --machines <machine-id> --allow process.exec,fs.read --for 1h
 ```
+
+Sessions cannot outlive the agent token that created them. Revoking a token also closes its active
+sessions.
 
 The Server is published on `127.0.0.1` by default. To test from another device, bind it to a
 specific reachable host interface:

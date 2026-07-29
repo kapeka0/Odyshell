@@ -41,7 +41,7 @@ export const agentTokenRequestSchema = z.object({
   name: z.string().trim().min(1).max(64),
   machineIds: z.array(z.string().uuid()).min(1).max(100),
   capabilities: z.array(capabilitySchema).min(1),
-  expiresInSeconds: z.number().int().min(60).max(30 * 24 * 60 * 60).default(24 * 60 * 60),
+  expiresInSeconds: z.number().int().min(60).max(30 * 24 * 60 * 60).default(60 * 60),
 });
 export type AgentTokenRequest = z.infer<typeof agentTokenRequestSchema>;
 
@@ -173,6 +173,7 @@ export type ClientConfig = z.infer<typeof clientConfigSchema>;
 export type ServerToClientMessage =
   | { type: "challenge"; connectionId: string; nonce: string }
   | { type: "authenticated"; machineId: string }
+  | { type: "ping"; pingId: string }
   | {
       type: "session.open";
       sessionId: string;
@@ -200,6 +201,7 @@ export type ClientToServerMessage =
       runtime?: ClientRuntimeInfo;
     }
   | { type: "heartbeat"; machineId: string; at: string }
+  | { type: "pong"; machineId: string; pingId: string }
   | {
       type: "session.opened";
       sessionId: string;

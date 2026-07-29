@@ -15,6 +15,7 @@ access tokens.
 ```bash
 ods login --server <server-url> --agent-token <agent-token>
 ods machines
+ods ping raspberry
 ods exec raspberry -- uname -a
 ods fs search raspberry package.json
 ods fs read raspberry notes/status.txt
@@ -30,9 +31,11 @@ ods --json exec raspberry -- uname -a
 ## Main commands
 
 - `ods up`, `ods status`, and `ods down` manage the outbound Client.
+- `ods ping` checks end-to-end access without running a command.
 - `ods exec`, `ods shell`, `ods fs`, and `ods docker` perform typed operations.
 - `ods session` manages longer-lived temporary sessions.
-- `ods agent create` creates scoped agent tokens.
+- `ods agent create --for 1h` creates temporary scoped access.
+- `ods agent list` and `ods agent revoke` inspect or remove agent access.
 - `ods client` configures the client running on a private machine.
 - `ods audit` shows actions performed by the current agent; `--all` uses administrator access.
 

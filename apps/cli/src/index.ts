@@ -20,6 +20,7 @@ import {
   stopLinuxUserService,
 } from "@odyshell/client";
 import { OdyshellApi, type Operation } from "./api.js";
+import { parseDuration } from "./duration.js";
 import { ExpectedError, printCliError } from "./errors.js";
 import {
   defaultConfigPath,
@@ -32,6 +33,7 @@ import {
 import {
   colorStatus,
   operationJson,
+  printAgents,
   printAudit,
   printJson,
   printMachines,
@@ -243,6 +245,21 @@ program
   });
 
 program
+  .command("ping <machine>")
+  .description("check end-to-end access to a machine")
+  .action(async (machineReference: string, _options, command: Command) => {
+    const options = globals(command);
+    const api = await apiFor(command);
+    const machine = await api.resolveMachine(machineReference);
+    const result = await api.ping(machine.id);
+    if (options.json) printJson({ ...result, machineName: machine.name });
+    else {
+      console.log("pong");
+      console.error(pc.dim(`  ${machine.name} ${result.latencyMs}ms`));
+    }
+  });
+
+program
   .command("sessions")
   .description("list recent sessions")
   .action(async (_options, command: Command) => {
@@ -256,10 +273,12 @@ const token = program.command("token").description("manage enrollment tokens");
 token
   .command("create")
   .description("create a one-time client enrollment token")
-  .option("--ttl <seconds>", "token lifetime", "600")
+  .option("--ttl <duration>", "token lifetime", "10m")
   .action(async (options: { ttl: string }, command: Command) => {
     const global = globals(command);
-    const result = await (await apiFor(command)).createEnrollmentToken(Number(options.ttl));
+    const result = await (await apiFor(command)).createEnrollmentToken(
+      parseDuration(options.ttl, "--ttl"),
+    );
     if (global.json) printJson(result);
     else {
       console.log(result.token);
@@ -269,15 +288,26 @@ token
 
 const agent = program.command("agent").description("manage scoped agent access");
 agent
+  .command("list")
+  .description("list scoped agent access")
+  .action(async (_options, command: Command) => {
+    const global = globals(command);
+    const agents = await (await apiFor(command)).agents();
+    if (global.json) printJson({ data: agents });
+    else printAgents(agents);
+  });
+
+agent
   .command("create <name>")
   .description("create a scoped agent token")
   .requiredOption("--machines <ids>", "comma-separated machine IDs")
   .requiredOption("--allow <capabilities>", "comma-separated capabilities")
-  .option("--ttl <seconds>", "token lifetime", "86400")
+  .option("--for <duration>", "access lifetime", "1h")
+  .option("--ttl <duration>", "access lifetime (alias for --for)")
   .action(
     async (
       name: string,
-      options: { machines: string; allow: string; ttl: string },
+      options: { machines: string; allow: string; for: string; ttl?: string },
       command: Command,
     ) => {
       const global = globals(command);
@@ -291,7 +321,7 @@ agent
         name,
         machineIds,
         parseCapabilities(options.allow),
-        Number(options.ttl),
+        parseDuration(options.ttl ?? options.for, options.ttl ? "--ttl" : "--for"),
       );
       if (global.json) printJson(result);
       else {
@@ -301,6 +331,19 @@ agent
       }
     },
   );
+
+agent
+  .command("revoke <agent-id>")
+  .description("revoke access and close its active sessions")
+  .action(async (agentId: string, _options, command: Command) => {
+    const global = globals(command);
+    const result = await (await apiFor(command)).revokeAgent(agentId);
+    if (global.json) printJson(result);
+    else {
+      console.log(`${pc.green("✓")} Revoked ${result.name} (${result.id})`);
+      console.log(pc.dim(`  closed ${result.closedSessions} active session(s)`));
+    }
+  });
 
 program
   .command("audit")

@@ -71,6 +71,28 @@ export class ClientGateway {
     return true;
   }
 
+  async ping(machineId: string, timeoutMilliseconds = 5_000): Promise<number> {
+    const pingId = randomUUID();
+    const startedAt = performance.now();
+    return new Promise<number>((resolve, reject) => {
+      const event = `ping:${pingId}`;
+      const onPong = (): void => {
+        clearTimeout(timeout);
+        resolve(Math.max(0, Math.round(performance.now() - startedAt)));
+      };
+      const timeout = setTimeout(() => {
+        this.events.off(event, onPong);
+        reject(new Error("Machine ping timed out"));
+      }, timeoutMilliseconds);
+      this.events.once(event, onPong);
+      if (!this.send(machineId, { type: "ping", pingId })) {
+        clearTimeout(timeout);
+        this.events.off(event, onPong);
+        reject(new Error("Machine disconnected before ping"));
+      }
+    });
+  }
+
   private sendSocket(socket: WebSocket, message: ServerToClientMessage): void {
     socket.send(JSON.stringify(message));
   }
@@ -137,6 +159,9 @@ export class ClientGateway {
           `UPDATE machines SET status = 'online', last_seen_at = now() WHERE id = $1`,
           [message.machineId],
         );
+        break;
+      case "pong":
+        this.events.emit(`ping:${message.pingId}`);
         break;
       case "session.opened":
         {

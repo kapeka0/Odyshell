@@ -113,13 +113,19 @@ ods up \
 ods exec my-machine -- uname -a
 ```
 
+Check that the complete path to a machine is working:
+
+```bash
+ods ping my-machine
+```
+
 ## Give an agent access
 
 Create a token that only works with specific machines and actions:
 
 ```bash
 ods machines
-ods agent create coding-agent --machines <machine-id> --allow process.exec,fs.stat,fs.list,fs.search,fs.read --ttl 86400
+ods agent create coding-agent --machines <machine-id> --allow process.exec,fs.stat,fs.list,fs.search,fs.read --for 1h
 ```
 
 The token is shown once. Give that token to the agent, which can use it through the API or CLI:
@@ -130,8 +136,9 @@ ods --server http://127.0.0.1:4100 --agent-token <agent-token> audit
 ```
 
 The Server restricts the token to its assigned machines and capabilities. The Client applies its
-own local policy as a second boundary. `ods audit` shows the current agent's history;
-administrators can use `ods audit --all`.
+own local policy as a second boundary. When the token expires, its sessions are closed too, so an
+agent cannot keep access through an older session. `ods audit` shows the current agent's history;
+administrators can use `ods audit --all`, `ods agent list`, and `ods agent revoke <agent-id>`.
 
 ## MVP status
 

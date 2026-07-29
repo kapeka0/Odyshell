@@ -1,5 +1,12 @@
 import pc from "picocolors";
-import type { AuditEvent, Machine, Operation, OperationEvent, Session } from "./api.js";
+import type {
+  AgentAccess,
+  AuditEvent,
+  Machine,
+  Operation,
+  OperationEvent,
+  Session,
+} from "./api.js";
 
 export function printJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
@@ -42,6 +49,24 @@ export function printSessions(sessions: Session[]): void {
   );
 }
 
+export function printAgents(agents: AgentAccess[]): void {
+  if (agents.length === 0) {
+    console.log(pc.dim("No agent access tokens."));
+    return;
+  }
+  printTable(
+    ["NAME", "STATUS", "EXPIRES", "MACHINES", "CAPABILITIES", "ID"],
+    agents.map((agent) => [
+      agent.name,
+      colorStatus(agent.status),
+      new Date(agent.expiresAt).toLocaleString(),
+      String(agent.machineIds.length),
+      agent.capabilities.join(","),
+      agent.id,
+    ]),
+  );
+}
+
 export function printAudit(
   principal: { id: string; name: string },
   events: AuditEvent[],
@@ -78,7 +103,7 @@ export function operationJson(operation: Operation): Record<string, unknown> {
 }
 
 export function colorStatus(status: string): string {
-  if (["ready", "online", "succeeded"].includes(status)) return pc.green(status);
+  if (["active", "ready", "online", "succeeded"].includes(status)) return pc.green(status);
   if (["failed", "timed_out", "execution_unknown"].includes(status)) return pc.red(status);
   if (["opening", "queued", "delivered", "running", "closing"].includes(status)) {
     return pc.yellow(status);

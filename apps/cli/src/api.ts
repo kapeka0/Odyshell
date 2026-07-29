@@ -59,6 +59,17 @@ export type AgentToken = {
   expiresAt: string;
 };
 
+export type AgentAccess = {
+  id: string;
+  name: string;
+  machineIds: string[];
+  capabilities: Capability[];
+  expiresAt: string;
+  revokedAt: string | null;
+  createdAt: string;
+  status: "active" | "expired" | "revoked";
+};
+
 export type AuditEvent = {
   id: string;
   principalId: string;
@@ -94,6 +105,10 @@ export class OdyshellApi {
   async machines(): Promise<Machine[]> {
     const response = await this.request<{ data: Machine[] }>("/v1/machines");
     return response.data;
+  }
+
+  async ping(machineId: string): Promise<{ reply: "pong"; machineId: string; latencyMs: number }> {
+    return this.request(`/v1/machines/${machineId}/ping`, { method: "POST" });
   }
 
   async resolveMachine(reference: string): Promise<Machine> {
@@ -222,6 +237,26 @@ export class OdyshellApi {
       method: "POST",
       admin: true,
       body: { name, machineIds, capabilities, expiresInSeconds },
+    });
+  }
+
+  async agents(): Promise<AgentAccess[]> {
+    const response = await this.request<{ data: AgentAccess[] }>("/v1/admin/agent-tokens", {
+      admin: true,
+    });
+    return response.data;
+  }
+
+  async revokeAgent(tokenId: string): Promise<{
+    id: string;
+    name: string;
+    status: "revoked";
+    revokedAt: string;
+    closedSessions: number;
+  }> {
+    return this.request(`/v1/admin/agent-tokens/${tokenId}`, {
+      method: "DELETE",
+      admin: true,
     });
   }
 

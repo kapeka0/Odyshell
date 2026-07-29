@@ -15,6 +15,7 @@ const composeEnvironment = {
   ODYSHELL_POSTGRES_PORT: "0",
   ODYSHELL_AGENT_KEY: agentKey,
   ODYSHELL_ADMIN_KEY: adminKey,
+  ODYSHELL_ALLOW_DEV_CREDENTIALS: "true",
 };
 const configDirectory = resolve(root, `.odyshell/e2e/${process.pid}`);
 const configPath = resolve(configDirectory, "client.json");
@@ -241,6 +242,23 @@ try {
     throw new Error("Scoped agent could access machines outside its token scope");
   }
 
+  const listedAgents = JSON.parse(
+    await run(process.execPath, [
+      tsxCli,
+      odsEntry,
+      "--server",
+      apiUrl,
+      "--admin-key",
+      adminKey,
+      "--json",
+      "agent",
+      "list",
+    ]),
+  );
+  if (!listedAgents.data.some((item) => item.id === scopedAgent.id && item.status === "active")) {
+    throw new Error("ods agent list did not show active scoped access");
+  }
+
   const deniedSession = await fetch(new URL("/v1/sessions", apiUrl), {
     method: "POST",
     headers: {
@@ -290,6 +308,23 @@ try {
   );
   if (!cliMachines.data.some((item) => item.id === machine.id)) {
     throw new Error("ods machines did not return the enrolled client");
+  }
+
+  const cliPing = JSON.parse(
+    await run(process.execPath, [
+      tsxCli,
+      odsEntry,
+      "--server",
+      apiUrl,
+      "--agent-token",
+      scopedAgent.token,
+      "--json",
+      "ping",
+      "e2e-docker",
+    ]),
+  );
+  if (cliPing.reply !== "pong" || cliPing.machineId !== machine.id) {
+    throw new Error("ods ping did not complete an end-to-end client round trip");
   }
 
   const cliExecution = JSON.parse(
@@ -514,6 +549,64 @@ try {
     throw new Error("Administrator audit did not include scoped agent activity");
   }
 
+  const boundedSessionResponse = await fetch(new URL("/v1/sessions", apiUrl), {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${scopedAgent.token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      machineId: machine.id,
+      profile: "workspace",
+      ttlSeconds: 3600,
+      capabilities: ["process.exec"],
+    }),
+  });
+  const boundedSession = await boundedSessionResponse.json();
+  if (
+    !boundedSessionResponse.ok ||
+    new Date(boundedSession.expiresAt).getTime() > new Date(scopedAgent.expiresAt).getTime()
+  ) {
+    throw new Error("Session expiry was not bounded by its agent token");
+  }
+  await waitUntil(
+    () =>
+      api(`/v1/sessions/${boundedSession.id}`, {
+        headers: { authorization: `Bearer ${scopedAgent.token}` },
+      }),
+    (value) => value.status === "ready",
+    "bounded scoped session",
+  );
+
+  const revokedAgent = JSON.parse(
+    await run(process.execPath, [
+      tsxCli,
+      odsEntry,
+      "--server",
+      apiUrl,
+      "--admin-key",
+      adminKey,
+      "--json",
+      "agent",
+      "revoke",
+      scopedAgent.id,
+    ]),
+  );
+  if (revokedAgent.status !== "revoked" || revokedAgent.closedSessions < 1) {
+    throw new Error("Revoking agent access did not close its active session");
+  }
+  const revokedAccess = await fetch(new URL("/v1/machines", apiUrl), {
+    headers: { authorization: `Bearer ${scopedAgent.token}` },
+  });
+  if (revokedAccess.status !== 401) {
+    throw new Error("Revoked agent token remained usable");
+  }
+  await waitUntil(
+    () => run("docker", ["ps", "-q", "--filter", `label=odyshell.session=${boundedSession.id}`]),
+    (value) => value.trim() === "",
+    "revoked agent session cleanup",
+  );
+
   await api(`/v1/sessions/${session.id}`, { method: "DELETE" });
   await waitUntil(
     () => api(`/v1/sessions/${session.id}`),
@@ -532,7 +625,11 @@ try {
           ed25519Authentication: true,
           runtimeMetadata: `${machine.runtime.hostPlatform}/${machine.runtime.architecture}`,
           odsCli: true,
+          odsPing: true,
           scopedAgentToken: true,
+          agentAccessListed: true,
+          agentAccessRevoked: true,
+          sessionBoundedByToken: true,
           capabilityScopeDenied: true,
           clientPolicyDenied: true,
           auditTrail: true,

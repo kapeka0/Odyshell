@@ -245,6 +245,13 @@ export class Client {
           } catch {}
         }, 10_000);
         break;
+      case "ping":
+        this.send({
+          type: "pong",
+          machineId: this.config.machineId,
+          pingId: message.pingId,
+        });
+        break;
       case "session.open":
         await this.openSession(message);
         break;
