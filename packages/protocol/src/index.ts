@@ -33,6 +33,14 @@ export const sessionRequestSchema = z.object({
 });
 export type SessionRequest = z.infer<typeof sessionRequestSchema>;
 
+export const agentTokenRequestSchema = z.object({
+  name: z.string().trim().min(1).max(64),
+  machineIds: z.array(z.string().uuid()).min(1).max(100),
+  capabilities: z.array(capabilitySchema).min(1),
+  expiresInSeconds: z.number().int().min(60).max(30 * 24 * 60 * 60).default(24 * 60 * 60),
+});
+export type AgentTokenRequest = z.infer<typeof agentTokenRequestSchema>;
+
 const relativePathSchema = z
   .string()
   .max(4096)

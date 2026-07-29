@@ -10,6 +10,19 @@ const adminKey = process.env.ODYSHELL_ADMIN_KEY ?? "dev-admin-key";
 const configDirectory = resolve(root, ".odyshell/e2e");
 const configPath = resolve(configDirectory, "client.json");
 const workspace = resolve(root, "tmp/e2e-workspace");
+const allCapabilities = [
+  "process.exec",
+  "process.shell",
+  "fs.stat",
+  "fs.list",
+  "fs.read",
+  "fs.write",
+  "fs.mkdir",
+  "fs.remove",
+];
+const clientCapabilities = allCapabilities.filter(
+  (capability) => capability !== "process.shell",
+);
 
 if (!configDirectory.startsWith(resolve(root, ".odyshell"))) {
   throw new Error("Refusing to clean an E2E path outside .odyshell");
@@ -92,6 +105,8 @@ const enrolled = JSON.parse(
       "e2e-docker",
       "--workspace",
       workspace,
+      "--allow",
+      clientCapabilities.join(","),
       "--config",
       configPath,
     ],
@@ -163,14 +178,80 @@ try {
   }
   e2eMachineId = machine.id;
 
+  const scopedAgent = JSON.parse(
+    await run(process.execPath, [
+      tsxCli,
+      odsEntry,
+      "--server",
+      apiUrl,
+      "--admin-key",
+      adminKey,
+      "--json",
+      "agent",
+      "create",
+      "e2e-exec-agent",
+      "--machines",
+      machine.id,
+      "--allow",
+      "process.exec",
+      "--ttl",
+      "600",
+    ]),
+  );
+
+  const scopedMachines = await api("/v1/machines", {
+    headers: { authorization: `Bearer ${scopedAgent.token}` },
+  });
+  if (
+    scopedMachines.data.length !== 1 ||
+    scopedMachines.data[0]?.id !== machine.id
+  ) {
+    throw new Error("Scoped agent could access machines outside its token scope");
+  }
+
+  const deniedSession = await fetch(new URL("/v1/sessions", apiUrl), {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${scopedAgent.token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      machineId: machine.id,
+      profile: "workspace",
+      ttlSeconds: 120,
+      capabilities: ["process.shell"],
+    }),
+  });
+  if (deniedSession.status !== 403) {
+    throw new Error("Scoped agent was allowed to exceed its capability scope");
+  }
+
+  const locallyDenied = await api("/v1/sessions", {
+    method: "POST",
+    body: JSON.stringify({
+      machineId: machine.id,
+      profile: "workspace",
+      ttlSeconds: 120,
+      capabilities: ["process.shell"],
+    }),
+  });
+  const locallyDeniedSession = await waitUntil(
+    () => api(`/v1/sessions/${locallyDenied.id}`),
+    (value) => value.status === "failed",
+    "client policy denial",
+  );
+  if (!locallyDeniedSession.error?.includes("denied by local policy")) {
+    throw new Error("Client did not enforce its local capability policy");
+  }
+
   const cliMachines = JSON.parse(
     await run(process.execPath, [
       tsxCli,
       odsEntry,
       "--server",
       apiUrl,
-      "--agent-key",
-      agentKey,
+      "--agent-token",
+      scopedAgent.token,
       "--json",
       "machines",
     ]),
@@ -185,8 +266,8 @@ try {
       odsEntry,
       "--server",
       apiUrl,
-      "--agent-key",
-      agentKey,
+      "--agent-token",
+      scopedAgent.token,
       "--json",
       "exec",
       "e2e-docker",
@@ -204,16 +285,7 @@ try {
       machineId: machine.id,
       profile: "workspace",
       ttlSeconds: 120,
-      capabilities: [
-        "process.exec",
-        "process.shell",
-        "fs.stat",
-        "fs.list",
-        "fs.read",
-        "fs.write",
-        "fs.mkdir",
-        "fs.remove",
-      ],
+      capabilities: clientCapabilities,
     }),
   });
   const session = await waitUntil(
@@ -305,6 +377,38 @@ try {
   );
   if (cancelled.status !== "cancelled") throw new Error(`Cancellation produced ${cancelled.status}`);
 
+  const scopedAudit = await waitUntil(
+    () =>
+      api("/v1/audit?limit=100", {
+        headers: { authorization: `Bearer ${scopedAgent.token}` },
+      }),
+    (value) => value.data.some((event) => event.action === "operation.completed"),
+    "scoped agent audit event",
+  );
+  if (
+    scopedAudit.principal.id !== scopedAgent.id ||
+    scopedAudit.data.some((event) => event.principalId !== scopedAgent.id)
+  ) {
+    throw new Error("Audit feed leaked events from another principal");
+  }
+  const cliAudit = JSON.parse(
+    await run(process.execPath, [
+      tsxCli,
+      odsEntry,
+      "--server",
+      apiUrl,
+      "--agent-token",
+      scopedAgent.token,
+      "--json",
+      "audit",
+      "--limit",
+      "100",
+    ]),
+  );
+  if (!cliAudit.data.some((event) => event.action === "operation.completed")) {
+    throw new Error("ods audit did not return the scoped agent history");
+  }
+
   await api(`/v1/sessions/${session.id}`, { method: "DELETE" });
   await waitUntil(
     () => api(`/v1/sessions/${session.id}`),
@@ -323,6 +427,10 @@ try {
           ed25519Authentication: true,
           runtimeMetadata: `${machine.runtime.hostPlatform}/${machine.runtime.architecture}`,
           odsCli: true,
+          scopedAgentToken: true,
+          capabilityScopeDenied: true,
+          clientPolicyDenied: true,
+          auditTrail: true,
           sandboxPolicy: true,
           sandboxedExec: execResult.output.trim(),
           filesystemRoundTrip: readResult.output,

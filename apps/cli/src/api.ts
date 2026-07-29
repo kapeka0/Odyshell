@@ -49,6 +49,25 @@ export type Operation = {
   updatedAt: string;
 };
 
+export type AgentToken = {
+  id: string;
+  name: string;
+  token: string;
+  machineIds: string[];
+  capabilities: Capability[];
+  expiresAt: string;
+};
+
+export type AuditEvent = {
+  id: string;
+  principalId: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -180,6 +199,26 @@ export class OdyshellApi {
     });
   }
 
+  async createAgentToken(
+    name: string,
+    machineIds: string[],
+    capabilities: Capability[],
+    expiresInSeconds: number,
+  ): Promise<AgentToken> {
+    return this.request("/v1/admin/agent-tokens", {
+      method: "POST",
+      admin: true,
+      body: { name, machineIds, capabilities, expiresInSeconds },
+    });
+  }
+
+  async audit(limit: number): Promise<{
+    principal: { id: string; name: string };
+    data: AuditEvent[];
+  }> {
+    return this.request(`/v1/audit?limit=${encodeURIComponent(String(limit))}`);
+  }
+
   private async request<T>(
     path: string,
     options: {
@@ -191,10 +230,10 @@ export class OdyshellApi {
     } = {},
   ): Promise<T> {
     const authenticated = options.authenticated ?? true;
-    const key = options.admin ? this.config.adminKey : this.config.agentKey;
-    if (authenticated && !key) {
+    const credential = options.admin ? this.config.adminKey : this.config.agentToken;
+    if (authenticated && !credential) {
       throw new Error(
-        `No ${options.admin ? "admin" : "agent"} key configured. Run "ods login" or set the corresponding environment variable.`,
+        `No ${options.admin ? "admin key" : "agent token"} configured. Run "ods login" or set the corresponding environment variable.`,
       );
     }
     const response = await fetch(new URL(path, this.config.serverUrl), {
@@ -202,7 +241,9 @@ export class OdyshellApi {
       headers: {
         ...(options.body === undefined ? {} : { "content-type": "application/json" }),
         ...(authenticated
-          ? { [options.admin ? "x-odyshell-admin-key" : "x-odyshell-agent-key"]: key! }
+          ? options.admin
+            ? { "x-odyshell-admin-key": credential! }
+            : { authorization: `Bearer ${credential!}` }
           : {}),
         ...options.headers,
       },

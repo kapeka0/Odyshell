@@ -5,12 +5,15 @@ import { homedir } from "node:os";
 
 export type StoredConfig = {
   serverUrl: string;
+  agentToken?: string;
+  /** @deprecated Read only for existing development configurations. */
   agentKey?: string;
   adminKey?: string;
 };
 
 export type GlobalOptions = {
   server?: string;
+  agentToken?: string;
   agentKey?: string;
   adminKey?: string;
   configFile?: string;
@@ -69,7 +72,13 @@ export async function removeStoredConfig(path = defaultConfigPath()): Promise<vo
 export async function resolveConfig(options: GlobalOptions): Promise<StoredConfig> {
   const configPath = options.configFile ? resolve(options.configFile) : defaultConfigPath();
   const stored = await loadStoredConfig(configPath);
-  const agentKey = options.agentKey ?? process.env.ODYSHELL_AGENT_KEY ?? stored?.agentKey;
+  const agentToken =
+    options.agentToken ??
+    process.env.ODYSHELL_AGENT_TOKEN ??
+    options.agentKey ??
+    process.env.ODYSHELL_AGENT_KEY ??
+    stored?.agentToken ??
+    stored?.agentKey;
   const adminKey = options.adminKey ?? process.env.ODYSHELL_ADMIN_KEY ?? stored?.adminKey;
   return {
     serverUrl:
@@ -78,7 +87,7 @@ export async function resolveConfig(options: GlobalOptions): Promise<StoredConfi
       process.env.ODYSHELL_SERVER_URL ??
       stored?.serverUrl ??
       "http://127.0.0.1:4100",
-    ...(agentKey ? { agentKey } : {}),
+    ...(agentToken ? { agentToken } : {}),
     ...(adminKey ? { adminKey } : {}),
   };
 }

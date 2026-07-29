@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { operationRequestSchema, sessionRequestSchema } from "../packages/protocol/src/index.js";
+import {
+  agentTokenRequestSchema,
+  operationRequestSchema,
+  sessionRequestSchema,
+} from "../packages/protocol/src/index.js";
 
 describe("protocol validation", () => {
   it("rejects absolute and parent-traversing filesystem paths at the workspace boundary", () => {
@@ -29,6 +33,25 @@ describe("protocol validation", () => {
         machineId: "2dc24de7-ec0e-45b3-88c1-acbb900e51f8",
         ttlSeconds: 7200,
         capabilities: ["process.exec"],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires agent tokens to be explicitly scoped", () => {
+    expect(
+      agentTokenRequestSchema.safeParse({
+        name: "reader",
+        machineIds: [],
+        capabilities: ["fs.read"],
+        expiresInSeconds: 600,
+      }).success,
+    ).toBe(false);
+    expect(
+      agentTokenRequestSchema.safeParse({
+        name: "reader",
+        machineIds: ["2dc24de7-ec0e-45b3-88c1-acbb900e51f8"],
+        capabilities: [],
+        expiresInSeconds: 600,
       }).success,
     ).toBe(false);
   });

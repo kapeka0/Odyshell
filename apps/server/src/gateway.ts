@@ -8,7 +8,7 @@ import {
   type ClientToServerMessage,
   type ServerToClientMessage,
 } from "@odyshell/protocol";
-import type { Database } from "./database.js";
+import { audit, type Database } from "./database.js";
 
 type AuthState = {
   connectionId: string;
@@ -139,28 +139,58 @@ export class ClientGateway {
         );
         break;
       case "session.opened":
-        await this.db.query(
-          `UPDATE sessions SET status = 'ready', updated_at = now(), error = NULL WHERE id = $1`,
-          [message.sessionId],
-        );
-        this.events.emit(`session:${message.sessionId}`);
+        {
+          const result = await this.db.query<{ principal_id: string }>(
+            `UPDATE sessions
+             SET status = 'ready', updated_at = now(), error = NULL
+             WHERE id = $1
+             RETURNING principal_id`,
+            [message.sessionId],
+          );
+          const principalId = result.rows[0]?.principal_id;
+          if (principalId) {
+            await audit(this.db, principalId, "session.opened", "session", message.sessionId);
+          }
+          this.events.emit(`session:${message.sessionId}`);
+        }
         break;
       case "session.open_failed":
-        await this.db.query(
-          `UPDATE sessions SET status = 'failed', updated_at = now(), error = $2 WHERE id = $1`,
-          [message.sessionId, message.error],
-        );
-        this.events.emit(`session:${message.sessionId}`);
+        {
+          const result = await this.db.query<{ principal_id: string }>(
+            `UPDATE sessions
+             SET status = 'failed', updated_at = now(), error = $2
+             WHERE id = $1
+             RETURNING principal_id`,
+            [message.sessionId, message.error],
+          );
+          const principalId = result.rows[0]?.principal_id;
+          if (principalId) {
+            await audit(this.db, principalId, "session.open_failed", "session", message.sessionId, {
+              error: message.error,
+            });
+          }
+          this.events.emit(`session:${message.sessionId}`);
+        }
         break;
       case "session.closed":
-        await this.db.query(
-          `UPDATE sessions
-           SET status = CASE WHEN expires_at <= now() THEN 'expired' ELSE 'closed' END,
-               updated_at = now()
-           WHERE id = $1`,
-          [message.sessionId],
-        );
-        this.events.emit(`session:${message.sessionId}`);
+        {
+          const result = await this.db.query<{ principal_id: string; status: string }>(
+            `UPDATE sessions
+             SET status = CASE WHEN expires_at <= now() THEN 'expired' ELSE 'closed' END,
+                 updated_at = now()
+             WHERE id = $1
+             RETURNING principal_id, status`,
+            [message.sessionId],
+          );
+          const session = result.rows[0];
+          if (session) {
+            await audit(this.db, session.principal_id, "session.closed", "session", message.sessionId, {
+              reason: message.reason,
+              status: session.status,
+            });
+          }
+          this.events.emit(`session:${message.sessionId}`);
+        }
         break;
       case "operation.started":
         await this.db.query(
@@ -184,19 +214,37 @@ export class ClientGateway {
         this.events.emit(`operation:${message.operationId}`, message);
         break;
       case "operation.completed":
-        await this.db.query(
-          `UPDATE operations
-           SET status = $2, exit_code = $3, error = $4, output_truncated = $5, updated_at = now()
-           WHERE id = $1`,
-          [
-            message.operationId,
-            message.status,
-            message.exitCode,
-            message.error ?? null,
-            message.outputTruncated,
-          ],
-        );
-        this.events.emit(`operation:${message.operationId}`);
+        {
+          const result = await this.db.query<{ principal_id: string }>(
+            `UPDATE operations
+             SET status = $2, exit_code = $3, error = $4, output_truncated = $5, updated_at = now()
+             WHERE id = $1
+             RETURNING principal_id`,
+            [
+              message.operationId,
+              message.status,
+              message.exitCode,
+              message.error ?? null,
+              message.outputTruncated,
+            ],
+          );
+          const principalId = result.rows[0]?.principal_id;
+          if (principalId) {
+            await audit(
+              this.db,
+              principalId,
+              "operation.completed",
+              "operation",
+              message.operationId,
+              {
+                status: message.status,
+                exitCode: message.exitCode,
+                outputTruncated: message.outputTruncated,
+              },
+            );
+          }
+          this.events.emit(`operation:${message.operationId}`);
+        }
         break;
       case "authenticate":
         throw new Error("Already authenticated");

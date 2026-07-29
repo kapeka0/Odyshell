@@ -25,9 +25,9 @@ flowchart LR
     O -->|"Result"| A
 ```
 
-The machine decides which directory and capabilities are available. Tasks run in temporary
-Linux containers and results are returned through the client's existing connection. The client
-runs on Linux, macOS, and Windows.
+The machine decides which directory and capabilities are available. Anything not explicitly
+allowed is denied by the client. Tasks run in temporary Linux containers and results are returned
+through the client's existing connection. The client runs on Linux, macOS, and Windows.
 
 Odyshell is not an SSH client, VPN, or full coding agent. It is the infrastructure layer between
 agents and private machines.
@@ -67,7 +67,7 @@ docker compose up -d --build
 Connect the CLI:
 
 ```bash
-ods login --server http://127.0.0.1:4100 --agent-key dev-agent-key --admin-key dev-admin-key
+ods login --server http://127.0.0.1:4100 --agent-token dev-agent-key --admin-key dev-admin-key
 ```
 
 Create a one-time enrollment token:
@@ -82,7 +82,7 @@ Choose a workspace, enroll the machine, and start its client:
 mkdir odyshell-workspace
 
 ods client doctor
-ods client enroll --token <token> --name my-machine --workspace ./odyshell-workspace
+ods client enroll --token <token> --name my-machine --workspace ./odyshell-workspace --allow process.exec,fs.stat,fs.list,fs.read
 ods client start
 ```
 
@@ -92,9 +92,30 @@ Keep the client running. In another terminal:
 ods exec my-machine -- uname -a
 ```
 
+## Give an agent access
+
+Create a token that only works with specific machines and actions:
+
+```bash
+ods machines
+ods agent create coding-agent --machines <machine-id> --allow process.exec,fs.stat,fs.list,fs.read --ttl 86400
+```
+
+The token is shown once. Give that token to the agent, which can use it through the API or CLI:
+
+```bash
+ods --server http://127.0.0.1:4100 --agent-token <agent-token> exec my-machine -- uname -a
+ods --server http://127.0.0.1:4100 --agent-token <agent-token> audit
+```
+
+The server restricts the token to its assigned machines and capabilities. The client applies its
+own local allowlist as a second boundary. `ods audit` shows the current agent's session and
+operation history.
+
 ## MVP status
 
 Odyshell currently supports Linux, macOS, and Windows hosts, shell commands, filesystem
 operations, Docker sandboxes, and temporary sessions.
 
-It is an early development MVP. The default local credentials are only intended for testing.
+It is an early development MVP. The default local credentials are only intended for development;
+create scoped agent tokens for real agent access.

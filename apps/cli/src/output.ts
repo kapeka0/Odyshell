@@ -1,5 +1,5 @@
 import pc from "picocolors";
-import type { Machine, Operation, OperationEvent, Session } from "./api.js";
+import type { AuditEvent, Machine, Operation, OperationEvent, Session } from "./api.js";
 
 export function printJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
@@ -36,6 +36,26 @@ export function printSessions(sessions: Session[]): void {
       session.machineName ?? session.machineId,
       session.id,
       new Date(session.expiresAt).toLocaleString(),
+    ]),
+  );
+}
+
+export function printAudit(
+  principal: { id: string; name: string },
+  events: AuditEvent[],
+): void {
+  console.log(pc.dim(`Agent ${principal.name} (${principal.id})`));
+  if (events.length === 0) {
+    console.log(pc.dim("No audit events."));
+    return;
+  }
+  printTable(
+    ["TIME", "ACTION", "TARGET", "DETAILS"],
+    events.map((event) => [
+      new Date(event.createdAt).toLocaleString(),
+      event.action,
+      `${event.targetType}:${event.targetId}`,
+      Object.keys(event.metadata).length > 0 ? JSON.stringify(event.metadata) : "",
     ]),
   );
 }

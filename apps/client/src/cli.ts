@@ -1,4 +1,5 @@
 import process from "node:process";
+import { capabilitySchema, type Capability } from "@odyshell/protocol";
 import {
   defaultClientConfigPath,
   enrollClient,
@@ -17,6 +18,16 @@ function requiredOption(name: string, fallback?: string): string {
   return value;
 }
 
+function requiredCapabilities(name: string, fallback?: string): Capability[] {
+  const value = requiredOption(name, fallback);
+  const parsed = capabilitySchema
+    .array()
+    .min(1)
+    .safeParse([...new Set(value.split(",").map((item) => item.trim()))].filter(Boolean));
+  if (!parsed.success) throw new Error(`Invalid --${name} capability list`);
+  return parsed.data;
+}
+
 const command = process.argv[2];
 if (command === "enroll") {
   const result = await enrollClient({
@@ -24,6 +35,7 @@ if (command === "enroll") {
     token: requiredOption("token", process.env.ODYSHELL_ENROLLMENT_TOKEN),
     machineName: requiredOption("name", process.env.ODYSHELL_MACHINE_NAME),
     workspaceRoot: requiredOption("workspace", process.cwd()),
+    allowedCapabilities: requiredCapabilities("allow", process.env.ODYSHELL_ALLOWED_CAPABILITIES),
     configPath: option("config", defaultClientConfigPath())!,
     image: option("image", "alpine:3.22") ?? "alpine:3.22",
   });

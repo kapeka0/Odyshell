@@ -29,6 +29,17 @@ export async function migrate(db: Database): Promise<void> {
       created_at timestamptz NOT NULL DEFAULT now()
     );
 
+    CREATE TABLE IF NOT EXISTS agent_tokens (
+      id uuid PRIMARY KEY,
+      name text NOT NULL,
+      token_hash text NOT NULL UNIQUE,
+      machine_ids jsonb NOT NULL,
+      capabilities jsonb NOT NULL,
+      expires_at timestamptz NOT NULL,
+      revoked_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+
     CREATE TABLE IF NOT EXISTS sessions (
       id uuid PRIMARY KEY,
       machine_id uuid NOT NULL REFERENCES machines(id),
@@ -80,6 +91,8 @@ export async function migrate(db: Database): Promise<void> {
 
     CREATE INDEX IF NOT EXISTS sessions_machine_status_idx ON sessions(machine_id, status);
     CREATE INDEX IF NOT EXISTS operations_session_idx ON operations(session_id, created_at);
+    CREATE INDEX IF NOT EXISTS audit_events_principal_created_idx
+      ON audit_events(principal_id, created_at DESC);
   `);
 }
 

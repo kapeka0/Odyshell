@@ -4,8 +4,9 @@ import { dirname, resolve } from "node:path";
 import process from "node:process";
 import {
   PROTOCOL_VERSION,
-  allCapabilities,
+  capabilitySchema,
   parseServerMessage,
+  type Capability,
   type ClientConfig,
   type ClientRuntimeInfo,
   type ClientToServerMessage,
@@ -29,6 +30,7 @@ export type EnrollClientOptions = {
   machineName: string;
   workspaceRoot: string;
   configPath: string;
+  allowedCapabilities: Capability[];
   image?: string;
 };
 
@@ -39,6 +41,13 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
   const serverUrl = options.serverUrl;
   const workspaceRoot = resolve(options.workspaceRoot);
   const configPath = resolve(options.configPath);
+  const parsedCapabilities = capabilitySchema
+    .array()
+    .min(1)
+    .safeParse([...new Set(options.allowedCapabilities)]);
+  if (!parsedCapabilities.success) {
+    throw new Error("At least one valid capability must be explicitly allowed");
+  }
   const { publicKey, privateKey } = generateKeyPairSync("ed25519", {
     publicKeyEncoding: { type: "spki", format: "pem" },
     privateKeyEncoding: { type: "pkcs8", format: "pem" },
@@ -66,7 +75,7 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
         maxSessionTtlSeconds: 1800,
         maxConcurrentSessions: 2,
         maxOutputBytes: 1024 * 1024,
-        capabilities: allCapabilities,
+        capabilities: parsedCapabilities.data,
       },
     },
   };

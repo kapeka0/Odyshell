@@ -5,6 +5,7 @@ import { Command } from "commander";
 import pc from "picocolors";
 import {
   allCapabilities,
+  capabilitySchema,
   type Capability,
   type OperationAction,
 } from "@odyshell/protocol";
@@ -26,6 +27,7 @@ import {
 import {
   colorStatus,
   operationJson,
+  printAudit,
   printJson,
   printMachines,
   printSessions,
@@ -36,10 +38,11 @@ const program = new Command();
 program
   .name("ods")
   .description("Agent-first access to private machines")
-  .version("0.4.0")
+  .version("0.5.0")
   .option("-j, --json", "emit stable JSON output")
   .option("--server <url>", "override the Odyshell server URL")
-  .option("--agent-key <key>", "override the agent API key")
+  .option("--agent-token <token>", "override the scoped agent token")
+  .option("--agent-key <key>", "use the legacy development agent key")
   .option("--admin-key <key>", "override the administrator API key")
   .option("--config-file <path>", "use a different configuration file")
   .showSuggestionAfterError()
@@ -51,7 +54,13 @@ function globals(command: Command): GlobalOptions {
 }
 
 function normalizeGlobalOptions(argv: string[]): string[] {
-  const flagsWithValues = ["--server", "--agent-key", "--admin-key", "--config-file"];
+  const flagsWithValues = [
+    "--server",
+    "--agent-token",
+    "--agent-key",
+    "--admin-key",
+    "--config-file",
+  ];
   const globalArguments: string[] = [];
   const commandArguments: string[] = [];
 
@@ -86,6 +95,19 @@ function normalizeGlobalOptions(argv: string[]): string[] {
 
 async function apiFor(command: Command): Promise<OdyshellApi> {
   return new OdyshellApi(await resolveConfig(globals(command)));
+}
+
+function parseCapabilities(value: string): Capability[] {
+  const parsed = capabilitySchema
+    .array()
+    .min(1)
+    .safeParse(
+      [...new Set(value.split(",").map((capability) => capability.trim()))].filter(Boolean),
+    );
+  if (!parsed.success) {
+    throw new Error(`Invalid capabilities. Choose from: ${allCapabilities.join(", ")}`);
+  }
+  return parsed.data;
 }
 
 async function finishOperation(
@@ -129,8 +151,10 @@ program
     const configPath = options.configFile ? resolve(options.configFile) : defaultConfigPath();
     const previous = await loadStoredConfig(configPath);
     const resolved = await resolveConfig(options);
-    if (!resolved.agentKey) {
-      throw new Error("An agent key is required. Pass --agent-key or set ODYSHELL_AGENT_KEY.");
+    if (!resolved.agentToken) {
+      throw new Error(
+        "An agent token is required. Pass --agent-token or set ODYSHELL_AGENT_TOKEN.",
+      );
     }
     const api = new OdyshellApi(resolved);
     await api.health();
@@ -139,7 +163,7 @@ program
     await saveStoredConfig(
       {
         serverUrl: resolved.serverUrl,
-        agentKey: resolved.agentKey,
+        agentToken: resolved.agentToken,
         ...(savedAdminKey ? { adminKey: savedAdminKey } : {}),
       },
       configPath,
@@ -212,21 +236,61 @@ token
     }
   });
 
+const agent = program.command("agent").description("manage scoped agent access");
+agent
+  .command("create <name>")
+  .description("create a scoped agent token")
+  .requiredOption("--machines <ids>", "comma-separated machine IDs")
+  .requiredOption("--allow <capabilities>", "comma-separated capabilities")
+  .option("--ttl <seconds>", "token lifetime", "86400")
+  .action(
+    async (
+      name: string,
+      options: { machines: string; allow: string; ttl: string },
+      command: Command,
+    ) => {
+      const global = globals(command);
+      const machineIds = [...new Set(options.machines.split(",").map((id) => id.trim()))].filter(
+        Boolean,
+      );
+      if (machineIds.length === 0) throw new Error("At least one machine ID is required");
+      const result = await (await apiFor(command)).createAgentToken(
+        name,
+        machineIds,
+        parseCapabilities(options.allow),
+        Number(options.ttl),
+      );
+      if (global.json) printJson(result);
+      else {
+        console.log(result.token);
+        console.error(pc.dim(`Agent ${result.name} (${result.id})`));
+        console.error(pc.dim(`Expires ${new Date(result.expiresAt).toLocaleString()}`));
+      }
+    },
+  );
+
+program
+  .command("audit")
+  .description("show recent actions for the current agent")
+  .option("--limit <count>", "number of events", "50")
+  .action(async (options: { limit: string }, command: Command) => {
+    const global = globals(command);
+    const result = await (await apiFor(command)).audit(Number(options.limit));
+    if (global.json) printJson(result);
+    else printAudit(result.principal, result.data);
+  });
+
 const session = program.command("session").description("manage persistent sessions");
 session
   .command("create <machine>")
   .description("open a temporary session")
   .option("--ttl <seconds>", "session lifetime", "600")
-  .option(
-    "--capabilities <items>",
-    "comma-separated capabilities",
-    allCapabilities.join(","),
-  )
+  .requiredOption("--capabilities <items>", "comma-separated capabilities")
   .action(async (machineReference: string, options: { ttl: string; capabilities: string }, command: Command) => {
     const global = globals(command);
     const api = await apiFor(command);
     const machine = await api.resolveMachine(machineReference);
-    const capabilities = options.capabilities.split(",") as Capability[];
+    const capabilities = parseCapabilities(options.capabilities);
     const created = await api.createSession(machine.id, capabilities, Number(options.ttl));
     const ready = await api.waitForSession(created.id);
     if (global.json) printJson(ready);
@@ -429,11 +493,19 @@ client
   .requiredOption("--token <token>", "one-time enrollment token")
   .requiredOption("--name <name>", "machine name")
   .requiredOption("--workspace <path>", "workspace exposed to sessions")
+  .requiredOption("--allow <capabilities>", "comma-separated capabilities allowed by this machine")
   .option("--image <image>", "sandbox image", "alpine:3.22")
   .option("--config <path>", "client configuration", defaultClientConfigPath())
   .action(
     async (
-      options: { token: string; name: string; workspace: string; image: string; config: string },
+      options: {
+        token: string;
+        name: string;
+        workspace: string;
+        allow: string;
+        image: string;
+        config: string;
+      },
       command: Command,
     ) => {
       const global = globals(command);
@@ -443,6 +515,7 @@ client
         token: options.token,
         machineName: options.name,
         workspaceRoot: options.workspace,
+        allowedCapabilities: parseCapabilities(options.allow),
         image: options.image,
         configPath: options.config,
       });
