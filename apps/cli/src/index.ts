@@ -40,6 +40,7 @@ import {
   printSessions,
   streamEvent,
 } from "./output.js";
+import { assertClientUpConfiguration } from "./up.js";
 
 const program = new Command();
 program
@@ -685,6 +686,19 @@ program
         () => true,
         () => false,
       );
+      const enrollmentRequested =
+        global.server !== undefined ||
+        options.token !== undefined ||
+        options.name !== undefined ||
+        options.workspace !== undefined ||
+        options.allow !== undefined ||
+        command.getOptionValueSource("runner") === "cli" ||
+        command.getOptionValueSource("image") === "cli";
+      assertClientUpConfiguration({
+        configExists: configFound,
+        enrollmentRequested,
+        configPath,
+      });
       let enrollment:
         | { machineId: string; configPath: string }
         | undefined;

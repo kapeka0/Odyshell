@@ -29,6 +29,7 @@ import { defaultClientConfigPath, hostPlatform } from "./platform.js";
 
 export { defaultClientConfigPath } from "./platform.js";
 export {
+  activateLinuxUserService,
   clientServiceStatus,
   installLinuxUserService,
   linuxUserServicePath,

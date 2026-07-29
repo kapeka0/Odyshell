@@ -6,6 +6,7 @@ import {
 } from "../apps/client/src/platform.js";
 import { parseDockerRuntime } from "../apps/client/src/docker-runner.js";
 import {
+  activateLinuxUserService,
   linuxUserServicePath,
   renderLinuxUserService,
 } from "../apps/client/src/service.js";
@@ -70,5 +71,20 @@ describe("client platform support", () => {
     );
     expect(unit).toContain("Restart=always");
     expect(unit).toContain("NoNewPrivileges=true");
+  });
+
+  it("restarts an existing Linux service after replacing its configuration", async () => {
+    const commands: string[][] = [];
+
+    await activateLinuxUserService(async (args) => {
+      commands.push(args);
+    });
+
+    expect(commands).toEqual([
+      ["daemon-reload"],
+      ["enable", "odyshell-client.service"],
+      ["restart", "odyshell-client.service"],
+      ["is-active", "--quiet", "odyshell-client.service"],
+    ]);
   });
 });

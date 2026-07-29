@@ -35,6 +35,10 @@ ods up \
 operating-system user, and `--allow` list form the local policy. The Server and remote agents
 cannot grant themselves capabilities that the Client has not explicitly allowed.
 
+Running `ods up` again without enrollment options restarts the existing identity. To enroll the
+same host in another Server, pass a different `--config` path; Odyshell never silently overwrites
+or ignores enrollment options for an existing identity.
+
 ## Security baseline
 
 - Client configuration is validated locally and fails closed.

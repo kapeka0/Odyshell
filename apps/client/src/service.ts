@@ -61,10 +61,17 @@ export async function installLinuxUserService(options: {
     renderLinuxUserService({ ...options, configPath: resolve(options.configPath) }),
     { mode: 0o644 },
   );
-  await systemctl(["daemon-reload"]);
-  await systemctl(["enable", "--now", linuxServiceName]);
-  await systemctl(["is-active", "--quiet", linuxServiceName]);
+  await activateLinuxUserService();
   return { servicePath, lingering: await userLingering() };
+}
+
+export async function activateLinuxUserService(
+  runSystemctl: (args: string[]) => Promise<void> = systemctl,
+): Promise<void> {
+  await runSystemctl(["daemon-reload"]);
+  await runSystemctl(["enable", linuxServiceName]);
+  await runSystemctl(["restart", linuxServiceName]);
+  await runSystemctl(["is-active", "--quiet", linuxServiceName]);
 }
 
 export async function stopLinuxUserService(): Promise<void> {
