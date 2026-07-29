@@ -39,6 +39,25 @@ ods --json exec raspberry -- uname -a
 - `ods agent list` and `ods agent revoke` inspect or remove agent access.
 - `ods client` configures the client running on a private machine.
 - `ods audit` shows actions performed by the current agent; `--all` uses administrator access.
+- `ods mcp` exposes the same scoped operations to MCP-compatible agents over stdio.
+
+## MCP
+
+Log in with a scoped agent token, then configure your agent to launch Odyshell:
+
+```json
+{
+  "mcpServers": {
+    "odyshell": {
+      "command": "ods",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+The MCP process receives only agent tools. It cannot enroll or revoke machines, create tokens, or
+use the administrator key. Each operation runs in a disposable session and remains auditable.
 
 From the monorepo root, build and install the CLI with:
 

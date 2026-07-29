@@ -19,7 +19,7 @@ import {
   runClient,
   stopLinuxUserService,
 } from "@odyshell/client";
-import { OdyshellApi, type Operation } from "@odyshell/sdk";
+import { Odyshell, OdyshellApi, type Operation } from "@odyshell/sdk";
 import { parseDuration } from "./duration.js";
 import { ExpectedError, printCliError } from "./errors.js";
 import {
@@ -41,6 +41,7 @@ import {
   streamEvent,
 } from "./output.js";
 import { assertClientUpConfiguration } from "./up.js";
+import { serveOdyshellMcp } from "./mcp.js";
 
 const program = new Command();
 program
@@ -385,6 +386,25 @@ program
     const result = await (await apiFor(command)).audit(Number(options.limit), options.all ?? false);
     if (global.json) printJson(result);
     else printAudit(result.principal, result.data);
+  });
+
+program
+  .command("mcp")
+  .description("serve Odyshell tools to AI agents over MCP stdio")
+  .action(async (_options, command: Command) => {
+    const config = await resolveConfig(globals(command));
+    if (!config.agentToken) {
+      throw new ExpectedError(
+        "An agent token is required for MCP. Run \"ods login\" or set ODYSHELL_AGENT_TOKEN.",
+        "agent_token_required",
+      );
+    }
+    serveOdyshellMcp(
+      new Odyshell({
+        serverUrl: config.serverUrl,
+        agentToken: config.agentToken,
+      }),
+    );
   });
 
 const session = program.command("session").description("manage persistent sessions");

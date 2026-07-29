@@ -25,9 +25,11 @@
     "build": "tsup"
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
     "commander": "^14.0.0",
     "picocolors": "^1.1.1",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@odyshell/client": "workspace:*",

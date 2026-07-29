@@ -135,6 +135,19 @@ ods --server http://127.0.0.1:4100 --agent-token <agent-token> exec my-machine -
 ods --server http://127.0.0.1:4100 --agent-token <agent-token> audit
 ```
 
+MCP-compatible agents can launch the same interface locally with `ods mcp`:
+
+```json
+{
+  "mcpServers": {
+    "odyshell": {
+      "command": "ods",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
 The Server restricts the token to its assigned machines and capabilities. The Client applies its
 own local policy as a second boundary. When the token expires, its sessions are closed too, so an
 agent cannot keep access through an older session. `ods audit` shows the current agent's history;

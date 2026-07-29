@@ -45,7 +45,7 @@ export const agentTokenRequestSchema = z.object({
 });
 export type AgentTokenRequest = z.infer<typeof agentTokenRequestSchema>;
 
-const relativePathSchema = z
+export const relativePathSchema = z
   .string()
   .max(4096)
   .refine((value) => !value.includes("\0"), "Path cannot contain NUL bytes")
@@ -55,19 +55,28 @@ const relativePathSchema = z
     "Parent traversal is not allowed",
   );
 
+export const operationEnvironmentSchema = z.record(
+  z
+    .string()
+    .min(1)
+    .max(256)
+    .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "Invalid environment variable name"),
+  z.string().max(65_536),
+);
+
 export const operationActionSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("process.exec"),
     program: z.string().min(1).max(1024),
     args: z.array(z.string().max(16_384)).max(256).default([]),
     cwd: relativePathSchema.default("."),
-    env: z.record(z.string(), z.string().max(65_536)).default({}),
+    env: operationEnvironmentSchema.default({}),
   }),
   z.object({
     kind: z.literal("process.shell"),
     command: z.string().min(1).max(65_536),
     cwd: relativePathSchema.default("."),
-    env: z.record(z.string(), z.string().max(65_536)).default({}),
+    env: operationEnvironmentSchema.default({}),
   }),
   z.object({ kind: z.literal("fs.stat"), path: relativePathSchema }),
   z.object({ kind: z.literal("fs.list"), path: relativePathSchema.default(".") }),

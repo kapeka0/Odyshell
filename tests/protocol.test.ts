@@ -26,6 +26,15 @@ describe("protocol validation", () => {
         action: { kind: "process.exec", program: "printf", args: ["hello"], cwd: ".", env: {} },
       }).success,
     ).toBe(true);
+    expect(
+      operationRequestSchema.safeParse({
+        action: {
+          kind: "process.exec",
+          program: "env",
+          env: { "BAD-NAME": "value" },
+        },
+      }).success,
+    ).toBe(false);
   });
 
   it("accepts structured filesystem search and Docker log operations", () => {
