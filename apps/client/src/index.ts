@@ -345,6 +345,7 @@ export class Client {
     let timedOut = false;
     let cancelled = false;
     const maximum = Math.min(message.maxOutputBytes, active.session.profile.maxOutputBytes);
+    const maximumEventBytes = 256 * 1024;
     const emit = (stream: "stdout" | "stderr" | "result", data: Buffer): void => {
       if (outputTruncated) return;
       const remaining = maximum - outputBytes;
@@ -355,13 +356,15 @@ export class Client {
       const accepted = data.subarray(0, remaining);
       outputBytes += accepted.length;
       if (accepted.length < data.length) outputTruncated = true;
-      this.send({
-        type: "operation.event",
-        operationId: message.operationId,
-        sequence: sequence++,
-        stream,
-        dataBase64: accepted.toString("base64"),
-      });
+      for (let offset = 0; offset < accepted.length; offset += maximumEventBytes) {
+        this.send({
+          type: "operation.event",
+          operationId: message.operationId,
+          sequence: sequence++,
+          stream,
+          dataBase64: accepted.subarray(offset, offset + maximumEventBytes).toString("base64"),
+        });
+      }
     };
 
     try {

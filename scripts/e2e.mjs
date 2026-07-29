@@ -12,7 +12,6 @@ const composeEnvironment = {
   ...process.env,
   ODYSHELL_BIND_ADDRESS: "127.0.0.1",
   ODYSHELL_SERVER_PORT: "0",
-  ODYSHELL_POSTGRES_PORT: "0",
   ODYSHELL_AGENT_KEY: agentKey,
   ODYSHELL_ADMIN_KEY: adminKey,
   ODYSHELL_ALLOW_DEV_CREDENTIALS: "true",

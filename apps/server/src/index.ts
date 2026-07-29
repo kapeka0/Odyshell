@@ -16,13 +16,11 @@ import {
   developmentCredentialsEnabled,
   serverAdminKey,
 } from "./access.js";
-import { audit, createDatabase, migrate } from "./database.js";
+import { audit, createDatabase } from "./database.js";
 import { ClientGateway } from "./gateway.js";
 
 const port = Number(process.env.PORT ?? 4100);
 const host = process.env.HOST ?? "127.0.0.1";
-const databaseUrl =
-  process.env.DATABASE_URL ?? "postgres://odyshell:odyshell@127.0.0.1:55432/odyshell";
 const adminKey = serverAdminKey(process.env);
 const developmentAgentKey = developmentCredentialsEnabled(process.env)
   ? (process.env.ODYSHELL_AGENT_KEY ?? "dev-agent-key")
@@ -31,9 +29,8 @@ const developmentAgentKey = developmentCredentialsEnabled(process.env)
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
 await app.register(websocket, { options: { maxPayload: 2 * 1024 * 1024 } });
 
-const db = createDatabase(databaseUrl);
-await migrate(db);
-await db.query(`UPDATE machines SET status = 'offline' WHERE status <> 'offline'`);
+const db = createDatabase(process.env);
+await db.initialize();
 const gateway = new ClientGateway(db);
 gateway.register(app);
 
@@ -81,26 +78,14 @@ async function requireAgent(request: FastifyRequest, reply: FastifyReply): Promi
   }
 
   if (token) {
-    const result = await db.query<{
-      id: string;
-      name: string;
-      machine_ids: string[];
-      capabilities: Capability[];
-      expires_at: Date;
-    }>(
-      `SELECT id, name, machine_ids, capabilities, expires_at
-       FROM agent_tokens
-       WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()`,
-      [hashToken(token)],
-    );
-    const principal = result.rows[0];
+    const principal = await db.findAgentByTokenHash(hashToken(token));
     if (principal) {
       requestPrincipals.set(request, {
         id: principal.id,
         name: principal.name,
-        machineIds: new Set(principal.machine_ids),
+        machineIds: new Set(principal.machineIds),
         capabilities: new Set(principal.capabilities),
-        expiresAt: principal.expires_at,
+        expiresAt: new Date(principal.expiresAt),
       });
       return;
     }
@@ -111,6 +96,10 @@ async function requireAgent(request: FastifyRequest, reply: FastifyReply): Promi
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+function isoTimestamp(timestamp: number | undefined): string | null {
+  return timestamp === undefined ? null : new Date(timestamp).toISOString();
 }
 
 function principalFor(request: FastifyRequest): AgentPrincipal {
@@ -167,24 +156,19 @@ function operationAuditMetadata(action: OperationAction): Record<string, unknown
 }
 
 async function expireAgentSessions(principalId: string, reason: string): Promise<number> {
-  const expired = await db.query<{ id: string; machine_id: string }>(
-    `UPDATE sessions SET status = 'expired', updated_at = now()
-     WHERE principal_id = $1 AND status IN ('opening', 'ready')
-     RETURNING id, machine_id`,
-    [principalId],
-  );
-  for (const session of expired.rows) {
-    gateway.send(session.machine_id, {
+  const expired = await db.expireAgentSessions(principalId);
+  for (const session of expired) {
+    gateway.send(session.machineId, {
       type: "session.close",
       sessionId: session.id,
       reason,
     });
   }
-  return expired.rowCount ?? 0;
+  return expired.length;
 }
 
 app.get("/health", async () => {
-  await db.query("SELECT 1");
+  await db.health();
   return { status: "ok", protocol: 1 };
 });
 
@@ -196,44 +180,45 @@ app.post(
     const expiresInSeconds = Math.min(Math.max(body.expiresInSeconds ?? 600, 60), 86_400);
     const token = createOpaqueToken("enroll");
     const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
-    await db.query(
-      `INSERT INTO enrollment_tokens (token_hash, expires_at) VALUES ($1, $2)`,
-      [hashToken(token), expiresAt],
-    );
+    await db.createEnrollmentToken(hashToken(token), expiresAt.getTime());
     await audit(db, "admin", "enrollment_token.created", "enrollment_token", hashToken(token));
     return reply.code(201).send({ token, expiresAt: expiresAt.toISOString() });
   },
 );
 
 app.get("/v1/admin/agent-tokens", { preHandler: requireAdmin }, async () => {
-  const result = await db.query(
-    `SELECT id, name, machine_ids AS "machineIds", capabilities,
-            expires_at AS "expiresAt", revoked_at AS "revokedAt",
-            created_at AS "createdAt",
-            CASE
-              WHEN revoked_at IS NOT NULL THEN 'revoked'
-              WHEN expires_at <= now() THEN 'expired'
-              ELSE 'active'
-            END AS status
-     FROM agent_tokens
-     ORDER BY created_at DESC
-     LIMIT 200`,
-  );
-  return { data: result.rows };
+  const tokens = await db.listAgentTokens();
+  return {
+    data: tokens.map((token) => ({
+      id: token.id,
+      name: token.name,
+      machineIds: token.machineIds,
+      capabilities: token.capabilities,
+      expiresAt: isoTimestamp(token.expiresAt),
+      revokedAt: isoTimestamp(token.revokedAt),
+      createdAt: isoTimestamp(token.createdAt),
+      status:
+        token.revokedAt !== undefined
+          ? "revoked"
+          : token.expiresAt <= Date.now()
+            ? "expired"
+            : "active",
+    })),
+  };
 });
 
 app.get("/v1/admin/machines", { preHandler: requireAdmin }, async () => {
-  const result = await db.query(
-    `SELECT id, name, status, runtime_info AS runtime,
-            last_seen_at AS "lastSeenAt", enrolled_at AS "enrolledAt",
-            revoked_at AS "revokedAt"
-     FROM machines
-     ORDER BY enrolled_at`,
-  );
+  const machines = await db.listMachines({ includeRevoked: true });
   return {
-    data: result.rows.map((row) => ({
-      ...row,
-      online: row.revokedAt === null && gateway.isOnline(row.id as string),
+    data: machines.map((machine) => ({
+      id: machine.id,
+      name: machine.name,
+      status: machine.status,
+      runtime: machine.runtime ?? null,
+      lastSeenAt: isoTimestamp(machine.lastSeenAt),
+      enrolledAt: isoTimestamp(machine.enrolledAt),
+      revokedAt: isoTimestamp(machine.revokedAt),
+      online: machine.revokedAt === undefined && gateway.isOnline(machine.id),
     })),
   };
 });
@@ -242,61 +227,37 @@ app.delete<{ Params: { machineId: string } }>(
   "/v1/admin/machines/:machineId",
   { preHandler: requireAdmin },
   async (request, reply) => {
-    const machineResult = await db.query<{ id: string; name: string; revoked_at: Date }>(
-      `UPDATE machines
-       SET revoked_at = now(), status = 'offline'
-       WHERE id = $1 AND revoked_at IS NULL
-       RETURNING id, name, revoked_at`,
-      [request.params.machineId],
-    );
-    const machine = machineResult.rows[0];
+    const machine = await db.revokeMachine(request.params.machineId);
     if (!machine) return reply.code(404).send({ error: "active_machine_not_found" });
 
-    const operations = await db.query<{ id: string }>(
-      `UPDATE operations AS operation
-       SET status = 'cancelled', error = 'machine_revoked', updated_at = now()
-       FROM sessions AS session
-       WHERE operation.session_id = session.id
-         AND session.machine_id = $1
-         AND operation.status IN ('queued', 'delivered', 'running')
-       RETURNING operation.id`,
-      [machine.id],
-    );
-    for (const operation of operations.rows) {
-      gateway.send(machine.id, { type: "operation.cancel", operationId: operation.id });
-      gateway.events.emit(`operation:${operation.id}`);
+    for (const operationId of machine.operationIds) {
+      gateway.send(machine.id, { type: "operation.cancel", operationId });
+      gateway.events.emit(`operation:${operationId}`);
     }
 
-    const sessions = await db.query<{ id: string }>(
-      `UPDATE sessions
-       SET status = 'closed', error = 'machine_revoked', updated_at = now()
-       WHERE machine_id = $1 AND status IN ('opening', 'ready', 'closing')
-       RETURNING id`,
-      [machine.id],
-    );
-    for (const session of sessions.rows) {
+    for (const sessionId of machine.sessionIds) {
       gateway.send(machine.id, {
         type: "session.close",
-        sessionId: session.id,
+        sessionId,
         reason: "machine_revoked",
       });
-      gateway.events.emit(`session:${session.id}`);
+      gateway.events.emit(`session:${sessionId}`);
     }
     const disconnected = gateway.disconnect(machine.id);
     await audit(db, "admin", "machine.revoked", "machine", machine.id, {
       name: machine.name,
-      revokedAt: machine.revoked_at.toISOString(),
-      cancelledOperations: operations.rowCount ?? 0,
-      closedSessions: sessions.rowCount ?? 0,
+      revokedAt: isoTimestamp(machine.revokedAt),
+      cancelledOperations: machine.operationIds.length,
+      closedSessions: machine.sessionIds.length,
       disconnected,
     });
     return {
       id: machine.id,
       name: machine.name,
       status: "revoked",
-      revokedAt: machine.revoked_at.toISOString(),
-      cancelledOperations: operations.rowCount ?? 0,
-      closedSessions: sessions.rowCount ?? 0,
+      revokedAt: isoTimestamp(machine.revokedAt),
+      cancelledOperations: machine.operationIds.length,
+      closedSessions: machine.sessionIds.length,
       disconnected,
     };
   },
@@ -311,30 +272,21 @@ app.post("/v1/admin/agent-tokens", { preHandler: requireAdmin }, async (request,
   const input = parsed.data;
   const uniqueMachineIds = [...new Set(input.machineIds)];
   const uniqueCapabilities = [...new Set(input.capabilities)];
-  const machines = await db.query<{ id: string }>(
-    `SELECT id FROM machines WHERE id = ANY($1::uuid[]) AND revoked_at IS NULL`,
-    [uniqueMachineIds],
-  );
-  if (machines.rowCount !== uniqueMachineIds.length) {
+  if (!(await db.activeMachinesExist(uniqueMachineIds))) {
     return reply.code(400).send({ error: "unknown_machine" });
   }
 
   const id = randomUUID();
   const token = createOpaqueToken("agent");
   const expiresAt = new Date(Date.now() + input.expiresInSeconds * 1000);
-  await db.query(
-    `INSERT INTO agent_tokens
-       (id, name, token_hash, machine_ids, capabilities, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [
-      id,
-      input.name,
-      hashToken(token),
-      JSON.stringify(uniqueMachineIds),
-      JSON.stringify(uniqueCapabilities),
-      expiresAt,
-    ],
-  );
+  await db.createAgentToken({
+    id,
+    name: input.name,
+    tokenHash: hashToken(token),
+    machineIds: uniqueMachineIds,
+    capabilities: uniqueCapabilities,
+    expiresAt: expiresAt.getTime(),
+  });
   await audit(db, "admin", "agent_token.created", "agent_token", id, {
     name: input.name,
     machineIds: uniqueMachineIds,
@@ -355,27 +307,20 @@ app.delete<{ Params: { tokenId: string } }>(
   "/v1/admin/agent-tokens/:tokenId",
   { preHandler: requireAdmin },
   async (request, reply) => {
-    const result = await db.query<{ id: string; name: string; revoked_at: Date }>(
-      `UPDATE agent_tokens
-       SET revoked_at = COALESCE(revoked_at, now())
-       WHERE id = $1
-       RETURNING id, name, revoked_at`,
-      [request.params.tokenId],
-    );
-    const token = result.rows[0];
+    const token = await db.revokeAgentToken(request.params.tokenId);
     if (!token) return reply.code(404).send({ error: "agent_token_not_found" });
 
     const closedSessions = await expireAgentSessions(token.id, "agent_token_revoked");
     await audit(db, "admin", "agent_token.revoked", "agent_token", token.id, {
       name: token.name,
-      revokedAt: token.revoked_at.toISOString(),
+      revokedAt: isoTimestamp(token.revokedAt),
       closedSessions,
     });
     return {
       id: token.id,
       name: token.name,
       status: "revoked",
-      revokedAt: token.revoked_at.toISOString(),
+      revokedAt: isoTimestamp(token.revokedAt),
       closedSessions,
     };
   },
@@ -395,59 +340,37 @@ app.post("/v1/clients/enroll", async (request, reply) => {
     return reply.code(400).send({ error: "invalid_client_public_key" });
   }
 
-  const client = await db.connect();
-  try {
-    await client.query("BEGIN");
-    const tokenResult = await client.query(
-      `SELECT token_hash FROM enrollment_tokens
-       WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()
-       FOR UPDATE`,
-      [hashToken(body.token)],
-    );
-    if (tokenResult.rowCount !== 1) {
-      await client.query("ROLLBACK");
-      return reply.code(401).send({ error: "invalid_or_expired_enrollment_token" });
-    }
-    const machineId = randomUUID();
-    await client.query(
-      `INSERT INTO machines (id, name, public_key) VALUES ($1, $2, $3)`,
-      [machineId, body.name, body.publicKey],
-    );
-    await client.query(`UPDATE enrollment_tokens SET used_at = now() WHERE token_hash = $1`, [
-      hashToken(body.token),
-    ]);
-    await client.query("COMMIT");
-    await audit(db, "client-enrollment", "machine.enrolled", "machine", machineId, {
-      name: body.name,
-    });
-    return reply.code(201).send({ machineId, name: body.name });
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
+  const machineId = randomUUID();
+  const enrolled = await db.enrollMachine({
+    tokenHash: hashToken(body.token),
+    machineId,
+    name: body.name,
+    publicKey: body.publicKey,
+  });
+  if (!enrolled) {
+    return reply.code(401).send({ error: "invalid_or_expired_enrollment_token" });
   }
+  await audit(db, "client-enrollment", "machine.enrolled", "machine", machineId, {
+    name: body.name,
+  });
+  return reply.code(201).send(enrolled);
 });
 
 app.get("/v1/machines", { preHandler: requireAgent }, async (request) => {
   const principal = principalFor(request);
-  const result =
-    principal.machineIds === null
-      ? await db.query(
-          `SELECT id, name, status, runtime_info AS runtime,
-                  last_seen_at AS "lastSeenAt", enrolled_at AS "enrolledAt"
-           FROM machines WHERE revoked_at IS NULL ORDER BY enrolled_at`,
-        )
-      : await db.query(
-          `SELECT id, name, status, runtime_info AS runtime,
-                  last_seen_at AS "lastSeenAt", enrolled_at AS "enrolledAt"
-           FROM machines
-           WHERE id = ANY($1::uuid[]) AND revoked_at IS NULL
-           ORDER BY enrolled_at`,
-          [[...principal.machineIds]],
-        );
+  const machines = await db.listMachines({
+    ...(principal.machineIds === null ? {} : { machineIds: [...principal.machineIds] }),
+  });
   return {
-    data: result.rows.map((row) => ({ ...row, online: gateway.isOnline(row.id as string) })),
+    data: machines.map((machine) => ({
+      id: machine.id,
+      name: machine.name,
+      status: machine.status,
+      runtime: machine.runtime ?? null,
+      lastSeenAt: isoTimestamp(machine.lastSeenAt),
+      enrolledAt: isoTimestamp(machine.enrolledAt),
+      online: gateway.isOnline(machine.id),
+    })),
   };
 });
 
@@ -486,18 +409,20 @@ app.post<{ Params: { machineId: string } }>(
 
 app.get("/v1/sessions", { preHandler: requireAgent }, async (request) => {
   const principal = principalFor(request);
-  const result = await db.query(
-    `SELECT s.id, s.machine_id AS "machineId", m.name AS "machineName", s.profile,
-            s.capabilities, s.status, s.expires_at AS "expiresAt", s.error,
-            s.created_at AS "createdAt"
-     FROM sessions s
-     JOIN machines m ON m.id = s.machine_id
-     WHERE s.principal_id = $1
-     ORDER BY s.created_at DESC
-     LIMIT 100`,
-    [principal.id],
-  );
-  return { data: result.rows };
+  const sessions = await db.listSessions(principal.id);
+  return {
+    data: sessions.map((session) => ({
+      id: session.id,
+      machineId: session.machineId,
+      machineName: session.machineName,
+      profile: session.profile,
+      capabilities: session.capabilities,
+      status: session.status,
+      expiresAt: isoTimestamp(session.expiresAt),
+      error: session.error ?? null,
+      createdAt: isoTimestamp(session.createdAt),
+    })),
+  };
 });
 
 app.post("/v1/sessions", { preHandler: requireAgent }, async (request, reply) => {
@@ -533,19 +458,14 @@ app.post("/v1/sessions", { preHandler: requireAgent }, async (request, reply) =>
   if (expiresAt.getTime() <= Date.now()) {
     return reply.code(401).send({ error: "invalid_or_expired_agent_token" });
   }
-  await db.query(
-    `INSERT INTO sessions
-       (id, machine_id, principal_id, profile, capabilities, status, expires_at)
-     VALUES ($1, $2, $3, $4, $5, 'opening', $6)`,
-    [
-      sessionId,
-      input.machineId,
-      principal.id,
-      input.profile,
-      JSON.stringify(input.capabilities),
-      expiresAt,
-    ],
-  );
+  await db.createSession({
+    id: sessionId,
+    machineId: input.machineId,
+    principalId: principal.id,
+    profile: input.profile,
+    capabilities: input.capabilities,
+    expiresAt: expiresAt.getTime(),
+  });
   gateway.send(input.machineId, {
     type: "session.open",
     sessionId,
@@ -572,14 +492,18 @@ app.get<{ Params: { sessionId: string } }>(
   { preHandler: requireAgent },
   async (request, reply) => {
     const principal = principalFor(request);
-    const result = await db.query(
-      `SELECT id, machine_id AS "machineId", profile, capabilities, status,
-              expires_at AS "expiresAt", error, created_at AS "createdAt"
-       FROM sessions WHERE id = $1 AND principal_id = $2`,
-      [request.params.sessionId, principal.id],
-    );
-    if (!result.rows[0]) return reply.code(404).send({ error: "session_not_found" });
-    return result.rows[0];
+    const session = await db.getSession(request.params.sessionId, principal.id);
+    if (!session) return reply.code(404).send({ error: "session_not_found" });
+    return {
+      id: session.id,
+      machineId: session.machineId,
+      profile: session.profile,
+      capabilities: session.capabilities,
+      status: session.status,
+      expiresAt: isoTimestamp(session.expiresAt),
+      error: session.error ?? null,
+      createdAt: isoTimestamp(session.createdAt),
+    };
   },
 );
 
@@ -588,21 +512,14 @@ app.delete<{ Params: { sessionId: string } }>(
   { preHandler: requireAgent },
   async (request, reply) => {
     const principal = principalFor(request);
-    const result = await db.query<{ machine_id: string }>(
-      `SELECT machine_id FROM sessions
-       WHERE id = $1 AND principal_id = $2 AND status IN ('opening', 'ready')`,
-      [request.params.sessionId, principal.id],
-    );
-    const session = result.rows[0];
+    const session = await db.getActiveSession(request.params.sessionId, principal.id);
     if (!session) return reply.code(404).send({ error: "active_session_not_found" });
-    gateway.send(session.machine_id, {
+    gateway.send(session.machineId, {
       type: "session.close",
       sessionId: request.params.sessionId,
       reason: "agent_request",
     });
-    await db.query(`UPDATE sessions SET status = 'closing', updated_at = now() WHERE id = $1`, [
-      request.params.sessionId,
-    ]);
+    await db.markSessionClosing(request.params.sessionId);
     await audit(
       db,
       principal.id,
@@ -625,30 +542,16 @@ app.post<{ Params: { sessionId: string } }>(
     }
     const idempotencyKey = request.headers["idempotency-key"] as string | undefined;
     if (idempotencyKey) {
-      const existing = await db.query(
-        `SELECT id, status FROM operations
-         WHERE principal_id = $1 AND idempotency_key = $2`,
-        [principal.id, idempotencyKey],
-      );
-      if (existing.rows[0]) return reply.code(200).send(existing.rows[0]);
+      const existing = await db.findOperationByIdempotency(principal.id, idempotencyKey);
+      if (existing) return reply.code(200).send({ id: existing.id, status: existing.status });
     }
 
-    const sessionResult = await db.query<{
-      machine_id: string;
-      capabilities: Capability[];
-      expires_at: Date;
-      status: string;
-    }>(
-      `SELECT machine_id, capabilities, expires_at, status
-       FROM sessions WHERE id = $1 AND principal_id = $2`,
-      [request.params.sessionId, principal.id],
-    );
-    const session = sessionResult.rows[0];
+    const session = await db.sessionForOperation(request.params.sessionId, principal.id);
     if (!session) return reply.code(404).send({ error: "session_not_found" });
     if (session.status !== "ready") {
       return reply.code(409).send({ error: "session_not_ready", status: session.status });
     }
-    if (session.expires_at.getTime() <= Date.now()) {
+    if (session.expiresAt <= Date.now()) {
       return reply.code(410).send({ error: "session_expired" });
     }
     const neededCapability = capabilityForAction(parsed.data.action);
@@ -660,26 +563,21 @@ app.post<{ Params: { sessionId: string } }>(
       });
       return reply.code(403).send({ error: "capability_denied", capability: neededCapability });
     }
-    if (!gateway.isOnline(session.machine_id)) {
+    if (!gateway.isOnline(session.machineId)) {
       return reply.code(409).send({ error: "machine_offline" });
     }
 
     const operationId = randomUUID();
-    await db.query(
-      `INSERT INTO operations
-       (id, session_id, principal_id, action, status, timeout_seconds, max_output_bytes, idempotency_key)
-       VALUES ($1, $2, $3, $4, 'queued', $5, $6, $7)`,
-      [
-        operationId,
-        request.params.sessionId,
-        principal.id,
-        JSON.stringify(parsed.data.action),
-        parsed.data.timeoutSeconds,
-        parsed.data.maxOutputBytes,
-        idempotencyKey ?? null,
-      ],
-    );
-    const sent = gateway.send(session.machine_id, {
+    await db.createOperation({
+      id: operationId,
+      sessionId: request.params.sessionId,
+      principalId: principal.id,
+      action: parsed.data.action,
+      timeoutSeconds: parsed.data.timeoutSeconds,
+      maxOutputBytes: parsed.data.maxOutputBytes,
+      ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+    });
+    const sent = gateway.send(session.machineId, {
       type: "operation.start",
       operationId,
       sessionId: request.params.sessionId,
@@ -688,9 +586,7 @@ app.post<{ Params: { sessionId: string } }>(
       maxOutputBytes: parsed.data.maxOutputBytes,
     });
     if (sent) {
-      await db.query(`UPDATE operations SET status = 'delivered', updated_at = now() WHERE id = $1`, [
-        operationId,
-      ]);
+      await db.markOperationDelivered(operationId);
     }
     await audit(db, principal.id, "operation.created", "operation", operationId, {
       sessionId: request.params.sessionId,
@@ -705,21 +601,25 @@ app.get<{ Params: { operationId: string } }>(
   { preHandler: requireAgent },
   async (request, reply) => {
     const principal = principalFor(request);
-    const result = await db.query(
-      `SELECT id, session_id AS "sessionId", action, status, exit_code AS "exitCode",
-              error, output_truncated AS "outputTruncated",
-              created_at AS "createdAt", updated_at AS "updatedAt"
-       FROM operations WHERE id = $1 AND principal_id = $2`,
-      [request.params.operationId, principal.id],
-    );
-    const operation = result.rows[0];
+    const operation = await db.getOperation(request.params.operationId, principal.id);
     if (!operation) return reply.code(404).send({ error: "operation_not_found" });
-    const events = await db.query(
-      `SELECT sequence, stream, encode(data, 'base64') AS "dataBase64", created_at AS "createdAt"
-       FROM operation_events WHERE operation_id = $1 ORDER BY sequence`,
-      [request.params.operationId],
-    );
-    return { ...operation, events: events.rows };
+    return {
+      id: operation.id,
+      sessionId: operation.sessionId,
+      action: operation.action,
+      status: operation.status,
+      exitCode: operation.exitCode ?? null,
+      error: operation.error ?? null,
+      outputTruncated: operation.outputTruncated,
+      createdAt: isoTimestamp(operation.createdAt),
+      updatedAt: isoTimestamp(operation.updatedAt),
+      events: operation.events.map((event) => ({
+        sequence: event.sequence,
+        stream: event.stream,
+        dataBase64: event.dataBase64,
+        createdAt: isoTimestamp(event.createdAt),
+      })),
+    };
   },
 );
 
@@ -728,18 +628,12 @@ app.post<{ Params: { operationId: string } }>(
   { preHandler: requireAgent },
   async (request, reply) => {
     const principal = principalFor(request);
-    const result = await db.query<{ machine_id: string; status: string }>(
-      `SELECT s.machine_id, o.status
-       FROM operations o JOIN sessions s ON s.id = o.session_id
-       WHERE o.id = $1 AND o.principal_id = $2`,
-      [request.params.operationId, principal.id],
-    );
-    const operation = result.rows[0];
+    const operation = await db.getOperationTarget(request.params.operationId, principal.id);
     if (!operation) return reply.code(404).send({ error: "operation_not_found" });
     if (!["queued", "delivered", "running"].includes(operation.status)) {
       return reply.code(409).send({ error: "operation_not_cancellable", status: operation.status });
     }
-    gateway.send(operation.machine_id, {
+    gateway.send(operation.machineId, {
       type: "operation.cancel",
       operationId: request.params.operationId,
     });
@@ -759,11 +653,9 @@ app.get<{ Params: { operationId: string }; Querystring: { after?: string } }>(
   { preHandler: requireAgent },
   async (request, reply) => {
     const principal = principalFor(request);
-    const found = await db.query(
-      `SELECT 1 FROM operations WHERE id = $1 AND principal_id = $2`,
-      [request.params.operationId, principal.id],
-    );
-    if (!found.rowCount) return reply.code(404).send({ error: "operation_not_found" });
+    if (!(await db.operationExists(request.params.operationId, principal.id))) {
+      return reply.code(404).send({ error: "operation_not_found" });
+    }
 
     reply.hijack();
     reply.raw.writeHead(200, {
@@ -774,19 +666,18 @@ app.get<{ Params: { operationId: string }; Querystring: { after?: string } }>(
 
     let lastSequence = Number(request.query.after ?? -1);
     const emitRows = async (): Promise<void> => {
-      const rows = await db.query(
-        `SELECT sequence, stream, encode(data, 'base64') AS "dataBase64"
-         FROM operation_events WHERE operation_id = $1 AND sequence > $2 ORDER BY sequence`,
-        [request.params.operationId, lastSequence],
-      );
-      for (const row of rows.rows) {
-        lastSequence = row.sequence as number;
-        reply.raw.write(`id: ${lastSequence}\nevent: output\ndata: ${JSON.stringify(row)}\n\n`);
+      const events = await db.listOperationEvents(request.params.operationId, lastSequence);
+      for (const event of events) {
+        lastSequence = event.sequence;
+        reply.raw.write(
+          `id: ${lastSequence}\nevent: output\ndata: ${JSON.stringify({
+            sequence: event.sequence,
+            stream: event.stream,
+            dataBase64: event.dataBase64,
+          })}\n\n`,
+        );
       }
-      const state = await db.query(`SELECT status FROM operations WHERE id = $1`, [
-        request.params.operationId,
-      ]);
-      const status = state.rows[0]?.status as string | undefined;
+      const status = await db.operationStatus(request.params.operationId);
       if (status && !["queued", "delivered", "running"].includes(status)) {
         reply.raw.write(`event: completed\ndata: ${JSON.stringify({ status })}\n\n`);
         cleanup();
@@ -813,18 +704,13 @@ app.get<{ Querystring: { limit?: string } }>(
     const limit = Number.isFinite(requestedLimit)
       ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 200)
       : 50;
-    const result = await db.query(
-      `SELECT id, principal_id AS "principalId", action,
-              target_type AS "targetType", target_id AS "targetId",
-              metadata, created_at AS "createdAt"
-       FROM audit_events
-       ORDER BY created_at DESC
-       LIMIT $1`,
-      [limit],
-    );
+    const events = await db.listAudit(limit);
     return {
       principal: { id: "admin", name: "All agents" },
-      data: result.rows,
+      data: events.map((event) => ({
+        ...event,
+        createdAt: isoTimestamp(event.createdAt),
+      })),
     };
   },
 );
@@ -838,51 +724,32 @@ app.get<{ Querystring: { limit?: string } }>(
     const limit = Number.isFinite(requestedLimit)
       ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 200)
       : 50;
-    const result = await db.query(
-      `SELECT id, principal_id AS "principalId", action,
-              target_type AS "targetType", target_id AS "targetId",
-              metadata, created_at AS "createdAt"
-       FROM audit_events
-       WHERE principal_id = $1
-       ORDER BY created_at DESC
-       LIMIT $2`,
-      [principal.id, limit],
-    );
+    const events = await db.listAudit(limit, principal.id);
     return {
       principal: { id: principal.id, name: principal.name },
-      data: result.rows,
+      data: events.map((event) => ({
+        ...event,
+        createdAt: isoTimestamp(event.createdAt),
+      })),
     };
   },
 );
 
 const expiryTimer = setInterval(() => {
   void (async () => {
-    const expired = await db.query<{ id: string; machine_id: string }>(
-      `UPDATE sessions AS session SET status = 'expired', updated_at = now()
-       WHERE status IN ('opening', 'ready')
-         AND (
-           expires_at <= now()
-           OR EXISTS (
-             SELECT 1 FROM agent_tokens AS token
-             WHERE token.id::text = session.principal_id
-               AND (token.expires_at <= now() OR token.revoked_at IS NOT NULL)
-           )
-         )
-       RETURNING session.id, session.machine_id`,
-    );
-    for (const session of expired.rows) {
-      gateway.send(session.machine_id, {
+    const expired = await db.expireSessions();
+    for (const session of expired) {
+      gateway.send(session.machineId, {
         type: "session.close",
         sessionId: session.id,
         reason: "expired",
       });
     }
   })().catch((error: unknown) => app.log.error(error, "Session expiry sweep failed"));
-}, 1_000);
+}, 60_000);
 
 app.addHook("onClose", async () => {
   clearInterval(expiryTimer);
-  await db.end();
 });
 
 await app.listen({ port, host });

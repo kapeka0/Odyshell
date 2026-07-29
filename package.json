@@ -7,6 +7,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "node scripts/e2e.mjs",
+    "convex:dev": "convex dev",
+    "convex:deploy": "convex deploy",
     "install:ods": "pnpm --filter @odyshell/client build && pnpm --filter @odyshell/cli build && npm install --global ./apps/cli",
     "dev:server": "pnpm --filter @odyshell/server dev",
     "client": "pnpm --filter @odyshell/client start",
@@ -16,6 +18,7 @@
   "devDependencies": {
     "@modelcontextprotocol/client": "^2.0.0",
     "@types/node": "^24.0.0",
+    "convex": "^1.42.3",
     "tsup": "^8.5.0",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0",

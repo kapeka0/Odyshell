@@ -15,6 +15,7 @@ type AuthState = {
   nonce: string;
   machineId?: string;
   authenticated: boolean;
+  lastHeartbeatPersistedAt?: number;
 };
 
 export class ClientGateway {
@@ -43,18 +44,21 @@ export class ClientGateway {
         if (!state.authenticated) socket.close(4001, "Authentication timeout");
       }, 10_000);
 
+      let messageQueue = Promise.resolve();
       socket.on("message", (data) => {
-        void this.handleMessage(socket, state, data.toString()).catch((error: unknown) => {
-          app.log.error(error, "Client message failed");
-          socket.close(4002, "Protocol error");
-        });
+        messageQueue = messageQueue
+          .then(() => this.handleMessage(socket, state, data.toString()))
+          .catch((error: unknown) => {
+            app.log.error(error, "Client message failed");
+            socket.close(4002, "Protocol error");
+          });
       });
 
       socket.on("close", () => {
         clearTimeout(authTimer);
         if (state.machineId && this.connections.get(state.machineId) === socket) {
           this.connections.delete(state.machineId);
-          void this.db.query(`UPDATE machines SET status = 'offline' WHERE id = $1`, [state.machineId]);
+          void this.db.setMachineOffline(state.machineId);
         }
       });
     });
@@ -117,7 +121,7 @@ export class ClientGateway {
       throw new Error("Machine identity mismatch");
     }
 
-    await this.persistMessage(message);
+    await this.persistMessage(message, state);
   }
 
   private async authenticate(
@@ -126,18 +130,14 @@ export class ClientGateway {
     message: Extract<ClientToServerMessage, { type: "authenticate" }>,
   ): Promise<void> {
     if (message.protocolVersion !== PROTOCOL_VERSION) throw new Error("Unsupported protocol version");
-    const result = await this.db.query<{ public_key: string }>(
-      "SELECT public_key FROM machines WHERE id = $1 AND revoked_at IS NULL",
-      [message.machineId],
-    );
-    const machine = result.rows[0];
-    if (!machine) throw new Error("Unknown machine");
+    const publicKey = await this.db.machinePublicKey(message.machineId);
+    if (!publicKey) throw new Error("Unknown machine");
 
     const payload = Buffer.from(`odyshell:${state.connectionId}:${state.nonce}`);
     const valid = verify(
       null,
       payload,
-      createPublicKey(machine.public_key),
+      createPublicKey(publicKey),
       Buffer.from(message.signature, "base64url"),
     );
     if (!valid) throw new Error("Invalid client signature");
@@ -147,42 +147,34 @@ export class ClientGateway {
 
     state.authenticated = true;
     state.machineId = message.machineId;
+    state.lastHeartbeatPersistedAt = Date.now();
     this.connections.set(message.machineId, socket);
-    await this.db.query(
-      `UPDATE machines
-       SET status = 'online',
-           last_seen_at = now(),
-           runtime_info = COALESCE($2::jsonb, runtime_info)
-       WHERE id = $1`,
-      [message.machineId, message.runtime ? JSON.stringify(message.runtime) : null],
-    );
+    await this.db.setMachineOnline(message.machineId, message.runtime);
     this.sendSocket(socket, { type: "authenticated", machineId: message.machineId });
     this.events.emit("machine.online", message.machineId);
   }
 
-  private async persistMessage(message: ClientToServerMessage): Promise<void> {
+  private async persistMessage(
+    message: ClientToServerMessage,
+    state: AuthState,
+  ): Promise<void> {
     switch (message.type) {
       case "heartbeat":
-        await this.db.query(
-          `UPDATE machines
-           SET status = 'online', last_seen_at = now()
-           WHERE id = $1 AND revoked_at IS NULL`,
-          [message.machineId],
-        );
+        if (
+          state.lastHeartbeatPersistedAt === undefined ||
+          Date.now() - state.lastHeartbeatPersistedAt >= 5 * 60_000
+        ) {
+          await this.db.heartbeat(message.machineId);
+          state.lastHeartbeatPersistedAt = Date.now();
+        }
         break;
       case "pong":
         this.events.emit(`ping:${message.pingId}`);
         break;
       case "session.opened":
         {
-          const result = await this.db.query<{ principal_id: string }>(
-            `UPDATE sessions
-             SET status = 'ready', updated_at = now(), error = NULL
-             WHERE id = $1 AND status = 'opening'
-             RETURNING principal_id`,
-            [message.sessionId],
-          );
-          const principalId = result.rows[0]?.principal_id;
+          const result = await this.db.markSessionOpened(message.sessionId);
+          const principalId = result?.principalId;
           if (principalId) {
             await audit(this.db, principalId, "session.opened", "session", message.sessionId);
           }
@@ -191,14 +183,8 @@ export class ClientGateway {
         break;
       case "session.open_failed":
         {
-          const result = await this.db.query<{ principal_id: string }>(
-            `UPDATE sessions
-             SET status = 'failed', updated_at = now(), error = $2
-             WHERE id = $1 AND status = 'opening'
-             RETURNING principal_id`,
-            [message.sessionId, message.error],
-          );
-          const principalId = result.rows[0]?.principal_id;
+          const result = await this.db.markSessionOpenFailed(message.sessionId, message.error);
+          const principalId = result?.principalId;
           if (principalId) {
             await audit(this.db, principalId, "session.open_failed", "session", message.sessionId, {
               error: message.error,
@@ -209,17 +195,9 @@ export class ClientGateway {
         break;
       case "session.closed":
         {
-          const result = await this.db.query<{ principal_id: string; status: string }>(
-            `UPDATE sessions
-             SET status = CASE WHEN expires_at <= now() THEN 'expired' ELSE 'closed' END,
-                 updated_at = now()
-             WHERE id = $1 AND status IN ('opening', 'ready', 'closing')
-             RETURNING principal_id, status`,
-            [message.sessionId],
-          );
-          const session = result.rows[0];
+          const session = await this.db.markSessionClosed(message.sessionId);
           if (session) {
-            await audit(this.db, session.principal_id, "session.closed", "session", message.sessionId, {
+            await audit(this.db, session.principalId, "session.closed", "session", message.sessionId, {
               reason: message.reason,
               status: session.status,
             });
@@ -228,44 +206,28 @@ export class ClientGateway {
         }
         break;
       case "operation.started":
-        await this.db.query(
-          `UPDATE operations
-           SET status = 'running', updated_at = now()
-           WHERE id = $1 AND status IN ('queued', 'delivered')`,
-          [message.operationId],
-        );
+        await this.db.markOperationStarted(message.operationId);
         this.events.emit(`operation:${message.operationId}`);
         break;
       case "operation.event":
-        await this.db.query(
-          `INSERT INTO operation_events (operation_id, sequence, stream, data)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT DO NOTHING`,
-          [
-            message.operationId,
-            message.sequence,
-            message.stream,
-            Buffer.from(message.dataBase64, "base64"),
-          ],
-        );
+        await this.db.addOperationEvent({
+          operationId: message.operationId,
+          sequence: message.sequence,
+          stream: message.stream,
+          dataBase64: message.dataBase64,
+        });
         this.events.emit(`operation:${message.operationId}`, message);
         break;
       case "operation.completed":
         {
-          const result = await this.db.query<{ principal_id: string }>(
-            `UPDATE operations
-             SET status = $2, exit_code = $3, error = $4, output_truncated = $5, updated_at = now()
-             WHERE id = $1 AND status IN ('queued', 'delivered', 'running')
-             RETURNING principal_id`,
-            [
-              message.operationId,
-              message.status,
-              message.exitCode,
-              message.error ?? null,
-              message.outputTruncated,
-            ],
-          );
-          const principalId = result.rows[0]?.principal_id;
+          const result = await this.db.markOperationCompleted({
+            operationId: message.operationId,
+            status: message.status,
+            exitCode: message.exitCode,
+            ...(message.error === undefined ? {} : { error: message.error }),
+            outputTruncated: message.outputTruncated,
+          });
+          const principalId = result?.principalId;
           if (principalId) {
             await audit(
               this.db,

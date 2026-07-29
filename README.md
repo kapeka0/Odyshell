@@ -158,5 +158,8 @@ administrators can use `ods audit --all`, `ods agent list`, and `ods agent revok
 Odyshell currently supports typed process, shell, filesystem, and Docker log operations. Direct
 host execution is the default. Docker sandboxes remain an optional execution profile.
 
-It is an early development MVP. The default local credentials are only intended for development;
-create scoped agent tokens for real agent access.
+The Server keeps machine identities, temporary access, operations, and audit history in Convex.
+Railway remains the connection gateway; Convex does not connect to private machines. Local Docker
+tests use an ephemeral store and do not appear in a real workspace.
+
+It is an early development MVP. The default local credentials are only intended for development.

@@ -1,100 +1,366 @@
-import pg from "pg";
+import { ConvexHttpClient } from "convex/browser";
+import { makeFunctionReference } from "convex/server";
+import { randomUUID } from "node:crypto";
+import type { Capability, OperationAction } from "@odyshell/protocol";
+import { MemoryDatabase } from "./memory-database.js";
 
-const { Pool } = pg;
+const readFunction = makeFunctionReference<"query">("store:read");
+const writeFunction = makeFunctionReference<"mutation">("store:write");
 
-export type Database = InstanceType<typeof Pool>;
+type Timestamped = {
+  createdAt: number;
+  updatedAt?: number;
+};
 
-export function createDatabase(connectionString: string): Database {
-  return new Pool({ connectionString, max: 10 });
+export type MachineRecord = {
+  id: string;
+  name: string;
+  publicKey: string;
+  status: string;
+  runtime?: unknown;
+  lastSeenAt?: number;
+  enrolledAt: number;
+  revokedAt?: number;
+};
+
+export type AgentTokenRecord = Timestamped & {
+  id: string;
+  name: string;
+  tokenHash: string;
+  machineIds: string[];
+  capabilities: Capability[];
+  expiresAt: number;
+  revokedAt?: number;
+};
+
+export type SessionRecord = Timestamped & {
+  id: string;
+  machineId: string;
+  machineName?: string;
+  principalId: string;
+  profile: string;
+  capabilities: Capability[];
+  status: string;
+  expiresAt: number;
+  error?: string;
+};
+
+export type OperationRecord = Timestamped & {
+  id: string;
+  sessionId: string;
+  principalId: string;
+  action: OperationAction;
+  status: string;
+  timeoutSeconds: number;
+  maxOutputBytes: number;
+  exitCode?: number;
+  error?: string;
+  outputTruncated: boolean;
+  idempotencyKey?: string;
+};
+
+export type OperationEventRecord = {
+  operationId: string;
+  sequence: number;
+  stream: string;
+  dataBase64: string;
+  createdAt: number;
+};
+
+export type AuditRecord = {
+  id: string;
+  principalId: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  metadata: Record<string, unknown>;
+  createdAt: number;
+};
+
+type RpcInput = Record<string, unknown>;
+
+export class ConvexDatabase {
+  private readonly client: ConvexHttpClient;
+
+  constructor(
+    convexUrl: string,
+    private readonly serviceKey: string,
+  ) {
+    this.client = new ConvexHttpClient(convexUrl);
+  }
+
+  private async read<T>(operation: string, input: RpcInput = {}): Promise<T> {
+    return (await this.client.query(readFunction, {
+      serviceKey: this.serviceKey,
+      operation,
+      input,
+    })) as T;
+  }
+
+  private async write<T>(operation: string, input: RpcInput = {}): Promise<T> {
+    return (await this.client.mutation(writeFunction, {
+      serviceKey: this.serviceKey,
+      operation,
+      input,
+    })) as T;
+  }
+
+  async initialize(): Promise<void> {
+    await this.write("initialize");
+  }
+
+  async health(): Promise<void> {
+    await this.read("health");
+  }
+
+  async findAgentByTokenHash(tokenHash: string): Promise<AgentTokenRecord | null> {
+    return await this.read("agentByTokenHash", { tokenHash });
+  }
+
+  async createEnrollmentToken(tokenHash: string, expiresAt: number): Promise<void> {
+    await this.write("createEnrollmentToken", { tokenHash, expiresAt });
+  }
+
+  async listAgentTokens(): Promise<AgentTokenRecord[]> {
+    return await this.read("listAgentTokens");
+  }
+
+  async listMachines(options: {
+    includeRevoked?: boolean;
+    machineIds?: string[];
+  } = {}): Promise<MachineRecord[]> {
+    return await this.read("listMachines", options);
+  }
+
+  async activeMachinesExist(machineIds: string[]): Promise<boolean> {
+    return await this.read("activeMachinesExist", { machineIds });
+  }
+
+  async createAgentToken(input: {
+    id: string;
+    name: string;
+    tokenHash: string;
+    machineIds: string[];
+    capabilities: Capability[];
+    expiresAt: number;
+  }): Promise<void> {
+    await this.write("createAgentToken", input);
+  }
+
+  async revokeAgentToken(tokenId: string): Promise<AgentTokenRecord | null> {
+    return await this.write("revokeAgentToken", { tokenId });
+  }
+
+  async expireAgentSessions(
+    principalId: string,
+  ): Promise<Array<{ id: string; machineId: string }>> {
+    return await this.write("expireAgentSessions", { principalId });
+  }
+
+  async enrollMachine(input: {
+    tokenHash: string;
+    machineId: string;
+    name: string;
+    publicKey: string;
+  }): Promise<{ machineId: string; name: string } | null> {
+    return await this.write("enrollMachine", input);
+  }
+
+  async machinePublicKey(machineId: string): Promise<string | null> {
+    return await this.read("machinePublicKey", { machineId });
+  }
+
+  async setMachineOffline(machineId: string): Promise<void> {
+    await this.write("machineOffline", { machineId });
+  }
+
+  async setMachineOnline(machineId: string, runtime?: unknown): Promise<boolean> {
+    return await this.write("machineOnline", { machineId, runtime });
+  }
+
+  async heartbeat(machineId: string): Promise<void> {
+    await this.write("heartbeat", { machineId });
+  }
+
+  async revokeMachine(machineId: string): Promise<{
+    id: string;
+    name: string;
+    revokedAt: number;
+    operationIds: string[];
+    sessionIds: string[];
+  } | null> {
+    return await this.write("revokeMachine", { machineId });
+  }
+
+  async listSessions(principalId: string): Promise<SessionRecord[]> {
+    return await this.read("listSessions", { principalId });
+  }
+
+  async createSession(input: {
+    id: string;
+    machineId: string;
+    principalId: string;
+    profile: string;
+    capabilities: Capability[];
+    expiresAt: number;
+  }): Promise<void> {
+    await this.write("createSession", input);
+  }
+
+  async getSession(sessionId: string, principalId: string): Promise<SessionRecord | null> {
+    return await this.read("session", { sessionId, principalId });
+  }
+
+  async getActiveSession(
+    sessionId: string,
+    principalId: string,
+  ): Promise<SessionRecord | null> {
+    return await this.read("activeSession", { sessionId, principalId });
+  }
+
+  async markSessionClosing(sessionId: string): Promise<void> {
+    await this.write("markSessionClosing", { sessionId });
+  }
+
+  async markSessionOpened(sessionId: string): Promise<{ principalId: string } | null> {
+    return await this.write("sessionOpened", { sessionId });
+  }
+
+  async markSessionOpenFailed(
+    sessionId: string,
+    error: string,
+  ): Promise<{ principalId: string } | null> {
+    return await this.write("sessionOpenFailed", { sessionId, error });
+  }
+
+  async markSessionClosed(
+    sessionId: string,
+  ): Promise<{ principalId: string; status: string } | null> {
+    return await this.write("sessionClosed", { sessionId });
+  }
+
+  async findOperationByIdempotency(
+    principalId: string,
+    idempotencyKey: string,
+  ): Promise<Pick<OperationRecord, "id" | "status"> | null> {
+    return await this.read("operationByIdempotency", { principalId, idempotencyKey });
+  }
+
+  async sessionForOperation(
+    sessionId: string,
+    principalId: string,
+  ): Promise<SessionRecord | null> {
+    return await this.read("sessionForOperation", { sessionId, principalId });
+  }
+
+  async createOperation(input: {
+    id: string;
+    sessionId: string;
+    principalId: string;
+    action: OperationAction;
+    timeoutSeconds: number;
+    maxOutputBytes: number;
+    idempotencyKey?: string;
+  }): Promise<void> {
+    await this.write("createOperation", input);
+  }
+
+  async markOperationDelivered(operationId: string): Promise<void> {
+    await this.write("markOperationDelivered", { operationId });
+  }
+
+  async markOperationStarted(operationId: string): Promise<void> {
+    await this.write("operationStarted", { operationId });
+  }
+
+  async addOperationEvent(input: {
+    operationId: string;
+    sequence: number;
+    stream: string;
+    dataBase64: string;
+  }): Promise<void> {
+    await this.write("operationEvent", input);
+  }
+
+  async markOperationCompleted(input: {
+    operationId: string;
+    status: string;
+    exitCode: number | null;
+    error?: string;
+    outputTruncated: boolean;
+  }): Promise<{ principalId: string } | null> {
+    return await this.write("operationCompleted", input);
+  }
+
+  async getOperation(
+    operationId: string,
+    principalId: string,
+  ): Promise<(OperationRecord & { events: OperationEventRecord[] }) | null> {
+    return await this.read("operation", { operationId, principalId });
+  }
+
+  async getOperationTarget(
+    operationId: string,
+    principalId: string,
+  ): Promise<{ machineId: string; status: string } | null> {
+    return await this.read("operationTarget", { operationId, principalId });
+  }
+
+  async operationExists(operationId: string, principalId: string): Promise<boolean> {
+    return await this.read("operationExists", { operationId, principalId });
+  }
+
+  async listOperationEvents(
+    operationId: string,
+    afterSequence: number,
+  ): Promise<OperationEventRecord[]> {
+    return await this.read("operationEvents", { operationId, afterSequence });
+  }
+
+  async operationStatus(operationId: string): Promise<string | null> {
+    return await this.read("operationStatus", { operationId });
+  }
+
+  async listAudit(limit: number, principalId?: string): Promise<AuditRecord[]> {
+    return await this.read("audit", { limit, principalId });
+  }
+
+  async audit(
+    principalId: string,
+    action: string,
+    targetType: string,
+    targetId: string,
+    metadata: Record<string, unknown> = {},
+  ): Promise<void> {
+    await this.write("audit", {
+      id: randomUUID(),
+      principalId,
+      action,
+      targetType,
+      targetId,
+      metadata,
+    });
+  }
+
+  async expireSessions(): Promise<Array<{ id: string; machineId: string }>> {
+    return await this.write("expireSessions");
+  }
 }
 
-export async function migrate(db: Database): Promise<void> {
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS machines (
-      id uuid PRIMARY KEY,
-      name text NOT NULL,
-      public_key text NOT NULL,
-      status text NOT NULL DEFAULT 'offline',
-      runtime_info jsonb,
-      last_seen_at timestamptz,
-      enrolled_at timestamptz NOT NULL DEFAULT now()
-    );
+export type Database = Pick<ConvexDatabase, keyof ConvexDatabase>;
 
-    ALTER TABLE machines ADD COLUMN IF NOT EXISTS runtime_info jsonb;
-    ALTER TABLE machines ADD COLUMN IF NOT EXISTS revoked_at timestamptz;
-
-    CREATE TABLE IF NOT EXISTS enrollment_tokens (
-      token_hash text PRIMARY KEY,
-      expires_at timestamptz NOT NULL,
-      used_at timestamptz,
-      created_at timestamptz NOT NULL DEFAULT now()
-    );
-
-    CREATE TABLE IF NOT EXISTS agent_tokens (
-      id uuid PRIMARY KEY,
-      name text NOT NULL,
-      token_hash text NOT NULL UNIQUE,
-      machine_ids jsonb NOT NULL,
-      capabilities jsonb NOT NULL,
-      expires_at timestamptz NOT NULL,
-      revoked_at timestamptz,
-      created_at timestamptz NOT NULL DEFAULT now()
-    );
-
-    CREATE TABLE IF NOT EXISTS sessions (
-      id uuid PRIMARY KEY,
-      machine_id uuid NOT NULL REFERENCES machines(id),
-      principal_id text NOT NULL,
-      profile text NOT NULL,
-      capabilities jsonb NOT NULL,
-      status text NOT NULL,
-      expires_at timestamptz NOT NULL,
-      error text,
-      created_at timestamptz NOT NULL DEFAULT now(),
-      updated_at timestamptz NOT NULL DEFAULT now()
-    );
-
-    CREATE TABLE IF NOT EXISTS operations (
-      id uuid PRIMARY KEY,
-      session_id uuid NOT NULL REFERENCES sessions(id),
-      principal_id text NOT NULL,
-      action jsonb NOT NULL,
-      status text NOT NULL,
-      timeout_seconds integer NOT NULL,
-      max_output_bytes integer NOT NULL,
-      exit_code integer,
-      error text,
-      output_truncated boolean NOT NULL DEFAULT false,
-      idempotency_key text,
-      created_at timestamptz NOT NULL DEFAULT now(),
-      updated_at timestamptz NOT NULL DEFAULT now(),
-      UNIQUE (principal_id, idempotency_key)
-    );
-
-    CREATE TABLE IF NOT EXISTS operation_events (
-      operation_id uuid NOT NULL REFERENCES operations(id) ON DELETE CASCADE,
-      sequence integer NOT NULL,
-      stream text NOT NULL,
-      data bytea NOT NULL,
-      created_at timestamptz NOT NULL DEFAULT now(),
-      PRIMARY KEY (operation_id, sequence)
-    );
-
-    CREATE TABLE IF NOT EXISTS audit_events (
-      id bigserial PRIMARY KEY,
-      principal_id text NOT NULL,
-      action text NOT NULL,
-      target_type text NOT NULL,
-      target_id text NOT NULL,
-      metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
-      created_at timestamptz NOT NULL DEFAULT now()
-    );
-
-    CREATE INDEX IF NOT EXISTS sessions_machine_status_idx ON sessions(machine_id, status);
-    CREATE INDEX IF NOT EXISTS operations_session_idx ON operations(session_id, created_at);
-    CREATE INDEX IF NOT EXISTS audit_events_principal_created_idx
-      ON audit_events(principal_id, created_at DESC);
-  `);
+export function createDatabase(environment: NodeJS.ProcessEnv): Database {
+  if (environment.ODYSHELL_STORAGE === "memory") {
+    if (environment.NODE_ENV === "production") {
+      throw new Error("ODYSHELL_STORAGE=memory is forbidden in production");
+    }
+    return new MemoryDatabase();
+  }
+  const convexUrl = environment.CONVEX_URL;
+  const serviceKey = environment.ODYSHELL_CONVEX_SERVICE_KEY;
+  if (!convexUrl) throw new Error("CONVEX_URL is required");
+  if (!serviceKey) throw new Error("ODYSHELL_CONVEX_SERVICE_KEY is required");
+  return new ConvexDatabase(convexUrl, serviceKey);
 }
 
 export async function audit(
@@ -105,9 +371,5 @@ export async function audit(
   targetId: string,
   metadata: Record<string, unknown> = {},
 ): Promise<void> {
-  await db.query(
-    `INSERT INTO audit_events (principal_id, action, target_type, target_id, metadata)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [principalId, action, targetType, targetId, metadata],
-  );
+  await db.audit(principalId, action, targetType, targetId, metadata);
 }

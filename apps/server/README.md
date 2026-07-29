@@ -26,8 +26,15 @@ The development Server is then available at:
 http://127.0.0.1:4100
 ```
 
-The local defaults are intended only for development. Agent access should use expiring tokens
-created with explicit machine and capability scopes:
+Docker Compose uses an in-memory store so local tests leave no machines, tokens, or audit data
+behind. For persistent development, connect the repository to Convex and run:
+
+```bash
+pnpm convex:dev
+pnpm dev:server
+```
+
+The local defaults are intended only for development. Agent access should use expiring tokens:
 
 ```bash
 ods agent create coding-agent --machines <machine-id> --allow process.exec,fs.read --for 1h
@@ -59,12 +66,17 @@ credentials private and use a host firewall appropriate for your test environmen
 
 The repository includes a Railway configuration for the Server. A production deployment needs:
 
-- `DATABASE_URL` pointing to PostgreSQL, such as Neon.
+- `CONVEX_URL` pointing to the production Convex deployment.
+- `ODYSHELL_CONVEX_SERVICE_KEY` matching the secret stored in Convex.
 - `ODYSHELL_ADMIN_KEY` set to a strong, private value.
 - `HOST=0.0.0.0`.
 
-Railway supplies `PORT` automatically. The Server runs database migrations during startup and
-reports readiness at `/health`. Keep one replica for now because active Client connections are
-held by the running Server process.
+Railway supplies `PORT` automatically. Convex stores machines, scoped tokens, temporary sessions,
+operations, and audit events. The service key is only for the Railway Server; agents and Clients
+never receive it.
+
+Keep one Railway replica for now because active Client connections are held by the running Server
+process. The future web app can use Clerk with Convex directly for human identity without changing
+the agent-token or machine-identity protocols.
 
 [Back to Odyshell](../../README.md)
