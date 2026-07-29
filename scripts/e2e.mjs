@@ -326,6 +326,19 @@ try {
   if (cliPing.reply !== "pong" || cliPing.machineId !== machine.id) {
     throw new Error("ods ping did not complete an end-to-end client round trip");
   }
+  const cliPingText = await run(process.execPath, [
+    tsxCli,
+    odsEntry,
+    "--server",
+    apiUrl,
+    "--agent-token",
+    scopedAgent.token,
+    "ping",
+    "e2e-docker",
+  ]);
+  if (cliPingText.trim() !== "Pong! 🏓") {
+    throw new Error("ods ping did not print the expected pong");
+  }
 
   const cliExecution = JSON.parse(
     await run(process.execPath, [

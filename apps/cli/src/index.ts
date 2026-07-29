@@ -254,7 +254,7 @@ program
     const result = await api.ping(machine.id);
     if (options.json) printJson({ ...result, machineName: machine.name });
     else {
-      console.log("pong");
+      console.log("Pong! 🏓");
       console.error(pc.dim(`  ${machine.name} ${result.latencyMs}ms`));
     }
   });

@@ -5,6 +5,7 @@ import {
   printCliError,
   ServerConnectionError,
 } from "../apps/cli/src/errors.js";
+import { ApiError } from "../apps/cli/src/api.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -61,6 +62,28 @@ describe("CLI error reporting", () => {
     const output = lines.join("\n");
     expect(output).toContain("machine_offline");
     expect(output).toContain("ods client start");
+    expect(output).not.toContain("Stack trace:");
+  });
+
+  it("explains how to recover from an unresponsive ping client", () => {
+    const lines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((...values: unknown[]) => {
+      lines.push(values.join(" "));
+    });
+
+    printCliError(
+      new ApiError(
+        504,
+        "machine_ping_timeout",
+        { possibleCause: "client_outdated_or_unresponsive" },
+      ),
+      false,
+    );
+
+    const output = lines.join("\n");
+    expect(output).toContain("did not answer the ping");
+    expect(output).toContain("machine_ping_timeout");
+    expect(output).toContain("Update and restart");
     expect(output).not.toContain("Stack trace:");
   });
 

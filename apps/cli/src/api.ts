@@ -86,9 +86,16 @@ export class ApiError extends ExpectedError {
     code: string,
     readonly details?: unknown,
   ) {
-    super(`${status} ${code}`, code);
+    super(apiErrorMessage(status, code), code);
     this.name = "ApiError";
   }
+}
+
+function apiErrorMessage(status: number, code: string): string {
+  if (code === "machine_ping_timeout") {
+    return "The machine is connected, but its Odyshell Client did not answer the ping.";
+  }
+  return `${status} ${code}`;
 }
 
 export class OdyshellApi {

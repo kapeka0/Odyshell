@@ -165,6 +165,9 @@ function connectionHint(value: ErrorReport): string | undefined {
   if (value.code === "machine_offline") {
     return 'Start the Odyshell Client on that machine with "ods client start".';
   }
+  if (value.code === "machine_ping_timeout") {
+    return 'Update and restart the Odyshell Client on that machine, then try "ods ping" again.';
+  }
   return undefined;
 }
 

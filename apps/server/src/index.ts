@@ -385,7 +385,14 @@ app.post<{ Params: { machineId: string } }>(
       });
       return { reply: "pong", machineId: request.params.machineId, latencyMs };
     } catch {
-      return reply.code(504).send({ error: "machine_ping_timeout" });
+      return reply.code(504).send({
+        error: "machine_ping_timeout",
+        details: {
+          machineId: request.params.machineId,
+          timeoutMilliseconds: 5_000,
+          possibleCause: "client_outdated_or_unresponsive",
+        },
+      });
     }
   },
 );
