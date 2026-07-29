@@ -1,12 +1,28 @@
 import { describe, expect, it } from "vitest";
 import {
   boundedSessionExpiry,
+  createOpaqueToken,
   developmentCredentialsEnabled,
   serverAdminKey,
 } from "../apps/server/src/access.js";
 import { parseDuration } from "../apps/cli/src/duration.js";
 
 describe("temporary access", () => {
+  it("generates distinct 256-bit opaque tokens with ods prefixes", () => {
+    const enrollmentTokens = [createOpaqueToken("enroll"), createOpaqueToken("enroll")];
+    const agentTokens = [createOpaqueToken("agent"), createOpaqueToken("agent")];
+
+    for (const token of enrollmentTokens) {
+      expect(token).toMatch(/^ods_enroll_[A-Za-z0-9_-]{43}$/);
+      expect(token).not.toContain("ody_enroll_");
+    }
+    for (const token of agentTokens) {
+      expect(token).toMatch(/^ods_agent_[A-Za-z0-9_-]{43}$/);
+      expect(token).not.toContain("ody_agent_");
+    }
+    expect(new Set([...enrollmentTokens, ...agentTokens]).size).toBe(4);
+  });
+
   it("never lets a session outlive its agent token", () => {
     const now = new Date("2026-07-29T10:00:00.000Z");
     const tokenExpiresAt = new Date("2026-07-29T10:05:00.000Z");

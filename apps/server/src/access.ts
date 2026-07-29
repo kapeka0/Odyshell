@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 export type AccessEnvironment = {
   NODE_ENV?: string | undefined;
   ODYSHELL_ADMIN_KEY?: string | undefined;
@@ -5,6 +7,10 @@ export type AccessEnvironment = {
 };
 
 const developmentAdminKey = "dev-admin-key";
+
+export function createOpaqueToken(kind: "enroll" | "agent"): string {
+  return `ods_${kind}_${randomBytes(32).toString("base64url")}`;
+}
 
 export function serverAdminKey(environment: AccessEnvironment): string {
   const configuredKey = environment.ODYSHELL_ADMIN_KEY;

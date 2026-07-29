@@ -1,4 +1,4 @@
-import { createHash, createPublicKey, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createPublicKey, randomUUID, timingSafeEqual } from "node:crypto";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import {
@@ -12,6 +12,7 @@ import {
 } from "@odyshell/protocol";
 import {
   boundedSessionExpiry,
+  createOpaqueToken,
   developmentCredentialsEnabled,
   serverAdminKey,
 } from "./access.js";
@@ -193,7 +194,7 @@ app.post(
   async (request, reply) => {
     const body = (request.body ?? {}) as { expiresInSeconds?: number };
     const expiresInSeconds = Math.min(Math.max(body.expiresInSeconds ?? 600, 60), 86_400);
-    const token = `ody_enroll_${randomBytes(32).toString("base64url")}`;
+    const token = createOpaqueToken("enroll");
     const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
     await db.query(
       `INSERT INTO enrollment_tokens (token_hash, expires_at) VALUES ($1, $2)`,
@@ -239,7 +240,7 @@ app.post("/v1/admin/agent-tokens", { preHandler: requireAdmin }, async (request,
   }
 
   const id = randomUUID();
-  const token = `ody_agent_${randomBytes(32).toString("base64url")}`;
+  const token = createOpaqueToken("agent");
   const expiresAt = new Date(Date.now() + input.expiresInSeconds * 1000);
   await db.query(
     `INSERT INTO agent_tokens
