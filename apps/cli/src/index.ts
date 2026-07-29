@@ -433,6 +433,20 @@ program
 
 const fsCommand = program.command("fs").description("access a machine workspace");
 fsCommand
+  .command("stat <machine> <path>")
+  .description("inspect a file or directory")
+  .action(async (machine: string, path: string, _options, command: Command) =>
+    runInTemporarySession(
+      command,
+      machine,
+      "fs.stat",
+      { kind: "fs.stat", path },
+      300,
+      120,
+    ),
+  );
+
+fsCommand
   .command("read <machine> <path>")
   .description("read a file through a disposable session")
   .action(async (machine: string, path: string, _options, command: Command) =>
@@ -527,6 +541,48 @@ fsCommand
         120,
       );
     },
+  );
+
+fsCommand
+  .command("mkdir <machine> <path>")
+  .description("create a directory")
+  .option("--no-recursive", "require the parent directory to exist")
+  .action(
+    async (
+      machine: string,
+      path: string,
+      options: { recursive: boolean },
+      command: Command,
+    ) =>
+      runInTemporarySession(
+        command,
+        machine,
+        "fs.mkdir",
+        { kind: "fs.mkdir", path, recursive: options.recursive },
+        300,
+        120,
+      ),
+  );
+
+fsCommand
+  .command("remove <machine> <path>")
+  .description("remove a file or directory")
+  .option("--recursive", "remove a directory and its contents")
+  .action(
+    async (
+      machine: string,
+      path: string,
+      options: { recursive?: boolean },
+      command: Command,
+    ) =>
+      runInTemporarySession(
+        command,
+        machine,
+        "fs.remove",
+        { kind: "fs.remove", path, recursive: options.recursive ?? false },
+        300,
+        120,
+      ),
   );
 
 const dockerCommand = program.command("docker").description("access Docker through typed operations");
