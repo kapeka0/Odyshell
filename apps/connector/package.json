@@ -2,8 +2,12 @@
   "name": "@odyshell/connector",
   "version": "0.1.0",
   "type": "module",
+  "exports": "./src/index.ts",
+  "bin": {
+    "ods-connector": "./dist/cli.js"
+  },
   "scripts": {
-    "start": "tsx src/index.ts",
+    "start": "tsx src/cli.ts",
     "build": "tsup"
   },
   "dependencies": {

@@ -28,6 +28,7 @@ Run:
 
 ```powershell
 pnpm install
+pnpm install:ods
 pnpm test
 pnpm test:e2e
 ```
@@ -58,52 +59,76 @@ Start the control plane:
 docker compose up -d --build
 ```
 
+Configure the CLI:
+
+```powershell
+ods login --server http://127.0.0.1:4100 --agent-key dev-agent-key --admin-key dev-admin-key
+ods status
+```
+
 Create a one-time enrollment token:
 
 ```powershell
-pnpm cli admin enrollment-token
+ods token create
 ```
 
 Enroll the connector. Replace `<token>` with the returned token and choose the directory that
 agents may access:
 
 ```powershell
-pnpm connector enroll --server http://127.0.0.1:4100 --token <token> --name my-machine --workspace C:\path\to\workspace
+ods connector enroll --token <token> --name my-machine --workspace C:\path\to\workspace
 ```
 
 Start the outbound connector:
 
 ```powershell
-pnpm connector start
+ods connector start
 ```
 
 In another terminal, list machines:
 
 ```powershell
-pnpm cli machines
+ods machines
 ```
 
-Open a session using the returned machine ID:
+Run a command using either the machine name or ID. Odyshell creates and removes a disposable
+session automatically:
 
 ```powershell
-pnpm cli session open <machine-id> 600
+ods exec my-machine printf "hello from Odyshell\n"
+ods shell my-machine "pwd && id"
+ods fs write my-machine notes/hello.txt --content "written by an agent"
+ods fs read my-machine notes/hello.txt
 ```
 
-Use the returned session ID:
+For a persistent session:
 
 ```powershell
-pnpm cli exec <session-id> printf "hello from Odyshell\n"
-pnpm cli shell <session-id> "pwd && id"
-pnpm cli write <session-id> notes/hello.txt "written by an agent"
-pnpm cli read <session-id> notes/hello.txt
-pnpm cli session close <session-id>
+ods session create my-machine --ttl 600
+ods session exec <session-id> printf "hello\n"
+ods session inspect <session-id>
+ods session close <session-id>
 ```
 
-For a one-shot shell task:
+Every data-producing command supports JSON for autonomous clients:
 
 ```powershell
-pnpm cli run <machine-id> "uname -a"
+ods machines --json
+ods --json exec my-machine -- uname -a
 ```
+
+## Tailnet-only deployment
+
+To make the local control plane available to your Tailscale devices with HTTPS and WSS:
+
+```powershell
+tailscale serve --bg --yes http://127.0.0.1:4100
+tailscale serve status
+```
+
+Use the generated HTTPS URL with `ods login` and with connectors on other devices. This is
+Tailscale Serve, not Funnel, so the service remains private to the tailnet. See
+`deploy/tailscale/README.md` for the complete workflow.
 
 ## API
 
@@ -111,6 +136,7 @@ The agent API uses `x-odyshell-agent-key`. Important endpoints:
 
 ```text
 GET    /v1/machines
+GET    /v1/sessions
 POST   /v1/sessions
 GET    /v1/sessions/:sessionId
 DELETE /v1/sessions/:sessionId
@@ -152,6 +178,7 @@ apps/connector       Outbound connector and Docker sandbox runner
 apps/cli             Admin and agent command-line client
 packages/protocol    Shared schemas, capabilities, and wire messages
 deploy/systemd       Linux connector service template
+deploy/tailscale      Tailnet-only HTTPS/WSS deployment guide
 scripts/e2e.mjs      Full live integration test
 tests                Protocol and policy tests
 ```

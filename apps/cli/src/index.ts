@@ -1,232 +1,445 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import process from "node:process";
-import { randomUUID } from "node:crypto";
-import { allCapabilities, type Capability, type OperationAction } from "@odyshell/protocol";
+import { Command } from "commander";
+import pc from "picocolors";
+import {
+  allCapabilities,
+  type Capability,
+  type OperationAction,
+} from "@odyshell/protocol";
+import { enrollConnector, runConnector } from "@odyshell/connector";
+import { ApiError, OdyshellApi, type Operation } from "./api.js";
+import {
+  defaultConfigPath,
+  loadStoredConfig,
+  removeStoredConfig,
+  resolveConfig,
+  saveStoredConfig,
+  type GlobalOptions,
+} from "./config.js";
+import {
+  colorStatus,
+  operationJson,
+  printJson,
+  printMachines,
+  printSessions,
+  streamEvent,
+} from "./output.js";
 
-const baseUrl = process.env.ODYSHELL_URL ?? "http://127.0.0.1:4100";
-const agentKey = process.env.ODYSHELL_AGENT_KEY ?? "dev-agent-key";
-const adminKey = process.env.ODYSHELL_ADMIN_KEY ?? "dev-admin-key";
+const program = new Command();
+program
+  .name("ods")
+  .description("Agent-first access to private machines")
+  .version("0.2.0")
+  .option("-j, --json", "emit stable JSON output")
+  .option("--server <url>", "override the Odyshell server URL")
+  .option("--agent-key <key>", "override the agent API key")
+  .option("--admin-key <key>", "override the administrator API key")
+  .option("--config-file <path>", "use a different configuration file")
+  .showSuggestionAfterError()
+  .showHelpAfterError();
+program.enablePositionalOptions();
 
-async function api<T>(
-  path: string,
-  options: RequestInit & { admin?: boolean } = {},
-): Promise<T> {
-  const response = await fetch(new URL(path, baseUrl), {
-    ...options,
-    headers: {
-      ...(options.body ? { "content-type": "application/json" } : {}),
-      [options.admin ? "x-odyshell-admin-key" : "x-odyshell-agent-key"]:
-        options.admin ? adminKey : agentKey,
-      ...options.headers,
-    },
-  });
-  const body = (await response.json()) as T & { error?: string };
-  if (!response.ok) throw new Error(`${response.status} ${body.error ?? response.statusText}`);
-  return body;
+function globals(command: Command): GlobalOptions {
+  return command.optsWithGlobals() as GlobalOptions;
 }
 
-function print(value: unknown): void {
-  console.log(JSON.stringify(value, null, 2));
-}
+function normalizeGlobalOptions(argv: string[]): string[] {
+  const flagsWithValues = ["--server", "--agent-key", "--admin-key", "--config-file"];
+  const globalArguments: string[] = [];
+  const commandArguments: string[] = [];
 
-async function waitForSession(sessionId: string): Promise<Record<string, unknown>> {
-  for (;;) {
-    const session = await api<Record<string, unknown>>(`/v1/sessions/${sessionId}`);
-    if (session.status === "ready") return session;
-    if (["failed", "closed", "expired"].includes(String(session.status))) {
-      throw new Error(`Session ${String(session.status)}: ${String(session.error ?? "")}`);
+  for (let index = 2; index < argv.length; index += 1) {
+    const argument = argv[index]!;
+    if (argument === "--") {
+      commandArguments.push(...argv.slice(index));
+      break;
     }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-}
-
-type OperationResponse = {
-  id: string;
-  status: string;
-  exitCode: number | null;
-  error?: string | null;
-  outputTruncated?: boolean;
-  events: Array<{ sequence: number; stream: "stdout" | "stderr" | "result"; dataBase64: string }>;
-};
-
-async function waitForOperation(operationId: string): Promise<OperationResponse> {
-  let lastSequence = -1;
-  for (;;) {
-    const operation = await api<OperationResponse>(`/v1/operations/${operationId}`);
-    for (const event of operation.events) {
-      if (event.sequence <= lastSequence) continue;
-      lastSequence = event.sequence;
-      const data = Buffer.from(event.dataBase64, "base64");
-      if (event.stream === "stderr") process.stderr.write(data);
-      else process.stdout.write(data);
+    if (argument === "--json" || argument === "-j") {
+      globalArguments.push(argument);
+      continue;
     }
-    if (!["queued", "delivered", "running"].includes(operation.status)) {
-      if (operation.error) process.stderr.write(`\n${operation.error}\n`);
-      return operation;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-}
 
-async function openSession(
-  machineId: string,
-  capabilities: Capability[] = allCapabilities,
-  ttlSeconds = 600,
-): Promise<string> {
-  const created = await api<{ id: string }>("/v1/sessions", {
-    method: "POST",
-    body: JSON.stringify({ machineId, profile: "workspace", ttlSeconds, capabilities }),
-  });
-  await waitForSession(created.id);
-  return created.id;
-}
-
-async function createOperation(sessionId: string, action: OperationAction): Promise<OperationResponse> {
-  const created = await api<{ id: string }>(`/v1/sessions/${sessionId}/operations`, {
-    method: "POST",
-    headers: { "idempotency-key": randomUUID() },
-    body: JSON.stringify({ action, timeoutSeconds: 120, maxOutputBytes: 1024 * 1024 }),
-  });
-  return waitForOperation(created.id);
-}
-
-async function main(): Promise<void> {
-  const [command, subcommand, ...args] = process.argv.slice(2);
-
-  if (command === "admin" && subcommand === "enrollment-token") {
-    print(
-      await api("/v1/admin/enrollment-tokens", {
-        method: "POST",
-        admin: true,
-        body: JSON.stringify({ expiresInSeconds: Number(args[0] ?? 600) }),
-      }),
+    const flag = flagsWithValues.find(
+      (candidate) => argument === candidate || argument.startsWith(`${candidate}=`),
     );
-    return;
-  }
-
-  if (command === "machines") {
-    print(await api("/v1/machines"));
-    return;
-  }
-
-  if (command === "session" && subcommand === "open") {
-    const machineId = args[0];
-    if (!machineId) throw new Error("Usage: session open <machine-id> [ttl-seconds]");
-    const sessionId = await openSession(machineId, allCapabilities, Number(args[1] ?? 600));
-    print(await api(`/v1/sessions/${sessionId}`));
-    return;
-  }
-
-  if (command === "session" && subcommand === "get") {
-    if (!args[0]) throw new Error("Usage: session get <session-id>");
-    print(await api(`/v1/sessions/${args[0]}`));
-    return;
-  }
-
-  if (command === "session" && subcommand === "close") {
-    if (!args[0]) throw new Error("Usage: session close <session-id>");
-    print(await api(`/v1/sessions/${args[0]}`, { method: "DELETE" }));
-    return;
-  }
-
-  if (command === "operation" && subcommand === "get") {
-    if (!args[0]) throw new Error("Usage: operation get <operation-id>");
-    print(await api(`/v1/operations/${args[0]}`));
-    return;
-  }
-
-  if (command === "operation" && subcommand === "cancel") {
-    if (!args[0]) throw new Error("Usage: operation cancel <operation-id>");
-    print(await api(`/v1/operations/${args[0]}/cancel`, { method: "POST" }));
-    return;
-  }
-
-  if (command === "exec") {
-    const sessionId = subcommand;
-    const [program, ...programArgs] = args;
-    if (!sessionId || !program) throw new Error("Usage: exec <session-id> <program> [args...]");
-    const result = await createOperation(sessionId, {
-      kind: "process.exec",
-      program,
-      args: programArgs,
-      cwd: ".",
-      env: {},
-    });
-    process.exitCode = result.status === "succeeded" ? 0 : 1;
-    return;
-  }
-
-  if (command === "shell") {
-    const sessionId = subcommand;
-    if (!sessionId || args.length === 0) throw new Error("Usage: shell <session-id> <command...>");
-    const result = await createOperation(sessionId, {
-      kind: "process.shell",
-      command: args.join(" "),
-      cwd: ".",
-      env: {},
-    });
-    process.exitCode = result.status === "succeeded" ? 0 : 1;
-    return;
-  }
-
-  if (command === "read") {
-    const sessionId = subcommand;
-    const path = args[0];
-    if (!sessionId || !path) throw new Error("Usage: read <session-id> <relative-path>");
-    const result = await createOperation(sessionId, { kind: "fs.read", path });
-    process.exitCode = result.status === "succeeded" ? 0 : 1;
-    return;
-  }
-
-  if (command === "write") {
-    const sessionId = subcommand;
-    const [path, ...content] = args;
-    if (!sessionId || !path) throw new Error("Usage: write <session-id> <relative-path> <content...>");
-    const result = await createOperation(sessionId, {
-      kind: "fs.write",
-      path,
-      contentBase64: Buffer.from(content.join(" ")).toString("base64"),
-      createParents: true,
-    });
-    process.exitCode = result.status === "succeeded" ? 0 : 1;
-    return;
-  }
-
-  if (command === "run") {
-    const machineId = subcommand;
-    if (!machineId || args.length === 0) throw new Error("Usage: run <machine-id> <shell-command...>");
-    const sessionId = await openSession(machineId, ["process.shell"], 300);
-    try {
-      const result = await createOperation(sessionId, {
-        kind: "process.shell",
-        command: args.join(" "),
-        cwd: ".",
-        env: {},
-      });
-      process.exitCode = result.status === "succeeded" ? 0 : 1;
-    } finally {
-      await api(`/v1/sessions/${sessionId}`, { method: "DELETE" });
+    if (!flag) {
+      commandArguments.push(argument);
+      continue;
     }
-    return;
+
+    globalArguments.push(argument);
+    if (argument === flag && argv[index + 1] !== undefined) {
+      globalArguments.push(argv[index + 1]!);
+      index += 1;
+    }
   }
 
-  console.log(`Odyshell CLI
-
-Commands:
-  admin enrollment-token [ttl]
-  machines
-  session open <machine-id> [ttl]
-  session get <session-id>
-  session close <session-id>
-  exec <session-id> <program> [args...]
-  shell <session-id> <command...>
-  read <session-id> <relative-path>
-  write <session-id> <relative-path> <content...>
-  operation get <operation-id>
-  operation cancel <operation-id>
-  run <machine-id> <shell-command...>`);
+  return [...argv.slice(0, 2), ...globalArguments, ...commandArguments];
 }
 
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : error);
+async function apiFor(command: Command): Promise<OdyshellApi> {
+  return new OdyshellApi(await resolveConfig(globals(command)));
+}
+
+async function finishOperation(
+  api: OdyshellApi,
+  operationId: string,
+  json: boolean,
+): Promise<Operation> {
+  const operation = await api.waitForOperation(operationId, json ? undefined : streamEvent);
+  if (json) printJson(operationJson(operation));
+  else if (operation.error) console.error(pc.red(`\n${operation.error}`));
+  if (operation.status !== "succeeded") process.exitCode = 1;
+  return operation;
+}
+
+async function runInTemporarySession(
+  command: Command,
+  machineReference: string,
+  capability: Capability,
+  action: OperationAction,
+  ttlSeconds: number,
+  timeoutSeconds: number,
+): Promise<void> {
+  const options = globals(command);
+  const api = await apiFor(command);
+  const machine = await api.resolveMachine(machineReference);
+  const created = await api.createSession(machine.id, [capability], ttlSeconds);
+  const session = await api.waitForSession(created.id);
+  try {
+    const operation = await api.createOperation(session.id, action, timeoutSeconds);
+    await finishOperation(api, operation.id, options.json ?? false);
+  } finally {
+    await api.closeSession(session.id).catch(() => {});
+  }
+}
+
+program
+  .command("login")
+  .description("save server credentials and verify the connection")
+  .action(async (_options, command: Command) => {
+    const options = globals(command);
+    const configPath = options.configFile ? resolve(options.configFile) : defaultConfigPath();
+    const previous = await loadStoredConfig(configPath);
+    const resolved = await resolveConfig(options);
+    if (!resolved.agentKey) {
+      throw new Error("An agent key is required. Pass --agent-key or set ODYSHELL_AGENT_KEY.");
+    }
+    const api = new OdyshellApi(resolved);
+    await api.health();
+    await api.machines();
+    const savedAdminKey = resolved.adminKey ?? previous?.adminKey;
+    await saveStoredConfig(
+      {
+        serverUrl: resolved.serverUrl,
+        agentKey: resolved.agentKey,
+        ...(savedAdminKey ? { adminKey: savedAdminKey } : {}),
+      },
+      configPath,
+    );
+    if (options.json) printJson({ authenticated: true, serverUrl: resolved.serverUrl, configPath });
+    else {
+      console.log(`${pc.green("✓")} Connected to ${pc.bold(resolved.serverUrl)}`);
+      console.log(pc.dim(`  Credentials saved to ${configPath}`));
+    }
+  });
+
+program
+  .command("logout")
+  .description("remove locally stored credentials")
+  .action(async (_options, command: Command) => {
+    const options = globals(command);
+    const configPath = options.configFile ? resolve(options.configFile) : defaultConfigPath();
+    await removeStoredConfig(configPath);
+    if (options.json) printJson({ loggedOut: true, configPath });
+    else console.log(`${pc.green("✓")} Removed ${configPath}`);
+  });
+
+program
+  .command("status")
+  .description("check the control plane and connected machines")
+  .action(async (_options, command: Command) => {
+    const options = globals(command);
+    const api = await apiFor(command);
+    const [health, machines] = await Promise.all([api.health(), api.machines()]);
+    if (options.json) printJson({ serverUrl: api.serverUrl, health, machines });
+    else {
+      console.log(`${pc.green("●")} ${pc.bold(api.serverUrl)}  protocol v${health.protocol}`);
+      printMachines(machines);
+    }
+  });
+
+program
+  .command("machines")
+  .alias("machine")
+  .description("list enrolled machines")
+  .action(async (_options, command: Command) => {
+    const options = globals(command);
+    const machines = await (await apiFor(command)).machines();
+    if (options.json) printJson({ data: machines });
+    else printMachines(machines);
+  });
+
+program
+  .command("sessions")
+  .description("list recent sessions")
+  .action(async (_options, command: Command) => {
+    const options = globals(command);
+    const sessions = await (await apiFor(command)).sessions();
+    if (options.json) printJson({ data: sessions });
+    else printSessions(sessions);
+  });
+
+const token = program.command("token").description("manage enrollment tokens");
+token
+  .command("create")
+  .description("create a one-time connector enrollment token")
+  .option("--ttl <seconds>", "token lifetime", "600")
+  .action(async (options: { ttl: string }, command: Command) => {
+    const global = globals(command);
+    const result = await (await apiFor(command)).createEnrollmentToken(Number(options.ttl));
+    if (global.json) printJson(result);
+    else {
+      console.log(result.token);
+      console.error(pc.dim(`Expires ${new Date(result.expiresAt).toLocaleString()}`));
+    }
+  });
+
+const session = program.command("session").description("manage persistent sessions");
+session
+  .command("create <machine>")
+  .description("open a temporary session")
+  .option("--ttl <seconds>", "session lifetime", "600")
+  .option(
+    "--capabilities <items>",
+    "comma-separated capabilities",
+    allCapabilities.join(","),
+  )
+  .action(async (machineReference: string, options: { ttl: string; capabilities: string }, command: Command) => {
+    const global = globals(command);
+    const api = await apiFor(command);
+    const machine = await api.resolveMachine(machineReference);
+    const capabilities = options.capabilities.split(",") as Capability[];
+    const created = await api.createSession(machine.id, capabilities, Number(options.ttl));
+    const ready = await api.waitForSession(created.id);
+    if (global.json) printJson(ready);
+    else {
+      console.log(`${pc.green("✓")} Session ${pc.bold(ready.id)} is ready`);
+      console.log(pc.dim(`  expires ${new Date(ready.expiresAt).toLocaleString()}`));
+    }
+  });
+
+session
+  .command("inspect <session-id>")
+  .description("show a session")
+  .action(async (sessionId: string, _options, command: Command) => {
+    const global = globals(command);
+    const result = await (await apiFor(command)).session(sessionId);
+    if (global.json) printJson(result);
+    else {
+      console.log(`${colorStatus(result.status)}  ${result.id}`);
+      console.log(`machine       ${result.machineName ?? result.machineId}`);
+      console.log(`profile       ${result.profile}`);
+      console.log(`capabilities  ${result.capabilities.join(", ")}`);
+      console.log(`expires       ${new Date(result.expiresAt).toLocaleString()}`);
+    }
+  });
+
+session
+  .command("close <session-id>")
+  .description("close a session")
+  .action(async (sessionId: string, _options, command: Command) => {
+    const global = globals(command);
+    const result = await (await apiFor(command)).closeSession(sessionId);
+    if (global.json) printJson(result);
+    else console.log(`${pc.green("✓")} Closing ${sessionId}`);
+  });
+
+session
+  .command("exec <session-id> <program> [args...]")
+  .description("execute a program in an existing session")
+  .option("--timeout <seconds>", "operation timeout", "120")
+  .passThroughOptions()
+  .action(
+    async (
+      sessionId: string,
+      executable: string,
+      args: string[],
+      options: { timeout: string },
+      command: Command,
+    ) => {
+      const global = globals(command);
+      const api = await apiFor(command);
+      const operation = await api.createOperation(
+        sessionId,
+        { kind: "process.exec", program: executable, args, cwd: ".", env: {} },
+        Number(options.timeout),
+      );
+      await finishOperation(api, operation.id, global.json ?? false);
+    },
+  );
+
+program
+  .command("exec <machine> <program> [args...]")
+  .description("run a program in a disposable session")
+  .option("--ttl <seconds>", "session lifetime", "300")
+  .option("--timeout <seconds>", "operation timeout", "120")
+  .passThroughOptions()
+  .action(
+    async (
+      machine: string,
+      executable: string,
+      args: string[],
+      options: { ttl: string; timeout: string },
+      command: Command,
+    ) =>
+      runInTemporarySession(
+        command,
+        machine,
+        "process.exec",
+        { kind: "process.exec", program: executable, args, cwd: ".", env: {} },
+        Number(options.ttl),
+        Number(options.timeout),
+      ),
+  );
+
+program
+  .command("shell <machine> <command...>")
+  .description("run a shell command in a disposable session")
+  .option("--ttl <seconds>", "session lifetime", "300")
+  .option("--timeout <seconds>", "operation timeout", "120")
+  .passThroughOptions()
+  .action(
+    async (
+      machine: string,
+      commandParts: string[],
+      options: { ttl: string; timeout: string },
+      command: Command,
+    ) =>
+      runInTemporarySession(
+        command,
+        machine,
+        "process.shell",
+        { kind: "process.shell", command: commandParts.join(" "), cwd: ".", env: {} },
+        Number(options.ttl),
+        Number(options.timeout),
+      ),
+  );
+
+const fsCommand = program.command("fs").description("access a machine workspace");
+fsCommand
+  .command("read <machine> <path>")
+  .description("read a file through a disposable session")
+  .action(async (machine: string, path: string, _options, command: Command) =>
+    runInTemporarySession(
+      command,
+      machine,
+      "fs.read",
+      { kind: "fs.read", path },
+      300,
+      120,
+    ),
+  );
+
+fsCommand
+  .command("list <machine> [path]")
+  .description("list a directory through a disposable session")
+  .action(async (machine: string, path: string | undefined, _options, command: Command) =>
+    runInTemporarySession(
+      command,
+      machine,
+      "fs.list",
+      { kind: "fs.list", path: path ?? "." },
+      300,
+      120,
+    ),
+  );
+
+fsCommand
+  .command("write <machine> <path>")
+  .description("write a file through a disposable session")
+  .option("--content <text>", "text to write")
+  .option("--file <path>", "read content from a local file")
+  .action(
+    async (
+      machine: string,
+      path: string,
+      options: { content?: string; file?: string },
+      command: Command,
+    ) => {
+      if (options.content === undefined && !options.file) {
+        throw new Error("Pass --content <text> or --file <path>");
+      }
+      if (options.content !== undefined && options.file) {
+        throw new Error("--content and --file are mutually exclusive");
+      }
+      const content =
+        options.content !== undefined ? Buffer.from(options.content) : await readFile(resolve(options.file!));
+      await runInTemporarySession(
+        command,
+        machine,
+        "fs.write",
+        {
+          kind: "fs.write",
+          path,
+          contentBase64: content.toString("base64"),
+          createParents: true,
+        },
+        300,
+        120,
+      );
+    },
+  );
+
+const connector = program.command("connector").description("manage the private-machine connector");
+connector
+  .command("enroll")
+  .description("enroll this machine with an Odyshell control plane")
+  .requiredOption("--token <token>", "one-time enrollment token")
+  .requiredOption("--name <name>", "machine name")
+  .requiredOption("--workspace <path>", "workspace exposed to sessions")
+  .option("--image <image>", "sandbox image", "alpine:3.22")
+  .option("--config <path>", "connector configuration", ".odyshell/connector.json")
+  .action(
+    async (
+      options: { token: string; name: string; workspace: string; image: string; config: string },
+      command: Command,
+    ) => {
+      const global = globals(command);
+      const config = await resolveConfig(global);
+      const result = await enrollConnector({
+        serverUrl: config.serverUrl,
+        token: options.token,
+        machineName: options.name,
+        workspaceRoot: options.workspace,
+        image: options.image,
+        configPath: options.config,
+      });
+      if (global.json) printJson({ enrolled: true, ...result });
+      else {
+        console.log(`${pc.green("✓")} Enrolled ${options.name}`);
+        console.log(`  machine  ${result.machineId}`);
+        console.log(`  config   ${result.configPath}`);
+      }
+    },
+  );
+
+connector
+  .command("start")
+  .description("start the outbound connector in the foreground")
+  .option("--config <path>", "connector configuration", ".odyshell/connector.json")
+  .action(async (options: { config: string }) => {
+    await runConnector(options.config);
+  });
+
+await program.parseAsync(normalizeGlobalOptions(process.argv)).catch((error: unknown) => {
+  if (error instanceof ApiError) {
+    console.error(pc.red(`Error: ${error.code} (${error.status})`));
+    if (error.details) console.error(JSON.stringify(error.details, null, 2));
+  } else {
+    console.error(pc.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+  }
   process.exitCode = 1;
 });

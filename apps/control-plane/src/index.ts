@@ -128,6 +128,20 @@ app.get("/v1/machines", { preHandler: requireAgent }, async () => {
   };
 });
 
+app.get("/v1/sessions", { preHandler: requireAgent }, async () => {
+  const result = await db.query(
+    `SELECT s.id, s.machine_id AS "machineId", m.name AS "machineName", s.profile,
+            s.capabilities, s.status, s.expires_at AS "expiresAt", s.error,
+            s.created_at AS "createdAt"
+     FROM sessions s
+     JOIN machines m ON m.id = s.machine_id
+     WHERE s.principal_id = 'dev-agent'
+     ORDER BY s.created_at DESC
+     LIMIT 100`,
+  );
+  return { data: result.rows };
+});
+
 app.post("/v1/sessions", { preHandler: requireAgent }, async (request, reply) => {
   const parsed = sessionRequestSchema.safeParse(request.body);
   if (!parsed.success) {

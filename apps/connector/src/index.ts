@@ -14,25 +14,22 @@ import WebSocket from "ws";
 import { DockerRunner, type RunningOperation, type RunningSession } from "./docker-runner.js";
 import { OperationJournal, type JournalResult } from "./journal.js";
 
-function option(name: string, fallback?: string): string | undefined {
-  const index = process.argv.indexOf(`--${name}`);
-  return index >= 0 ? process.argv[index + 1] : fallback;
-}
+export type EnrollConnectorOptions = {
+  serverUrl: string;
+  token: string;
+  machineName: string;
+  workspaceRoot: string;
+  configPath: string;
+  image?: string;
+};
 
-function requiredOption(name: string, fallback?: string): string {
-  const value = option(name, fallback);
-  if (!value) throw new Error(`Missing --${name}`);
-  return value;
-}
-
-async function enroll(): Promise<void> {
-  const serverUrl = requiredOption("server", process.env.ODYSHELL_SERVER_URL);
-  const token = requiredOption("token", process.env.ODYSHELL_ENROLLMENT_TOKEN);
-  const machineName = requiredOption("name", process.env.ODYSHELL_MACHINE_NAME);
-  const workspaceRoot = resolve(requiredOption("workspace", process.cwd()));
-  const configPath = resolve(option("config", ".odyshell/connector.json")!);
-  const image = option("image", "alpine:3.22")!;
-
+export async function enrollConnector(options: EnrollConnectorOptions): Promise<{
+  machineId: string;
+  configPath: string;
+}> {
+  const serverUrl = options.serverUrl;
+  const workspaceRoot = resolve(options.workspaceRoot);
+  const configPath = resolve(options.configPath);
   const { publicKey, privateKey } = generateKeyPairSync("ed25519", {
     publicKeyEncoding: { type: "spki", format: "pem" },
     privateKeyEncoding: { type: "pkcs8", format: "pem" },
@@ -40,7 +37,7 @@ async function enroll(): Promise<void> {
   const response = await fetch(new URL("/v1/connectors/enroll", serverUrl), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ token, name: machineName, publicKey }),
+    body: JSON.stringify({ token: options.token, name: options.machineName, publicKey }),
   });
   const body = (await response.json()) as { machineId?: string; error?: string };
   if (!response.ok || !body.machineId) throw new Error(body.error ?? `Enrollment failed: ${response.status}`);
@@ -48,14 +45,14 @@ async function enroll(): Promise<void> {
   const config: ConnectorConfig = {
     serverUrl,
     machineId: body.machineId,
-    machineName,
+    machineName: options.machineName,
     privateKeyPem: privateKey,
     stateDirectory: resolve(dirname(configPath), "state"),
     profiles: {
       workspace: {
         runner: "docker",
         workspaceRoot,
-        image,
+        image: options.image ?? "alpine:3.22",
         network: "none",
         maxSessionTtlSeconds: 1800,
         maxConcurrentSessions: 2,
@@ -66,12 +63,13 @@ async function enroll(): Promise<void> {
   };
   await mkdir(dirname(configPath), { recursive: true });
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600, flag: "wx" });
-  console.log(JSON.stringify({ enrolled: true, machineId: body.machineId, configPath }, null, 2));
+  return { machineId: body.machineId, configPath };
 }
 
-class Connector {
+export class Connector {
   private socket: WebSocket | undefined;
   private heartbeat?: NodeJS.Timeout;
+  private reconnectTimer: NodeJS.Timeout | undefined;
   private reconnectDelay = 1_000;
   private stopped = false;
   private readonly sessions = new Map<string, RunningSession>();
@@ -93,6 +91,7 @@ class Connector {
   async stop(): Promise<void> {
     this.stopped = true;
     if (this.heartbeat) clearInterval(this.heartbeat);
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.socket?.close();
     for (const operation of this.operations.values()) await operation.cancel();
     for (const session of this.sessions.values()) await this.runner.closeSession(session);
@@ -117,7 +116,10 @@ class Connector {
       if (this.socket === socket) this.socket = undefined;
       if (!this.stopped) {
         console.error(`Disconnected; reconnecting in ${this.reconnectDelay}ms`);
-        setTimeout(() => void this.connect(), this.reconnectDelay).unref();
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectTimer = undefined;
+          void this.connect();
+        }, this.reconnectDelay);
         this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30_000);
       }
     });
@@ -326,8 +328,8 @@ class Connector {
   }
 }
 
-async function start(): Promise<void> {
-  const configPath = resolve(option("config", ".odyshell/connector.json")!);
+export async function runConnector(configPathInput: string): Promise<Connector> {
+  const configPath = resolve(configPathInput);
   const config = JSON.parse(await readFile(configPath, "utf8")) as ConnectorConfig;
   const connector = new Connector(config);
   const shutdown = (): void => {
@@ -336,12 +338,5 @@ async function start(): Promise<void> {
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
   await connector.start();
-}
-
-const command = process.argv[2];
-if (command === "enroll") await enroll();
-else if (command === "start") await start();
-else {
-  console.error("Usage: odyshell-connector <enroll|start> [options]");
-  process.exitCode = 1;
+  return connector;
 }

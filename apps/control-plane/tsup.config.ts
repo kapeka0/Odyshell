@@ -6,5 +6,6 @@ export default defineConfig({
   platform: "node",
   target: "node24",
   noExternal: ["@odyshell/protocol"],
+  removeNodeProtocol: false,
   sourcemap: true,
 });

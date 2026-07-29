@@ -1,0 +1,62 @@
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import process from "node:process";
+import { homedir } from "node:os";
+
+export type StoredConfig = {
+  serverUrl: string;
+  agentKey?: string;
+  adminKey?: string;
+};
+
+export type GlobalOptions = {
+  server?: string;
+  agentKey?: string;
+  adminKey?: string;
+  configFile?: string;
+  json?: boolean;
+};
+
+export function defaultConfigPath(): string {
+  if (process.env.ODS_CONFIG_FILE) return resolve(process.env.ODS_CONFIG_FILE);
+  if (process.platform === "win32" && process.env.APPDATA) {
+    return join(process.env.APPDATA, "odyshell", "config.json");
+  }
+  return join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "odyshell", "config.json");
+}
+
+export async function loadStoredConfig(path = defaultConfigPath()): Promise<StoredConfig | undefined> {
+  try {
+    return JSON.parse(await readFile(path, "utf8")) as StoredConfig;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+export async function saveStoredConfig(config: StoredConfig, path = defaultConfigPath()): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  await chmod(path, 0o600).catch(() => {});
+}
+
+export async function removeStoredConfig(path = defaultConfigPath()): Promise<void> {
+  await rm(path, { force: true });
+}
+
+export async function resolveConfig(options: GlobalOptions): Promise<StoredConfig> {
+  const configPath = options.configFile ? resolve(options.configFile) : defaultConfigPath();
+  const stored = await loadStoredConfig(configPath);
+  const agentKey = options.agentKey ?? process.env.ODYSHELL_AGENT_KEY ?? stored?.agentKey;
+  const adminKey = options.adminKey ?? process.env.ODYSHELL_ADMIN_KEY ?? stored?.adminKey;
+  return {
+    serverUrl:
+      options.server ??
+      process.env.ODYSHELL_URL ??
+      process.env.ODYSHELL_SERVER_URL ??
+      stored?.serverUrl ??
+      "http://127.0.0.1:4100",
+    ...(agentKey ? { agentKey } : {}),
+    ...(adminKey ? { adminKey } : {}),
+  };
+}

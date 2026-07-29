@@ -4,9 +4,9 @@ import { resolve } from "node:path";
 import process from "node:process";
 
 const root = process.cwd();
-const apiUrl = "http://127.0.0.1:4100";
-const agentKey = "dev-agent-key";
-const adminKey = "dev-admin-key";
+const apiUrl = process.env.ODYSHELL_E2E_URL ?? "http://127.0.0.1:4100";
+const agentKey = process.env.ODYSHELL_AGENT_KEY ?? "dev-agent-key";
+const adminKey = process.env.ODYSHELL_ADMIN_KEY ?? "dev-admin-key";
 const configDirectory = resolve(root, ".odyshell/e2e");
 const configPath = resolve(configDirectory, "connector.json");
 const workspace = resolve(root, "tmp/e2e-workspace");
@@ -72,7 +72,8 @@ const enrollment = await api("/v1/admin/enrollment-tokens", {
 });
 
 const tsxCli = resolve(root, "node_modules/tsx/dist/cli.mjs");
-const connectorEntry = resolve(root, "apps/connector/src/index.ts");
+const connectorEntry = resolve(root, "apps/connector/src/cli.ts");
+const odsEntry = resolve(root, "apps/cli/src/index.ts");
 
 await run(
   process.execPath,
@@ -146,6 +147,41 @@ try {
   const machine = machines.data.find((item) => item.name === "e2e-docker" && item.online);
   if (!machine) throw new Error("Enrolled connector did not come online");
   e2eMachineId = machine.id;
+
+  const cliMachines = JSON.parse(
+    await run(process.execPath, [
+      tsxCli,
+      odsEntry,
+      "--server",
+      apiUrl,
+      "--agent-key",
+      agentKey,
+      "--json",
+      "machines",
+    ]),
+  );
+  if (!cliMachines.data.some((item) => item.id === machine.id)) {
+    throw new Error("ods machines did not return the enrolled connector");
+  }
+
+  const cliExecution = JSON.parse(
+    await run(process.execPath, [
+      tsxCli,
+      odsEntry,
+      "--server",
+      apiUrl,
+      "--agent-key",
+      agentKey,
+      "--json",
+      "exec",
+      "e2e-docker",
+      "printf",
+      "hello from ods CLI",
+    ]),
+  );
+  if (cliExecution.output.stdout !== "hello from ods CLI") {
+    throw new Error("ods one-shot execution did not return expected output");
+  }
 
   const createdSession = await api("/v1/sessions", {
     method: "POST",
@@ -270,6 +306,7 @@ try {
         checks: {
           outboundConnector: true,
           ed25519Authentication: true,
+          odsCli: true,
           sandboxPolicy: true,
           sandboxedExec: execResult.output.trim(),
           filesystemRoundTrip: readResult.output,
