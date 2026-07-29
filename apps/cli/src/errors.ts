@@ -14,24 +14,42 @@ export type ErrorReport = {
   cause?: ErrorReport;
 };
 
-export class ServerConnectionError extends Error {
-  readonly code = "server_unreachable";
+export class ExpectedError extends Error {
+  readonly expected = true;
 
+  constructor(
+    message: string,
+    readonly code: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "Error";
+  }
+}
+
+export class ServerConnectionError extends ExpectedError {
   constructor(
     readonly serverUrl: string,
     cause: unknown,
   ) {
-    super(`Unable to reach the Odyshell Server at ${serverUrl}.`, { cause });
+    super(
+      `Unable to reach the Odyshell Server at ${serverUrl}.`,
+      "server_unreachable",
+      { cause },
+    );
     this.name = "ServerConnectionError";
   }
 }
 
-export function errorReport(error: unknown): ErrorReport {
-  return report(error, new Set(), 0);
+export function errorReport(
+  error: unknown,
+  options: { includeStack?: boolean } = {},
+): ErrorReport {
+  return report(error, new Set(), 0, options.includeStack ?? true);
 }
 
 export function printCliError(error: unknown, json: boolean): void {
-  const value = errorReport(error);
+  const value = errorReport(error, { includeStack: !isExpected(error) });
   const hint = connectionHint(value);
   if (json) {
     process.stderr.write(
@@ -63,7 +81,12 @@ export function printCliError(error: unknown, json: boolean): void {
   if (hint) console.error(pc.cyan(`\nHint: ${hint}`));
 }
 
-function report(error: unknown, seen: Set<object>, depth: number): ErrorReport {
+function report(
+  error: unknown,
+  seen: Set<object>,
+  depth: number,
+  includeStack: boolean,
+): ErrorReport {
   if (depth >= 8) return { name: "Error", message: "Cause chain exceeded 8 levels" };
   if (!(error instanceof Error)) {
     return { name: "Error", message: typeof error === "string" ? error : String(error) };
@@ -84,7 +107,7 @@ function report(error: unknown, seen: Set<object>, depth: number): ErrorReport {
   return {
     name: error.name || "Error",
     message: error.message,
-    ...(error.stack ? { stack: error.stack } : {}),
+    ...(includeStack && error.stack ? { stack: error.stack } : {}),
     ...(isStringOrNumber(record.code) ? { code: record.code } : {}),
     ...(typeof record.status === "number" ? { status: record.status } : {}),
     ...(isStringOrNumber(record.errno) ? { errno: record.errno } : {}),
@@ -92,7 +115,9 @@ function report(error: unknown, seen: Set<object>, depth: number): ErrorReport {
     ...(typeof record.address === "string" ? { address: record.address } : {}),
     ...(typeof record.port === "number" ? { port: record.port } : {}),
     ...(record.details === undefined ? {} : { details: record.details }),
-    ...(record.cause === undefined ? {} : { cause: report(record.cause, seen, depth + 1) }),
+    ...(record.cause === undefined
+      ? {}
+      : { cause: report(record.cause, seen, depth + 1, includeStack) }),
   };
 }
 
@@ -137,7 +162,19 @@ function connectionHint(value: ErrorReport): string | undefined {
   if (value.code === "server_unreachable") {
     return "Check the Server URL, confirm the Server is running, and verify that its port is published on a reachable interface.";
   }
+  if (value.code === "machine_offline") {
+    return 'Start the Odyshell Client on that machine with "ods client start".';
+  }
   return undefined;
+}
+
+function isExpected(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const record = error as Error & { expected?: unknown; code?: unknown };
+  return (
+    record.expected === true ||
+    (typeof record.code === "string" && record.code.startsWith("commander."))
+  );
 }
 
 function isStringOrNumber(value: unknown): value is string | number {

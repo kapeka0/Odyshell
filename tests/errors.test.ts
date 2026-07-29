@@ -1,5 +1,14 @@
-import { describe, expect, it } from "vitest";
-import { errorReport, ServerConnectionError } from "../apps/cli/src/errors.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  errorReport,
+  ExpectedError,
+  printCliError,
+  ServerConnectionError,
+} from "../apps/cli/src/errors.js";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("CLI error reporting", () => {
   it("preserves network causes and stack traces", () => {
@@ -33,5 +42,38 @@ describe("CLI error reporting", () => {
       name: "Error",
       message: "plain failure",
     });
+  });
+
+  it("keeps expected operational errors concise", () => {
+    const lines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((...values: unknown[]) => {
+      lines.push(values.join(" "));
+    });
+
+    printCliError(
+      new ExpectedError(
+        'Machine "desktop-test" is enrolled, but its Odyshell Client is not connected to the Server.',
+        "machine_offline",
+      ),
+      false,
+    );
+
+    const output = lines.join("\n");
+    expect(output).toContain("machine_offline");
+    expect(output).toContain("ods client start");
+    expect(output).not.toContain("Stack trace:");
+  });
+
+  it("prints stack traces for unexpected errors", () => {
+    const lines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((...values: unknown[]) => {
+      lines.push(values.join(" "));
+    });
+
+    printCliError(new Error("unexpected failure"), false);
+
+    const output = lines.join("\n");
+    expect(output).toContain("Stack trace:");
+    expect(output).toContain("unexpected failure");
   });
 });

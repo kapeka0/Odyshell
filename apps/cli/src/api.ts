@@ -6,7 +6,7 @@ import type {
   OperationStatus,
 } from "@odyshell/protocol";
 import type { StoredConfig } from "./config.js";
-import { ServerConnectionError } from "./errors.js";
+import { ExpectedError, ServerConnectionError } from "./errors.js";
 
 export type Machine = {
   id: string;
@@ -69,13 +69,13 @@ export type AuditEvent = {
   createdAt: string;
 };
 
-export class ApiError extends Error {
+export class ApiError extends ExpectedError {
   constructor(
     readonly status: number,
-    readonly code: string,
+    code: string,
     readonly details?: unknown,
   ) {
-    super(`${status} ${code}`);
+    super(`${status} ${code}`, code);
     this.name = "ApiError";
   }
 }
@@ -112,11 +112,19 @@ export class OdyshellApi {
           : undefined);
     if (!machine) {
       if (onlineNamed.length > 1 || named.length > 1) {
-        throw new Error(`Machine name "${reference}" is ambiguous; use its ID`);
+        throw new ExpectedError(
+          `Machine name "${reference}" is ambiguous; use its ID`,
+          "machine_ambiguous",
+        );
       }
-      throw new Error(`Machine "${reference}" was not found`);
+      throw new ExpectedError(`Machine "${reference}" was not found`, "machine_not_found");
     }
-    if (!machine.online) throw new Error(`Machine "${machine.name}" is offline`);
+    if (!machine.online) {
+      throw new ExpectedError(
+        `Machine "${machine.name}" is enrolled, but its Odyshell Client is not connected to the Server.`,
+        "machine_offline",
+      );
+    }
     return machine;
   }
 
@@ -149,7 +157,10 @@ export class OdyshellApi {
       const session = await this.session(sessionId);
       if (session.status === "ready") return session;
       if (["failed", "closed", "expired"].includes(session.status)) {
-        throw new Error(`Session ${session.status}: ${session.error ?? "no additional details"}`);
+        throw new ExpectedError(
+          `Session ${session.status}: ${session.error ?? "no additional details"}`,
+          `session_${session.status}`,
+        );
       }
       await delay(200);
     }
@@ -234,8 +245,9 @@ export class OdyshellApi {
     const authenticated = options.authenticated ?? true;
     const credential = options.admin ? this.config.adminKey : this.config.agentToken;
     if (authenticated && !credential) {
-      throw new Error(
+      throw new ExpectedError(
         `No ${options.admin ? "admin key" : "agent token"} configured. Run "ods login" or set the corresponding environment variable.`,
+        "credentials_missing",
       );
     }
     let response: Response;

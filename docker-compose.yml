@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: odyshell
       POSTGRES_PASSWORD: odyshell
     ports:
-      - "127.0.0.1:55432:5432"
+      - "127.0.0.1:${ODYSHELL_POSTGRES_PORT:-55432}:5432"
     volumes:
       - odyshell-postgres:/var/lib/postgresql
     healthcheck:
@@ -26,7 +26,7 @@ services:
       ODYSHELL_ADMIN_KEY: ${ODYSHELL_ADMIN_KEY:-dev-admin-key}
       ODYSHELL_AGENT_KEY: ${ODYSHELL_AGENT_KEY:-dev-agent-key}
     ports:
-      - "${ODYSHELL_BIND_ADDRESS:-127.0.0.1}:4100:4100"
+      - "${ODYSHELL_BIND_ADDRESS:-127.0.0.1}:${ODYSHELL_SERVER_PORT:-4100}:4100"
     depends_on:
       postgres:
         condition: service_healthy

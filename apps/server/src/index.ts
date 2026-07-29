@@ -24,6 +24,7 @@ await app.register(websocket, { options: { maxPayload: 2 * 1024 * 1024 } });
 
 const db = createDatabase(databaseUrl);
 await migrate(db);
+await db.query(`UPDATE machines SET status = 'offline' WHERE status <> 'offline'`);
 const gateway = new ClientGateway(db);
 gateway.register(app);
 

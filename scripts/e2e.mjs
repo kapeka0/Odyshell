@@ -4,12 +4,23 @@ import { resolve } from "node:path";
 import process from "node:process";
 
 const root = process.cwd();
-let apiUrl = process.env.ODYSHELL_E2E_URL;
+let apiUrl;
 const agentKey = process.env.ODYSHELL_AGENT_KEY ?? "dev-agent-key";
 const adminKey = process.env.ODYSHELL_ADMIN_KEY ?? "dev-admin-key";
-const configDirectory = resolve(root, ".odyshell/e2e");
+const composeProject = `odyshell-e2e-${process.pid}`;
+const composeEnvironment = {
+  ...process.env,
+  ODYSHELL_BIND_ADDRESS: "127.0.0.1",
+  ODYSHELL_SERVER_PORT: "0",
+  ODYSHELL_POSTGRES_PORT: "0",
+  ODYSHELL_AGENT_KEY: agentKey,
+  ODYSHELL_ADMIN_KEY: adminKey,
+};
+const configDirectory = resolve(root, `.odyshell/e2e/${process.pid}`);
 const configPath = resolve(configDirectory, "client.json");
-const workspace = resolve(root, "tmp/e2e-workspace");
+const workspace = resolve(root, `tmp/e2e-workspace-${process.pid}`);
+let client;
+let e2eMachineId;
 const allCapabilities = [
   "process.exec",
   "process.shell",
@@ -66,80 +77,13 @@ function run(command, args, options = {}) {
   });
 }
 
-await run("docker", ["compose", "up", "-d", "--build", "--remove-orphans"]);
-
-if (!apiUrl) {
-  const publishedAddresses = (await run("docker", ["compose", "port", "server", "4100"]))
-    .trim()
-    .split(/\r?\n/);
-  const published = publishedAddresses[0];
-  if (!published) throw new Error("Docker Compose did not publish the Server port");
-  const separator = published.lastIndexOf(":");
-  if (separator <= 0) throw new Error(`Could not parse published Server address: ${published}`);
-  const rawHost = published.slice(0, separator).replace(/^\[|\]$/g, "");
-  const port = published.slice(separator + 1);
-  const host = rawHost === "0.0.0.0" || rawHost === "::" ? "127.0.0.1" : rawHost;
-  apiUrl = `http://${host.includes(":") ? `[${host}]` : host}:${port}`;
+function compose(args) {
+  return run(
+    "docker",
+    ["compose", "--project-name", composeProject, ...args],
+    { env: composeEnvironment },
+  );
 }
-
-for (let attempt = 0; attempt < 60; attempt++) {
-  try {
-    await api("/health");
-    break;
-  } catch {
-    if (attempt === 59) throw new Error("Server did not become healthy");
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
-  }
-}
-
-const enrollment = await api("/v1/admin/enrollment-tokens", {
-  method: "POST",
-  headers: { "x-odyshell-admin-key": adminKey },
-  body: JSON.stringify({ expiresInSeconds: 600 }),
-});
-
-const tsxCli = resolve(root, "node_modules/tsx/dist/cli.mjs");
-const clientEntry = resolve(root, "apps/client/src/cli.ts");
-const odsEntry = resolve(root, "apps/cli/src/index.ts");
-
-const enrolled = JSON.parse(
-  await run(
-    process.execPath,
-    [
-      tsxCli,
-      odsEntry,
-      "--server",
-      apiUrl,
-      "--json",
-      "client",
-      "enroll",
-      "--token",
-      enrollment.token,
-      "--name",
-      "e2e-docker",
-      "--workspace",
-      workspace,
-      "--allow",
-      clientCapabilities.join(","),
-      "--config",
-      configPath,
-    ],
-  ),
-);
-
-const client = spawn(
-  process.execPath,
-  [tsxCli, clientEntry, "start", "--config", configPath],
-  {
-    cwd: root,
-    shell: false,
-    windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  },
-);
-client.stdout.on("data", (chunk) => process.stdout.write(`[client] ${chunk}`));
-client.stderr.on("data", (chunk) => process.stderr.write(`[client] ${chunk}`));
-let e2eMachineId;
 
 async function waitUntil(read, predicate, description) {
   for (let attempt = 0; attempt < 120; attempt++) {
@@ -173,6 +117,78 @@ async function operation(sessionId, action, expectedStatus = "succeeded") {
 }
 
 try {
+  await compose(["up", "-d", "--build", "--remove-orphans"]);
+
+  const publishedAddresses = (await compose(["port", "server", "4100"]))
+    .trim()
+    .split(/\r?\n/);
+  const published = publishedAddresses[0];
+  if (!published) throw new Error("Docker Compose did not publish the Server port");
+  const separator = published.lastIndexOf(":");
+  if (separator <= 0) throw new Error(`Could not parse published Server address: ${published}`);
+  const rawHost = published.slice(0, separator).replace(/^\[|\]$/g, "");
+  const port = published.slice(separator + 1);
+  const host = rawHost === "0.0.0.0" || rawHost === "::" ? "127.0.0.1" : rawHost;
+  apiUrl = `http://${host.includes(":") ? `[${host}]` : host}:${port}`;
+
+  for (let attempt = 0; attempt < 60; attempt++) {
+    try {
+      await api("/health");
+      break;
+    } catch {
+      if (attempt === 59) throw new Error("Server did not become healthy");
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
+    }
+  }
+
+  const enrollment = await api("/v1/admin/enrollment-tokens", {
+    method: "POST",
+    headers: { "x-odyshell-admin-key": adminKey },
+    body: JSON.stringify({ expiresInSeconds: 600 }),
+  });
+
+  const tsxCli = resolve(root, "node_modules/tsx/dist/cli.mjs");
+  const clientEntry = resolve(root, "apps/client/src/cli.ts");
+  const odsEntry = resolve(root, "apps/cli/src/index.ts");
+
+  const enrolled = JSON.parse(
+    await run(
+      process.execPath,
+      [
+        tsxCli,
+        odsEntry,
+        "--server",
+        apiUrl,
+        "--json",
+        "client",
+        "enroll",
+        "--token",
+        enrollment.token,
+        "--name",
+        "e2e-docker",
+        "--workspace",
+        workspace,
+        "--allow",
+        clientCapabilities.join(","),
+        "--config",
+        configPath,
+      ],
+    ),
+  );
+
+  client = spawn(
+    process.execPath,
+    [tsxCli, clientEntry, "start", "--config", configPath],
+    {
+      cwd: root,
+      shell: false,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  client.stdout.on("data", (chunk) => process.stdout.write(`[client] ${chunk}`));
+  client.stderr.on("data", (chunk) => process.stderr.write(`[client] ${chunk}`));
+
   const machines = await waitUntil(
     () => api("/v1/machines"),
     (value) =>
@@ -520,9 +536,12 @@ try {
       .filter(Boolean);
     if (orphanIds.length > 0) await run("docker", ["rm", "-f", ...orphanIds]).catch(() => {});
   }
-  if (client.pid && process.platform === "win32") {
+  if (client?.pid && process.platform === "win32") {
     await run("taskkill.exe", ["/pid", String(client.pid), "/t", "/f"]).catch(() => {});
-  } else {
+  } else if (client) {
     client.kill("SIGTERM");
   }
+  await compose(["down", "--volumes", "--remove-orphans"]);
+  await rm(configDirectory, { recursive: true, force: true });
+  await rm(workspace, { recursive: true, force: true });
 }

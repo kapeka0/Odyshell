@@ -16,7 +16,7 @@ import {
   runClient,
 } from "@odyshell/client";
 import { OdyshellApi, type Operation } from "./api.js";
-import { printCliError } from "./errors.js";
+import { ExpectedError, printCliError } from "./errors.js";
 import {
   defaultConfigPath,
   loadStoredConfig,
@@ -39,7 +39,7 @@ const program = new Command();
 program
   .name("ods")
   .description("Agent-first access to private machines")
-  .version("0.7.0")
+  .version("0.7.1")
   .option("-j, --json", "emit stable JSON output")
   .option("--server <url>", "override the Odyshell server URL")
   .option("--agent-token <token>", "override the scoped agent token")
@@ -106,7 +106,10 @@ function parseCapabilities(value: string): Capability[] {
       [...new Set(value.split(",").map((capability) => capability.trim()))].filter(Boolean),
     );
   if (!parsed.success) {
-    throw new Error(`Invalid capabilities. Choose from: ${allCapabilities.join(", ")}`);
+    throw new ExpectedError(
+      `Invalid capabilities. Choose from: ${allCapabilities.join(", ")}`,
+      "invalid_capabilities",
+    );
   }
   return parsed.data;
 }
@@ -153,8 +156,9 @@ program
     const previous = await loadStoredConfig(configPath);
     const resolved = await resolveConfig(options);
     if (!resolved.agentToken) {
-      throw new Error(
+      throw new ExpectedError(
         "An agent token is required. Pass --agent-token or set ODYSHELL_AGENT_TOKEN.",
+        "agent_token_required",
       );
     }
     const api = new OdyshellApi(resolved);
@@ -254,7 +258,9 @@ agent
       const machineIds = [...new Set(options.machines.split(",").map((id) => id.trim()))].filter(
         Boolean,
       );
-      if (machineIds.length === 0) throw new Error("At least one machine ID is required");
+      if (machineIds.length === 0) {
+        throw new ExpectedError("At least one machine ID is required", "machine_ids_required");
+      }
       const result = await (await apiFor(command)).createAgentToken(
         name,
         machineIds,
@@ -440,10 +446,16 @@ fsCommand
       command: Command,
     ) => {
       if (options.content === undefined && !options.file) {
-        throw new Error("Pass --content <text> or --file <path>");
+        throw new ExpectedError(
+          "Pass --content <text> or --file <path>",
+          "file_content_required",
+        );
       }
       if (options.content !== undefined && options.file) {
-        throw new Error("--content and --file are mutually exclusive");
+        throw new ExpectedError(
+          "--content and --file are mutually exclusive",
+          "file_content_conflict",
+        );
       }
       const content =
         options.content !== undefined ? Buffer.from(options.content) : await readFile(resolve(options.file!));
