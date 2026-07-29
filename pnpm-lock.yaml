@@ -36,14 +36,14 @@ importers:
         specifier: ^8.18.0
         version: 8.21.1
     devDependencies:
-      '@odyshell/connector':
+      '@odyshell/client':
         specifier: workspace:*
-        version: link:../connector
+        version: link:../client
       '@odyshell/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
 
-  apps/connector:
+  apps/client:
     dependencies:
       '@odyshell/protocol':
         specifier: workspace:*
@@ -56,7 +56,7 @@ importers:
         specifier: ^8.18.0
         version: 8.18.1
 
-  apps/control-plane:
+  apps/server:
     dependencies:
       '@fastify/websocket':
         specifier: ^11.2.0

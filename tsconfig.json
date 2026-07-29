@@ -11,7 +11,7 @@
     "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
-      "@odyshell/connector": ["apps/connector/src/index.ts"],
+      "@odyshell/client": ["apps/client/src/index.ts"],
       "@odyshell/protocol": ["packages/protocol/src/index.ts"]
     },
     "types": ["node", "vitest/globals"]

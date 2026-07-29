@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
   Capability,
-  ConnectorRuntimeInfo,
+  ClientRuntimeInfo,
   OperationAction,
   OperationStatus,
 } from "@odyshell/protocol";
@@ -12,7 +12,7 @@ export type Machine = {
   name: string;
   status: string;
   online: boolean;
-  runtime?: ConnectorRuntimeInfo | null;
+  runtime?: ClientRuntimeInfo | null;
   lastSeenAt: string | null;
   enrolledAt: string;
 };

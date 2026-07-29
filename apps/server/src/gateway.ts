@@ -4,9 +4,9 @@ import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
 import {
   PROTOCOL_VERSION,
-  parseConnectorMessage,
-  type ConnectorToServerMessage,
-  type ServerToConnectorMessage,
+  parseClientMessage,
+  type ClientToServerMessage,
+  type ServerToClientMessage,
 } from "@odyshell/protocol";
 import type { Database } from "./database.js";
 
@@ -17,7 +17,7 @@ type AuthState = {
   authenticated: boolean;
 };
 
-export class ConnectorGateway {
+export class ClientGateway {
   readonly events = new EventEmitter();
   private readonly connections = new Map<string, WebSocket>();
 
@@ -45,7 +45,7 @@ export class ConnectorGateway {
 
       socket.on("message", (data) => {
         void this.handleMessage(socket, state, data.toString()).catch((error: unknown) => {
-          app.log.error(error, "Connector message failed");
+          app.log.error(error, "Client message failed");
           socket.close(4002, "Protocol error");
         });
       });
@@ -64,19 +64,19 @@ export class ConnectorGateway {
     return this.connections.get(machineId)?.readyState === 1;
   }
 
-  send(machineId: string, message: ServerToConnectorMessage): boolean {
+  send(machineId: string, message: ServerToClientMessage): boolean {
     const socket = this.connections.get(machineId);
     if (!socket || socket.readyState !== 1) return false;
     this.sendSocket(socket, message);
     return true;
   }
 
-  private sendSocket(socket: WebSocket, message: ServerToConnectorMessage): void {
+  private sendSocket(socket: WebSocket, message: ServerToClientMessage): void {
     socket.send(JSON.stringify(message));
   }
 
   private async handleMessage(socket: WebSocket, state: AuthState, raw: string): Promise<void> {
-    const message = parseConnectorMessage(raw);
+    const message = parseClientMessage(raw);
     if (!state.authenticated) {
       if (message.type !== "authenticate") throw new Error("Expected authenticate message");
       await this.authenticate(socket, state, message);
@@ -93,7 +93,7 @@ export class ConnectorGateway {
   private async authenticate(
     socket: WebSocket,
     state: AuthState,
-    message: Extract<ConnectorToServerMessage, { type: "authenticate" }>,
+    message: Extract<ClientToServerMessage, { type: "authenticate" }>,
   ): Promise<void> {
     if (message.protocolVersion !== PROTOCOL_VERSION) throw new Error("Unsupported protocol version");
     const result = await this.db.query<{ public_key: string }>(
@@ -110,7 +110,7 @@ export class ConnectorGateway {
       createPublicKey(machine.public_key),
       Buffer.from(message.signature, "base64url"),
     );
-    if (!valid) throw new Error("Invalid connector signature");
+    if (!valid) throw new Error("Invalid client signature");
 
     const previous = this.connections.get(message.machineId);
     if (previous && previous !== socket) previous.close(4003, "Superseded connection");
@@ -130,7 +130,7 @@ export class ConnectorGateway {
     this.events.emit("machine.online", message.machineId);
   }
 
-  private async persistMessage(message: ConnectorToServerMessage): Promise<void> {
+  private async persistMessage(message: ClientToServerMessage): Promise<void> {
     switch (message.type) {
       case "heartbeat":
         await this.db.query(

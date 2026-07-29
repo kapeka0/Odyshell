@@ -90,7 +90,7 @@ export type OperationStatus =
 
 export type HostPlatform = "linux" | "macos" | "windows";
 
-export type ConnectorRuntimeInfo = {
+export type ClientRuntimeInfo = {
   hostPlatform: HostPlatform;
   architecture: string;
   nodeVersion: string;
@@ -100,7 +100,7 @@ export type ConnectorRuntimeInfo = {
   containerEngineVersion: string;
 };
 
-export type ConnectorProfile = {
+export type ClientProfile = {
   runner: "docker";
   workspaceRoot: string;
   image: string;
@@ -111,16 +111,16 @@ export type ConnectorProfile = {
   capabilities: Capability[];
 };
 
-export type ConnectorConfig = {
+export type ClientConfig = {
   serverUrl: string;
   machineId: string;
   machineName: string;
   privateKeyPem: string;
   stateDirectory: string;
-  profiles: Record<string, ConnectorProfile>;
+  profiles: Record<string, ClientProfile>;
 };
 
-export type ServerToConnectorMessage =
+export type ServerToClientMessage =
   | { type: "challenge"; connectionId: string; nonce: string }
   | { type: "authenticated"; machineId: string }
   | {
@@ -141,13 +141,13 @@ export type ServerToConnectorMessage =
     }
   | { type: "operation.cancel"; operationId: string };
 
-export type ConnectorToServerMessage =
+export type ClientToServerMessage =
   | {
       type: "authenticate";
       machineId: string;
       protocolVersion: number;
       signature: string;
-      runtime?: ConnectorRuntimeInfo;
+      runtime?: ClientRuntimeInfo;
     }
   | { type: "heartbeat"; machineId: string; at: string }
   | { type: "session.opened"; sessionId: string; containerId: string }
@@ -175,10 +175,10 @@ export function capabilityForAction(action: OperationAction): Capability {
   return action.kind;
 }
 
-export function parseConnectorMessage(raw: string): ConnectorToServerMessage {
-  return JSON.parse(raw) as ConnectorToServerMessage;
+export function parseClientMessage(raw: string): ClientToServerMessage {
+  return JSON.parse(raw) as ClientToServerMessage;
 }
 
-export function parseServerMessage(raw: string): ServerToConnectorMessage {
-  return JSON.parse(raw) as ServerToConnectorMessage;
+export function parseServerMessage(raw: string): ServerToClientMessage {
+  return JSON.parse(raw) as ServerToClientMessage;
 }

@@ -17,7 +17,7 @@ export type GlobalOptions = {
   json?: boolean;
 };
 
-export function clientConfigPathFor(
+export function cliConfigPathFor(
   platform: "linux" | "darwin" | "win32",
   home: string,
   environment: NodeJS.ProcessEnv = process.env,
@@ -41,7 +41,7 @@ export function clientConfigPathFor(
 
 export function defaultConfigPath(): string {
   if (process.env.ODS_CONFIG_FILE) return resolve(process.env.ODS_CONFIG_FILE);
-  return clientConfigPathFor(
+  return cliConfigPathFor(
     process.platform as "linux" | "darwin" | "win32",
     homedir(),
   );

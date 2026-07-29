@@ -14,7 +14,7 @@ import {
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   capabilityForAction,
-  type ConnectorProfile,
+  type ClientProfile,
   type OperationAction,
 } from "@odyshell/protocol";
 import { containerUser } from "./platform.js";
@@ -23,7 +23,7 @@ export type RunningSession = {
   id: string;
   containerId: string;
   containerName: string;
-  profile: ConnectorProfile;
+  profile: ClientProfile;
   capabilities: Set<string>;
   expiresAt: Date;
   expiryTimer: NodeJS.Timeout;
@@ -160,7 +160,7 @@ export class DockerRunner {
 
   async openSession(
     sessionId: string,
-    profile: ConnectorProfile,
+    profile: ClientProfile,
     capabilities: string[],
     expiresAt: Date,
     onExpire: () => void,

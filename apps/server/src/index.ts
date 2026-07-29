@@ -8,7 +8,7 @@ import {
   type Capability,
 } from "@odyshell/protocol";
 import { audit, createDatabase, migrate } from "./database.js";
-import { ConnectorGateway } from "./gateway.js";
+import { ClientGateway } from "./gateway.js";
 
 const port = Number(process.env.PORT ?? 4100);
 const host = process.env.HOST ?? "127.0.0.1";
@@ -22,7 +22,7 @@ await app.register(websocket, { options: { maxPayload: 2 * 1024 * 1024 } });
 
 const db = createDatabase(databaseUrl);
 await migrate(db);
-const gateway = new ConnectorGateway(db);
+const gateway = new ClientGateway(db);
 gateway.register(app);
 
 function matchesSecret(actual: string | undefined, expected: string): boolean {
@@ -70,7 +70,7 @@ app.post(
   },
 );
 
-app.post("/v1/connectors/enroll", async (request, reply) => {
+app.post("/v1/clients/enroll", async (request, reply) => {
   const body = request.body as { token?: string; name?: string; publicKey?: string };
   if (!body?.token || !body.name || !body.publicKey) {
     return reply.code(400).send({ error: "token_name_and_public_key_required" });
@@ -78,10 +78,10 @@ app.post("/v1/connectors/enroll", async (request, reply) => {
   try {
     const key = createPublicKey(body.publicKey);
     if (key.asymmetricKeyType !== "ed25519") {
-      return reply.code(400).send({ error: "connector_key_must_be_ed25519" });
+      return reply.code(400).send({ error: "client_key_must_be_ed25519" });
     }
   } catch {
-    return reply.code(400).send({ error: "invalid_connector_public_key" });
+    return reply.code(400).send({ error: "invalid_client_public_key" });
   }
 
   const client = await db.connect();
@@ -106,7 +106,7 @@ app.post("/v1/connectors/enroll", async (request, reply) => {
       hashToken(body.token),
     ]);
     await client.query("COMMIT");
-    await audit(db, "connector-enrollment", "machine.enrolled", "machine", machineId, {
+    await audit(db, "client-enrollment", "machine.enrolled", "machine", machineId, {
       name: body.name,
     });
     return reply.code(201).send({ machineId, name: body.name });

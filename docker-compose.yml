@@ -15,10 +15,10 @@ services:
       timeout: 2s
       retries: 20
 
-  control-plane:
+  server:
     build:
       context: .
-      dockerfile: apps/control-plane/Dockerfile
+      dockerfile: apps/server/Dockerfile
     environment:
       PORT: 4100
       HOST: 0.0.0.0

@@ -1,5 +1,5 @@
 {
-  "name": "@odyshell/connector",
+  "name": "@odyshell/client",
   "version": "0.2.0",
   "type": "module",
   "exports": {
@@ -9,9 +9,10 @@
     }
   },
   "bin": {
-    "ods-connector": "./dist/cli.js"
+    "ods-client": "./bin/ods-client.js"
   },
   "files": [
+    "bin",
     "dist"
   ],
   "engines": {

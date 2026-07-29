@@ -6,8 +6,8 @@ AI agents can use APIs and cloud services easily. Working with a real machine is
 it usually means sharing SSH credentials, exposing inbound ports, configuring a VPN, or
 installing a complete coding agent on the machine.
 
-Odyshell provides a smaller abstraction. A private machine runs a lightweight connector, and
-that connector establishes an outbound connection to Odyshell. An agent can then request a
+Odyshell provides a smaller abstraction. A private machine runs a lightweight client, and that
+client establishes an outbound connection to the Odyshell server. An agent can then request a
 temporary session, perform a task, receive the result, and disconnect.
 
 The agent never needs SSH credentials or direct access to the private network.
@@ -17,7 +17,7 @@ The agent never needs SSH credentials or direct access to the private network.
 ```mermaid
 flowchart LR
     A["AI agent"] -->|"Request a task"| O["Odyshell"]
-    M["Private machine"] -->|"Outbound connector"| O
+    M["Private machine"] -->|"Outbound client"| O
     O -->|"Use existing connection"| M
     M --> D["Temporary Docker session"]
     D -->|"Output"| M
@@ -26,8 +26,8 @@ flowchart LR
 ```
 
 The machine decides which directory and capabilities are available. Tasks run in temporary
-Linux containers and results are returned through the connector's existing connection. The
-connector runs on Linux, macOS, and Windows.
+Linux containers and results are returned through the client's existing connection. The client
+runs on Linux, macOS, and Windows.
 
 Odyshell is not an SSH client, VPN, or full coding agent. It is the infrastructure layer between
 agents and private machines.
@@ -76,17 +76,17 @@ Create a one-time enrollment token:
 ods token create
 ```
 
-Choose a workspace, enroll the machine, and start its connector:
+Choose a workspace, enroll the machine, and start its client:
 
 ```bash
 mkdir odyshell-workspace
 
-ods connector doctor
-ods connector enroll --token <token> --name my-machine --workspace ./odyshell-workspace
-ods connector start
+ods client doctor
+ods client enroll --token <token> --name my-machine --workspace ./odyshell-workspace
+ods client start
 ```
 
-Keep the connector running. In another terminal:
+Keep the client running. In another terminal:
 
 ```bash
 ods exec my-machine -- uname -a

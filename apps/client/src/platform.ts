@@ -18,7 +18,7 @@ export function hostPlatform(platform: NodeJS.Platform = process.platform): Host
   }
 }
 
-export function connectorConfigPathFor(
+export function clientConfigPathFor(
   platform: SupportedNodePlatform,
   home: string,
   environment: NodeJS.ProcessEnv = process.env,
@@ -27,21 +27,21 @@ export function connectorConfigPathFor(
     return win32.join(
       environment.APPDATA ?? win32.join(home, "AppData", "Roaming"),
       "Odyshell",
-      "connector.json",
+      "client.json",
     );
   }
   if (platform === "darwin") {
-    return posix.join(home, "Library", "Application Support", "Odyshell", "connector.json");
+    return posix.join(home, "Library", "Application Support", "Odyshell", "client.json");
   }
   return posix.join(
     environment.XDG_CONFIG_HOME ?? posix.join(home, ".config"),
     "odyshell",
-    "connector.json",
+    "client.json",
   );
 }
 
-export function defaultConnectorConfigPath(): string {
-  return connectorConfigPathFor(process.platform as SupportedNodePlatform, homedir());
+export function defaultClientConfigPath(): string {
+  return clientConfigPathFor(process.platform as SupportedNodePlatform, homedir());
 }
 
 export function containerUser(

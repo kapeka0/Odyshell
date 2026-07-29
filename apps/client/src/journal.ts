@@ -41,7 +41,7 @@ export class OperationJournal {
       const result: JournalResult = {
         status: "execution_unknown",
         exitCode: null,
-        error: "Connector restarted or lost operation ownership while the command was running",
+        error: "Client restarted or lost operation ownership while the command was running",
         outputTruncated: false,
       };
       this.complete(id, result);

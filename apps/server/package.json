@@ -1,5 +1,5 @@
 {
-  "name": "@odyshell/control-plane",
+  "name": "@odyshell/server",
   "version": "0.1.0",
   "type": "module",
   "scripts": {

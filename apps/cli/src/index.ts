@@ -9,11 +9,11 @@ import {
   type OperationAction,
 } from "@odyshell/protocol";
 import {
-  defaultConnectorConfigPath,
-  enrollConnector,
-  inspectConnectorRuntime,
-  runConnector,
-} from "@odyshell/connector";
+  defaultClientConfigPath,
+  enrollClient,
+  inspectClientRuntime,
+  runClient,
+} from "@odyshell/client";
 import { ApiError, OdyshellApi, type Operation } from "./api.js";
 import {
   defaultConfigPath,
@@ -36,7 +36,7 @@ const program = new Command();
 program
   .name("ods")
   .description("Agent-first access to private machines")
-  .version("0.3.0")
+  .version("0.4.0")
   .option("-j, --json", "emit stable JSON output")
   .option("--server <url>", "override the Odyshell server URL")
   .option("--agent-key <key>", "override the agent API key")
@@ -164,7 +164,7 @@ program
 
 program
   .command("status")
-  .description("check the control plane and connected machines")
+  .description("check the server and connected machines")
   .action(async (_options, command: Command) => {
     const options = globals(command);
     const api = await apiFor(command);
@@ -200,7 +200,7 @@ program
 const token = program.command("token").description("manage enrollment tokens");
 token
   .command("create")
-  .description("create a one-time connector enrollment token")
+  .description("create a one-time client enrollment token")
   .option("--ttl <seconds>", "token lifetime", "600")
   .action(async (options: { ttl: string }, command: Command) => {
     const global = globals(command);
@@ -398,11 +398,11 @@ fsCommand
     },
   );
 
-const connector = program.command("connector").description("manage the private-machine connector");
-connector
+const client = program.command("client").description("manage the private-machine client");
+client
   .command("doctor")
-  .description("check this host for connector compatibility")
-  .option("--config <path>", "connector configuration", defaultConnectorConfigPath())
+  .description("check this host for client compatibility")
+  .option("--config <path>", "client configuration", defaultClientConfigPath())
   .action(async (options: { config: string }, command: Command) => {
     const global = globals(command);
     const configPath = resolve(options.config);
@@ -410,7 +410,7 @@ connector
       () => true,
       () => false,
     );
-    const runtime = await inspectConnectorRuntime();
+    const runtime = await inspectClientRuntime();
     const report = { compatible: true, configPath, configFound, runtime };
     if (global.json) printJson(report);
     else {
@@ -423,14 +423,14 @@ connector
     }
   });
 
-connector
+client
   .command("enroll")
-  .description("enroll this machine with an Odyshell control plane")
+  .description("enroll this machine with an Odyshell server")
   .requiredOption("--token <token>", "one-time enrollment token")
   .requiredOption("--name <name>", "machine name")
   .requiredOption("--workspace <path>", "workspace exposed to sessions")
   .option("--image <image>", "sandbox image", "alpine:3.22")
-  .option("--config <path>", "connector configuration", defaultConnectorConfigPath())
+  .option("--config <path>", "client configuration", defaultClientConfigPath())
   .action(
     async (
       options: { token: string; name: string; workspace: string; image: string; config: string },
@@ -438,7 +438,7 @@ connector
     ) => {
       const global = globals(command);
       const config = await resolveConfig(global);
-      const result = await enrollConnector({
+      const result = await enrollClient({
         serverUrl: config.serverUrl,
         token: options.token,
         machineName: options.name,
@@ -455,12 +455,12 @@ connector
     },
   );
 
-connector
+client
   .command("start")
-  .description("start the outbound connector in the foreground")
-  .option("--config <path>", "connector configuration", defaultConnectorConfigPath())
+  .description("start the outbound client in the foreground")
+  .option("--config <path>", "client configuration", defaultClientConfigPath())
   .action(async (options: { config: string }) => {
-    await runConnector(options.config);
+    await runClient(options.config);
   });
 
 await program.parseAsync(normalizeGlobalOptions(process.argv)).catch((error: unknown) => {

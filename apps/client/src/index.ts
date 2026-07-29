@@ -6,10 +6,10 @@ import {
   PROTOCOL_VERSION,
   allCapabilities,
   parseServerMessage,
-  type ConnectorConfig,
-  type ConnectorRuntimeInfo,
-  type ConnectorToServerMessage,
-  type ServerToConnectorMessage,
+  type ClientConfig,
+  type ClientRuntimeInfo,
+  type ClientToServerMessage,
+  type ServerToClientMessage,
 } from "@odyshell/protocol";
 import WebSocket from "ws";
 import {
@@ -19,11 +19,11 @@ import {
   type RunningSession,
 } from "./docker-runner.js";
 import { OperationJournal, type JournalResult } from "./journal.js";
-import { defaultConnectorConfigPath, hostPlatform } from "./platform.js";
+import { defaultClientConfigPath, hostPlatform } from "./platform.js";
 
-export { defaultConnectorConfigPath } from "./platform.js";
+export { defaultClientConfigPath } from "./platform.js";
 
-export type EnrollConnectorOptions = {
+export type EnrollClientOptions = {
   serverUrl: string;
   token: string;
   machineName: string;
@@ -32,7 +32,7 @@ export type EnrollConnectorOptions = {
   image?: string;
 };
 
-export async function enrollConnector(options: EnrollConnectorOptions): Promise<{
+export async function enrollClient(options: EnrollClientOptions): Promise<{
   machineId: string;
   configPath: string;
 }> {
@@ -43,7 +43,7 @@ export async function enrollConnector(options: EnrollConnectorOptions): Promise<
     publicKeyEncoding: { type: "spki", format: "pem" },
     privateKeyEncoding: { type: "pkcs8", format: "pem" },
   });
-  const response = await fetch(new URL("/v1/connectors/enroll", serverUrl), {
+  const response = await fetch(new URL("/v1/clients/enroll", serverUrl), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ token: options.token, name: options.machineName, publicKey }),
@@ -51,7 +51,7 @@ export async function enrollConnector(options: EnrollConnectorOptions): Promise<
   const body = (await response.json()) as { machineId?: string; error?: string };
   if (!response.ok || !body.machineId) throw new Error(body.error ?? `Enrollment failed: ${response.status}`);
 
-  const config: ConnectorConfig = {
+  const config: ClientConfig = {
     serverUrl,
     machineId: body.machineId,
     machineName: options.machineName,
@@ -75,7 +75,7 @@ export async function enrollConnector(options: EnrollConnectorOptions): Promise<
   return { machineId: body.machineId, configPath };
 }
 
-export async function inspectConnectorRuntime(): Promise<ConnectorRuntimeInfo> {
+export async function inspectClientRuntime(): Promise<ClientRuntimeInfo> {
   const docker = await inspectDockerRuntime();
   return {
     hostPlatform: hostPlatform(),
@@ -88,7 +88,7 @@ export async function inspectConnectorRuntime(): Promise<ConnectorRuntimeInfo> {
   };
 }
 
-export class Connector {
+export class Client {
   private socket: WebSocket | undefined;
   private heartbeat?: NodeJS.Timeout;
   private reconnectTimer: NodeJS.Timeout | undefined;
@@ -98,15 +98,15 @@ export class Connector {
   private readonly operations = new Map<string, RunningOperation>();
   private readonly runner: DockerRunner;
   private readonly journal: OperationJournal;
-  private runtime: ConnectorRuntimeInfo | undefined;
+  private runtime: ClientRuntimeInfo | undefined;
 
-  constructor(private readonly config: ConnectorConfig) {
+  constructor(private readonly config: ClientConfig) {
     this.runner = new DockerRunner(config.machineId);
     this.journal = new OperationJournal(resolve(config.stateDirectory, "operations.sqlite"));
   }
 
   async start(): Promise<void> {
-    this.runtime = await inspectConnectorRuntime();
+    this.runtime = await inspectClientRuntime();
     await this.runner.cleanupOrphans();
     await this.connect();
   }
@@ -131,7 +131,7 @@ export class Connector {
     socket.on("open", () => console.log(`Connected to ${url.toString()}`));
     socket.on("message", (data) => {
       void this.handle(parseServerMessage(data.toString())).catch((error: unknown) => {
-        console.error("Connector message failed:", error);
+        console.error("Client message failed:", error);
       });
     });
     socket.on("close", () => {
@@ -146,17 +146,17 @@ export class Connector {
         this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30_000);
       }
     });
-    socket.on("error", (error) => console.error("Connector socket error:", error.message));
+    socket.on("error", (error) => console.error("Client socket error:", error.message));
   }
 
-  private send(message: ConnectorToServerMessage): void {
+  private send(message: ClientToServerMessage): void {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error("Control plane is disconnected");
+      throw new Error("Server is disconnected");
     }
     this.socket.send(JSON.stringify(message));
   }
 
-  private async handle(message: ServerToConnectorMessage): Promise<void> {
+  private async handle(message: ServerToClientMessage): Promise<void> {
     switch (message.type) {
       case "challenge": {
         const signature = sign(
@@ -203,7 +203,7 @@ export class Connector {
   }
 
   private async openSession(
-    message: Extract<ServerToConnectorMessage, { type: "session.open" }>,
+    message: Extract<ServerToClientMessage, { type: "session.open" }>,
   ): Promise<void> {
     try {
       const profile = this.config.profiles[message.profile];
@@ -244,7 +244,7 @@ export class Connector {
   }
 
   private async startOperation(
-    message: Extract<ServerToConnectorMessage, { type: "operation.start" }>,
+    message: Extract<ServerToClientMessage, { type: "operation.start" }>,
   ): Promise<void> {
     const receipt = this.journal.receive(message.operationId);
     if (receipt === "completed" || receipt === "unknown") {
@@ -259,7 +259,7 @@ export class Connector {
       const result: JournalResult = {
         status: "failed",
         exitCode: null,
-        error: "Session is not active on this connector",
+        error: "Session is not active on this client",
         outputTruncated: false,
       };
       this.journal.complete(message.operationId, result);
@@ -352,17 +352,17 @@ export class Connector {
   }
 }
 
-export async function runConnector(
-  configPathInput = defaultConnectorConfigPath(),
-): Promise<Connector> {
+export async function runClient(
+  configPathInput = defaultClientConfigPath(),
+): Promise<Client> {
   const configPath = resolve(configPathInput);
-  const config = JSON.parse(await readFile(configPath, "utf8")) as ConnectorConfig;
-  const connector = new Connector(config);
+  const config = JSON.parse(await readFile(configPath, "utf8")) as ClientConfig;
+  const client = new Client(config);
   const shutdown = (): void => {
-    void connector.stop().finally(() => process.exit(0));
+    void client.stop().finally(() => process.exit(0));
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
-  await connector.start();
-  return connector;
+  await client.start();
+  return client;
 }

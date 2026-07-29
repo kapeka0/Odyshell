@@ -1,9 +1,9 @@
 import process from "node:process";
 import {
-  defaultConnectorConfigPath,
-  enrollConnector,
-  inspectConnectorRuntime,
-  runConnector,
+  defaultClientConfigPath,
+  enrollClient,
+  inspectClientRuntime,
+  runClient,
 } from "./index.js";
 
 function option(name: string, fallback?: string): string | undefined {
@@ -19,20 +19,20 @@ function requiredOption(name: string, fallback?: string): string {
 
 const command = process.argv[2];
 if (command === "enroll") {
-  const result = await enrollConnector({
+  const result = await enrollClient({
     serverUrl: requiredOption("server", process.env.ODYSHELL_SERVER_URL),
     token: requiredOption("token", process.env.ODYSHELL_ENROLLMENT_TOKEN),
     machineName: requiredOption("name", process.env.ODYSHELL_MACHINE_NAME),
     workspaceRoot: requiredOption("workspace", process.cwd()),
-    configPath: option("config", defaultConnectorConfigPath())!,
+    configPath: option("config", defaultClientConfigPath())!,
     image: option("image", "alpine:3.22") ?? "alpine:3.22",
   });
   console.log(JSON.stringify({ enrolled: true, ...result }, null, 2));
 } else if (command === "start") {
-  await runConnector(option("config", defaultConnectorConfigPath())!);
+  await runClient(option("config", defaultClientConfigPath())!);
 } else if (command === "doctor") {
-  console.log(JSON.stringify(await inspectConnectorRuntime(), null, 2));
+  console.log(JSON.stringify(await inspectClientRuntime(), null, 2));
 } else {
-  console.error("Usage: ods-connector <doctor|enroll|start> [options]");
+  console.error("Usage: ods-client <doctor|enroll|start> [options]");
   process.exitCode = 1;
 }

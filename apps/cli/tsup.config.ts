@@ -6,7 +6,7 @@ export default defineConfig({
   platform: "node",
   target: "node24",
   noExternal: [
-    "@odyshell/connector",
+    "@odyshell/client",
     "@odyshell/protocol",
     "zod",
   ],

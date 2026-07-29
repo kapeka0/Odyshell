@@ -1,5 +1,5 @@
 [Unit]
-Description=Odyshell outbound connector
+Description=Odyshell client
 After=network-online.target docker.service
 Wants=network-online.target
 
@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=odyshell
 Group=odyshell
-ExecStart=/usr/local/bin/odyshell-connector start --config /etc/odyshell/connector.json
+ExecStart=/usr/local/bin/odyshell-client start --config /etc/odyshell/client.json
 Restart=always
 RestartSec=3
 NoNewPrivileges=true

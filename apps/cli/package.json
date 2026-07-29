@@ -1,6 +1,6 @@
 {
   "name": "@odyshell/cli",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "bin": {
     "ods": "./dist/index.js"
@@ -30,7 +30,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@odyshell/connector": "workspace:*",
+    "@odyshell/client": "workspace:*",
     "@odyshell/protocol": "workspace:*"
   }
 }

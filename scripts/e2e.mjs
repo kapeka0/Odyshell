@@ -8,7 +8,7 @@ const apiUrl = process.env.ODYSHELL_E2E_URL ?? "http://127.0.0.1:4100";
 const agentKey = process.env.ODYSHELL_AGENT_KEY ?? "dev-agent-key";
 const adminKey = process.env.ODYSHELL_ADMIN_KEY ?? "dev-admin-key";
 const configDirectory = resolve(root, ".odyshell/e2e");
-const configPath = resolve(configDirectory, "connector.json");
+const configPath = resolve(configDirectory, "client.json");
 const workspace = resolve(root, "tmp/e2e-workspace");
 
 if (!configDirectory.startsWith(resolve(root, ".odyshell"))) {
@@ -53,14 +53,14 @@ function run(command, args, options = {}) {
   });
 }
 
-await run("docker", ["compose", "up", "-d", "--build"]);
+await run("docker", ["compose", "up", "-d", "--build", "--remove-orphans"]);
 
 for (let attempt = 0; attempt < 60; attempt++) {
   try {
     await api("/health");
     break;
   } catch {
-    if (attempt === 59) throw new Error("Control plane did not become healthy");
+    if (attempt === 59) throw new Error("Server did not become healthy");
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
   }
 }
@@ -72,7 +72,7 @@ const enrollment = await api("/v1/admin/enrollment-tokens", {
 });
 
 const tsxCli = resolve(root, "node_modules/tsx/dist/cli.mjs");
-const connectorEntry = resolve(root, "apps/connector/src/cli.ts");
+const clientEntry = resolve(root, "apps/client/src/cli.ts");
 const odsEntry = resolve(root, "apps/cli/src/index.ts");
 
 const enrolled = JSON.parse(
@@ -80,10 +80,14 @@ const enrolled = JSON.parse(
     process.execPath,
     [
       tsxCli,
-      connectorEntry,
-      "enroll",
+      odsEntry,
       "--server",
       apiUrl,
+      "--json",
+      "client",
+      "enroll",
+      "--token",
+      enrollment.token,
       "--name",
       "e2e-docker",
       "--workspace",
@@ -91,13 +95,12 @@ const enrolled = JSON.parse(
       "--config",
       configPath,
     ],
-    { env: { ...process.env, ODYSHELL_ENROLLMENT_TOKEN: enrollment.token } },
   ),
 );
 
-const connector = spawn(
+const client = spawn(
   process.execPath,
-  [tsxCli, connectorEntry, "start", "--config", configPath],
+  [tsxCli, clientEntry, "start", "--config", configPath],
   {
     cwd: root,
     shell: false,
@@ -105,8 +108,8 @@ const connector = spawn(
     stdio: ["ignore", "pipe", "pipe"],
   },
 );
-connector.stdout.on("data", (chunk) => process.stdout.write(`[connector] ${chunk}`));
-connector.stderr.on("data", (chunk) => process.stderr.write(`[connector] ${chunk}`));
+client.stdout.on("data", (chunk) => process.stdout.write(`[client] ${chunk}`));
+client.stderr.on("data", (chunk) => process.stderr.write(`[client] ${chunk}`));
 let e2eMachineId;
 
 async function waitUntil(read, predicate, description) {
@@ -145,18 +148,18 @@ try {
     () => api("/v1/machines"),
     (value) =>
       value.data.some((machine) => machine.id === enrolled.machineId && machine.online),
-    "connector authentication",
+    "client authentication",
   );
   const machine = machines.data.find(
     (item) => item.id === enrolled.machineId && item.online,
   );
-  if (!machine) throw new Error("Enrolled connector did not come online");
+  if (!machine) throw new Error("Enrolled client did not come online");
   if (
     !["linux", "macos", "windows"].includes(machine.runtime?.hostPlatform) ||
     !machine.runtime?.architecture ||
     machine.runtime?.containerOs !== "linux"
   ) {
-    throw new Error("Connector runtime metadata was not reported");
+    throw new Error("Client runtime metadata was not reported");
   }
   e2eMachineId = machine.id;
 
@@ -173,7 +176,7 @@ try {
     ]),
   );
   if (!cliMachines.data.some((item) => item.id === machine.id)) {
-    throw new Error("ods machines did not return the enrolled connector");
+    throw new Error("ods machines did not return the enrolled client");
   }
 
   const cliExecution = JSON.parse(
@@ -316,7 +319,7 @@ try {
         machineId: machine.id,
         sessionId: session.id,
         checks: {
-          outboundConnector: true,
+          outboundClient: true,
           ed25519Authentication: true,
           runtimeMetadata: `${machine.runtime.hostPlatform}/${machine.runtime.architecture}`,
           odsCli: true,
@@ -345,9 +348,9 @@ try {
       .filter(Boolean);
     if (orphanIds.length > 0) await run("docker", ["rm", "-f", ...orphanIds]).catch(() => {});
   }
-  if (connector.pid && process.platform === "win32") {
-    await run("taskkill.exe", ["/pid", String(connector.pid), "/t", "/f"]).catch(() => {});
+  if (client.pid && process.platform === "win32") {
+    await run("taskkill.exe", ["/pid", String(client.pid), "/t", "/f"]).catch(() => {});
   } else {
-    connector.kill("SIGTERM");
+    client.kill("SIGTERM");
   }
 }

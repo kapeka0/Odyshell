@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
-  connectorConfigPathFor,
+  clientConfigPathFor,
   containerUser,
   hostPlatform,
-} from "../apps/connector/src/platform.js";
-import { parseDockerRuntime } from "../apps/connector/src/docker-runner.js";
-import { clientConfigPathFor } from "../apps/cli/src/config.js";
+} from "../apps/client/src/platform.js";
+import { parseDockerRuntime } from "../apps/client/src/docker-runner.js";
+import { cliConfigPathFor } from "../apps/cli/src/config.js";
 
-describe("connector platform support", () => {
+describe("client platform support", () => {
   it("maps Node platform names to public Odyshell platform names", () => {
     expect(hostPlatform("linux")).toBe("linux");
     expect(hostPlatform("darwin")).toBe("macos");
@@ -17,19 +17,19 @@ describe("connector platform support", () => {
 
   it("uses the native application configuration directory", () => {
     expect(
-      connectorConfigPathFor("win32", "C:\\Users\\ada", {
+      clientConfigPathFor("win32", "C:\\Users\\ada", {
         APPDATA: "C:\\Users\\ada\\AppData\\Roaming",
       }),
-    ).toBe("C:\\Users\\ada\\AppData\\Roaming\\Odyshell\\connector.json");
-    expect(connectorConfigPathFor("darwin", "/Users/ada", {})).toBe(
-      "/Users/ada/Library/Application Support/Odyshell/connector.json",
+    ).toBe("C:\\Users\\ada\\AppData\\Roaming\\Odyshell\\client.json");
+    expect(clientConfigPathFor("darwin", "/Users/ada", {})).toBe(
+      "/Users/ada/Library/Application Support/Odyshell/client.json",
     );
     expect(
-      connectorConfigPathFor("linux", "/home/ada", {
+      clientConfigPathFor("linux", "/home/ada", {
         XDG_CONFIG_HOME: "/home/ada/.config-custom",
       }),
-    ).toBe("/home/ada/.config-custom/odyshell/connector.json");
-    expect(clientConfigPathFor("darwin", "/Users/ada", {})).toBe(
+    ).toBe("/home/ada/.config-custom/odyshell/client.json");
+    expect(cliConfigPathFor("darwin", "/Users/ada", {})).toBe(
       "/Users/ada/Library/Application Support/Odyshell/config.json",
     );
   });
