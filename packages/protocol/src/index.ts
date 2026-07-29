@@ -108,25 +108,29 @@ export type ClientRuntimeInfo = {
   containerEngineVersion: string;
 };
 
-export type ClientProfile = {
-  runner: "docker";
-  workspaceRoot: string;
-  image: string;
-  network: "none" | "bridge";
-  maxSessionTtlSeconds: number;
-  maxConcurrentSessions: number;
-  maxOutputBytes: number;
-  capabilities: Capability[];
-};
+export const clientProfileSchema = z.object({
+  runner: z.literal("docker"),
+  workspaceRoot: z.string().min(1).max(4096),
+  image: z.string().min(1).max(512),
+  network: z.literal("none"),
+  maxSessionTtlSeconds: z.number().int().min(10).max(3600),
+  maxConcurrentSessions: z.number().int().min(1).max(32),
+  maxOutputBytes: z.number().int().min(1024).max(16 * 1024 * 1024),
+  capabilities: z.array(capabilitySchema).min(1),
+});
+export type ClientProfile = z.infer<typeof clientProfileSchema>;
 
-export type ClientConfig = {
-  serverUrl: string;
-  machineId: string;
-  machineName: string;
-  privateKeyPem: string;
-  stateDirectory: string;
-  profiles: Record<string, ClientProfile>;
-};
+export const clientConfigSchema = z.object({
+  serverUrl: z.string().url(),
+  machineId: z.string().uuid(),
+  machineName: z.string().min(1).max(128),
+  privateKeyPem: z.string().min(1),
+  stateDirectory: z.string().min(1).max(4096),
+  profiles: z
+    .record(z.string().min(1).max(64), clientProfileSchema)
+    .refine((profiles) => Object.keys(profiles).length > 0, "At least one profile is required"),
+});
+export type ClientConfig = z.infer<typeof clientConfigSchema>;
 
 export type ServerToClientMessage =
   | { type: "challenge"; connectionId: string; nonce: string }

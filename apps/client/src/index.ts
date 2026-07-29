@@ -5,6 +5,7 @@ import process from "node:process";
 import {
   PROTOCOL_VERSION,
   capabilitySchema,
+  clientConfigSchema,
   parseServerMessage,
   type Capability,
   type ClientConfig,
@@ -365,7 +366,14 @@ export async function runClient(
   configPathInput = defaultClientConfigPath(),
 ): Promise<Client> {
   const configPath = resolve(configPathInput);
-  const config = JSON.parse(await readFile(configPath, "utf8")) as ClientConfig;
+  const parsed = clientConfigSchema.safeParse(JSON.parse(await readFile(configPath, "utf8")));
+  if (!parsed.success) {
+    const details = parsed.error.issues
+      .map((issue) => `${issue.path.join(".") || "config"}: ${issue.message}`)
+      .join("; ");
+    throw new Error(`Invalid client configuration: ${details}`);
+  }
+  const config: ClientConfig = parsed.data;
   const client = new Client(config);
   const shutdown = (): void => {
     void client.stop().finally(() => process.exit(0));

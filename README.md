@@ -36,6 +36,20 @@ through the client's existing connection. The client runs on Linux, macOS, and W
 Odyshell is not an SSH client, VPN, or full coding agent. It is the infrastructure layer between
 agents and private machines.
 
+## Security principles
+
+Odyshell treats every remote task as untrusted:
+
+- Security is enforced by the Client and operating system, not by prompts.
+- Network access and host credentials are unavailable by default.
+- Only the selected workspace is mounted into a session.
+- The workspace is read-only unless the session has an explicit write capability.
+- Sessions are resource-limited, audited, temporary, and removed when they close.
+
+The MVP uses hardened Docker containers, not Docker Sandboxes microVMs. Containers provide a
+lighter boundary but share the Docker host's kernel on Linux, so Odyshell does not claim VM-level
+isolation.
+
 ## What using it looks like
 
 Agents can use the Odyshell API directly. The `ods` CLI is the quickest way to try the same

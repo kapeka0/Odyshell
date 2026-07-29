@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   agentTokenRequestSchema,
+  clientConfigSchema,
   operationRequestSchema,
   sessionRequestSchema,
 } from "../packages/protocol/src/index.js";
@@ -54,5 +55,37 @@ describe("protocol validation", () => {
         expiresInSeconds: 600,
       }).success,
     ).toBe(false);
+  });
+
+  it("fails closed when a client profile enables network access", () => {
+    const config = {
+      serverUrl: "http://127.0.0.1:4100",
+      machineId: "2dc24de7-ec0e-45b3-88c1-acbb900e51f8",
+      machineName: "test-machine",
+      privateKeyPem: "private-key",
+      stateDirectory: "/tmp/odyshell",
+      profiles: {
+        workspace: {
+          runner: "docker",
+          workspaceRoot: "/tmp/workspace",
+          image: "alpine:3.22",
+          network: "bridge",
+          maxSessionTtlSeconds: 1800,
+          maxConcurrentSessions: 2,
+          maxOutputBytes: 1024 * 1024,
+          capabilities: ["process.exec"],
+        },
+      },
+    };
+
+    expect(clientConfigSchema.safeParse(config).success).toBe(false);
+    expect(
+      clientConfigSchema.safeParse({
+        ...config,
+        profiles: {
+          workspace: { ...config.profiles.workspace, network: "none" },
+        },
+      }).success,
+    ).toBe(true);
   });
 });

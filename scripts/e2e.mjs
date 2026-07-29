@@ -279,6 +279,51 @@ try {
     throw new Error("ods one-shot execution did not return expected output");
   }
 
+  const readOnlyCreated = await api("/v1/sessions", {
+    method: "POST",
+    body: JSON.stringify({
+      machineId: machine.id,
+      profile: "workspace",
+      ttlSeconds: 120,
+      capabilities: ["process.exec"],
+    }),
+  });
+  const readOnlySession = await waitUntil(
+    () => api(`/v1/sessions/${readOnlyCreated.id}`),
+    (value) => value.status === "ready" || value.status === "failed",
+    "read-only sandbox creation",
+  );
+  if (readOnlySession.status !== "ready") {
+    throw new Error(`Read-only sandbox failed: ${readOnlySession.error}`);
+  }
+  const readOnlyContainerId = (
+    await run("docker", ["ps", "-q", "--filter", `label=odyshell.session=${readOnlySession.id}`])
+  ).trim();
+  const readOnlyInspect = JSON.parse(await run("docker", ["inspect", readOnlyContainerId]))[0];
+  const readOnlyWorkspace = readOnlyInspect.Mounts.find(
+    (mount) => mount.Destination === "/workspace",
+  );
+  if (readOnlyWorkspace?.RW !== false || readOnlyInspect.HostConfig.IpcMode !== "none") {
+    throw new Error("Read-only session did not enforce workspace and IPC isolation");
+  }
+  await operation(
+    readOnlySession.id,
+    {
+      kind: "process.exec",
+      program: "touch",
+      args: ["should-not-be-written"],
+      cwd: ".",
+      env: {},
+    },
+    "failed",
+  );
+  await api(`/v1/sessions/${readOnlySession.id}`, { method: "DELETE" });
+  await waitUntil(
+    () => api(`/v1/sessions/${readOnlySession.id}`),
+    (value) => value.status === "closed",
+    "read-only sandbox cleanup",
+  );
+
   const createdSession = await api("/v1/sessions", {
     method: "POST",
     body: JSON.stringify({
@@ -299,11 +344,14 @@ try {
     await run("docker", ["ps", "-q", "--filter", `label=odyshell.session=${session.id}`])
   ).trim();
   const inspected = JSON.parse(await run("docker", ["inspect", containerId]))[0];
+  const workspaceMount = inspected.Mounts.find((mount) => mount.Destination === "/workspace");
   if (
     inspected.HostConfig.NetworkMode !== "none" ||
+    inspected.HostConfig.IpcMode !== "none" ||
     !inspected.HostConfig.ReadonlyRootfs ||
     !inspected.HostConfig.CapDrop.includes("ALL") ||
-    !inspected.HostConfig.SecurityOpt.includes("no-new-privileges:true")
+    !inspected.HostConfig.SecurityOpt.includes("no-new-privileges:true") ||
+    workspaceMount?.RW !== true
   ) {
     throw new Error("Session container does not match the required sandbox policy");
   }
@@ -432,6 +480,8 @@ try {
           clientPolicyDenied: true,
           auditTrail: true,
           sandboxPolicy: true,
+          readOnlyWorkspaceByDefault: true,
+          ipcIsolated: true,
           sandboxedExec: execResult.output.trim(),
           filesystemRoundTrip: readResult.output,
           networkBlocked: networkResult.status === "failed",

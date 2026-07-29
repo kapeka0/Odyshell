@@ -19,6 +19,8 @@ import {
 } from "@odyshell/protocol";
 import { containerUser } from "./platform.js";
 
+const workspaceWriteCapabilities = new Set(["fs.write", "fs.mkdir", "fs.remove"]);
+
 export type RunningSession = {
   id: string;
   containerId: string;
@@ -172,11 +174,17 @@ export class DockerRunner {
     if (ttlMilliseconds <= 0 || ttlMilliseconds > profile.maxSessionTtlSeconds * 1000) {
       throw new Error("Requested session TTL violates local policy");
     }
+    if (profile.network !== "none") {
+      throw new Error("Network access is denied by local policy");
+    }
     for (const capability of capabilities) {
       if (!profile.capabilities.includes(capability as never)) {
         throw new Error(`Capability ${capability} is denied by local policy`);
       }
     }
+    const workspaceWritable = capabilities.some((capability) =>
+      workspaceWriteCapabilities.has(capability),
+    );
 
     const args = [
       "run",
@@ -191,7 +199,9 @@ export class DockerRunner {
       "--label",
       `odyshell.session=${sessionId}`,
       "--network",
-      profile.network,
+      "none",
+      "--ipc",
+      "none",
       "--read-only",
       "--tmpfs",
       "/tmp:rw,noexec,nosuid,size=64m",
@@ -208,7 +218,7 @@ export class DockerRunner {
       "--user",
       containerUser(),
       "--mount",
-      `type=bind,source=${mountSource},target=/workspace`,
+      `type=bind,source=${mountSource},target=/workspace${workspaceWritable ? "" : ",readonly"}`,
       "--workdir",
       "/workspace",
       profile.image,
