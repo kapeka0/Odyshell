@@ -31,3 +31,6 @@
   and public online documentation for required updates.
 - Keep documentation synchronized with shipped behavior. Do not present planned features as
   available.
+- Treat `docs/design/` as accepted target architecture, not shipped behavior. Promote a design
+  into public usage documentation only after its corresponding vertical is implemented and
+  verified.

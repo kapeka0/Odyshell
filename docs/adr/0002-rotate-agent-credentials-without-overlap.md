@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0004
+---
+
 # Rotate Agent Credentials without overlap
 
 Odyshell allows at most one active Agent Credential per Agent. Renewing issues a new secret and
