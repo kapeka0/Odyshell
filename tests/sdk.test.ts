@@ -52,6 +52,88 @@ describe("Odyshell SDK", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("uses a workspace-bound CLI token without exposing the admin key surface", async () => {
+    const requests: CapturedRequest[] = [];
+    const fetch = mockFetch(requests, () => ({ data: [] }));
+    const ods = new Odyshell({
+      serverUrl: "https://ods.example",
+      cliToken: "cli-secret",
+      workspaceId: "workspace-123",
+      fetch,
+    });
+
+    await ods.machines();
+    await ods.adminMachines();
+
+    expect(requests[0]?.headers).toMatchObject({
+      authorization: "Bearer cli-secret",
+    });
+    expect(requests[1]?.headers).toMatchObject({
+      authorization: "Bearer cli-secret",
+      "x-odyshell-workspace-id": "workspace-123",
+    });
+    expect(requests[0]?.headers).not.toHaveProperty("x-odyshell-admin-key");
+    expect(requests[1]?.headers).not.toHaveProperty("x-odyshell-admin-key");
+  });
+
+  it("keeps device authorization public and exchanges only the opaque device code", async () => {
+    const requests: CapturedRequest[] = [];
+    const fetch = mockFetch(requests, (request) =>
+      request.path.endsWith("/token")
+        ? {
+            accessToken: "ods_cli_result",
+            tokenType: "Bearer",
+            workspaceId: "workspace-123",
+            expiresAt: "2026-08-29T18:00:00.000Z",
+          }
+        : {
+            deviceCode: "ods_device_secret",
+            userCode: "ABCD-EFGH",
+            verificationUri: "https://app.ods.example/activate",
+            verificationUriComplete: "https://app.ods.example/activate?code=ABCD-EFGH",
+            expiresAt: "2026-07-29T18:10:00.000Z",
+            intervalSeconds: 2,
+          },
+    );
+    const ods = new Odyshell({ serverUrl: "https://ods.example", fetch });
+
+    await ods.startDeviceAuthorization("Test CLI");
+    await ods.exchangeDeviceAuthorization("ods_device_secret");
+
+    expect(requests[0]).toMatchObject({
+      path: "/v1/auth/device",
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: { clientName: "Test CLI" },
+    });
+    expect(requests[0]?.headers).not.toHaveProperty("authorization");
+    expect(requests[1]).toMatchObject({
+      path: "/v1/auth/device/token",
+      method: "POST",
+      body: { deviceCode: "ods_device_secret" },
+    });
+    expect(requests[1]?.headers).not.toHaveProperty("authorization");
+  });
+
+  it("revokes a CLI token through its bearer credential", async () => {
+    const requests: CapturedRequest[] = [];
+    const fetch = mockFetch(requests, () => ({ revoked: true }));
+    const ods = new Odyshell({
+      serverUrl: "https://ods.example",
+      cliToken: "cli-secret",
+      agentToken: "agent-secret",
+      fetch,
+    });
+
+    await expect(ods.logoutCli()).resolves.toEqual({ revoked: true });
+    expect(requests[0]).toMatchObject({
+      path: "/v1/auth/logout",
+      method: "POST",
+      headers: { authorization: "Bearer cli-secret" },
+    });
+    expect(requests[0]?.headers).not.toHaveProperty("x-odyshell-admin-key");
+  });
+
   it("does not expose credentials through API errors", async () => {
     const ods = new Odyshell({
       serverUrl: "https://ods.example",

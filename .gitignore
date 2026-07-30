@@ -10,3 +10,4 @@ tmp/
 .claude/
 skills-lock.json
 convex/
+.clerk/

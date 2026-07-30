@@ -46,6 +46,7 @@ A production deployment needs:
 - `DATABASE_URL` pointing to PostgreSQL with TLS enabled.
 - `ODYSHELL_ADMIN_KEY` set to a strong, private value.
 - `HOST=0.0.0.0`.
+- Optional `ODYSHELL_WEB_KEY` and `ODYSHELL_WEB_URL` to enable the cloud web bridge.
 
 Railway supplies `PORT` automatically. PostgreSQL stores machine identities, scoped tokens,
 temporary sessions, operations, and content-minimal control events. Operation payloads expire
@@ -61,7 +62,9 @@ remain inside the selected Workspace. Agent requests do not accept a workspace s
 workspace comes from the hashed token record.
 
 Keep one Server replica for the MVP because active Client connections are held by the running
-process. The future frontend will call the Odyshell API and will not access PostgreSQL directly.
+process. The frontend calls authenticated internal endpoints and never accesses PostgreSQL
+directly. `ODYSHELL_WEB_KEY` must be shared only between the web app and Server; production
+startup rejects weak keys and non-HTTPS web origins.
 
 [Self-hosting guide](../../docs/self-hosting.md) ·
 [Privacy and event data](../../docs/privacy.md) ·

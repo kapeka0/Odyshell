@@ -76,8 +76,8 @@ See [Privacy and event data](./privacy.md) for the exact boundary.
 
 ## What the MVP does not yet include
 
-- Clerk authentication or a web frontend;
-- human organization membership and roles;
+- billing and plan checkout;
+- fine-grained human roles beyond Clerk organization administrators;
 - human approval workflows;
 - customer-owned webhook, object-storage, or SIEM event sinks;
 - SSO, SCIM, billing, or compliance certification;
@@ -91,10 +91,10 @@ These are not implied by the current API.
 
 The next product milestone is to support design partners without changing the agent protocol:
 
-1. add customer-owned delivery for content-minimal control events;
-2. authenticate human administrators without changing agent or machine identities;
-3. add organization membership and the initial human roles;
-4. add a small frontend only for machines, grants, members, and event visibility.
+1. validate CLI device authorization with design partners;
+2. add agent grant creation and revocation to the web app;
+3. add customer-owned delivery for content-minimal control events;
+4. add event visibility and the first human roles beyond organization administrator.
 
 The milestone succeeds when an agent vendor can onboard a customer machine, complete a recurring
 real task, revoke access, and show the customer a useful control trail without exposing task

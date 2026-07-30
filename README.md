@@ -131,18 +131,25 @@ still use outbound-only connections and do not expose ports.
 See the [minimal self-hosting guide](./docs/self-hosting.md) for the current setup and production
 security checklist.
 
-## Give an agent access
+## Use Odyshell Cloud
 
-Create an organization and an isolated execution workspace:
+Cloud users create an account and organization in the web app. The organization owns the
+Odyshell workspace; organization membership is intentionally not managed by the CLI.
+
+Connect `ods` without copying a permanent administrator key:
 
 ```bash
-ods organization create acme --name "Acme"
-ods workspace create production --organization <organization-id> --name "Production"
-ods workspace use production
+ods login --server https://server.example.com
 ```
 
-Administrator commands now apply only to the selected workspace. Enrollment tokens bind new
-machines to that workspace, and agent tokens inherit the same boundary automatically.
+The CLI prints a short-lived code and opens Odyshell in the browser. After you approve it, `ods`
+receives an expiring workspace credential. The browser session and Clerk credentials never leave
+the web app.
+
+From the dashboard, generate the one-time `ods up` command for a machine. The enrollment token
+expires after ten minutes and can only be used once.
+
+## Give an agent access
 
 Create a token that only works with specific machines and actions:
 
@@ -186,8 +193,10 @@ through Kysely. Operation payloads are retained for one hour by default; content
 events are retained for 30 days. Odyshell does not provide session recording by default.
 
 Organizations provide the ownership boundary and workspaces isolate machines, grants, sessions,
-operations, and control events. Human membership, OAuth, billing, and a frontend are not included
-yet. It is an early development MVP; the default local credentials are only for development.
+operations, and control events. Human and organization identity now live in the Clerk-backed web
+app. Device authorization binds the CLI to one workspace, while agent tokens remain separate,
+scoped, revocable and expiring. Billing is not enabled yet. It is an early development MVP; the
+default local credentials are only for development.
 
 ## Product documents
 

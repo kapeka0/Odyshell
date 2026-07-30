@@ -7,6 +7,7 @@ export type StoredConfig = {
   serverUrl: string;
   workspaceId?: string;
   agentToken?: string;
+  cliToken?: string;
   /** @deprecated Read only for existing development configurations. */
   agentKey?: string;
   adminKey?: string;
@@ -16,6 +17,7 @@ export type GlobalOptions = {
   server?: string;
   workspaceId?: string;
   agentToken?: string;
+  cliToken?: string;
   agentKey?: string;
   adminKey?: string;
   configFile?: string;
@@ -82,6 +84,10 @@ export async function resolveConfig(options: GlobalOptions): Promise<StoredConfi
     stored?.agentToken ??
     stored?.agentKey;
   const adminKey = options.adminKey ?? process.env.ODYSHELL_ADMIN_KEY ?? stored?.adminKey;
+  const cliToken =
+    options.cliToken ??
+    process.env.ODYSHELL_CLI_TOKEN ??
+    stored?.cliToken;
   const workspaceId =
     options.workspaceId ??
     process.env.ODYSHELL_WORKSPACE_ID ??
@@ -95,6 +101,7 @@ export async function resolveConfig(options: GlobalOptions): Promise<StoredConfi
       "http://127.0.0.1:4100",
     ...(workspaceId ? { workspaceId } : {}),
     ...(agentToken ? { agentToken } : {}),
+    ...(cliToken ? { cliToken } : {}),
     ...(adminKey ? { adminKey } : {}),
   };
 }

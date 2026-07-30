@@ -1,0 +1,21 @@
+{
+  "date": "2026-07-30",
+  "scope": "apps/web",
+  "framework": "Next.js 16 App Router",
+  "fontStack": "none to preserve",
+  "palette": "none to preserve",
+  "motion": "none to preserve",
+  "spacing": "none to preserve",
+  "preserve": [
+    "pnpm monorepo conventions",
+    "TypeScript strictness",
+    "existing Odyshell brand assets"
+  ],
+  "introduce": [
+    "Cobalt OKLCH tokens",
+    "4pt spacing scale",
+    "Space Grotesk, Inter, and JetBrains Mono",
+    "Motion for React",
+    "Workbench macrostructure"
+  ]
+}

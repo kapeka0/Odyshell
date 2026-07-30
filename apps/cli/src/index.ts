@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
+import open from "open";
 import pc from "picocolors";
 import {
   allCapabilities,
@@ -19,7 +20,7 @@ import {
   runClient,
   stopLinuxUserService,
 } from "@odyshell/client";
-import { Odyshell, OdyshellApi, type Operation } from "@odyshell/sdk";
+import { ApiError, Odyshell, OdyshellApi, type Operation } from "@odyshell/sdk";
 import { parseDuration } from "./duration.js";
 import { ExpectedError, printCliError } from "./errors.js";
 import {
@@ -172,36 +173,108 @@ async function runInTemporarySession(
 
 program
   .command("login")
-  .description("save server credentials and verify the connection")
-  .action(async (_options, command: Command) => {
+  .description("sign in through the Odyshell web app")
+  .option("--no-browser", "do not open the verification page automatically")
+  .action(async (loginOptions: { browser: boolean }, command: Command) => {
     const options = globals(command);
     const configPath = options.configFile ? resolve(options.configFile) : defaultConfigPath();
     const previous = await loadStoredConfig(configPath);
     const resolved = await resolveConfig(options);
-    if (!resolved.agentToken) {
-      throw new ExpectedError(
-        "An agent token is required. Pass --agent-token or set ODYSHELL_AGENT_TOKEN.",
-        "agent_token_required",
-      );
-    }
     const api = new OdyshellApi(resolved);
     await api.health();
-    await api.machines();
-    const savedAdminKey = resolved.adminKey ?? previous?.adminKey;
-    await saveStoredConfig(
-      {
+
+    const explicitAgentToken =
+      options.agentToken ??
+      options.agentKey ??
+      process.env.ODYSHELL_AGENT_TOKEN ??
+      process.env.ODYSHELL_AGENT_KEY;
+    if (explicitAgentToken) {
+      const agentApi = new OdyshellApi({
         serverUrl: resolved.serverUrl,
-        ...(resolved.workspaceId ? { workspaceId: resolved.workspaceId } : {}),
-        agentToken: resolved.agentToken,
-        ...(savedAdminKey ? { adminKey: savedAdminKey } : {}),
-      },
-      configPath,
-    );
-    if (options.json) printJson({ authenticated: true, serverUrl: resolved.serverUrl, configPath });
-    else {
-      console.log(`${pc.green("✓")} Connected to ${pc.bold(resolved.serverUrl)}`);
-      console.log(pc.dim(`  Credentials saved to ${configPath}`));
+        agentToken: explicitAgentToken,
+      });
+      await agentApi.machines();
+      await saveStoredConfig(
+        {
+          serverUrl: resolved.serverUrl,
+          agentToken: explicitAgentToken,
+          ...(resolved.adminKey ? { adminKey: resolved.adminKey } : {}),
+          ...(resolved.workspaceId ? { workspaceId: resolved.workspaceId } : {}),
+        },
+        configPath,
+      );
+      if (options.json) {
+        printJson({ authenticated: true, mode: "agent_token", serverUrl: resolved.serverUrl });
+      } else {
+        console.log(`${pc.green("✓")} Agent token verified`);
+        console.log(pc.dim(`  Credentials saved to ${configPath}`));
+      }
+      return;
     }
+
+    const authorization = await api.startDeviceAuthorization();
+    if (options.json) {
+      printJson({
+        status: "authorization_required",
+        userCode: authorization.userCode,
+        verificationUri: authorization.verificationUri,
+        expiresIn: authorization.expiresIn,
+      });
+    } else {
+      console.log(`Open ${pc.bold(authorization.verificationUri)}`);
+      console.log(`Enter code ${pc.cyan(pc.bold(authorization.userCode))}`);
+      console.log(pc.dim("Waiting for approval…"));
+    }
+    if (loginOptions.browser) {
+      await open(authorization.verificationUriComplete, { wait: false }).catch(() => undefined);
+    }
+
+    const deadline = Date.now() + authorization.expiresIn * 1_000;
+    while (Date.now() < deadline) {
+      await new Promise((resolveDelay) =>
+        setTimeout(resolveDelay, authorization.interval * 1_000),
+      );
+      try {
+        const token = await api.exchangeDeviceAuthorization(authorization.deviceCode);
+        const savedAdminKey = resolved.adminKey ?? previous?.adminKey;
+        await saveStoredConfig(
+          {
+            serverUrl: resolved.serverUrl,
+            workspaceId: token.workspaceId,
+            cliToken: token.accessToken,
+            ...(savedAdminKey ? { adminKey: savedAdminKey } : {}),
+          },
+          configPath,
+        );
+        if (options.json) {
+          printJson({
+            authenticated: true,
+            mode: "web",
+            serverUrl: resolved.serverUrl,
+            workspaceId: token.workspaceId,
+            expiresAt: token.expiresAt,
+            configPath,
+          });
+        } else {
+          console.log(`${pc.green("✓")} Signed in to ${pc.bold(resolved.serverUrl)}`);
+          console.log(pc.dim(`  Credentials expire ${token.expiresAt}`));
+          console.log(pc.dim(`  Credentials saved to ${configPath}`));
+        }
+        return;
+      } catch (error) {
+        if (
+          error instanceof ApiError &&
+          ["authorization_pending", "slow_down"].includes(error.code)
+        ) {
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw new ExpectedError(
+      "The login code expired. Run \"ods login\" to request a new one.",
+      "device_code_expired",
+    );
   });
 
 program
@@ -210,108 +283,27 @@ program
   .action(async (_options, command: Command) => {
     const options = globals(command);
     const configPath = options.configFile ? resolve(options.configFile) : defaultConfigPath();
-    await removeStoredConfig(configPath);
-    if (options.json) printJson({ loggedOut: true, configPath });
-    else console.log(`${pc.green("✓")} Removed ${configPath}`);
-  });
-
-const organization = program
-  .command("organization")
-  .description("manage customer organizations");
-
-organization
-  .command("list")
-  .description("list organizations")
-  .action(async (_options, command: Command) => {
-    const global = globals(command);
-    const organizations = await (await apiFor(command)).organizations();
-    if (global.json) printJson({ data: organizations });
-    else if (organizations.length === 0) console.log(pc.dim("No organizations."));
-    else {
-      for (const item of organizations) {
-        console.log(`${pc.bold(item.name)}  ${pc.dim(item.slug)}  ${item.id}`);
-      }
+    const stored = await loadStoredConfig(configPath);
+    let revoked = false;
+    if (stored?.cliToken) {
+      revoked = await new OdyshellApi({
+        serverUrl: stored.serverUrl,
+        cliToken: stored.cliToken,
+      })
+        .logoutCli()
+        .then(() => true)
+        .catch(() => false);
     }
-  });
-
-organization
-  .command("create <slug>")
-  .description("create an organization")
-  .requiredOption("--name <name>", "display name")
-  .action(async (slug: string, options: { name: string }, command: Command) => {
-    const global = globals(command);
-    const created = await (await apiFor(command)).createOrganization(slug, options.name);
-    if (global.json) printJson(created);
-    else console.log(`${pc.green("✓")} Created ${created.name} (${created.id})`);
-  });
-
-const workspace = program.command("workspace").description("manage execution workspaces");
-
-workspace
-  .command("list")
-  .description("list workspaces")
-  .option("--organization <id>", "only show one organization")
-  .action(async (options: { organization?: string }, command: Command) => {
-    const global = globals(command);
-    const workspaces = await (await apiFor(command)).workspaces(options.organization);
-    if (global.json) printJson({ data: workspaces });
-    else if (workspaces.length === 0) console.log(pc.dim("No workspaces."));
+    await removeStoredConfig(configPath);
+    if (options.json) printJson({ loggedOut: true, revoked, configPath });
     else {
-      for (const item of workspaces) {
-        console.log(
-          `${pc.bold(item.name)}  ${pc.dim(item.slug)}  ${item.id}  ${pc.dim(item.organizationId)}`,
+      console.log(`${pc.green("✓")} Removed ${configPath}`);
+      if (stored?.cliToken && !revoked) {
+        console.error(
+          pc.yellow("  The Server could not revoke this CLI token. It will remain valid until expiry."),
         );
       }
     }
-  });
-
-workspace
-  .command("create <slug>")
-  .description("create an isolated execution workspace")
-  .requiredOption("--organization <id>", "owning organization ID")
-  .requiredOption("--name <name>", "display name")
-  .action(
-    async (
-      slug: string,
-      options: { organization: string; name: string },
-      command: Command,
-    ) => {
-      const global = globals(command);
-      const created = await (await apiFor(command)).createWorkspace(
-        options.organization,
-        slug,
-        options.name,
-      );
-      if (global.json) printJson(created);
-      else console.log(`${pc.green("✓")} Created ${created.name} (${created.id})`);
-    },
-  );
-
-workspace
-  .command("use <workspace>")
-  .description("select a workspace for administrator commands")
-  .action(async (reference: string, _options, command: Command) => {
-    const global = globals(command);
-    const api = await apiFor(command);
-    const matches = (await api.workspaces()).filter(
-      (item) => item.id === reference || item.slug === reference,
-    );
-    if (matches.length !== 1) {
-      throw new ExpectedError(
-        matches.length === 0
-          ? `Workspace "${reference}" was not found`
-          : `Workspace "${reference}" is ambiguous; use its ID`,
-        matches.length === 0 ? "workspace_not_found" : "workspace_ambiguous",
-      );
-    }
-    const selected = matches[0]!;
-    const configPath = global.configFile
-      ? resolve(global.configFile)
-      : defaultConfigPath();
-    const resolved = await resolveConfig(global);
-    await saveStoredConfig({ ...resolved, workspaceId: selected.id }, configPath);
-    if (global.json) printJson({ selected });
-    else console.log(`${pc.green("✓")} Using ${selected.name} (${selected.id})`);
   });
 
 program

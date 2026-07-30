@@ -18,6 +18,18 @@ import {
   developmentCredentialsEnabled,
   serverAdminKey,
 } from "./access.js";
+import {
+  approveDeviceSchema,
+  cloudIdentitySchema,
+  cloudWebKey,
+  cloudWebUrl,
+  createDeviceUserCode,
+  entitlementsFor,
+  exchangeDeviceAuthorizationSchema,
+  FixedWindowRateLimiter,
+  normalizeDeviceUserCode,
+  startDeviceAuthorizationSchema,
+} from "./cloud.js";
 import { audit, createDatabase, DEFAULT_WORKSPACE_ID } from "./database.js";
 import { ClientGateway } from "./gateway.js";
 import { dataRetentionPolicy } from "./privacy.js";
@@ -25,6 +37,8 @@ import { dataRetentionPolicy } from "./privacy.js";
 const port = Number(process.env.PORT ?? 4100);
 const host = process.env.HOST ?? "127.0.0.1";
 const adminKey = serverAdminKey(process.env);
+const webKey = cloudWebKey(process.env);
+const webUrl = cloudWebUrl(process.env, webKey !== undefined);
 const developmentAgentKey = developmentCredentialsEnabled(process.env)
   ? (process.env.ODYSHELL_AGENT_KEY ?? "dev-agent-key")
   : undefined;
@@ -60,6 +74,9 @@ type AgentPrincipal = {
 
 const requestPrincipals = new WeakMap<FastifyRequest, AgentPrincipal>();
 const requestAdminWorkspaces = new WeakMap<FastifyRequest, string>();
+const requestAdminPrincipals = new WeakMap<FastifyRequest, string>();
+const deviceStartLimiter = new FixedWindowRateLimiter(12, 60_000);
+const devicePollLimiter = new FixedWindowRateLimiter(40, 60_000);
 
 function matchesSecret(actual: string | undefined, expected: string | undefined): boolean {
   if (!actual || !expected) return false;
@@ -72,6 +89,23 @@ async function requireAdmin(request: FastifyRequest, reply: FastifyReply): Promi
   if (!matchesSecret(request.headers["x-odyshell-admin-key"] as string | undefined, adminKey)) {
     await reply.code(401).send({ error: "invalid_admin_key" });
   }
+}
+
+async function requireWeb(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  if (!webKey) {
+    await reply.code(503).send({ error: "cloud_authentication_disabled" });
+    return;
+  }
+  if (!matchesSecret(request.headers["x-odyshell-web-key"] as string | undefined, webKey)) {
+    await reply.code(401).send({ error: "invalid_web_key" });
+  }
+}
+
+function bearerTokenFor(request: FastifyRequest): string | undefined {
+  const authorization = request.headers.authorization;
+  return typeof authorization === "string"
+    ? /^Bearer\s+(.+)$/i.exec(authorization)?.[1]
+    : undefined;
 }
 
 async function requireAdminWorkspace(
@@ -93,14 +127,37 @@ async function requireAdminWorkspace(
     return;
   }
   requestAdminWorkspaces.set(request, workspaceId);
+  requestAdminPrincipals.set(request, "admin");
+}
+
+async function requireWorkspaceAccess(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  if (matchesSecret(request.headers["x-odyshell-admin-key"] as string | undefined, adminKey)) {
+    await requireAdminWorkspace(request, reply);
+    return;
+  }
+  const token = bearerTokenFor(request);
+  const principal = token ? await db.findCliByTokenHash(hashToken(token)) : null;
+  if (!principal) {
+    await reply.code(401).send({ error: "invalid_or_expired_cli_token" });
+    return;
+  }
+  const requestedWorkspace = request.headers["x-odyshell-workspace-id"];
+  if (
+    Array.isArray(requestedWorkspace) ||
+    (requestedWorkspace !== undefined && requestedWorkspace !== principal.workspaceId)
+  ) {
+    await reply.code(403).send({ error: "workspace_scope_denied" });
+    return;
+  }
+  requestAdminWorkspaces.set(request, principal.workspaceId);
+  requestAdminPrincipals.set(request, principal.id);
 }
 
 async function requireAgent(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const authorization = request.headers.authorization;
-  const bearerToken =
-    typeof authorization === "string"
-      ? /^Bearer\s+(.+)$/i.exec(authorization)?.[1]
-      : undefined;
+  const bearerToken = bearerTokenFor(request);
   const legacyHeader = request.headers["x-odyshell-agent-key"];
   const token = bearerToken ?? (typeof legacyHeader === "string" ? legacyHeader : undefined);
 
@@ -129,6 +186,18 @@ async function requireAgent(request: FastifyRequest, reply: FastifyReply): Promi
       });
       return;
     }
+    const cliPrincipal = await db.findCliByTokenHash(hashToken(token));
+    if (cliPrincipal) {
+      requestPrincipals.set(request, {
+        id: cliPrincipal.id,
+        name: `Clerk user ${cliPrincipal.userId}`,
+        workspaceId: cliPrincipal.workspaceId,
+        machineIds: null,
+        capabilities: new Set(allCapabilities),
+        expiresAt: new Date(cliPrincipal.expiresAt),
+      });
+      return;
+    }
   }
 
   await reply.code(401).send({ error: "invalid_or_expired_agent_token" });
@@ -152,6 +221,12 @@ function adminWorkspaceFor(request: FastifyRequest): string {
   const workspaceId = requestAdminWorkspaces.get(request);
   if (!workspaceId) throw new Error("Authenticated administrator has no workspace context");
   return workspaceId;
+}
+
+function adminPrincipalFor(request: FastifyRequest): string {
+  const principalId = requestAdminPrincipals.get(request);
+  if (!principalId) throw new Error("Authenticated administrator has no principal");
+  return principalId;
 }
 
 function canAccessMachine(principal: AgentPrincipal, machineId: string): boolean {
@@ -186,6 +261,211 @@ app.get("/health", async () => {
   await db.health();
   return { status: "ok", protocol: 1 };
 });
+
+app.post("/v1/auth/device", async (request, reply) => {
+  if (!webKey || !webUrl) {
+    return reply.code(503).send({ error: "cloud_authentication_disabled" });
+  }
+  if (!deviceStartLimiter.allow(request.ip)) {
+    return reply.code(429).send({ error: "device_authorization_rate_limited" });
+  }
+  const parsed = startDeviceAuthorizationSchema.safeParse(request.body ?? {});
+  if (!parsed.success) {
+    return reply.code(400).send({ error: "invalid_request", details: parsed.error.issues });
+  }
+  const deviceCode = createOpaqueToken("device");
+  const userCode = createDeviceUserCode();
+  const expiresIn = 600;
+  await db.createDeviceAuthorization({
+    id: randomUUID(),
+    deviceCodeHash: hashToken(deviceCode),
+    userCodeHash: hashToken(normalizeDeviceUserCode(userCode)),
+    clientName: parsed.data.clientName,
+    expiresAt: Date.now() + expiresIn * 1_000,
+  });
+  const verificationUri = `${webUrl}/activate`;
+  return reply.code(201).send({
+    deviceCode,
+    userCode,
+    verificationUri,
+    verificationUriComplete: `${verificationUri}?code=${encodeURIComponent(userCode)}`,
+    expiresIn,
+    interval: 2,
+  });
+});
+
+app.post("/v1/auth/device/token", async (request, reply) => {
+  const parsed = exchangeDeviceAuthorizationSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: "invalid_request", details: parsed.error.issues });
+  }
+  const deviceHash = hashToken(parsed.data.deviceCode);
+  if (!devicePollLimiter.allow(deviceHash)) {
+    return reply.code(429).send({ error: "slow_down" });
+  }
+  const accessToken = createOpaqueToken("cli");
+  const tokenId = randomUUID();
+  const tokenExpiresAt = Date.now() + 30 * 24 * 60 * 60 * 1_000;
+  const exchange = await db.exchangeDeviceAuthorization({
+    deviceCodeHash: deviceHash,
+    tokenId,
+    tokenHash: hashToken(accessToken),
+    tokenExpiresAt,
+  });
+  if (exchange.status === "pending") {
+    return reply.code(400).send({ error: "authorization_pending" });
+  }
+  if (exchange.status === "expired") {
+    return reply.code(400).send({ error: "expired_token" });
+  }
+  if (exchange.status === "denied") {
+    return reply.code(403).send({ error: "access_denied" });
+  }
+  if (exchange.status === "consumed") {
+    return reply.code(409).send({ error: "device_code_already_used" });
+  }
+  if (exchange.status === "invalid") {
+    return reply.code(401).send({ error: "invalid_device_code" });
+  }
+  if (exchange.status !== "authorized") {
+    throw new Error(`Unhandled device authorization state: ${exchange.status}`);
+  }
+  await audit(
+    db,
+    exchange.workspaceId,
+    exchange.tokenId,
+    "cli.login",
+    "cli_token",
+    exchange.tokenId,
+    { userId: exchange.userId, expiresAt: isoTimestamp(exchange.expiresAt) },
+  );
+  return {
+    accessToken,
+    tokenType: "Bearer",
+    workspaceId: exchange.workspaceId,
+    expiresAt: isoTimestamp(exchange.expiresAt),
+  };
+});
+
+app.post("/v1/auth/logout", async (request, reply) => {
+  const token = bearerTokenFor(request);
+  if (!token || !(await db.revokeCliByTokenHash(hashToken(token)))) {
+    return reply.code(401).send({ error: "invalid_or_expired_cli_token" });
+  }
+  return { revoked: true };
+});
+
+app.post(
+  "/v1/internal/cloud/context",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = cloudIdentitySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request", details: parsed.error.issues });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const machines = await db.listMachines(context.workspace.id);
+    const usage = await db.workspacePlan(context.workspace.id);
+    const plan = entitlementsFor(context.organization.plan);
+    return {
+      organization: context.organization,
+      workspace: context.workspace,
+      plan: {
+        id: context.organization.plan,
+        ...plan,
+      },
+      usage: {
+        machines: usage?.activeMachines ?? machines.length,
+        workspaces: 1,
+        activeAgents: usage?.activeAgents ?? 0,
+      },
+      machines: machines.map((machine) => ({
+        id: machine.id,
+        name: machine.name,
+        status: machine.status,
+        runtime: machine.runtime ?? null,
+        lastSeenAt: isoTimestamp(machine.lastSeenAt),
+        enrolledAt: isoTimestamp(machine.enrolledAt),
+        online: gateway.isOnline(machine.id),
+      })),
+    };
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/device/approve",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = approveDeviceSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request", details: parsed.error.issues });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const result = await db.approveDeviceAuthorization({
+      userCodeHash: hashToken(normalizeDeviceUserCode(parsed.data.userCode)),
+      userId: parsed.data.userId,
+      workspaceId: context.workspace.id,
+    });
+    if (result === "invalid") return reply.code(404).send({ error: "device_code_not_found" });
+    if (result === "expired") return reply.code(410).send({ error: "device_code_expired" });
+    if (result === "already_used") {
+      return reply.code(409).send({ error: "device_code_already_used" });
+    }
+    await audit(
+      db,
+      context.workspace.id,
+      parsed.data.userId,
+      "cli.login_approved",
+      "workspace",
+      context.workspace.id,
+    );
+    return { approved: true, workspace: context.workspace };
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/enrollment-token",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = cloudIdentitySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request", details: parsed.error.issues });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const usage = await db.workspacePlan(context.workspace.id);
+    const entitlement = entitlementsFor(context.organization.plan);
+    if (usage?.cloudManaged && usage.activeMachines >= entitlement.machineLimit) {
+      return reply.code(409).send({
+        error: "machine_limit_reached",
+        details: { machineLimit: entitlement.machineLimit, plan: context.organization.plan },
+      });
+    }
+    const token = createOpaqueToken("enroll");
+    const expiresAt = Date.now() + 10 * 60 * 1_000;
+    await db.createEnrollmentToken(context.workspace.id, hashToken(token), expiresAt);
+    await audit(
+      db,
+      context.workspace.id,
+      parsed.data.userId,
+      "enrollment_token.created",
+      "enrollment_token",
+      hashToken(token),
+    );
+    return reply.code(201).send({ token, expiresAt: isoTimestamp(expiresAt) });
+  },
+);
 
 app.get("/v1/admin/organizations", { preHandler: requireAdmin }, async () => ({
   data: (await db.listOrganizations()).map((organization) => ({
@@ -276,9 +556,19 @@ app.post<{ Params: { organizationId: string } }>(
 
 app.post(
   "/v1/admin/enrollment-tokens",
-  { preHandler: [requireAdmin, requireAdminWorkspace] },
+  { preHandler: requireWorkspaceAccess },
   async (request, reply) => {
     const workspaceId = adminWorkspaceFor(request);
+    const usage = await db.workspacePlan(workspaceId);
+    if (usage?.cloudManaged) {
+      const entitlement = entitlementsFor(usage.plan);
+      if (usage.activeMachines >= entitlement.machineLimit) {
+        return reply.code(409).send({
+          error: "machine_limit_reached",
+          details: { machineLimit: entitlement.machineLimit, plan: usage.plan },
+        });
+      }
+    }
     const body = (request.body ?? {}) as { expiresInSeconds?: number };
     const expiresInSeconds = Math.min(Math.max(body.expiresInSeconds ?? 600, 60), 86_400);
     const token = createOpaqueToken("enroll");
@@ -287,7 +577,7 @@ app.post(
     await audit(
       db,
       workspaceId,
-      "admin",
+      adminPrincipalFor(request),
       "enrollment_token.created",
       "enrollment_token",
       hashToken(token),
@@ -298,7 +588,7 @@ app.post(
 
 app.get(
   "/v1/admin/agent-tokens",
-  { preHandler: [requireAdmin, requireAdminWorkspace] },
+  { preHandler: requireWorkspaceAccess },
   async (request) => {
     const tokens = await db.listAgentTokens(adminWorkspaceFor(request));
     return {
@@ -323,7 +613,7 @@ app.get(
 
 app.get(
   "/v1/admin/machines",
-  { preHandler: [requireAdmin, requireAdminWorkspace] },
+  { preHandler: requireWorkspaceAccess },
   async (request) => {
     const machines = await db.listMachines(adminWorkspaceFor(request), {
       includeRevoked: true,
@@ -345,7 +635,7 @@ app.get(
 
 app.delete<{ Params: { machineId: string } }>(
   "/v1/admin/machines/:machineId",
-  { preHandler: [requireAdmin, requireAdminWorkspace] },
+  { preHandler: requireWorkspaceAccess },
   async (request, reply) => {
     const workspaceId = adminWorkspaceFor(request);
     const machine = await db.revokeMachine(workspaceId, request.params.machineId);
@@ -365,7 +655,7 @@ app.delete<{ Params: { machineId: string } }>(
       gateway.events.emit(`session:${sessionId}`);
     }
     const disconnected = gateway.disconnect(machine.id);
-    await audit(db, workspaceId, "admin", "machine.revoked", "machine", machine.id, {
+    await audit(db, workspaceId, adminPrincipalFor(request), "machine.revoked", "machine", machine.id, {
       name: machine.name,
       revokedAt: isoTimestamp(machine.revokedAt),
       cancelledOperations: machine.operationIds.length,
@@ -385,7 +675,7 @@ app.delete<{ Params: { machineId: string } }>(
 );
 
 app.post("/v1/admin/agent-tokens", {
-  preHandler: [requireAdmin, requireAdminWorkspace],
+  preHandler: requireWorkspaceAccess,
 }, async (request, reply) => {
   const workspaceId = adminWorkspaceFor(request);
   const parsed = agentTokenRequestSchema.safeParse(request.body);
@@ -403,7 +693,7 @@ app.post("/v1/admin/agent-tokens", {
   const id = randomUUID();
   const token = createOpaqueToken("agent");
   const expiresAt = new Date(Date.now() + input.expiresInSeconds * 1000);
-  await db.createAgentToken({
+  const creation = await db.createAgentToken({
     workspaceId,
     id,
     name: input.name,
@@ -412,7 +702,16 @@ app.post("/v1/admin/agent-tokens", {
     capabilities: uniqueCapabilities,
     expiresAt: expiresAt.getTime(),
   });
-  await audit(db, workspaceId, "admin", "agent_token.created", "agent_token", id, {
+  if (!creation.created) {
+    return reply.code(409).send({
+      error: "agent_token_limit_reached",
+      details: {
+        plan: creation.plan,
+        activeAgentLimit: creation.activeAgentLimit,
+      },
+    });
+  }
+  await audit(db, workspaceId, adminPrincipalFor(request), "agent_token.created", "agent_token", id, {
     name: input.name,
     machineIds: uniqueMachineIds,
     capabilities: uniqueCapabilities,
@@ -430,7 +729,7 @@ app.post("/v1/admin/agent-tokens", {
 
 app.delete<{ Params: { tokenId: string } }>(
   "/v1/admin/agent-tokens/:tokenId",
-  { preHandler: [requireAdmin, requireAdminWorkspace] },
+  { preHandler: requireWorkspaceAccess },
   async (request, reply) => {
     const workspaceId = adminWorkspaceFor(request);
     const token = await db.revokeAgentToken(workspaceId, request.params.tokenId);
@@ -441,7 +740,7 @@ app.delete<{ Params: { tokenId: string } }>(
       token.id,
       "agent_token_revoked",
     );
-    await audit(db, workspaceId, "admin", "agent_token.revoked", "agent_token", token.id, {
+    await audit(db, workspaceId, adminPrincipalFor(request), "agent_token.revoked", "agent_token", token.id, {
       name: token.name,
       revokedAt: isoTimestamp(token.revokedAt),
       closedSessions,
@@ -480,6 +779,12 @@ app.post("/v1/clients/enroll", async (request, reply) => {
   if (!enrolled) {
     return reply.code(401).send({ error: "invalid_or_expired_enrollment_token" });
   }
+  if (enrolled.status === "machine_limit_reached") {
+    return reply.code(409).send({
+      error: "machine_limit_reached",
+      details: { machineLimit: enrolled.machineLimit },
+    });
+  }
   await audit(
     db,
     enrolled.workspaceId,
@@ -489,7 +794,11 @@ app.post("/v1/clients/enroll", async (request, reply) => {
     machineId,
     { name: body.name },
   );
-  return reply.code(201).send(enrolled);
+  return reply.code(201).send({
+    machineId: enrolled.machineId,
+    name: enrolled.name,
+    workspaceId: enrolled.workspaceId,
+  });
 });
 
 app.get("/v1/machines", { preHandler: requireAgent }, async (request) => {
@@ -892,7 +1201,7 @@ app.get<{ Params: { operationId: string }; Querystring: { after?: string } }>(
 
 app.get<{ Querystring: { limit?: string } }>(
   "/v1/admin/audit",
-  { preHandler: [requireAdmin, requireAdminWorkspace] },
+  { preHandler: requireWorkspaceAccess },
   async (request) => {
     const requestedLimit = Number(request.query.limit ?? 50);
     const limit = Number.isFinite(requestedLimit)
@@ -900,7 +1209,7 @@ app.get<{ Querystring: { limit?: string } }>(
       : 50;
     const events = await db.listAudit(adminWorkspaceFor(request), limit);
     return {
-      principal: { id: "admin", name: "All agents" },
+      principal: { id: adminPrincipalFor(request), name: "All agents" },
       data: events.map((event) => ({
         ...event,
         createdAt: isoTimestamp(event.createdAt),

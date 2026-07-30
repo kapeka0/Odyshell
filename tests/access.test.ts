@@ -11,6 +11,8 @@ describe("temporary access", () => {
   it("generates distinct 256-bit opaque tokens with ods prefixes", () => {
     const enrollmentTokens = [createOpaqueToken("enroll"), createOpaqueToken("enroll")];
     const agentTokens = [createOpaqueToken("agent"), createOpaqueToken("agent")];
+    const cliTokens = [createOpaqueToken("cli"), createOpaqueToken("cli")];
+    const deviceCodes = [createOpaqueToken("device"), createOpaqueToken("device")];
 
     for (const token of enrollmentTokens) {
       expect(token).toMatch(/^ods_enroll_[A-Za-z0-9_-]{43}$/);
@@ -20,7 +22,15 @@ describe("temporary access", () => {
       expect(token).toMatch(/^ods_agent_[A-Za-z0-9_-]{43}$/);
       expect(token).not.toContain("ody_agent_");
     }
-    expect(new Set([...enrollmentTokens, ...agentTokens]).size).toBe(4);
+    for (const token of cliTokens) {
+      expect(token).toMatch(/^ods_cli_[A-Za-z0-9_-]{43}$/);
+    }
+    for (const token of deviceCodes) {
+      expect(token).toMatch(/^ods_device_[A-Za-z0-9_-]{43}$/);
+    }
+    expect(
+      new Set([...enrollmentTokens, ...agentTokens, ...cliTokens, ...deviceCodes]).size,
+    ).toBe(8);
   });
 
   it("never lets a session outlive its agent token", () => {

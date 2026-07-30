@@ -65,16 +65,10 @@ Create a single-use enrollment token:
 ods --server https://ods.example.com --admin-key <admin-key> token create
 ```
 
-For more than one tenant or environment, create and select a Workspace first:
-
-```bash
-ods --server https://ods.example.com --admin-key <admin-key> \
-  organization create acme --name "Acme"
-ods --server https://ods.example.com --admin-key <admin-key> \
-  workspace create production --organization <organization-id> --name "Production"
-ods --server https://ods.example.com --admin-key <admin-key> \
-  workspace use production
-```
+The standalone Server creates a default organization and workspace automatically. Organization
+membership is not managed by the CLI. If you need multiple human organizations, enable the cloud
+web bridge and use Clerk Organizations; separate standalone deployments remain the smallest
+self-hosted isolation boundary for the MVP.
 
 On the private machine:
 

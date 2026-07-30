@@ -15,6 +15,12 @@ import {
   type MigrationProvider,
 } from "kysely/migration";
 import pg from "pg";
+import {
+  deviceApprovalDecision,
+  deviceExchangeDecision,
+  entitlementsFor,
+  type CloudPlanId,
+} from "./cloud.js";
 
 const { Pool } = pg;
 export const DEFAULT_ORGANIZATION_ID = "default";
@@ -31,6 +37,8 @@ interface OrganizationTable {
   id: string;
   slug: string;
   name: string;
+  externalId: ColumnType<string | null, string | null | undefined, string | null>;
+  plan: Generated<string>;
   createdAt: Generated<Date>;
 }
 
@@ -71,6 +79,31 @@ interface AgentTokenTable {
   capabilities: Json<Capability[]>;
   expiresAt: Date;
   revokedAt: Date | null;
+  createdAt: Generated<Date>;
+}
+
+interface CliTokenTable {
+  workspaceId: string;
+  id: string;
+  userId: string;
+  tokenHash: string;
+  expiresAt: Date;
+  revokedAt: Date | null;
+  lastUsedAt: Date | null;
+  createdAt: Generated<Date>;
+}
+
+interface DeviceAuthorizationTable {
+  id: string;
+  deviceCodeHash: string;
+  userCodeHash: string;
+  clientName: string;
+  status: string;
+  workspaceId: string | null;
+  userId: string | null;
+  expiresAt: Date;
+  approvedAt: Date | null;
+  consumedAt: Date | null;
   createdAt: Generated<Date>;
 }
 
@@ -131,6 +164,8 @@ interface DatabaseSchema {
   machines: MachineTable;
   enrollmentTokens: EnrollmentTokenTable;
   agentTokens: AgentTokenTable;
+  cliTokens: CliTokenTable;
+  deviceAuthorizations: DeviceAuthorizationTable;
   sessions: SessionTable;
   operations: OperationTable;
   operationEvents: OperationEventTable;
@@ -146,6 +181,8 @@ export type OrganizationRecord = {
   id: string;
   slug: string;
   name: string;
+  externalId?: string;
+  plan: CloudPlanId;
   createdAt: number;
 };
 
@@ -178,6 +215,24 @@ export type AgentTokenRecord = Timestamped & {
   expiresAt: number;
   revokedAt?: number;
 };
+
+export type CliTokenRecord = {
+  id: string;
+  workspaceId: string;
+  userId: string;
+  expiresAt: number;
+  createdAt: number;
+};
+
+export type DeviceExchangeResult =
+  | { status: "pending" | "denied" | "expired" | "consumed" | "invalid" }
+  | {
+      status: "authorized";
+      tokenId: string;
+      workspaceId: string;
+      userId: string;
+      expiresAt: number;
+    };
 
 export type SessionRecord = Timestamped & {
   id: string;
@@ -236,6 +291,8 @@ function organizationRecord(
     id: organization.id,
     slug: organization.slug,
     name: organization.name,
+    ...(organization.externalId === null ? {} : { externalId: organization.externalId }),
+    plan: organization.plan as CloudPlanId,
     createdAt: timestamp(organization.createdAt),
   };
 }
@@ -692,6 +749,59 @@ async function migrateOrganizationBoundaries(
   `.execute(db);
 }
 
+async function migrateCloudIdentity(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    alter table ${sql.table(`${DATABASE_SCHEMA}.organizations`)}
+    add column if not exists external_id text
+  `.execute(db);
+  await sql`
+    alter table ${sql.table(`${DATABASE_SCHEMA}.organizations`)}
+    add column if not exists plan text not null default 'free'
+  `.execute(db);
+  await sql`
+    create unique index if not exists organizations_external_id_unique
+    on ${sql.table(`${DATABASE_SCHEMA}.organizations`)} (external_id)
+    where external_id is not null
+  `.execute(db);
+  await sql`
+    create table if not exists ${sql.table(`${DATABASE_SCHEMA}.cli_tokens`)} (
+      workspace_id text not null references ${sql.table(`${DATABASE_SCHEMA}.workspaces`)} (id),
+      id text primary key,
+      user_id text not null,
+      token_hash text not null unique,
+      expires_at timestamptz not null,
+      revoked_at timestamptz,
+      last_used_at timestamptz,
+      created_at timestamptz not null default now()
+    )
+  `.execute(db);
+  await sql`
+    create index if not exists cli_tokens_workspace_created_idx
+    on ${sql.table(`${DATABASE_SCHEMA}.cli_tokens`)} (workspace_id, created_at)
+  `.execute(db);
+  await sql`
+    create table if not exists ${sql.table(`${DATABASE_SCHEMA}.device_authorizations`)} (
+      id text primary key,
+      device_code_hash text not null unique,
+      user_code_hash text not null unique,
+      client_name text not null,
+      status text not null,
+      workspace_id text references ${sql.table(`${DATABASE_SCHEMA}.workspaces`)} (id),
+      user_id text,
+      expires_at timestamptz not null,
+      approved_at timestamptz,
+      consumed_at timestamptz,
+      created_at timestamptz not null default now()
+    )
+  `.execute(db);
+  await sql`
+    create index if not exists device_authorizations_expiry_idx
+    on ${sql.table(`${DATABASE_SCHEMA}.device_authorizations`)} (expires_at)
+  `.execute(db);
+}
+
 const migrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
     return {
@@ -703,6 +813,9 @@ const migrationProvider: MigrationProvider = {
       },
       "003_organization_boundaries": {
         up: migrateOrganizationBoundaries,
+      },
+      "004_cloud_identity": {
+        up: migrateCloudIdentity,
       },
     };
   },
@@ -795,8 +908,102 @@ export class PostgresDatabase {
         .insertInto("organizations")
         .values(input)
         .returningAll()
-        .executeTakeFirstOrThrow(),
+      .executeTakeFirstOrThrow(),
     );
+  }
+
+  async ensureCloudContext(input: {
+    externalId: string;
+    slug: string;
+    name: string;
+  }): Promise<{ organization: OrganizationRecord; workspace: WorkspaceRecord }> {
+    return await this.db.transaction().execute(async (transaction) => {
+      await sql`select pg_advisory_xact_lock(hashtext(${input.externalId}))`.execute(
+        transaction,
+      );
+      let organization = await transaction
+        .selectFrom("organizations")
+        .selectAll()
+        .where("externalId", "=", input.externalId)
+        .executeTakeFirst();
+      if (!organization) {
+        organization = await transaction
+          .insertInto("organizations")
+          .values({
+            id: randomUUID(),
+            externalId: input.externalId,
+            slug: input.slug,
+            name: input.name,
+            plan: "free",
+          })
+          .returningAll()
+          .executeTakeFirstOrThrow();
+      } else if (organization.name !== input.name) {
+        organization = await transaction
+          .updateTable("organizations")
+          .set({ name: input.name })
+          .where("id", "=", organization.id)
+          .returningAll()
+          .executeTakeFirstOrThrow();
+      }
+
+      let workspace = await transaction
+        .selectFrom("workspaces")
+        .selectAll()
+        .where("organizationId", "=", organization.id)
+        .orderBy("createdAt", "asc")
+        .executeTakeFirst();
+      if (!workspace) {
+        workspace = await transaction
+          .insertInto("workspaces")
+          .values({
+            id: randomUUID(),
+            organizationId: organization.id,
+            slug: "default",
+            name: "Default workspace",
+          })
+          .returningAll()
+          .executeTakeFirstOrThrow();
+      }
+      return {
+        organization: organizationRecord(organization),
+        workspace: workspaceRecord(workspace),
+      };
+    });
+  }
+
+  async workspacePlan(workspaceId: string): Promise<{
+    plan: CloudPlanId;
+    activeMachines: number;
+    activeAgents: number;
+    cloudManaged: boolean;
+  } | null> {
+    const workspace = await this.db
+      .selectFrom("workspaces")
+      .innerJoin("organizations", "organizations.id", "workspaces.organizationId")
+      .select(["organizations.plan", "organizations.externalId"])
+      .where("workspaces.id", "=", workspaceId)
+      .executeTakeFirst();
+    if (!workspace) return null;
+    const count = await this.db
+      .selectFrom("machines")
+      .select(({ fn }) => fn.countAll<number>().as("count"))
+      .where("workspaceId", "=", workspaceId)
+      .where("revokedAt", "is", null)
+      .executeTakeFirstOrThrow();
+    const agents = await this.db
+      .selectFrom("agentTokens")
+      .select(({ fn }) => fn.countAll<number>().as("count"))
+      .where("workspaceId", "=", workspaceId)
+      .where("revokedAt", "is", null)
+      .where("expiresAt", ">", new Date())
+      .executeTakeFirstOrThrow();
+    return {
+      plan: workspace.plan as CloudPlanId,
+      activeMachines: Number(count.count),
+      activeAgents: Number(agents.count),
+      cloudManaged: workspace.externalId !== null,
+    };
   }
 
   async listWorkspaces(organizationId?: string): Promise<WorkspaceRecord[]> {
@@ -846,6 +1053,137 @@ export class PostgresDatabase {
       .where("expiresAt", ">", new Date())
       .executeTakeFirst();
     return token ? agentTokenRecord(token) : null;
+  }
+
+  async findCliByTokenHash(tokenHash: string): Promise<CliTokenRecord | null> {
+    const now = new Date();
+    const token = await this.db
+      .updateTable("cliTokens")
+      .set({ lastUsedAt: now })
+      .where("tokenHash", "=", tokenHash)
+      .where("revokedAt", "is", null)
+      .where("expiresAt", ">", now)
+      .returningAll()
+      .executeTakeFirst();
+    if (!token) return null;
+    return {
+      id: token.id,
+      workspaceId: token.workspaceId,
+      userId: token.userId,
+      expiresAt: timestamp(token.expiresAt),
+      createdAt: timestamp(token.createdAt),
+    };
+  }
+
+  async revokeCliByTokenHash(tokenHash: string): Promise<boolean> {
+    const revoked = await this.db
+      .updateTable("cliTokens")
+      .set({ revokedAt: new Date() })
+      .where("tokenHash", "=", tokenHash)
+      .where("revokedAt", "is", null)
+      .returning("id")
+      .executeTakeFirst();
+    return revoked !== undefined;
+  }
+
+  async createDeviceAuthorization(input: {
+    id: string;
+    deviceCodeHash: string;
+    userCodeHash: string;
+    clientName: string;
+    expiresAt: number;
+  }): Promise<void> {
+    await this.db
+      .insertInto("deviceAuthorizations")
+      .values({
+        ...input,
+        status: "pending",
+        workspaceId: null,
+        userId: null,
+        expiresAt: new Date(input.expiresAt),
+        approvedAt: null,
+        consumedAt: null,
+      })
+      .execute();
+  }
+
+  async approveDeviceAuthorization(input: {
+    userCodeHash: string;
+    userId: string;
+    workspaceId: string;
+  }): Promise<"approved" | "expired" | "invalid" | "already_used"> {
+    return await this.db.transaction().execute(async (transaction) => {
+      const authorization = await transaction
+        .selectFrom("deviceAuthorizations")
+        .selectAll()
+        .where("userCodeHash", "=", input.userCodeHash)
+        .forUpdate()
+        .executeTakeFirst();
+      const decision = deviceApprovalDecision(authorization ?? null);
+      if (decision !== "approved") return decision;
+      if (!authorization) {
+        throw new Error("Approved device authorization record is missing");
+      }
+      await transaction
+        .updateTable("deviceAuthorizations")
+        .set({
+          status: "approved",
+          workspaceId: input.workspaceId,
+          userId: input.userId,
+          approvedAt: new Date(),
+        })
+        .where("id", "=", authorization.id)
+        .execute();
+      return "approved";
+    });
+  }
+
+  async exchangeDeviceAuthorization(input: {
+    deviceCodeHash: string;
+    tokenId: string;
+    tokenHash: string;
+    tokenExpiresAt: number;
+  }): Promise<DeviceExchangeResult> {
+    return await this.db.transaction().execute(async (transaction) => {
+      const authorization = await transaction
+        .selectFrom("deviceAuthorizations")
+        .selectAll()
+        .where("deviceCodeHash", "=", input.deviceCodeHash)
+        .forUpdate()
+        .executeTakeFirst();
+      const decision = deviceExchangeDecision(authorization ?? null);
+      if (decision !== "authorized") return { status: decision };
+      if (!authorization?.workspaceId || !authorization.userId) {
+        throw new Error("Authorized device record is missing its workspace or user");
+      }
+      const workspaceId = authorization.workspaceId;
+      const userId = authorization.userId;
+      const expiresAt = new Date(input.tokenExpiresAt);
+      await transaction
+        .insertInto("cliTokens")
+        .values({
+          workspaceId,
+          id: input.tokenId,
+          userId,
+          tokenHash: input.tokenHash,
+          expiresAt,
+          revokedAt: null,
+          lastUsedAt: null,
+        })
+        .execute();
+      await transaction
+        .updateTable("deviceAuthorizations")
+        .set({ status: "consumed", consumedAt: new Date() })
+        .where("id", "=", authorization.id)
+        .execute();
+      return {
+        status: "authorized",
+        tokenId: input.tokenId,
+        workspaceId,
+        userId,
+        expiresAt: expiresAt.getTime(),
+      };
+    });
   }
 
   async createEnrollmentToken(
@@ -911,17 +1249,46 @@ export class PostgresDatabase {
     machineIds: string[];
     capabilities: Capability[];
     expiresAt: number;
-  }): Promise<void> {
-    await this.db
-      .insertInto("agentTokens")
-      .values({
-        ...input,
-        machineIds: JSON.stringify(input.machineIds),
-        capabilities: JSON.stringify(input.capabilities),
-        expiresAt: new Date(input.expiresAt),
-        revokedAt: null,
-      })
-      .execute();
+  }): Promise<
+    | { created: true }
+    | { created: false; plan: CloudPlanId; activeAgentLimit: number }
+  > {
+    return await this.db.transaction().execute(async (transaction) => {
+      await sql`select pg_advisory_xact_lock(hashtext(${input.workspaceId}))`.execute(
+        transaction,
+      );
+      const workspace = await transaction
+        .selectFrom("workspaces")
+        .innerJoin("organizations", "organizations.id", "workspaces.organizationId")
+        .select(["organizations.plan", "organizations.externalId"])
+        .where("workspaces.id", "=", input.workspaceId)
+        .executeTakeFirstOrThrow();
+      const plan = workspace.plan as CloudPlanId;
+      const activeAgentLimit = entitlementsFor(plan).activeAgentLimit;
+      if (workspace.externalId !== null) {
+        const activeAgents = await transaction
+          .selectFrom("agentTokens")
+          .select(({ fn }) => fn.countAll<number>().as("count"))
+          .where("workspaceId", "=", input.workspaceId)
+          .where("revokedAt", "is", null)
+          .where("expiresAt", ">", new Date())
+          .executeTakeFirstOrThrow();
+        if (Number(activeAgents.count) >= activeAgentLimit) {
+          return { created: false, plan, activeAgentLimit };
+        }
+      }
+      await transaction
+        .insertInto("agentTokens")
+        .values({
+          ...input,
+          machineIds: JSON.stringify(input.machineIds),
+          capabilities: JSON.stringify(input.capabilities),
+          expiresAt: new Date(input.expiresAt),
+          revokedAt: null,
+        })
+        .execute();
+      return { created: true };
+    });
   }
 
   async revokeAgentToken(
@@ -958,7 +1325,11 @@ export class PostgresDatabase {
     machineId: string;
     name: string;
     publicKey: string;
-  }): Promise<{ machineId: string; name: string; workspaceId: string } | null> {
+  }): Promise<
+    | { status: "enrolled"; machineId: string; name: string; workspaceId: string }
+    | { status: "machine_limit_reached"; workspaceId: string; machineLimit: number }
+    | null
+  > {
     return await this.db.transaction().execute(async (transaction) => {
       const enrollment = await transaction
         .selectFrom("enrollmentTokens")
@@ -973,6 +1344,29 @@ export class PostgresDatabase {
         enrollment.expiresAt <= now
       ) {
         return null;
+      }
+      const organization = await transaction
+        .selectFrom("workspaces")
+        .innerJoin("organizations", "organizations.id", "workspaces.organizationId")
+        .select(["organizations.plan", "organizations.externalId"])
+        .where("workspaces.id", "=", enrollment.workspaceId)
+        .executeTakeFirstOrThrow();
+      const entitlement = entitlementsFor(organization.plan);
+      const activeMachines = await transaction
+        .selectFrom("machines")
+        .select(({ fn }) => fn.countAll<number>().as("count"))
+        .where("workspaceId", "=", enrollment.workspaceId)
+        .where("revokedAt", "is", null)
+        .executeTakeFirstOrThrow();
+      if (
+        organization.externalId !== null &&
+        Number(activeMachines.count) >= entitlement.machineLimit
+      ) {
+        return {
+          status: "machine_limit_reached",
+          workspaceId: enrollment.workspaceId,
+          machineLimit: entitlement.machineLimit,
+        };
       }
       await transaction
         .updateTable("enrollmentTokens")
@@ -994,6 +1388,7 @@ export class PostgresDatabase {
         })
         .execute();
       return {
+        status: "enrolled",
         machineId: input.machineId,
         name: input.name,
         workspaceId: enrollment.workspaceId,
@@ -1507,6 +1902,10 @@ export class PostgresDatabase {
     return await this.db.transaction().execute(async (transaction) => {
       const operationDataBefore = new Date(input.operationDataBefore);
       const auditBefore = new Date(input.auditBefore);
+      await transaction
+        .deleteFrom("deviceAuthorizations")
+        .where("expiresAt", "<", operationDataBefore)
+        .execute();
       const deletedOperations = await transaction
         .deleteFrom("operations")
         .where("status", "not in", ACTIVE_OPERATION_STATUSES)
@@ -1560,6 +1959,19 @@ export class PostgresDatabase {
                 token.or([
                   token("agentTokens.expiresAt", "<=", now),
                   token("agentTokens.revokedAt", "is not", null),
+                ]),
+              ),
+          ),
+          expression.exists(
+            expression
+              .selectFrom("cliTokens")
+              .select("cliTokens.id")
+              .whereRef("cliTokens.id", "=", "sessions.principalId")
+              .whereRef("cliTokens.workspaceId", "=", "sessions.workspaceId")
+              .where((token) =>
+                token.or([
+                  token("cliTokens.expiresAt", "<=", now),
+                  token("cliTokens.revokedAt", "is not", null),
                 ]),
               ),
           ),

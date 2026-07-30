@@ -8,7 +8,7 @@ export type AccessEnvironment = {
 
 const developmentAdminKey = "dev-admin-key";
 
-export function createOpaqueToken(kind: "enroll" | "agent"): string {
+export function createOpaqueToken(kind: "enroll" | "agent" | "cli" | "device"): string {
   return `ods_${kind}_${randomBytes(32).toString("base64url")}`;
 }
 

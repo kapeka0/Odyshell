@@ -11,6 +11,7 @@ import { resolveMachineReference } from "./machines.js";
 export type OdyshellConfig = {
   serverUrl: string;
   agentToken?: string;
+  cliToken?: string;
   adminKey?: string;
   workspaceId?: string;
   fetch?: typeof globalThis.fetch;
@@ -172,6 +173,22 @@ export type AuditEvent = {
   createdAt: string;
 };
 
+export type DeviceAuthorization = {
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete: string;
+  expiresIn: number;
+  interval: number;
+};
+
+export type DeviceToken = {
+  accessToken: string;
+  tokenType: "Bearer";
+  workspaceId: string;
+  expiresAt: string;
+};
+
 export class Odyshell {
   private readonly fetcher: typeof globalThis.fetch;
 
@@ -288,6 +305,35 @@ export class Odyshell {
 
   async health(): Promise<{ status: string; protocol: number }> {
     return this.request("/health", { authenticated: false });
+  }
+
+  async startDeviceAuthorization(clientName = "Odyshell CLI"): Promise<DeviceAuthorization> {
+    return this.request("/v1/auth/device", {
+      method: "POST",
+      authenticated: false,
+      body: { clientName },
+    });
+  }
+
+  async exchangeDeviceAuthorization(deviceCode: string): Promise<DeviceToken> {
+    return this.request("/v1/auth/device/token", {
+      method: "POST",
+      authenticated: false,
+      body: { deviceCode },
+    });
+  }
+
+  async logoutCli(): Promise<{ revoked: true }> {
+    if (!this.config.cliToken) {
+      throw new ExpectedError(
+        "No CLI token configured.",
+        "credentials_missing",
+      );
+    }
+    return this.request("/v1/auth/logout", {
+      method: "POST",
+      credential: this.config.cliToken,
+    });
   }
 
   async machines(): Promise<Machine[]> {
@@ -537,13 +583,18 @@ export class Odyshell {
       headers?: Record<string, string>;
       admin?: boolean;
       authenticated?: boolean;
+      credential?: string;
     } = {},
   ): Promise<T> {
     const authenticated = options.authenticated ?? true;
-    const credential = options.admin ? this.config.adminKey : this.config.agentToken;
+    const credential =
+      options.credential ??
+      (options.admin
+        ? (this.config.adminKey ?? this.config.cliToken)
+        : (this.config.agentToken ?? this.config.cliToken));
     if (authenticated && !credential) {
       throw new ExpectedError(
-        `No ${options.admin ? "admin key" : "agent token"} configured. Run "ods login" or set the corresponding environment variable.`,
+        `No ${options.admin ? "workspace credential" : "agent or CLI token"} configured. Run "ods login" or set the corresponding environment variable.`,
         "credentials_missing",
       );
     }
@@ -554,14 +605,19 @@ export class Odyshell {
         headers: {
           ...(options.body === undefined ? {} : { "content-type": "application/json" }),
           ...(authenticated
-            ? options.admin
+            ? options.admin && this.config.adminKey
               ? {
                   "x-odyshell-admin-key": credential!,
                   ...(this.config.workspaceId
                     ? { "x-odyshell-workspace-id": this.config.workspaceId }
                     : {}),
                 }
-              : { authorization: `Bearer ${credential!}` }
+              : {
+                  authorization: `Bearer ${credential!}`,
+                  ...(options.admin && this.config.workspaceId
+                    ? { "x-odyshell-workspace-id": this.config.workspaceId }
+                    : {}),
+                }
             : {}),
           ...options.headers,
         },
