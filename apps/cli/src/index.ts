@@ -6,8 +6,6 @@ import { Command } from "commander";
 import open from "open";
 import pc from "picocolors";
 import {
-  allCapabilities,
-  capabilitySchema,
   type Capability,
   type OperationAction,
 } from "@odyshell/protocol";
@@ -23,6 +21,7 @@ import {
 } from "@odyshell/client";
 import { ApiError, Odyshell, OdyshellApi, type Operation } from "@odyshell/sdk";
 import { parseDuration } from "./duration.js";
+import { parseCapabilities } from "./capabilities.js";
 import { ExpectedError, printCliError } from "./errors.js";
 import {
   defaultConfigPath,
@@ -50,7 +49,7 @@ const program = new Command();
 program
   .name("ods")
   .description("Agent-first access to private machines")
-  .version("0.8.0")
+  .version("0.8.1")
   .option("-j, --json", "emit stable JSON output")
   .option("--server <url>", "override the Odyshell server URL")
   .option("--workspace-id <id>", "select the administrator workspace")
@@ -125,22 +124,6 @@ function normalizeGlobalOptions(argv: string[]): string[] {
 
 async function apiFor(command: Command): Promise<OdyshellApi> {
   return new OdyshellApi(await resolveConfig(globals(command)));
-}
-
-function parseCapabilities(value: string): Capability[] {
-  const parsed = capabilitySchema
-    .array()
-    .min(1)
-    .safeParse(
-      [...new Set(value.split(",").map((capability) => capability.trim()))].filter(Boolean),
-    );
-  if (!parsed.success) {
-    throw new ExpectedError(
-      `Invalid capabilities. Choose from: ${allCapabilities.join(", ")}`,
-      "invalid_capabilities",
-    );
-  }
-  return parsed.data;
 }
 
 function parseRunner(value: string): "host" | "docker" {

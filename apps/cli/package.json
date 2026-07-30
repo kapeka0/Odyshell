@@ -1,6 +1,6 @@
 {
   "name": "@odyshell/cli",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Agent-first command line access to machines connected through Odyshell.",
   "keywords": [
     "ai-agents",
