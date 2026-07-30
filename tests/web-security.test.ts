@@ -406,6 +406,14 @@ describe("dashboard navigation performance boundary", () => {
     expect(copyable).toContain('aria-live="polite"');
     expect(copyable).not.toContain("toast");
     expect(copyable).not.toContain("hover:text-foreground");
+    for (const file of ["enroll-machine.tsx", "create-agent-access.tsx"]) {
+      const generatedCommand = readFileSync(
+        resolve(componentsRoot, file),
+        "utf8",
+      );
+      expect(generatedCommand).toContain("border bg-muted/50");
+      expect(generatedCommand).not.toContain("bg-foreground p-");
+    }
     for (const file of [
       "machine-list.tsx",
       "agent-access-manager.tsx",

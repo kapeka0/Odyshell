@@ -423,7 +423,7 @@ function Credential({
         value={value}
         label={copyLabel}
         wrap
-        className="w-full rounded-lg bg-foreground p-4 font-mono text-xs leading-6 text-background"
+        className="w-full rounded-lg border bg-muted/50 p-4 font-mono text-xs leading-6 text-foreground hover:bg-muted/70"
       />
     </div>
   );

@@ -163,6 +163,8 @@ particular component, library or interaction pattern.
   copy affordance with a restrained horizontal hover or focus animation.
 - Copyable values preserve readable text contrast in every interaction state,
   including when the surrounding surface inverts foreground and background.
+- Generated commands use a quiet secondary surface with a thin border. Avoid
+  full foreground/background inversion for large code blocks.
 - Destructive row actions remain secondary, require confirmation and never
   compete with the view's primary creation action.
 - Users can permanently delete any Agent from its actions. Deletion closes
