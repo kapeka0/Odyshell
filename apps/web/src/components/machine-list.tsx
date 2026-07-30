@@ -15,6 +15,7 @@ import {
   DataTableColumnHeader,
 } from "@/components/data-table";
 import { useDashboard } from "@/components/dashboard-provider";
+import { StatusDot } from "@/components/status-dot";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -99,14 +100,7 @@ export function MachineList({ machines }: { machines: CloudMachine[] }) {
         ),
         cell: ({ row }) => (
           <span className="inline-flex items-center gap-2">
-            <span
-              className={
-                row.original.online
-                  ? "size-2 rounded-full bg-emerald-500 motion-safe:animate-pulse"
-                  : "size-2 rounded-full bg-muted-foreground/45"
-              }
-              aria-hidden="true"
-            />
+            <StatusDot active={row.original.online} />
             {row.original.online ? "Online" : "Offline"}
           </span>
         ),

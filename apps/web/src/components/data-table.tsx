@@ -73,6 +73,7 @@ export function DataTable<TData>({
   filters,
   hiddenColumns = [searchColumn],
   emptyMessage,
+  summaryLabel,
 }: {
   columns: ColumnDef<TData>[];
   data: TData[];
@@ -82,6 +83,7 @@ export function DataTable<TData>({
   filters?: TableFilter[];
   hiddenColumns?: string[];
   emptyMessage: string;
+  summaryLabel?: string;
 }) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
@@ -168,6 +170,14 @@ export function DataTable<TData>({
           );
         })}
       </div>
+      {summaryLabel ? (
+        <div className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
+          <p className="tabular-nums">
+            {table.getFilteredRowModel().rows.length} results
+          </p>
+          <p>{summaryLabel}</p>
+        </div>
+      ) : null}
       <div className="overflow-hidden rounded-lg border">
         <Table>
           <TableHeader>
@@ -213,10 +223,16 @@ export function DataTable<TData>({
           </TableBody>
         </Table>
       </div>
-      <div className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
-        <p className="tabular-nums">
-          {table.getFilteredRowModel().rows.length} results
-        </p>
+      <div
+        className={`flex items-center gap-4 text-sm text-muted-foreground ${
+          summaryLabel ? "justify-end" : "justify-between"
+        }`}
+      >
+        {summaryLabel ? null : (
+          <p className="tabular-nums">
+            {table.getFilteredRowModel().rows.length} results
+          </p>
+        )}
         <div className="flex items-center gap-2">
           <Button
             type="button"

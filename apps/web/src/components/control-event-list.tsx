@@ -49,10 +49,12 @@ export function ControlEventList({
   events,
   machines,
   accesses,
+  retentionDays,
 }: {
   events: ControlEvent[];
   machines: CloudMachine[];
   accesses: AgentAccess[];
+  retentionDays: number;
 }) {
   const rows = useMemo(
     () => activityRows(events, machines, accesses),
@@ -206,6 +208,7 @@ export function ControlEventList({
       ]}
       hiddenColumns={["search", "type"]}
       emptyMessage="No control events match these filters."
+      summaryLabel={`${retentionDays} days retained`}
     />
   );
 }

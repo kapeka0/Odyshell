@@ -9,6 +9,7 @@ import {
 import { MachineList } from "@/components/machine-list";
 import { useDashboard } from "@/components/dashboard-provider";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { PlusIcon } from "lucide-react";
 
 export default function MachinesPage() {
   const { state } = useDashboard();
@@ -19,7 +20,6 @@ export default function MachinesPage() {
   return (
     <DashboardPage>
       <DashboardPageHeader
-        eyebrow="Workspace"
         title="Machines"
         action={
           state.status === "ready" ? (
@@ -32,6 +32,7 @@ export default function MachinesPage() {
                 href="/dashboard/machines/add"
                 className={buttonVariants()}
               >
+                <PlusIcon aria-hidden="true" data-icon="inline-start" />
                 Add
               </Link>
             )

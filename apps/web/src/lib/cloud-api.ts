@@ -70,6 +70,7 @@ export type CloudContext = {
     machineLimit: number;
     workspaceLimit: number;
     activeAgentLimit: number;
+    controlEventRetentionDays: number;
   };
   usage: {
     machines: number;

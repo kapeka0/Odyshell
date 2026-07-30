@@ -117,8 +117,9 @@ particular component, library or interaction pattern.
   in a small dialog.
 - Dialog and form actions stay at the bottom-right. Place Cancel before the
   primary action.
-- Form actions use no decorative icons and prefer one-word labels such as Add,
-  Create or Cancel.
+- Final form and dialog actions use no decorative icons and prefer one-word
+  labels such as Add, Create or Cancel. Entry-point actions such as an Add
+  button that opens a dialog or creation route may use a leading icon.
 - Select triggers show the user-facing label for the current value, never its
   internal value.
 - Pending state stays visually attached to the initiating action. Completion
@@ -127,6 +128,10 @@ particular component, library or interaction pattern.
 - Prefer the shortest label that remains clear in context. Avoid redundant
   qualifiers, repeated explanations and descriptive copy that does not help
   the next action.
+- Do not prefix dashboard page titles with an obvious context label such as
+  Workspace.
+- Activity places the filtered result count above the table and shows the
+  workspace plan retention beside it.
 - The account menu cycles directly between System, Light and Dark before the
   Settings action. Theme changes do not need success toasts.
 - Browser icons follow the active system color scheme.
@@ -143,7 +148,8 @@ particular component, library or interaction pattern.
 - The overview updates from live workspace state and shows agent-to-machine
   connections only while activity is actually in progress.
 - Online machines use a restrained green live indicator. Offline machines use
-  a quiet neutral indicator, and both states include text.
+  a quiet neutral indicator, and both states include text. Keep the active dot
+  solid; animate only a restrained halo around it with the ping motion.
 - Operational collections support search, relevant filters, sorting and
   pagination. Row details and secondary actions stay behind a consistent
   actions menu.

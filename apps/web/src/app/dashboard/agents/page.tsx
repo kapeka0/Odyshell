@@ -9,6 +9,7 @@ import {
   DashboardStateNotice,
 } from "@/components/dashboard-state";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { PlusIcon } from "lucide-react";
 
 export default function AgentsPage() {
   const { state } = useDashboard();
@@ -19,7 +20,6 @@ export default function AgentsPage() {
   return (
     <DashboardPage>
       <DashboardPageHeader
-        eyebrow="Workspace"
         title="Agents"
         action={
           state.status === "ready" ? (
@@ -32,6 +32,7 @@ export default function AgentsPage() {
                 href="/dashboard/agents/add"
                 className={buttonVariants()}
               >
+                <PlusIcon aria-hidden="true" data-icon="inline-start" />
                 Add
               </Link>
             )

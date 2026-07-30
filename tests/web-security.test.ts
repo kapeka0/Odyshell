@@ -167,6 +167,24 @@ describe("dashboard navigation performance boundary", () => {
     expect(provider).toContain("<DashboardLiveRefresh");
   });
 
+  it("keeps live status dots stable while only their halo animates", () => {
+    const componentsRoot = resolve(
+      process.cwd(),
+      "apps/web/src/components",
+    );
+    const statusDot = readFileSync(
+      resolve(componentsRoot, "status-dot.tsx"),
+      "utf8",
+    );
+    expect(statusDot).toContain("motion-safe:animate-ping");
+    expect(statusDot).not.toContain("animate-pulse");
+    for (const file of ["machine-list.tsx", "workspace-canvas.tsx"]) {
+      expect(
+        readFileSync(resolve(componentsRoot, file), "utf8"),
+      ).toContain("<StatusDot");
+    }
+  });
+
   it("keeps table filter labels stable while their selected values change", () => {
     const dataTable = readFileSync(
       resolve(
@@ -257,9 +275,46 @@ describe("dashboard navigation performance boundary", () => {
         "utf8",
       ),
     ).not.toContain("Privacy-minimal");
-    expect(
-      readFileSync(resolve(componentsRoot, "ui/sidebar.tsx"), "utf8"),
-    ).toContain("border-sidebar-border");
+    const sidebarPrimitive = readFileSync(
+      resolve(componentsRoot, "ui/sidebar.tsx"),
+      "utf8",
+    );
+    const appShell = readFileSync(
+      resolve(componentsRoot, "app-shell.tsx"),
+      "utf8",
+    );
+    expect(appShell).toContain("border-b");
+    expect(sidebarPrimitive).toContain(
+      "border-border group-data-[collapsible=icon]",
+    );
+    const activityPage = readFileSync(
+      resolve(
+        process.cwd(),
+        "apps/web/src/app/dashboard/activity/page.tsx",
+      ),
+      "utf8",
+    );
+    expect(activityPage).toContain("controlEventRetentionDays");
+    expect(activityPage).toContain("-day retention");
+    const dataTable = readFileSync(
+      resolve(componentsRoot, "data-table.tsx"),
+      "utf8",
+    );
+    expect(dataTable).toContain("summaryLabel");
+    expect(dataTable).toContain(
+      "{table.getFilteredRowModel().rows.length} results",
+    );
+    for (const page of ["activity", "agents", "machines", "settings"]) {
+      expect(
+        readFileSync(
+          resolve(
+            process.cwd(),
+            `apps/web/src/app/dashboard/${page}/page.tsx`,
+          ),
+          "utf8",
+        ),
+      ).not.toContain('eyebrow="Workspace"');
+    }
     const userSettings = readFileSync(
       resolve(
         process.cwd(),

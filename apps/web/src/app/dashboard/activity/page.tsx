@@ -14,8 +14,12 @@ export default function ActivityPage() {
   return (
     <DashboardPage>
       <DashboardPageHeader
-        eyebrow="Workspace"
         title="Activity"
+        description={
+          state.status === "ready"
+            ? `${planLabel(state.context.plan.id)} · ${state.context.plan.controlEventRetentionDays}-day retention`
+            : undefined
+        }
       />
       {state.status !== "ready" ? (
         <DashboardStateNotice state={state} />
@@ -24,8 +28,13 @@ export default function ActivityPage() {
           events={state.context.controlEvents ?? []}
           machines={state.context.machines}
           accesses={state.context.agentAccess ?? []}
+          retentionDays={state.context.plan.controlEventRetentionDays}
         />
       )}
     </DashboardPage>
   );
+}
+
+function planLabel(planId: "free" | "team" | "scale"): string {
+  return `${planId[0]!.toUpperCase()}${planId.slice(1)} plan`;
 }

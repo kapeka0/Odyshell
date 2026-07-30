@@ -26,7 +26,6 @@ export default function WorkspaceSettingsPage() {
   return (
     <DashboardPage>
       <DashboardPageHeader
-        eyebrow="Workspace"
         title="Settings"
       />
       {state.status !== "ready" ? (

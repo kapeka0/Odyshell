@@ -20,6 +20,7 @@ import Link from "next/link";
 import { useTheme } from "next-themes";
 import { useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { StatusDot } from "@/components/status-dot";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import type { CloudContext } from "@/lib/cloud-api";
@@ -179,14 +180,9 @@ function MachineNode({ data }: NodeProps<MachineFlowNode>) {
       <div className="flex items-start gap-3">
         <span className="relative flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted text-muted-foreground">
           <CpuIcon aria-hidden="true" className="size-4" />
-          <span
-            aria-label={data.online ? "Online" : "Offline"}
-            className={cn(
-              "absolute -top-1 -right-1 size-2.5 rounded-full border-2 border-card",
-              data.online
-                ? "bg-emerald-500 motion-safe:animate-pulse"
-                : "bg-muted-foreground/45",
-            )}
+          <StatusDot
+            active={data.online}
+            className="absolute -top-1 -right-1 size-2.5 rounded-full ring-2 ring-card"
           />
         </span>
         <span className="min-w-0 flex-1">

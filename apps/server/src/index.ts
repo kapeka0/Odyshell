@@ -552,6 +552,9 @@ app.post(
       plan: {
         id: context.organization.plan,
         ...plan,
+        controlEventRetentionDays: Math.round(
+          retention.auditMilliseconds / (24 * 60 * 60 * 1_000),
+        ),
       },
       usage: {
         machines: usage?.activeMachines ?? machines.length,
