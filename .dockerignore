@@ -1,7 +1,13 @@
 .git
+.env
+.env.*
+.agents
+.claude
 .odyshell
+convex
 node_modules
 **/node_modules
 **/dist
 coverage
+skills-lock.json
 tmp

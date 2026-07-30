@@ -263,7 +263,6 @@ try {
   }
 
   const tsxCli = resolve(root, "node_modules/tsx/dist/cli.mjs");
-  const clientEntry = resolve(root, "apps/client/src/cli.ts");
   const odsEntry = resolve(root, "apps/cli/src/index.ts");
   const selectedWorkspace = JSON.parse(
     await run(process.execPath, [
@@ -331,7 +330,7 @@ try {
 
   client = spawn(
     process.execPath,
-    [tsxCli, clientEntry, "start", "--config", configPath],
+    [tsxCli, odsEntry, "client", "start", "--config", configPath],
     {
       cwd: root,
       shell: false,

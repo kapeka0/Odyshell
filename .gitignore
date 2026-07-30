@@ -6,3 +6,7 @@ dist/
 coverage/
 *.log
 tmp/
+.agents/
+.claude/
+skills-lock.json
+convex/

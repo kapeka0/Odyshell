@@ -8,11 +8,7 @@
       "import": "./dist/index.js"
     }
   },
-  "bin": {
-    "ods-client": "./bin/ods-client.js"
-  },
   "files": [
-    "bin",
     "dist"
   ],
   "engines": {
@@ -28,7 +24,6 @@
     "x64"
   ],
   "scripts": {
-    "start": "tsx src/cli.ts",
     "build": "tsup"
   },
   "dependencies": {

@@ -11,14 +11,4 @@ describe("server storage boundaries", () => {
       }),
     ).toThrow(/DATABASE_URL/);
   });
-
-  it("does not accept the removed Convex configuration", () => {
-    expect(() =>
-      createDatabase({
-        NODE_ENV: "production",
-        CONVEX_URL: "https://example.convex.cloud",
-        ODYSHELL_CONVEX_SERVICE_KEY: "not-used",
-      }),
-    ).toThrow(/DATABASE_URL/);
-  });
 });

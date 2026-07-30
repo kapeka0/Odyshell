@@ -7,7 +7,6 @@ import {
 import {
   operationEnvironmentSchema,
   relativePathSchema,
-  type Capability,
 } from "@odyshell/protocol";
 import {
   Odyshell,
