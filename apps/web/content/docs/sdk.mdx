@@ -1,0 +1,33 @@
+---
+title: TypeScript SDK
+description: Request typed Odyshell operations from a TypeScript agent.
+---
+
+`@odyshell/sdk` is the programmatic interface used inside this monorepo. It is not published to
+npm yet.
+
+```ts
+import { Odyshell } from "@odyshell/sdk";
+
+const ods = new Odyshell({
+  serverUrl: process.env.ODYSHELL_SERVER_URL!,
+  agentToken: process.env.ODYSHELL_AGENT_TOKEN!,
+});
+
+const result = await ods.process.exec({
+  machine: "rpi5",
+  program: "git",
+  args: ["status", "--short"],
+});
+
+console.log(result.stdout);
+```
+
+The SDK resolves a machine, opens a temporary session, submits the operation, follows its result
+events, and closes the session.
+
+Use environment variables or a secret manager for credentials. Never put an agent credential in
+source code, logs, or generated documentation.
+
+The SDK also exposes typed filesystem and Docker log methods. Authorization remains enforced by
+the Server and the target Client; TypeScript types are not a security boundary.

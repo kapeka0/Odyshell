@@ -1,0 +1,45 @@
+---
+title: Security
+description: Understand Odyshell's trust boundaries, least-privilege controls, and privacy model.
+---
+
+Odyshell removes SSH credentials, inbound machine ports, and private-LAN access from the agent
+workflow. It does not turn arbitrary command execution into a safe action.
+
+## Authorization path
+
+An operation is accepted only when:
+
+1. the agent credential is valid, unexpired, and not revoked;
+2. the target machine belongs to the same workspace and is assigned to that credential;
+3. the credential allows the required capability;
+4. the session is active and bounded by the credential;
+5. the machine is online;
+6. the Client's local policy allows the capability;
+7. operation-specific validation succeeds.
+
+The model cannot override these checks with a prompt.
+
+## Machine identity
+
+Enrollment is single-use and expiring. Each Client generates an Ed25519 identity and proves
+possession when it connects. Private machine key material remains in the local Client
+configuration.
+
+## Host authority
+
+Host operations run as the user running the Client. Use a dedicated operating-system user and
+grant it only the workspace, executables, Docker access, and services an agent actually needs.
+
+Prefer typed filesystem operations and `process.exec`. Grant `process.shell`, filesystem writes,
+removal, or Docker access only when the task requires them.
+
+## Privacy
+
+Durable Control Events contain lifecycle metadata, not commands, arguments, environment values,
+paths, file contents, stdout, or stderr.
+
+Full operation requests and results pass through the Server and are temporarily stored for
+delivery. They become eligible for deletion after one hour by default. Control Events become
+eligible for deletion after 30 days by default. Infrastructure logs and backups can have
+independent retention.

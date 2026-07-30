@@ -6,11 +6,15 @@
 
 <p align="center"><strong>The human control plane for Odyshell Cloud.</strong></p>
 
-The web app is where workspace members approve CLI access, connect or remove machines, create or
-revoke temporary Agent Access, delete Agents, and review privacy-minimal Control Events.
+The web app is where workspace members approve CLI access, connect or remove machines, create,
+revoke, or delete temporary Agent Access, and review privacy-minimal Control Events.
 Organization administrators additionally manage people and organization settings.
 
 Agents do not use this interface. They use Agent Access through the API, SDK, CLI, or MCP server.
+
+Public product documentation lives in `content/docs` and is served at `/docs` with local search.
+The same reviewed source is available to agents through `/llms.txt`, `/llms-full.txt`, and a
+Markdown version of every documentation page.
 
 ## Run locally
 

@@ -112,6 +112,33 @@ export default function HomePage() {
           </ol>
         </section>
 
+        <section className="page-shell pb-20 md:pb-28">
+          <Reveal className="rounded-2xl border bg-card px-6 py-10 md:px-10 md:py-14">
+            <p className="font-mono text-xs text-muted-foreground">DOCUMENTATION</p>
+            <div className="mt-5 flex flex-col gap-8 md:flex-row md:items-end md:justify-between">
+              <div>
+                <h2 className="display-balance max-w-[14ch] text-4xl leading-[1.05] font-semibold tracking-[-0.04em] md:text-5xl">
+                  Connect a machine. Give an agent the route.
+                </h2>
+                <p className="mt-5 max-w-xl leading-7 text-muted-foreground">
+                  Follow the quickstart, then integrate through MCP, the TypeScript SDK,
+                  or the CLI.
+                </p>
+              </div>
+              <Link
+                className={cn(
+                  buttonVariants({ variant: "outline", size: "lg" }),
+                  "w-fit whitespace-nowrap",
+                )}
+                href="/docs"
+              >
+                Read the docs
+                <ArrowRightIcon data-icon="inline-end" />
+              </Link>
+            </div>
+          </Reveal>
+        </section>
+
         <section className="border-y bg-muted/35">
           <div className="page-shell py-20 md:py-28">
             <div className="grid gap-10 lg:grid-cols-[0.7fr_1.3fr]">

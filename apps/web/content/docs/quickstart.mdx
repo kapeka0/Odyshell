@@ -1,0 +1,62 @@
+---
+title: Quickstart
+description: Connect a private Linux machine and give an agent temporary access.
+---
+
+This is the shortest Cloud workflow. It uses Linux for the persistent Client service.
+
+## 1. Install `ods`
+
+The MVP CLI is installed from the repository and requires Node.js 24+ and pnpm:
+
+```bash
+git clone https://github.com/kapeka0/odyshell.git
+cd odyshell
+pnpm install
+pnpm install:ods
+```
+
+## 2. Authorize the administrator CLI
+
+```bash
+ods login
+```
+
+Open the URL printed by the CLI and approve the request. The short-lived device code is already
+embedded in the URL.
+
+## 3. Connect a machine
+
+In Odyshell Cloud, open **Machines**, select **Add**, and choose the capabilities the Client may
+expose. Run the generated `ods up` command from the directory the target Linux machine should
+make available. The MVP command uses that current directory as `--workspace .`.
+
+The enrollment token in that command expires after ten minutes and works once. The Client then
+keeps an outbound connection to Odyshell; the machine does not expose an inbound port.
+
+## 4. Create agent access
+
+Open **Agents**, select **Add**, and choose:
+
+- a recognizable name;
+- one or more connected machines;
+- only the capabilities required for the task;
+- an expiry.
+
+The credential is shown once. Transfer the generated login command to the agent through a secure
+channel.
+
+## 5. Verify the route
+
+In the agent environment, run the generated login command, then:
+
+```bash
+ods machines
+ods ping my-machine
+ods exec my-machine -- uname -a
+```
+
+A successful ping returns `Pong! 🏓`.
+
+The administrator can revoke the credential at any time. Expiry or revocation closes the
+sessions created with it.

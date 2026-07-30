@@ -24,3 +24,10 @@
   symlink escape, resource limits, identity verification, and secret leakage where applicable.
 - Development shortcuts must be explicit, isolated from production, and tested to ensure they
   cannot become production defaults.
+
+# Documentation
+
+- After every implementation, review the root and package READMEs, repository Markdown files,
+  and public online documentation for required updates.
+- Keep documentation synchronized with shipped behavior. Do not present planned features as
+  available.

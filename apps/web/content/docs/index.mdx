@@ -1,0 +1,29 @@
+---
+title: Odyshell documentation
+description: Controlled access from AI agents to private machines without SSH, inbound ports, or a VPN.
+---
+
+Odyshell is the execution boundary between AI agents and private machines.
+
+A lightweight Client runs on each machine and maintains an authenticated outbound connection to
+the Odyshell Server. Agents use temporary, scoped credentials to request typed operations through
+that connection. They never receive SSH credentials or direct access to the private network.
+
+## Choose a path
+
+- **Administrators:** start with the [quickstart](/docs/quickstart), then learn how to
+  [connect machines](/docs/machines) and [grant agent access](/docs/agents).
+- **Agents:** use the local [MCP server](/docs/mcp), the [TypeScript SDK](/docs/sdk), or the
+  [`ods` CLI](/docs/cli).
+
+## What the MVP supports
+
+- Linux, macOS, and Windows Clients
+- Structured process execution and explicit shell execution
+- Typed filesystem operations
+- Docker container logs
+- Temporary sessions and agent credentials
+- Privacy-minimal Control Events
+
+Odyshell is not an SSH client, VPN, or full coding agent. It gives existing agents a controlled
+route to machines that already exist.

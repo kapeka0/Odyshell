@@ -6,8 +6,17 @@ export default clerkMiddleware();
 
 export const config = {
   matcher: [
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    "/(api|trpc)(.*)",
-    "/__clerk/(.*)",
+    "/",
+    "/activate/:path*",
+    "/dashboard/:path*",
+    "/onboarding",
+    "/sign-in/:path*",
+    "/sign-up/:path*",
+    "/api/agent-access/:path*",
+    "/api/dashboard/:path*",
+    "/api/device/:path*",
+    "/api/enrollment-token",
+    "/api/machines/:path*",
+    "/__clerk/:path*",
   ],
 };

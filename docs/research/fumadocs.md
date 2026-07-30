@@ -6,7 +6,7 @@ Fecha de verificación: 2026-07-30.
 
 Fumadocs encaja bien dentro de `apps/web`: permite conservar Next.js App Router, la
 ruta pública `/docs` y el despliegue actual de Vercel. Para el MVP usaría Fumadocs
-MDX como fuente local, Fumadocs UI con el preset de shadcn, búsqueda Orama
+MDX como fuente local, Fumadocs UI con el preset de shadcn, búsqueda ZBSearch
 autohospedada y salidas estáticas para agentes.
 
 No añadiría todavía `Ask AI`: requiere escoger y pagar un proveedor de modelos, y
@@ -110,7 +110,7 @@ Fuente: [temas de Fumadocs UI][themes].
 
 ### Búsqueda
 
-Para el MVP usaría Orama, la opción predeterminada, gratuita y autohospedable:
+Para el MVP usaría ZBSearch, la opción predeterminada, gratuita y autohospedable:
 
 ```ts
 import { source } from "@/lib/source";
@@ -122,9 +122,8 @@ export const { GET } = createFromSource(source, { language: "english" });
 Esto crea `/api/search` desde el `structuredData` que ya produce Fumadocs MDX.
 Evitaría el modo estático al principio: obliga al navegador a descargar el índice
 y la propia documentación advierte que resulta caro cuando crece. Si el corpus
-llega a ser grande, se puede sustituir el cliente por Orama Cloud, Algolia,
-Typesense u otro motor sin cambiar la estructura MDX. Fuentes:
-[búsqueda Fumadocs][search] y [Orama integrado][orama].
+llega a ser grande, se puede sustituir el motor por un servicio externo sin
+cambiar la estructura MDX. Fuente: [búsqueda Fumadocs][search].
 
 ### Documentación para agentes
 
@@ -185,7 +184,7 @@ la misma URL. Fuente: [inicio rápido de Fumadocs][quick-start].
 Fumadocs no introduce un runtime separado: se despliega como la aplicación
 Next.js subyacente. El build existente de `apps/web` generará `.source`, las
 rutas estáticas de documentación y los endpoints LLM. No hacen falta variables
-de entorno nuevas para MDX, Orama o estas salidas. Fumadocs remite al despliegue
+de entorno nuevas para MDX, ZBSearch o estas salidas. Fumadocs remite al despliegue
 del framework; Next.js reconoce Vercel como adaptador verificado. Fuentes:
 [despliegue Fumadocs][fumadocs-deploy] y
 [despliegue Next.js][next-deploy].
@@ -207,7 +206,8 @@ GET /docs/getting-started.md
 ```
 
 Además se debe probar que `llms-full.txt` no contiene patrones de secretos o
-tokens, que una página inexistente responde 404 y que añadir Fumadocs no hace
+tokens, que una página Markdown inexistente responde 404, que la página HTML
+equivalente usa la respuesta noindex de Next.js y que añadir Fumadocs no hace
 públicas rutas del dashboard.
 
 ## Límites y decisiones
@@ -218,7 +218,7 @@ públicas rutas del dashboard.
   no MDX arbitrario enviado por usuarios.
 - `llms-full.txt` crecerá linealmente con la documentación. Mantenerlo en el MVP,
   medir tamaño y dividirlo por áreas si se vuelve costoso.
-- Orama local evita cuentas y servicios externos; para un corpus grande habrá que
+- ZBSearch local evita cuentas y servicios externos; para un corpus grande habrá que
   cambiar de motor o estrategia de índice.
 - `DocsLayout` reduce mantenimiento, pero su CSS toca preflight. Debe adoptarse con
   el preset shadcn y pruebas visuales, sin intentar replicar el dashboard dentro de
@@ -237,7 +237,6 @@ públicas rutas del dashboard.
 [docs-page]: https://www.fumadocs.dev/docs/ui/layouts/page
 [themes]: https://www.fumadocs.dev/docs/ui/theme
 [search]: https://www.fumadocs.dev/docs/search
-[orama]: https://www.fumadocs.dev/docs/headless/search/orama
 [ai-llms]: https://www.fumadocs.dev/docs/integrations/llms
 [page-tree]: https://www.fumadocs.dev/docs/headless/page-tree
 [fumadocs-deploy]: https://www.fumadocs.dev/docs/deploying

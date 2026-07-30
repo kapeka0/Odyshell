@@ -18,6 +18,9 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "facehash": "^0.1.0",
+    "fumadocs-core": "16.14.0",
+    "fumadocs-mdx": "15.2.1",
+    "fumadocs-ui": "16.14.0",
     "lucide-react": "^1.27.0",
     "motion": "^12.43.0",
     "next": "16.2.12",
@@ -31,6 +34,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/mdx": "^2.0.14",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

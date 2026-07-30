@@ -6,6 +6,7 @@
     "build": "pnpm -r --if-present build",
     "typecheck": "tsc --noEmit && pnpm --filter @odyshell/web exec tsc --noEmit",
     "test": "vitest run",
+    "test:docs": "node scripts/docs-smoke.mjs",
     "test:e2e": "node scripts/e2e.mjs",
     "install:ods": "pnpm --filter @odyshell/client build && pnpm --filter @odyshell/cli build && npm install --global ./apps/cli",
     "dev:server": "pnpm --filter @odyshell/server dev",

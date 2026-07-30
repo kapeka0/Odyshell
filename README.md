@@ -167,8 +167,8 @@ it through the API, SDK, CLI, or MCP:
 ODYSHELL_AGENT_TOKEN=<agent-access> ods exec my-machine -- uname -a
 ```
 
-From the Agent's actions menu, revoke the active credential without removing the record or delete
-the Agent entirely. Deletion invalidates its credential and closes active sessions immediately;
+From the Agent Access actions menu, revoke the credential without removing the record or delete
+the access entirely. Deletion invalidates its credential and closes active sessions immediately;
 privacy-minimal Control Events remain available until the configured retention period expires.
 
 MCP-compatible agents can launch the same interface locally with `ods mcp`:
@@ -207,6 +207,7 @@ default local credentials are only for development.
 
 ## Product documents
 
+- [Public documentation](https://odyshell.com/docs)
 - [MVP scope and current behavior](./docs/mvp.md)
 - [Privacy and event data](./docs/privacy.md)
 - [Business model](./docs/business-model.md)

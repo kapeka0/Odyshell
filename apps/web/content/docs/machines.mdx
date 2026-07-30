@@ -1,0 +1,55 @@
+---
+title: Machines
+description: Enroll a machine, choose its local boundary, and keep its Client connected.
+---
+
+## Enroll from Odyshell Cloud
+
+Open **Machines**, select **Add**, and configure:
+
+- a machine name;
+- the capabilities the machine will accept.
+
+Odyshell generates an `ods up` command containing a single-use enrollment token. Run it on the
+target Linux machine from the directory the Client should make available. The generated command
+uses `--workspace .`. The token expires after ten minutes and cannot be replayed.
+
+`ods up` installs and starts a restartable user service on Linux. After enrollment, use:
+
+```bash
+ods status
+ods down
+ods up
+```
+
+On macOS and Windows, enroll and run the Client in the foreground:
+
+```bash
+ods client enroll \
+  --token "$ODYSHELL_ENROLLMENT_TOKEN" \
+  --name my-machine \
+  --workspace . \
+  --allow process.exec,fs.stat,fs.list,fs.search,fs.read
+ods client start
+```
+
+The MVP does not install a native background service on macOS or Windows.
+
+## Local policy
+
+The `--workspace` directory is the filesystem boundary for typed filesystem operations.
+Capabilities are default-deny and comma-separated:
+
+```bash
+--allow process.exec,fs.stat,fs.list,fs.search,fs.read
+```
+
+An agent can only use the intersection of its credential policy and the machine's local policy.
+
+## Multiple Odyshell Servers
+
+A host can keep separate Client identities for different Odyshell deployments. `ods up` selects
+the configuration associated with its Server automatically. Use `--config` when you need an
+explicit identity path.
+
+Do not reuse or copy a Client configuration between machines.

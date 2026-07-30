@@ -180,3 +180,12 @@ particular component, library or interaction pattern.
   administrators.
 - Control Events remain privacy-minimal in the MVP. Do not present unavailable
   logging policies as editable choices.
+- Keep public documentation outside the authenticated workspace and make it usable
+  without a Clerk session.
+- Documentation starts with the Cloud workflow, uses progressive disclosure and
+  describes only behavior available in the current release.
+- Documentation must serve people and agents from one reviewed source. Keep
+  Markdown pages and LLM indexes discoverable without adding provider-specific
+  actions.
+- The landing introduces documentation once, after the product workflow, with one
+  clear action.

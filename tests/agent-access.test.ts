@@ -28,7 +28,9 @@ function dependencies(
 describe("Agent Access service boundaries", () => {
   it("binds creation to the workspace and returns plaintext only once", async () => {
     const createAgentToken = vi.fn(async () => ({ created: true as const }));
-    const audit = vi.fn(async () => undefined);
+    const audit = vi.fn<AgentAccessDependencies["audit"]>(
+      async () => undefined,
+    );
     const service = dependencies({ createAgentToken, audit });
 
     const result = await createAgentAccess(
@@ -70,7 +72,9 @@ describe("Agent Access service boundaries", () => {
 
   it("denies cross-workspace machines before issuing or auditing a credential", async () => {
     const createAgentToken = vi.fn(async () => ({ created: true as const }));
-    const audit = vi.fn(async () => undefined);
+    const audit = vi.fn<AgentAccessDependencies["audit"]>(
+      async () => undefined,
+    );
     const service = dependencies({
       activeMachinesExist: vi.fn(async (workspaceId) => workspaceId === "owner"),
       createAgentToken,
@@ -106,7 +110,9 @@ describe("Agent Access service boundaries", () => {
       .mockResolvedValueOnce(token)
       .mockResolvedValueOnce(null);
     const expireAgentSessions = vi.fn(async () => 2);
-    const audit = vi.fn(async () => undefined);
+    const audit = vi.fn<AgentAccessDependencies["audit"]>(
+      async () => undefined,
+    );
     const service = dependencies({
       revokeAgentToken,
       expireAgentSessions,
@@ -150,7 +156,9 @@ describe("Agent Access service boundaries", () => {
         deleted = true;
         return { token, closedSessions: 2 };
       });
-    const audit = vi.fn(async () => undefined);
+    const audit = vi.fn<AgentAccessDependencies["audit"]>(
+      async () => undefined,
+    );
     const service = dependencies({ deleteAgentToken, audit });
 
     await expect(

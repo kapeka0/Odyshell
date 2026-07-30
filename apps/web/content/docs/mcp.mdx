@@ -1,0 +1,39 @@
+---
+title: MCP
+description: Expose scoped Odyshell operations to an MCP-compatible agent over local stdio.
+---
+
+`ods mcp` runs a local MCP server. It translates MCP tool calls into temporary Odyshell sessions
+and operations; it does not give the model an SSH connection or administrator authority.
+
+## Configure an agent
+
+First authorize `ods` with the generated agent credential. Then add:
+
+```json
+{
+  "mcpServers": {
+    "odyshell": {
+      "command": "ods",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+The MCP process uses the existing local `ods` configuration. Keep that configuration private.
+
+## Available tools
+
+- `machines_list` and `machine_ping`
+- `process_exec` and `process_shell`
+- `filesystem_stat`, `filesystem_list`, and `filesystem_search`
+- `filesystem_read`, `filesystem_write`, `filesystem_mkdir`, and `filesystem_remove`
+- `docker_logs`
+- `audit_list`
+
+Prefer `process_exec` with an explicit program and argument array. Use `process_shell` only when
+shell syntax is necessary and the credential has the separate `process.shell` capability.
+
+The Server and Client validate every call. MCP tool availability does not grant a capability by
+itself.

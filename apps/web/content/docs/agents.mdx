@@ -1,0 +1,42 @@
+---
+title: Agents
+description: Grant temporary, least-privilege machine access to an AI agent.
+---
+
+Agent access is separate from human sign-in and machine enrollment. A member creates it from the
+**Agents** page by choosing a name, machines, capabilities, and expiry.
+
+Available expiry choices range from one hour to one year. The credential is shown once and the
+Server stores only its hash.
+
+## Give the credential to an agent
+
+Use the generated command in the agent's environment:
+
+```bash
+ods login --server https://server.example.com --agent-token "$ODYSHELL_AGENT_TOKEN"
+```
+
+The agent can then use the CLI, MCP, SDK, or HTTP API. Its effective authority is the
+intersection of:
+
+1. the machines assigned to the credential;
+2. the capabilities assigned to the credential;
+3. the target machine's local policy;
+4. the operating-system permissions of the Client process.
+
+## Expiry and revocation
+
+An expired or revoked credential cannot create operations. Odyshell also closes its existing
+sessions so an agent cannot preserve access through an older session.
+
+Inactive access remains visible for review until it is removed by the Server's retention and
+referential-integrity rules. In the current MVP, create new agent access when another credential
+is required.
+
+## Delete access
+
+Delete is available from the access row's actions menu. It immediately revokes the credential,
+closes its active sessions, and removes it from the workspace list. The Server keeps the
+soft-deleted record only while a retained session or Control Event still references it, then
+removes it during retention cleanup.

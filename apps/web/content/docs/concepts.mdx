@@ -1,0 +1,41 @@
+---
+title: Concepts
+description: The small set of identities and boundaries used by Odyshell.
+---
+
+## Workspace
+
+The isolation boundary for machines, agent access, sessions, operations, and Control Events.
+Odyshell Cloud currently exposes one workspace for each organization.
+
+## Machine
+
+A private computer running an Odyshell Client. The Client owns a machine identity, applies a
+local capability policy, and initiates the outbound connection to the Server.
+
+## Agent access
+
+An expiring, revocable credential for a programmatic client. It is restricted to explicit
+machines and capabilities. The plaintext credential is returned once; the Server stores its
+hash.
+
+## Capability
+
+A named class of operation. Both the agent credential and the target machine policy must allow
+the required capability.
+
+## Session
+
+A temporary boundary for one or more operations. A session cannot outlive the agent credential
+that created it.
+
+## Operation
+
+A typed request such as `process.exec`, `fs.read`, or `docker.logs`. Structured operations make
+authorization and validation clearer than treating every action as shell text.
+
+## Control Event
+
+A durable, privacy-minimal lifecycle record. It identifies who acted, what kind of action
+occurred, the target, time, and result without recording commands, paths, file contents, stdout,
+or stderr.

@@ -1,0 +1,47 @@
+---
+title: Operations
+description: The typed process, filesystem, and Docker operations supported by the MVP.
+---
+
+## Capability reference
+
+| Capability | Purpose |
+| --- | --- |
+| `process.exec` | Run one executable with an argument array |
+| `process.shell` | Run explicit shell text |
+| `fs.stat` | Inspect file metadata |
+| `fs.list` | List a directory |
+| `fs.search` | Search filenames below the workspace |
+| `fs.read` | Read a file |
+| `fs.write` | Write a file |
+| `fs.mkdir` | Create a directory |
+| `fs.remove` | Remove a file or directory |
+| `docker.logs` | Read logs from a Docker container |
+
+Filesystem paths are relative to the machine's configured workspace. The Client rejects parent
+traversal and paths that escape through symbolic links.
+
+## Process execution
+
+Prefer structured execution:
+
+```bash
+ods exec my-machine -- git status --short
+```
+
+Shell execution is a separate, more powerful capability:
+
+```bash
+ods shell my-machine "git status --short && id"
+```
+
+Both run with the permissions of the operating-system user running the Client. Odyshell controls
+who may request an operation; it cannot make an allowed command harmless.
+
+## Docker
+
+`docker.logs` reads container logs through the host runner. Access to the Docker daemon is highly
+privileged and should only be granted to the dedicated Client user when required.
+
+The optional Docker runner executes supported work in an isolated container with networking
+disabled. It is a separate execution profile, not a requirement for using Odyshell.

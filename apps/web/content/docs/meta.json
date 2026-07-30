@@ -1,0 +1,17 @@
+{
+  "title": "Odyshell",
+  "pages": [
+    "index",
+    "quickstart",
+    "concepts",
+    "machines",
+    "agents",
+    "mcp",
+    "sdk",
+    "operations",
+    "cli",
+    "security",
+    "self-hosting",
+    "troubleshooting"
+  ]
+}

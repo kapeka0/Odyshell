@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
-import { ClerkProvider } from "@clerk/nextjs";
 import { Geist, Geist_Mono } from "next/font/google";
+import { ClerkBoundary } from "@/components/clerk-boundary";
 import { Providers } from "@/components/providers";
 import "./globals.css";
 
@@ -61,16 +61,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`${bodyFont.variable} ${monoFont.variable}`}>
-        <ClerkProvider
-          dynamic
-          signInUrl="/sign-in"
-          signUpUrl="/sign-up"
-          signInFallbackRedirectUrl="/dashboard"
-          signUpFallbackRedirectUrl="/dashboard"
-          taskUrls={{ "choose-organization": "/onboarding" }}
-        >
+        <ClerkBoundary>
           <Providers>{children}</Providers>
-        </ClerkProvider>
+        </ClerkBoundary>
       </body>
     </html>
   );

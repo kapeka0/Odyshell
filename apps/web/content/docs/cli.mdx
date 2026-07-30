@@ -1,0 +1,41 @@
+---
+title: CLI reference
+description: Use the agent-first `ods` command line interface.
+---
+
+`ods` uses Odyshell Cloud by default. Select a self-hosted Server with `--server` or
+`ODYSHELL_SERVER_URL`. Add `--json` when an agent needs structured output.
+
+## Common commands
+
+```bash
+ods login
+ods status
+ods machines
+ods ping my-machine
+ods exec my-machine -- uname -a
+ods shell my-machine "pwd && id"
+ods fs list my-machine .
+ods fs read my-machine README.md
+ods docker logs my-machine api --tail 100
+ods audit
+```
+
+## Client lifecycle
+
+- `ods up` enrolls when needed and starts the Linux background Client.
+- `ods down` stops that Client.
+- `ods client doctor` checks local prerequisites and configuration.
+- `ods client enroll` creates a machine identity explicitly.
+- `ods client start` runs the Client in the foreground.
+
+## Sessions
+
+High-level operation commands create disposable sessions automatically. For a longer bounded
+workflow, use `ods session create`, `ods session inspect`, `ods session exec`, and
+`ods session close`.
+
+## Agent integrations
+
+`ods mcp` starts the local MCP server over stdio. It exposes only agent operations and cannot
+enroll machines, create credentials, or use administrator commands.

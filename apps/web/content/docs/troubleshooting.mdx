@@ -1,0 +1,49 @@
+---
+title: Troubleshooting
+description: Diagnose common CLI, enrollment, connectivity, and operation failures.
+---
+
+## `fetch failed`
+
+The CLI could not reach the configured Server. Check the URL, DNS, TLS certificate, proxy, and
+whether the Server health endpoint is reachable from the same machine:
+
+```bash
+curl --fail https://server.example.com/health
+ods client doctor
+```
+
+## Machine is offline
+
+The machine record exists but its Client connection is not active. On Linux:
+
+```bash
+ods status
+ods up
+```
+
+For a foreground Client, run `ods client start` and keep the process alive. Also verify outbound
+HTTPS/WSS access to the Server.
+
+## `client_already_enrolled`
+
+The selected configuration already contains a machine identity. Start it without enrollment
+options:
+
+```bash
+ods up
+```
+
+To enroll a separate identity, use a different explicit `--config` path. Do not overwrite or copy
+an existing machine identity.
+
+## `machine_ping_timeout`
+
+The Server knows the machine connection but did not receive the end-to-end pong in time. Check
+Client logs, reconnect it, and confirm that Server and Client versions match.
+
+## Operation denied
+
+Compare the capability required by the operation with both the agent credential and the
+machine's local `--allow` policy. Also check credential expiry, machine assignment, filesystem
+workspace boundaries, and operating-system permissions.

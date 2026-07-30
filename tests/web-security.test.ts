@@ -14,6 +14,8 @@ import {
 import { agentLoginCommand } from "../apps/web/src/lib/agent-command.js";
 import { machinePlatform } from "../apps/web/src/lib/machine-platform.js";
 import { selectDisplayLabel } from "../apps/web/src/lib/select-label.js";
+import { isPublicDocumentationPath } from "../apps/web/src/lib/public-documentation.js";
+import { validDocumentationSearchQuery } from "../apps/web/src/lib/documentation-search.js";
 import {
   activeUserTheme,
   nextUserTheme,
@@ -30,6 +32,21 @@ import {
 } from "../apps/web/src/lib/device-activation.js";
 
 describe("web authentication boundaries", () => {
+  it("keeps documentation pages outside the Clerk UI boundary", () => {
+    expect(isPublicDocumentationPath("/docs")).toBe(true);
+    expect(isPublicDocumentationPath("/docs/quickstart")).toBe(true);
+    expect(isPublicDocumentationPath("/docs/quickstart.md")).toBe(true);
+    expect(isPublicDocumentationPath("/dashboard")).toBe(false);
+    expect(isPublicDocumentationPath("/docs-attacker")).toBe(false);
+  });
+
+  it("bounds public documentation search input", () => {
+    expect(validDocumentationSearchQuery("machine")).toBe(true);
+    expect(validDocumentationSearchQuery("")).toBe(true);
+    expect(validDocumentationSearchQuery("\u0000machine")).toBe(false);
+    expect(validDocumentationSearchQuery("a".repeat(201))).toBe(false);
+  });
+
   it("preserves valid local activation redirects", () => {
     expect(
       safeAuthRedirect("/activate?code=ABCD-EFGH", "/dashboard"),
@@ -432,20 +449,26 @@ describe("dashboard navigation performance boundary", () => {
     expect(machineForm).not.toContain("ArrowLeftIcon");
   });
 
-  it("shows allowlisted machine platform data and starts public documentation", () => {
+  it("shows allowlisted machine platform data and links to public documentation", () => {
     const webRoot = resolve(process.cwd(), "apps/web/src");
     const machineList = readFileSync(
       resolve(webRoot, "components/machine-list.tsx"),
       "utf8",
     );
-    const docs = readFileSync(
-      resolve(webRoot, "app/docs/page.tsx"),
+    const landing = readFileSync(
+      resolve(webRoot, "app/page.tsx"),
+      "utf8",
+    );
+    const quickstart = readFileSync(
+      resolve(process.cwd(), "apps/web/content/docs/quickstart.mdx"),
       "utf8",
     );
     expect(machineList).toContain('title="Platform"');
     expect(machineList).toContain("machinePlatform(machine.runtime)");
-    expect(docs).toContain("Start with Odyshell");
-    expect(docs).toContain("ods login --agent-token");
+    expect(landing).toContain('href="/docs"');
+    expect(landing).toContain("Read the docs");
+    expect(quickstart).toContain("ods login");
+    expect(quickstart).toContain("ods ping my-machine");
   });
 
   it("uses route-specific skeletons and theme-aware browser icons", () => {

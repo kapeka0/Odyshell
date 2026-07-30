@@ -1,0 +1,48 @@
+---
+title: Self-hosting
+description: Run the Odyshell Server and PostgreSQL on infrastructure you control.
+---
+
+Odyshell needs one Server reachable by agents and Clients, plus PostgreSQL. Private-machine
+Clients still initiate outbound connections and expose no inbound ports.
+
+## Local development
+
+```bash
+pnpm install
+docker compose up -d --build
+curl --fail http://127.0.0.1:4100/health
+```
+
+The bundled credentials are development-only. Do not expose this Compose setup to the internet.
+
+## Production configuration
+
+Build the Server:
+
+```bash
+docker build -f apps/server/Dockerfile -t odyshell-server .
+```
+
+Provide configuration through a protected environment file:
+
+```dotenv
+NODE_ENV=production
+HOST=0.0.0.0
+PORT=4100
+DATABASE_URL=postgresql://USER:PASSWORD@DB_HOST:5432/DB_NAME?sslmode=verify-full
+ODYSHELL_ADMIN_KEY=GENERATE_A_STRONG_RANDOM_VALUE
+ODYSHELL_OPERATION_RETENTION_SECONDS=3600
+ODYSHELL_AUDIT_RETENTION_DAYS=30
+```
+
+Put the Server behind HTTPS/WSS. Never enable `ODYSHELL_ALLOW_DEV_CREDENTIALS` in production.
+
+## Current scaling boundary
+
+Run one Server replica for the MVP because live Client connections are held in memory. Back up
+PostgreSQL, require database TLS, and remember that backup and proxy retention are independent
+from Odyshell's application retention.
+
+For the complete checklist and standalone administrator commands, see the
+[repository self-hosting guide](https://github.com/kapeka0/odyshell/blob/main/docs/self-hosting.md).
