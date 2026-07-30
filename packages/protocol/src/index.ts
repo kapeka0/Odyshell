@@ -4,6 +4,91 @@ export const PROTOCOL_VERSION = 1;
 export const DEFAULT_CLOUD_SERVER_URL =
   "https://server-production-30ab.up.railway.app";
 export const MAX_AGENT_ACCESS_SECONDS = 365 * 24 * 60 * 60;
+export const MAX_AGENT_SESSION_SECONDS = 24 * 60 * 60;
+
+const identityIdSchema = z.string().trim().min(1).max(256);
+const identityStatusSchema = z.enum(["active", "disabled"]);
+
+export const humanIdentitySchema = z
+  .object({
+    workspaceId: identityIdSchema,
+    id: identityIdSchema,
+    externalId: identityIdSchema,
+    status: identityStatusSchema,
+  })
+  .strict();
+export type HumanIdentity = z.infer<typeof humanIdentitySchema>;
+
+export const agentIdentitySchema = z
+  .object({
+    workspaceId: identityIdSchema,
+    id: identityIdSchema,
+    name: z.string().trim().min(1).max(128),
+    kind: z.enum(["independent", "managed"]),
+    parentAgentId: identityIdSchema.nullable(),
+    createdByHumanId: identityIdSchema.nullable(),
+    status: identityStatusSchema,
+  })
+  .strict()
+  .superRefine((agent, context) => {
+    if (agent.kind === "independent" && agent.parentAgentId !== null) {
+      context.addIssue({
+        code: "custom",
+        message: "Independent Agents cannot have a parent",
+        path: ["parentAgentId"],
+      });
+    }
+    if (agent.kind === "managed" && agent.parentAgentId === null) {
+      context.addIssue({
+        code: "custom",
+        message: "Managed Agents require a parent",
+        path: ["parentAgentId"],
+      });
+    }
+    if (agent.parentAgentId === agent.id) {
+      context.addIssue({
+        code: "custom",
+        message: "An Agent cannot be its own parent",
+        path: ["parentAgentId"],
+      });
+    }
+  });
+export type AgentIdentity = z.infer<typeof agentIdentitySchema>;
+
+export const agentSessionSchema = z
+  .object({
+    workspaceId: identityIdSchema,
+    id: identityIdSchema,
+    agentId: identityIdSchema,
+    purpose: z.string().trim().min(1).max(280),
+    status: z.enum(["active", "completed", "cancelled", "revoked", "expired"]),
+    createdAt: z.string().datetime({ offset: true }),
+    expiresAt: z.string().datetime({ offset: true }),
+    predecessorSessionId: identityIdSchema.nullable(),
+  })
+  .strict()
+  .superRefine((session, context) => {
+    const createdAt = Date.parse(session.createdAt);
+    const expiresAt = Date.parse(session.expiresAt);
+    if (
+      expiresAt <= createdAt ||
+      expiresAt - createdAt > MAX_AGENT_SESSION_SECONDS * 1_000
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Session expiry must be after creation and within 24 hours",
+        path: ["expiresAt"],
+      });
+    }
+    if (session.predecessorSessionId === session.id) {
+      context.addIssue({
+        code: "custom",
+        message: "A Session cannot be its own predecessor",
+        path: ["predecessorSessionId"],
+      });
+    }
+  });
+export type AgentSession = z.infer<typeof agentSessionSchema>;
 
 export const capabilitySchema = z.enum([
   "process.exec",

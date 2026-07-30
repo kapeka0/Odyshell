@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { Capability, OperationAction } from "@odyshell/protocol";
+import {
+  MAX_AGENT_SESSION_SECONDS,
+  type Capability,
+  type OperationAction,
+} from "@odyshell/protocol";
 import {
   CamelCasePlugin,
   Kysely,
@@ -108,7 +112,65 @@ interface DeviceAuthorizationTable {
   createdAt: Generated<Date>;
 }
 
-interface SessionTable {
+interface HumanTable {
+  workspaceId: string;
+  id: string;
+  externalId: string;
+  status: string;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+interface AgentTable {
+  workspaceId: string;
+  id: string;
+  name: string;
+  kind: string;
+  parentAgentId: string | null;
+  createdByHumanId: string | null;
+  status: string;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+interface AgentCredentialTable {
+  workspaceId: string;
+  id: string;
+  agentId: string;
+  agentKind: Generated<string>;
+  tokenHash: string;
+  status: string;
+  expiresAt: Date;
+  retiringAt: Date | null;
+  revokedAt: Date | null;
+  createdAt: Generated<Date>;
+}
+
+interface AgentSessionTable {
+  workspaceId: string;
+  id: string;
+  agentId: string;
+  purpose: string;
+  status: string;
+  expiresAt: Date;
+  predecessorSessionId: string | null;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+interface SessionCredentialTable {
+  workspaceId: string;
+  id: string;
+  sessionId: string;
+  tokenHash: string;
+  status: string;
+  expiresAt: Date;
+  claimedAt: Date;
+  revokedAt: Date | null;
+  createdAt: Generated<Date>;
+}
+
+interface LegacySessionTable {
   workspaceId: string;
   id: string;
   machineId: string;
@@ -167,7 +229,12 @@ interface DatabaseSchema {
   agentTokens: AgentTokenTable;
   cliTokens: CliTokenTable;
   deviceAuthorizations: DeviceAuthorizationTable;
-  sessions: SessionTable;
+  humans: HumanTable;
+  agents: AgentTable;
+  agentCredentials: AgentCredentialTable;
+  agentSessions: AgentSessionTable;
+  sessionCredentials: SessionCredentialTable;
+  sessions: LegacySessionTable;
   operations: OperationTable;
   operationEvents: OperationEventTable;
   auditEvents: AuditEventTable;
@@ -235,6 +302,33 @@ export type DeviceExchangeResult =
       userId: string;
       expiresAt: number;
     };
+
+export type HumanIdentityRecord = Timestamped & {
+  workspaceId: string;
+  id: string;
+  externalId: string;
+  status: "active" | "disabled";
+};
+
+export type AgentIdentityRecord = Timestamped & {
+  workspaceId: string;
+  id: string;
+  name: string;
+  kind: "independent" | "managed";
+  parentAgentId?: string;
+  createdByHumanId?: string;
+  status: "active" | "disabled";
+};
+
+export type AgentSessionRecord = Timestamped & {
+  workspaceId: string;
+  id: string;
+  agentId: string;
+  purpose: string;
+  status: "active" | "completed" | "cancelled" | "revoked" | "expired";
+  expiresAt: number;
+  predecessorSessionId?: string;
+};
 
 export type SessionRecord = Timestamped & {
   id: string;
@@ -337,8 +431,59 @@ function agentTokenRecord(token: Selectable<AgentTokenTable>): AgentTokenRecord 
   };
 }
 
+function humanIdentityRecord(
+  human: Selectable<HumanTable>,
+): HumanIdentityRecord {
+  return {
+    workspaceId: human.workspaceId,
+    id: human.id,
+    externalId: human.externalId,
+    status: human.status as HumanIdentityRecord["status"],
+    createdAt: timestamp(human.createdAt),
+    updatedAt: timestamp(human.updatedAt),
+  };
+}
+
+function agentIdentityRecord(
+  agent: Selectable<AgentTable>,
+): AgentIdentityRecord {
+  return {
+    workspaceId: agent.workspaceId,
+    id: agent.id,
+    name: agent.name,
+    kind: agent.kind as AgentIdentityRecord["kind"],
+    ...(agent.parentAgentId === null
+      ? {}
+      : { parentAgentId: agent.parentAgentId }),
+    ...(agent.createdByHumanId === null
+      ? {}
+      : { createdByHumanId: agent.createdByHumanId }),
+    status: agent.status as AgentIdentityRecord["status"],
+    createdAt: timestamp(agent.createdAt),
+    updatedAt: timestamp(agent.updatedAt),
+  };
+}
+
+function agentSessionRecord(
+  session: Selectable<AgentSessionTable>,
+): AgentSessionRecord {
+  return {
+    workspaceId: session.workspaceId,
+    id: session.id,
+    agentId: session.agentId,
+    purpose: session.purpose,
+    status: session.status as AgentSessionRecord["status"],
+    expiresAt: timestamp(session.expiresAt),
+    ...(session.predecessorSessionId === null
+      ? {}
+      : { predecessorSessionId: session.predecessorSessionId }),
+    createdAt: timestamp(session.createdAt),
+    updatedAt: timestamp(session.updatedAt),
+  };
+}
+
 function sessionRecord(
-  session: Selectable<SessionTable>,
+  session: Selectable<LegacySessionTable>,
   machineName?: string,
 ): SessionRecord {
   return {
@@ -815,6 +960,169 @@ async function migrateAgentDeletion(
   `.execute(db);
 }
 
+async function migrateIdentityAuthorityExpand(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    do $migration$
+    begin
+      if to_regclass('odyshell.sessions') is null then
+        raise exception
+          'Identity authority expansion requires the legacy session table';
+      end if;
+    end
+    $migration$
+  `.execute(db);
+  await sql`
+    create table if not exists odyshell.humans (
+      workspace_id text not null references odyshell.workspaces (id),
+      id text not null,
+      external_id text not null,
+      status text not null check (status in ('active', 'disabled')),
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      primary key (workspace_id, id),
+      unique (workspace_id, external_id)
+    )
+  `.execute(db);
+  await sql`
+    create table if not exists odyshell.agents (
+      workspace_id text not null references odyshell.workspaces (id),
+      id text not null,
+      name text not null,
+      kind text not null check (kind in ('independent', 'managed')),
+      parent_agent_id text,
+      created_by_human_id text,
+      status text not null check (status in ('active', 'disabled')),
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      primary key (workspace_id, id),
+      unique (workspace_id, id, kind),
+      foreign key (workspace_id, parent_agent_id)
+        references odyshell.agents (workspace_id, id),
+      foreign key (workspace_id, created_by_human_id)
+        references odyshell.humans (workspace_id, id),
+      check (
+        (kind = 'independent' and parent_agent_id is null)
+        or (kind = 'managed' and parent_agent_id is not null)
+      ),
+      check (parent_agent_id is null or parent_agent_id <> id)
+    )
+  `.execute(db);
+  await sql`
+    create table if not exists odyshell.agent_credentials (
+      workspace_id text not null,
+      id text not null,
+      agent_id text not null,
+      agent_kind text not null default 'independent'
+        check (agent_kind = 'independent'),
+      token_hash text not null,
+      status text not null check (
+        status in ('active', 'retiring', 'expired', 'revoked')
+      ),
+      expires_at timestamptz not null,
+      retiring_at timestamptz,
+      revoked_at timestamptz,
+      created_at timestamptz not null default now(),
+      primary key (workspace_id, id),
+      unique (workspace_id, token_hash),
+      foreign key (workspace_id, agent_id, agent_kind)
+        references odyshell.agents (workspace_id, id, kind),
+      check (expires_at > created_at),
+      check (expires_at <= created_at + interval '1 year')
+    )
+  `.execute(db);
+  await sql`
+    create table if not exists odyshell.agent_sessions (
+      workspace_id text not null,
+      id text not null,
+      agent_id text not null,
+      purpose text not null,
+      status text not null check (
+        status in ('active', 'completed', 'cancelled', 'revoked', 'expired')
+      ),
+      expires_at timestamptz not null,
+      predecessor_session_id text,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      primary key (workspace_id, id),
+      unique (workspace_id, id, expires_at),
+      foreign key (workspace_id, agent_id)
+        references odyshell.agents (workspace_id, id),
+      foreign key (workspace_id, predecessor_session_id)
+        references odyshell.agent_sessions (workspace_id, id),
+      check (predecessor_session_id is null or predecessor_session_id <> id),
+      check (length(btrim(purpose)) between 1 and 280),
+      check (expires_at > created_at),
+      check (expires_at <= created_at + interval '24 hours')
+    )
+  `.execute(db);
+  await sql`
+    create table if not exists odyshell.session_credentials (
+      workspace_id text not null,
+      id text not null,
+      session_id text not null,
+      token_hash text not null,
+      status text not null check (status in ('active', 'expired', 'revoked')),
+      expires_at timestamptz not null,
+      claimed_at timestamptz not null,
+      revoked_at timestamptz,
+      created_at timestamptz not null default now(),
+      primary key (workspace_id, id),
+      unique (workspace_id, session_id),
+      unique (workspace_id, token_hash),
+      foreign key (workspace_id, session_id, expires_at)
+        references odyshell.agent_sessions (workspace_id, id, expires_at),
+      check (expires_at > claimed_at)
+    )
+  `.execute(db);
+  await sql`
+    create index if not exists humans_workspace_created_idx
+    on odyshell.humans (workspace_id, created_at)
+  `.execute(db);
+  await sql`
+    create index if not exists agents_workspace_created_idx
+    on odyshell.agents (workspace_id, created_at)
+  `.execute(db);
+  await sql`
+    create index if not exists agent_credentials_agent_status_idx
+    on odyshell.agent_credentials (workspace_id, agent_id, status)
+  `.execute(db);
+  await sql`
+    create index if not exists agent_sessions_agent_created_idx
+    on odyshell.agent_sessions (workspace_id, agent_id, created_at)
+  `.execute(db);
+  await sql`
+    create index if not exists session_credentials_status_expiry_idx
+    on odyshell.session_credentials (workspace_id, status, expires_at)
+  `.execute(db);
+}
+
+async function rollbackIdentityAuthorityExpand(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    do $migration$
+    begin
+      if exists (select 1 from odyshell.humans)
+        or exists (select 1 from odyshell.agents)
+        or exists (select 1 from odyshell.agent_credentials)
+        or exists (select 1 from odyshell.agent_sessions)
+        or exists (select 1 from odyshell.session_credentials)
+      then
+        raise exception
+          'Cannot roll back identity authority expansion after target data exists';
+      end if;
+    end
+    $migration$
+  `.execute(db);
+  await sql`drop table odyshell.session_credentials`.execute(db);
+  await sql`drop table odyshell.agent_sessions`.execute(db);
+  await sql`drop table odyshell.agent_credentials`.execute(db);
+  await sql`drop table odyshell.agents`.execute(db);
+  await sql`drop table odyshell.humans`.execute(db);
+}
+
 const migrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
     return {
@@ -832,6 +1140,10 @@ const migrationProvider: MigrationProvider = {
       },
       "005_agent_deletion": {
         up: migrateAgentDeletion,
+      },
+      "006_expand_identity_authority": {
+        up: migrateIdentityAuthorityExpand,
+        down: rollbackIdentityAuthorityExpand,
       },
     };
   },
@@ -1085,6 +1397,190 @@ export class PostgresDatabase {
         .returningAll()
         .executeTakeFirstOrThrow(),
     );
+  }
+
+  async createHumanIdentity(input: {
+    workspaceId: string;
+    id: string;
+    externalId: string;
+  }): Promise<HumanIdentityRecord | null> {
+    const human = await this.db
+      .insertInto("humans")
+      .values({
+        ...input,
+        status: "active",
+      })
+      .onConflict((conflict) =>
+        conflict.columns(["workspaceId", "id"]).doNothing(),
+      )
+      .returningAll()
+      .executeTakeFirst();
+    return human ? humanIdentityRecord(human) : null;
+  }
+
+  async createAgentIdentity(input: {
+    workspaceId: string;
+    id: string;
+    name: string;
+    kind: "independent" | "managed";
+    parentAgentId: string | null;
+    createdByHumanId: string;
+  }): Promise<AgentIdentityRecord | null> {
+    if (
+      (input.kind === "independent" && input.parentAgentId !== null) ||
+      (input.kind === "managed" && input.parentAgentId === null) ||
+      input.parentAgentId === input.id
+    ) {
+      return null;
+    }
+    return await this.db.transaction().execute(async (transaction) => {
+      const human = await transaction
+        .selectFrom("humans")
+        .select("id")
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", input.createdByHumanId)
+        .where("status", "=", "active")
+        .forShare()
+        .executeTakeFirst();
+      if (!human) return null;
+
+      if (input.parentAgentId !== null) {
+        const parent = await transaction
+          .selectFrom("agents")
+          .select("id")
+          .where("workspaceId", "=", input.workspaceId)
+          .where("id", "=", input.parentAgentId)
+          .where("kind", "=", "independent")
+          .where("status", "=", "active")
+          .forShare()
+          .executeTakeFirst();
+        if (!parent) return null;
+      }
+
+      const agent = await transaction
+        .insertInto("agents")
+        .values({
+          ...input,
+          status: "active",
+        })
+        .onConflict((conflict) =>
+          conflict.columns(["workspaceId", "id"]).doNothing(),
+        )
+        .returningAll()
+        .executeTakeFirst();
+      return agent ? agentIdentityRecord(agent) : null;
+    });
+  }
+
+  async getAgentIdentity(
+    workspaceId: string,
+    agentId: string,
+  ): Promise<AgentIdentityRecord | null> {
+    const agent = await this.db
+      .selectFrom("agents")
+      .selectAll()
+      .where("workspaceId", "=", workspaceId)
+      .where("id", "=", agentId)
+      .executeTakeFirst();
+    return agent ? agentIdentityRecord(agent) : null;
+  }
+
+  async createAgentSession(input: {
+    workspaceId: string;
+    id: string;
+    agentId: string;
+    purpose: string;
+    createdAt: number;
+    expiresAt: number;
+    predecessorSessionId: string | null;
+  }): Promise<AgentSessionRecord | null> {
+    const purpose = input.purpose.trim();
+    const duration = input.expiresAt - input.createdAt;
+    if (
+      purpose.length === 0 ||
+      purpose.length > 280 ||
+      !Number.isFinite(input.createdAt) ||
+      !Number.isFinite(input.expiresAt) ||
+      duration <= 0 ||
+      duration > MAX_AGENT_SESSION_SECONDS * 1_000 ||
+      input.predecessorSessionId === input.id
+    ) {
+      return null;
+    }
+
+    return await this.db.transaction().execute(async (transaction) => {
+      const agent = await transaction
+        .selectFrom("agents")
+        .select("id")
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", input.agentId)
+        .where("status", "=", "active")
+        .forShare()
+        .executeTakeFirst();
+      if (!agent) return null;
+
+      if (input.predecessorSessionId !== null) {
+        const predecessor = await transaction
+          .selectFrom("agentSessions")
+          .select("id")
+          .where("workspaceId", "=", input.workspaceId)
+          .where("id", "=", input.predecessorSessionId)
+          .where("agentId", "=", input.agentId)
+          .forShare()
+          .executeTakeFirst();
+        if (!predecessor) return null;
+      }
+
+      const createdAt = new Date(input.createdAt);
+      const session = await transaction
+        .insertInto("agentSessions")
+        .values({
+          workspaceId: input.workspaceId,
+          id: input.id,
+          agentId: input.agentId,
+          purpose,
+          status: "active",
+          expiresAt: new Date(input.expiresAt),
+          predecessorSessionId: input.predecessorSessionId,
+          createdAt,
+          updatedAt: createdAt,
+        })
+        .onConflict((conflict) =>
+          conflict.columns(["workspaceId", "id"]).doNothing(),
+        )
+        .returningAll()
+        .executeTakeFirst();
+      return session ? agentSessionRecord(session) : null;
+    });
+  }
+
+  /**
+   * Reads active target-model Session metadata. This does not authorize Operations;
+   * the future cutover must also verify a Session Credential, target, and scope.
+   */
+  async getActiveAgentSession(
+    workspaceId: string,
+    sessionId: string,
+    agentId: string,
+  ): Promise<AgentSessionRecord | null> {
+    const now = new Date();
+    const session = await this.db
+      .selectFrom("agentSessions")
+      .innerJoin("agents", (join) =>
+        join
+          .onRef("agents.workspaceId", "=", "agentSessions.workspaceId")
+          .onRef("agents.id", "=", "agentSessions.agentId"),
+      )
+      .selectAll("agentSessions")
+      .where("agentSessions.workspaceId", "=", workspaceId)
+      .where("agentSessions.id", "=", sessionId)
+      .where("agentSessions.agentId", "=", agentId)
+      .where("agentSessions.status", "=", "active")
+      .where("agentSessions.createdAt", "<=", now)
+      .where("agentSessions.expiresAt", ">", now)
+      .where("agents.status", "=", "active")
+      .executeTakeFirst();
+    return session ? agentSessionRecord(session) : null;
   }
 
   async findAgentByTokenHash(tokenHash: string): Promise<AgentTokenRecord | null> {

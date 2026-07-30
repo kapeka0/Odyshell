@@ -1,7 +1,9 @@
 # Agent and Session implementation plan
 
-> **Status:** Planning document. No item in this document should be presented as shipped behavior
-> until its vertical is implemented, tested, deployed, and reflected in public documentation.
+> **Status:** Active implementation plan. The shared Human, Agent, and Session contracts plus the
+> additive PostgreSQL expansion are implemented. No target Agent or Session workflow should be
+> presented as shipped until its vertical is tested, deployed, and reflected in public
+> documentation.
 
 ## Objective
 

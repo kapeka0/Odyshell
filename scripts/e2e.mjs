@@ -20,6 +20,7 @@ const composeEnvironment = {
 };
 const configDirectory = resolve(root, `.odyshell/e2e/${process.pid}`);
 const configPath = resolve(configDirectory, "client.json");
+process.env.ODS_CONFIG_FILE = resolve(configDirectory, "cli.json");
 const workspace = resolve(root, `tmp/e2e-workspace-${process.pid}`);
 let client;
 let e2eMachineId;
@@ -447,6 +448,233 @@ try {
   if (!databaseBoundaryRejected) {
     throw new Error("PostgreSQL accepted a session linked across workspaces");
   }
+
+  const targetHumanId = crypto.randomUUID();
+  const targetAgentId = crypto.randomUUID();
+  const targetManagedAgentId = crypto.randomUUID();
+  await compose([
+    "exec",
+    "-T",
+    "postgres",
+    "psql",
+    "-U",
+    "odyshell",
+    "-d",
+    "odyshell",
+    "-v",
+    "ON_ERROR_STOP=1",
+    "-c",
+    [
+      "insert into odyshell.humans",
+      "(workspace_id, id, external_id, status)",
+      `values ('default', '${targetHumanId}', 'e2e-human', 'active');`,
+      "insert into odyshell.agents",
+      "(workspace_id, id, name, kind, created_by_human_id, status)",
+      `values ('default', '${targetAgentId}', 'E2E Agent', 'independent', '${targetHumanId}', 'active');`,
+      "insert into odyshell.agents",
+      "(workspace_id, id, name, kind, parent_agent_id, created_by_human_id, status)",
+      `values ('default', '${targetManagedAgentId}', 'Managed E2E Agent', 'managed', '${targetAgentId}', '${targetHumanId}', 'active');`,
+    ].join(" "),
+  ]);
+  let targetSessionBoundaryRejected = false;
+  try {
+    await compose([
+      "exec",
+      "-T",
+      "postgres",
+      "psql",
+      "-U",
+      "odyshell",
+      "-d",
+      "odyshell",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-c",
+      [
+        "insert into odyshell.agent_sessions",
+        "(workspace_id, id, agent_id, purpose, status, expires_at)",
+        `values ('${isolatedWorkspace.id}', '${crypto.randomUUID()}', '${targetAgentId}',`,
+        "'cross-workspace', 'active', now() + interval '1 minute');",
+      ].join(" "),
+    ]);
+  } catch {
+    targetSessionBoundaryRejected = true;
+  }
+  if (!targetSessionBoundaryRejected) {
+    throw new Error("PostgreSQL accepted Agent authority across workspaces");
+  }
+  let legacyAuthorityEscalationRejected = false;
+  try {
+    await compose([
+      "exec",
+      "-T",
+      "postgres",
+      "psql",
+      "-U",
+      "odyshell",
+      "-d",
+      "odyshell",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-c",
+      [
+        "insert into odyshell.agent_sessions",
+        "(workspace_id, id, agent_id, purpose, status, expires_at)",
+        `values ('${isolatedWorkspace.id}', '${crypto.randomUUID()}', '${isolatedAgent.id}',`,
+        "'legacy-escalation', 'active', now() + interval '1 minute');",
+      ].join(" "),
+    ]);
+  } catch {
+    legacyAuthorityEscalationRejected = true;
+  }
+  if (!legacyAuthorityEscalationRejected) {
+    throw new Error("Legacy Agent Access became canonical Session authority");
+  }
+  let managedAgentCredentialRejected = false;
+  try {
+    await compose([
+      "exec",
+      "-T",
+      "postgres",
+      "psql",
+      "-U",
+      "odyshell",
+      "-d",
+      "odyshell",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-c",
+      [
+        "insert into odyshell.agent_credentials",
+        "(workspace_id, id, agent_id, agent_kind, token_hash, status, expires_at)",
+        `values ('default', '${crypto.randomUUID()}', '${targetManagedAgentId}',`,
+        `'independent', 'managed-${crypto.randomUUID()}', 'active', now() + interval '1 day');`,
+      ].join(" "),
+    ]);
+  } catch {
+    managedAgentCredentialRejected = true;
+  }
+  if (!managedAgentCredentialRejected) {
+    throw new Error("PostgreSQL issued a credential to a managed Agent");
+  }
+  let overlongAgentCredentialRejected = false;
+  try {
+    await compose([
+      "exec",
+      "-T",
+      "postgres",
+      "psql",
+      "-U",
+      "odyshell",
+      "-d",
+      "odyshell",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-c",
+      [
+        "insert into odyshell.agent_credentials",
+        "(workspace_id, id, agent_id, agent_kind, token_hash, status, expires_at)",
+        `values ('default', '${crypto.randomUUID()}', '${targetAgentId}',`,
+        `'independent', 'overlong-${crypto.randomUUID()}', 'active', now() + interval '1 year 1 second');`,
+      ].join(" "),
+    ]);
+  } catch {
+    overlongAgentCredentialRejected = true;
+  }
+  if (!overlongAgentCredentialRejected) {
+    throw new Error("PostgreSQL accepted an Agent Credential beyond one year");
+  }
+  await compose([
+    "exec",
+    "-T",
+    "postgres",
+    "psql",
+    "-U",
+    "odyshell",
+    "-d",
+    "odyshell",
+    "-v",
+    "ON_ERROR_STOP=1",
+    "-c",
+    [
+      "insert into odyshell.agent_credentials",
+      "(workspace_id, id, agent_id, agent_kind, token_hash, status, expires_at)",
+      `values ('default', '${crypto.randomUUID()}', '${targetAgentId}',`,
+      `'independent', 'valid-${crypto.randomUUID()}', 'active', now() + interval '1 day');`,
+    ].join(" "),
+  ]);
+  const targetSessionId = crypto.randomUUID();
+  await compose([
+    "exec",
+    "-T",
+    "postgres",
+    "psql",
+    "-U",
+    "odyshell",
+    "-d",
+    "odyshell",
+    "-v",
+    "ON_ERROR_STOP=1",
+    "-c",
+    [
+      "insert into odyshell.agent_sessions",
+      "(workspace_id, id, agent_id, purpose, status, expires_at)",
+      `values ('default', '${targetSessionId}', '${targetAgentId}',`,
+      "'credential-lifetime', 'active', now() + interval '1 minute');",
+    ].join(" "),
+  ]);
+  let sessionCredentialLifetimeBound = false;
+  try {
+    await compose([
+      "exec",
+      "-T",
+      "postgres",
+      "psql",
+      "-U",
+      "odyshell",
+      "-d",
+      "odyshell",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-c",
+      [
+        "insert into odyshell.session_credentials",
+        "(workspace_id, id, session_id, token_hash, status, expires_at, claimed_at)",
+        "select workspace_id,",
+        `'${crypto.randomUUID()}', id, 'session-${crypto.randomUUID()}', 'active',`,
+        "expires_at + interval '1 second', now()",
+        "from odyshell.agent_sessions",
+        `where workspace_id = 'default' and id = '${targetSessionId}';`,
+      ].join(" "),
+    ]);
+  } catch {
+    sessionCredentialLifetimeBound = true;
+  }
+  if (!sessionCredentialLifetimeBound) {
+    throw new Error("A Session Credential outlived its Session");
+  }
+  await compose([
+    "exec",
+    "-T",
+    "postgres",
+    "psql",
+    "-U",
+    "odyshell",
+    "-d",
+    "odyshell",
+    "-v",
+    "ON_ERROR_STOP=1",
+    "-c",
+    [
+      "insert into odyshell.session_credentials",
+      "(workspace_id, id, session_id, token_hash, status, expires_at, claimed_at)",
+      "select workspace_id,",
+      `'${crypto.randomUUID()}', id, 'valid-session-${crypto.randomUUID()}', 'active',`,
+      "expires_at, now()",
+      "from odyshell.agent_sessions",
+      `where workspace_id = 'default' and id = '${targetSessionId}';`,
+    ].join(" "),
+  ]);
 
   const adminMachines = JSON.parse(
     await run(process.execPath, [
@@ -1111,6 +1339,11 @@ try {
           workspaceIsolation: true,
           crossWorkspaceAccessDenied: true,
           databaseWorkspaceBoundary: true,
+          targetDatabaseWorkspaceBoundary: true,
+          legacyAuthorityEscalationRejected: true,
+          managedAgentCredentialRejected: true,
+          overlongAgentCredentialRejected: true,
+          sessionCredentialLifetimeBound: true,
           workspaceAuditIsolation: true,
           ed25519Authentication: true,
           runtimeMetadata: `${machine.runtime.hostPlatform}/${machine.runtime.architecture}`,

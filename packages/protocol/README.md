@@ -8,7 +8,8 @@
 
 `@odyshell/protocol` contains the TypeScript types and validation rules used across Odyshell. It
 defines capabilities, session requests, typed process, filesystem and Docker operations, and
-messages exchanged between the Server and Client.
+messages exchanged between the Server and Client. It also defines the strict Human, Agent, and
+task Session identity contracts used by the ongoing Agent Access migration.
 
 The package keeps both sides aligned without containing transport, authentication, or execution
 logic.

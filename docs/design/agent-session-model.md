@@ -1,6 +1,8 @@
 # Agent and Session model
 
-> **Status:** Accepted product and architecture design. Not implemented yet.
+> **Status:** Accepted product and architecture design. The additive Human, Agent, Agent
+> Credential, Session, and Session Credential storage model is implemented, but it does not expose
+> public target APIs or authorize Operations yet.
 >
 > Current public documentation continues to describe the shipped legacy Agent Access model until
 > the fail-closed migration is complete.

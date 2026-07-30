@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  agentIdentitySchema,
+  agentSessionSchema,
   agentTokenRequestSchema,
   clientConfigSchema,
+  humanIdentitySchema,
   operationRequestSchema,
   organizationRequestSchema,
   sessionRequestSchema,
@@ -103,6 +106,88 @@ describe("protocol validation", () => {
       agentTokenRequestSchema.safeParse({
         ...request,
         expiresInSeconds: 366 * 24 * 60 * 60,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps Human and Agent identity separate from machine authority", () => {
+    expect(
+      humanIdentitySchema.safeParse({
+        workspaceId: "workspace-a",
+        id: "human-a",
+        externalId: "clerk-user-a",
+        status: "active",
+      }).success,
+    ).toBe(true);
+
+    const agent = {
+      workspaceId: "workspace-a",
+      id: "agent-a",
+      name: "Dependency updater",
+      kind: "independent",
+      parentAgentId: null,
+      createdByHumanId: "human-a",
+      status: "active",
+    };
+    expect(agentIdentitySchema.safeParse(agent).success).toBe(true);
+    expect(
+      agentIdentitySchema.safeParse({
+        ...agent,
+        machineIds: ["2dc24de7-ec0e-45b3-88c1-acbb900e51f8"],
+        capabilities: ["fs.write"],
+        token: "ods_agent_secret",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires managed Agents to have one distinct parent", () => {
+    const agent = {
+      workspaceId: "workspace-a",
+      id: "managed-a",
+      name: "Dependency updater",
+      kind: "managed",
+      createdByHumanId: "human-a",
+      status: "active",
+    };
+
+    expect(
+      agentIdentitySchema.safeParse({ ...agent, parentAgentId: "agent-a" })
+        .success,
+    ).toBe(true);
+    expect(
+      agentIdentitySchema.safeParse({ ...agent, parentAgentId: null }).success,
+    ).toBe(false);
+    expect(
+      agentIdentitySchema.safeParse({
+        ...agent,
+        parentAgentId: "managed-a",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("models Session as temporary authority for one Agent without exposing credentials", () => {
+    const session = {
+      workspaceId: "workspace-a",
+      id: "session-a",
+      agentId: "agent-a",
+      purpose: "Inspect dependency versions",
+      status: "active",
+      createdAt: "2026-07-30T10:00:00.000Z",
+      expiresAt: "2026-07-30T11:00:00.000Z",
+      predecessorSessionId: null,
+    };
+
+    expect(agentSessionSchema.safeParse(session).success).toBe(true);
+    expect(
+      agentSessionSchema.safeParse({
+        ...session,
+        expiresAt: "2026-07-31T10:00:01.000Z",
+      }).success,
+    ).toBe(false);
+    expect(
+      agentSessionSchema.safeParse({
+        ...session,
+        sessionCredential: "ods_session_secret",
       }).success,
     ).toBe(false);
   });
