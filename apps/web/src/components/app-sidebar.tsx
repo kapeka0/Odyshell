@@ -36,11 +36,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent className="overflow-hidden">
         <SidebarNav label="Workspace" items={workspaceItems} />
-        <SidebarNav
-          label="Manage"
-          items={workspaceSettingsItems}
-          className="mt-auto"
-        />
+        <SidebarNav label="Manage" items={workspaceSettingsItems} />
       </SidebarContent>
       <SidebarFooter>
         <SidebarUser />
