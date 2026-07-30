@@ -97,23 +97,25 @@ export function SidebarUser() {
           <DropdownMenuContent
             side={isMobile ? "bottom" : "right"}
             align="end"
-            className="min-w-56"
+            className="min-w-56 p-2"
           >
             <DropdownMenuGroup>
-              <DropdownMenuLabel>
+              <DropdownMenuLabel className="px-2 py-2">
                 <span className="block truncate text-foreground">{name}</span>
                 <span className="block truncate font-normal">{email}</span>
               </DropdownMenuLabel>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuGroup>
+            <DropdownMenuGroup className="flex flex-col gap-1">
               <DropdownMenuItem
+                className="px-2 py-2"
                 onClick={() => setTheme(nextUserTheme(activeTheme))}
               >
                 <ThemeIcon aria-hidden="true" />
                 {themeOption.label}
               </DropdownMenuItem>
               <DropdownMenuItem
+                className="px-2 py-2"
                 render={<Link href="/dashboard/user-settings" />}
               >
                 <SettingsIcon aria-hidden="true" />
@@ -121,8 +123,9 @@ export function SidebarUser() {
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuGroup>
+            <DropdownMenuGroup className="flex flex-col gap-1">
               <DropdownMenuItem
+                className="px-2 py-2"
                 disabled={pending}
                 onClick={() => {
                   setPending(true);

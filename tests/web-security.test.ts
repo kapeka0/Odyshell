@@ -279,6 +279,9 @@ describe("dashboard navigation performance boundary", () => {
     expect(sidebar).not.toContain('className="mt-auto"');
     expect(userMenu).not.toContain("User settings");
     expect(userMenu).toContain("nextUserTheme(activeTheme)");
+    expect(userMenu).toContain('className="min-w-56 p-2"');
+    expect(userMenu).toContain('className="flex flex-col gap-1"');
+    expect(userMenu).toContain('className="px-2 py-2"');
     expect(userMenu.indexOf("nextUserTheme(activeTheme)")).toBeLessThan(
       userMenu.indexOf('href="/dashboard/user-settings"'),
     );
@@ -450,6 +453,17 @@ describe("dashboard navigation performance boundary", () => {
       process.cwd(),
       "apps/web/src/app/dashboard",
     );
+    const dashboardSkeletons = readFileSync(
+      resolve(
+        process.cwd(),
+        "apps/web/src/components/dashboard-skeletons.tsx",
+      ),
+      "utf8",
+    );
+    const tableSkeleton = dashboardSkeletons.slice(
+      dashboardSkeletons.indexOf("export function TablePageSkeleton"),
+      dashboardSkeletons.indexOf("export function SettingsPageSkeleton"),
+    );
     const uiRules = readFileSync(
       resolve(process.cwd(), "apps/web/UI_RULES.md"),
       "utf8",
@@ -470,6 +484,18 @@ describe("dashboard navigation performance boundary", () => {
     expect(uiRules).toContain(
       "Every visual change also reviews its route-level skeleton",
     );
+    const resultsSkeletonIndex = tableSkeleton.indexOf(
+      'aria-label="Loading results"',
+    );
+    const tableSkeletonIndex = tableSkeleton.indexOf(
+      'className="overflow-hidden rounded-lg border"',
+    );
+    const paginationSkeletonIndex = tableSkeleton.indexOf(
+      'aria-label="Loading pagination"',
+    );
+    expect(resultsSkeletonIndex).toBeGreaterThan(-1);
+    expect(resultsSkeletonIndex).toBeLessThan(tableSkeletonIndex);
+    expect(paginationSkeletonIndex).toBeGreaterThan(tableSkeletonIndex);
     const rootLayout = readFileSync(
       resolve(process.cwd(), "apps/web/src/app/layout.tsx"),
       "utf8",

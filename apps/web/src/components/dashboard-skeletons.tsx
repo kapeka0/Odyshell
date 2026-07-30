@@ -16,10 +16,12 @@ export function TablePageSkeleton({
   action = false,
   filters = 1,
   columns = 4,
+  summary = false,
 }: {
   action?: boolean;
   filters?: number;
   columns?: number;
+  summary?: boolean;
 }) {
   return (
     <div
@@ -40,6 +42,13 @@ export function TablePageSkeleton({
           {Array.from({ length: filters }, (_, index) => (
             <Skeleton key={index} className="hidden h-8 w-40 sm:block" />
           ))}
+        </div>
+        <div
+          className="flex items-center justify-between gap-4"
+          aria-label="Loading results"
+        >
+          <Skeleton className="h-5 w-16" />
+          {summary ? <Skeleton className="h-5 w-28" /> : null}
         </div>
         <div className="overflow-hidden rounded-lg border">
           <div
@@ -67,8 +76,10 @@ export function TablePageSkeleton({
             </div>
           ))}
         </div>
-        <div className="flex justify-between">
-          <Skeleton className="h-5 w-16" />
+        <div
+          className="flex justify-center"
+          aria-label="Loading pagination"
+        >
           <Skeleton className="h-8 w-28" />
         </div>
       </div>

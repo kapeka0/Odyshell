@@ -136,9 +136,10 @@ particular component, library or interaction pattern.
   Workspace.
 - Tables place the filtered result count above the table, show optional context
   on the right and center pagination below. Activity uses that context for the
-  workspace plan retention.
+  workspace plan retention. Table skeletons preserve this same order.
 - The account menu cycles directly between System, Light and Dark before the
-  Settings action. Theme changes do not need success toasts.
+  Settings action, with comfortable inner padding between actions. Theme
+  changes do not need success toasts.
 - Browser icons follow the active system color scheme.
 - Prefer a user's identity-provider photo. When none exists, generate a
   recognizable face from an opaque identifier without displaying initials or
