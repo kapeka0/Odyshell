@@ -1006,6 +1006,32 @@ export class PostgresDatabase {
     };
   }
 
+  async workspaceConnections(workspaceId: string): Promise<{
+    activeConnections: number;
+    connectedAgents: number;
+    connections: Array<{
+      id: string;
+      machineId: string;
+      principalId: string;
+      status: string;
+    }>;
+  }> {
+    const connections = await this.db
+      .selectFrom("sessions")
+      .select(["id", "machineId", "principalId", "status"])
+      .where("workspaceId", "=", workspaceId)
+      .where("status", "in", ACTIVE_SESSION_STATUSES)
+      .orderBy("createdAt", "asc")
+      .execute();
+    return {
+      activeConnections: connections.length,
+      connectedAgents: new Set(
+        connections.map((connection) => connection.principalId),
+      ).size,
+      connections,
+    };
+  }
+
   async listWorkspaces(organizationId?: string): Promise<WorkspaceRecord[]> {
     let query = this.db.selectFrom("workspaces").selectAll();
     if (organizationId !== undefined) {

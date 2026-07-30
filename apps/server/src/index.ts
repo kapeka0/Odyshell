@@ -27,6 +27,7 @@ import {
   approveDeviceSchema,
   createCloudAgentAccessSchema,
   cloudIdentitySchema,
+  cloudConnectionView,
   cloudWebRequestDecision,
   cloudWebKey,
   cloudWebUrl,
@@ -523,9 +524,10 @@ app.post(
       slug: parsed.data.organization.slug,
       name: parsed.data.organization.name,
     });
-    const [machines, usage, agentAccess, controlEvents] = await Promise.all([
+    const [machines, usage, connections, agentAccess, controlEvents] = await Promise.all([
       db.listMachines(context.workspace.id),
       db.workspacePlan(context.workspace.id),
+      db.workspaceConnections(context.workspace.id),
       db.listAgentTokens(context.workspace.id),
       db.listAudit(context.workspace.id, 50),
     ]);
@@ -541,6 +543,17 @@ app.post(
         machines: usage?.activeMachines ?? machines.length,
         workspaces: 1,
         activeAgents: usage?.activeAgents ?? 0,
+      },
+      connections: {
+        activeConnections: connections.activeConnections,
+        connectedAgents: connections.connectedAgents,
+        connections: connections.connections.map((connection) =>
+          cloudConnectionView(
+            connection,
+            agentAccess.find((agent) => agent.id === connection.principalId)
+              ?.name ?? "CLI",
+          ),
+        ),
       },
       machines: machines.map((machine) => ({
         id: machine.id,

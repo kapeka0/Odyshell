@@ -105,11 +105,6 @@ function MachineRow({ machine }: { machine: CloudMachine }) {
   async function removeMachine() {
     setPending(true);
     setError(null);
-    const progressToast = toast.add({
-      title: "Removing machine",
-      description: `Disconnecting ${machine.name}.`,
-      type: "loading",
-    });
     try {
       const response = await fetch(`/api/machines/${machine.id}`, {
         method: "DELETE",
@@ -121,7 +116,6 @@ function MachineRow({ machine }: { machine: CloudMachine }) {
         throw new Error(body.error ?? "Could not remove machine");
       }
       setOpen(false);
-      toast.close(progressToast);
       toast.add({
         title: "Machine removed",
         description: `${machine.name} can no longer receive operations.`,
@@ -129,7 +123,6 @@ function MachineRow({ machine }: { machine: CloudMachine }) {
       });
       router.refresh();
     } catch (reason) {
-      toast.close(progressToast);
       toast.add({
         title: "Machine was not removed",
         description: `${machine.name} remains enrolled.`,

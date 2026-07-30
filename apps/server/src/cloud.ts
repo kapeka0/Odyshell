@@ -98,6 +98,32 @@ export function privacySafeControlMetadata(
   return safe;
 }
 
+type WorkspaceConnection = {
+  id: string;
+  machineId: string;
+  principalId: string;
+  status: string;
+};
+
+export function cloudConnectionView(
+  connection: WorkspaceConnection,
+  agentName: string,
+): {
+  id: string;
+  machineId: string;
+  agentId: string;
+  agentName: string;
+  status: string;
+} {
+  return {
+    id: connection.id,
+    machineId: connection.machineId,
+    agentId: connection.principalId,
+    agentName,
+    status: connection.status,
+  };
+}
+
 const controlEventReasonSchema = z.enum([
   "agent_request",
   "agent_token_revoked",

@@ -1,26 +1,20 @@
 "use client";
 
 import type { Capability } from "@odyshell/protocol";
-import {
-  CheckIcon,
-  CopyIcon,
-  KeyRoundIcon,
-  PlusIcon,
-} from "lucide-react";
+import { ArrowLeftIcon, CheckIcon, CopyIcon, KeyRoundIcon } from "lucide-react";
+import Link from "next/link";
 import { FormEvent, useState } from "react";
 import { z } from "zod";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,
   FieldContent,
@@ -39,7 +33,8 @@ import {
   capabilityGroups,
   readOnlyCapabilities,
 } from "@/lib/agent-access-options";
-import { DEFAULT_CLOUD_SERVER_URL } from "@/lib/cloud-api";
+import { machineEnrollmentCommand } from "@/lib/enrollment-command";
+import { cn } from "@/lib/utils";
 
 const machineNameSchema = z
   .string()
@@ -63,7 +58,6 @@ export function EnrollMachine({
   serverUrl: string;
   atLimit: boolean;
 }) {
-  const [open, setOpen] = useState(false);
   const [machineName, setMachineName] = useState("my-machine");
   const [capabilities, setCapabilities] = useState<Capability[]>([]);
   const [enrollment, setEnrollment] = useState<EnrollmentToken | null>(null);
@@ -75,27 +69,14 @@ export function EnrollMachine({
   const [pending, setPending] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const serverArgument =
-    serverUrl === DEFAULT_CLOUD_SERVER_URL ? "" : ` --server ${serverUrl}`;
   const command = enrollment
-    ? `ods${serverArgument} up --token ${enrollment.token} --name ${machineName} --workspace . --allow ${capabilities.join(",")}`
+    ? machineEnrollmentCommand({
+        serverUrl,
+        token: enrollment.token,
+        machineName,
+        capabilities,
+      })
     : "";
-
-  function resetDialog() {
-    setMachineName("my-machine");
-    setCapabilities([]);
-    setEnrollment(null);
-    setError(null);
-    setNameError(null);
-    setCapabilitiesError(null);
-    setCopied(false);
-  }
-
-  function handleOpenChange(nextOpen: boolean) {
-    if (pending) return;
-    setOpen(nextOpen);
-    if (!nextOpen) resetDialog();
-  }
 
   async function createEnrollment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -115,12 +96,6 @@ export function EnrollMachine({
     setError(null);
     setNameError(null);
     setCapabilitiesError(null);
-    setEnrollment(null);
-    const progressToast = toast.add({
-      title: "Creating enrollment",
-      description: "Issuing a one-time machine token.",
-      type: "loading",
-    });
 
     try {
       const response = await fetch("/api/enrollment-token", {
@@ -134,14 +109,12 @@ export function EnrollMachine({
         throw new Error(body.error ?? "Could not create enrollment token");
       }
       setEnrollment(body);
-      toast.close(progressToast);
       toast.add({
         title: "Enrollment command ready",
         description: "The one-time token expires in ten minutes.",
         type: "success",
       });
     } catch (reason) {
-      toast.close(progressToast);
       toast.add({
         title: "Enrollment was not created",
         description: "No machine token was issued.",
@@ -168,161 +141,184 @@ export function EnrollMachine({
     window.setTimeout(() => setCopied(false), 1800);
   }
 
-  return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger
-        disabled={atLimit}
-        render={<Button type="button" disabled={atLimit} />}
-      >
-        <PlusIcon data-icon="inline-start" />
-        {atLimit ? "Machine limit reached" : "Add machine"}
-      </DialogTrigger>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Add machine</DialogTitle>
-          <DialogDescription>
-            Create a one-time command and run it on the machine you want to
-            connect.
-          </DialogDescription>
-        </DialogHeader>
-
-        {!enrollment ? (
-          <form onSubmit={createEnrollment}>
-            <FieldGroup>
-              <Field data-invalid={Boolean(nameError)}>
-                <FieldLabel htmlFor="machine-name">Machine name</FieldLabel>
-                <Input
-                  id="machine-name"
-                  name="machine-name"
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={machineName}
-                  onChange={(event) => {
-                    setMachineName(event.target.value);
-                    setNameError(null);
-                  }}
-                  aria-invalid={Boolean(nameError)}
-                />
-                <FieldError>{nameError}</FieldError>
-              </Field>
-
-              <FieldSet data-invalid={Boolean(capabilitiesError)}>
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <FieldLegend>Local capabilities</FieldLegend>
-                    <FieldDescription>
-                      The Client enforces this maximum policy on the machine.
-                    </FieldDescription>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setCapabilities(readOnlyCapabilities);
-                      setCapabilitiesError(null);
-                    }}
-                  >
-                    Select read-only
-                  </Button>
-                </div>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  {capabilityGroups.map((group) => (
-                    <div key={group.name} className="flex flex-col gap-2">
-                      <p className="text-xs font-medium text-muted-foreground">
-                        {group.name}
-                      </p>
-                      {group.capabilities.map((capability) => (
-                        <Field key={capability.value} orientation="horizontal">
-                          <Checkbox
-                            id={`enroll-${capability.value}`}
-                            checked={capabilities.includes(capability.value)}
-                            onCheckedChange={(checked) => {
-                              setCapabilities((current) =>
-                                checked
-                                  ? [
-                                      ...new Set([
-                                        ...current,
-                                        capability.value,
-                                      ]),
-                                    ]
-                                  : current.filter(
-                                      (value) => value !== capability.value,
-                                    ),
-                              );
-                              setCapabilitiesError(null);
-                            }}
-                            aria-invalid={Boolean(capabilitiesError)}
-                          />
-                          <FieldContent>
-                            <FieldLabel
-                              htmlFor={`enroll-${capability.value}`}
-                            >
-                              <FieldTitle>{capability.label}</FieldTitle>
-                            </FieldLabel>
-                          </FieldContent>
-                        </Field>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-                <FieldError>{capabilitiesError}</FieldError>
-              </FieldSet>
-
-              {error ? (
-                <Alert variant="destructive">
-                  <AlertTitle>Could not create the command</AlertTitle>
-                  <AlertDescription>{error}</AlertDescription>
-                </Alert>
-              ) : null}
-
-              <DialogFooter>
-                <Button type="submit" disabled={pending}>
-                  {pending ? (
-                    <>
-                      <Spinner />
-                      Creating…
-                    </>
-                  ) : (
-                    "Generate command"
-                  )}
-                </Button>
-              </DialogFooter>
-            </FieldGroup>
-          </form>
-        ) : (
-          <div className="flex flex-col gap-4">
-            <div className="overflow-x-auto rounded-lg bg-foreground p-4 text-background">
-              <code className="whitespace-pre font-mono text-xs">{command}</code>
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <Button type="button" onClick={copyCommand}>
-                {copied ? (
-                  <CheckIcon data-icon="inline-start" />
-                ) : (
-                  <CopyIcon data-icon="inline-start" />
-                )}
-                {copied ? "Copied" : "Copy command"}
-              </Button>
-              <span className="text-xs text-muted-foreground">
-                Expires{" "}
-                {new Date(enrollment.expiresAt).toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </span>
-            </div>
-            <Alert>
-              <KeyRoundIcon aria-hidden="true" />
-              <AlertTitle>Shown once</AlertTitle>
-              <AlertDescription>
-                Run this command from the directory the Client may expose. The
-                one-time token expires in ten minutes.
-              </AlertDescription>
-            </Alert>
+  if (enrollment) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Run this command on {machineName}</CardTitle>
+          <CardDescription>
+            `ods up` enrolls a new identity or restarts the existing identity
+            for this Odyshell server.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-5">
+          <div className="rounded-xl bg-foreground p-5 text-background">
+            <code className="block whitespace-pre-wrap break-all font-mono text-sm leading-6">
+              {command}
+            </code>
           </div>
-        )}
-      </DialogContent>
-    </Dialog>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="button" onClick={copyCommand}>
+              {copied ? (
+                <CheckIcon data-icon="inline-start" />
+              ) : (
+                <CopyIcon data-icon="inline-start" />
+              )}
+              {copied ? "Copied" : "Copy command"}
+            </Button>
+            <Link
+              href="/dashboard/machines"
+              className={buttonVariants({ variant: "outline" })}
+            >
+              View machines
+            </Link>
+            <span className="text-xs text-muted-foreground">
+              Expires{" "}
+              {new Date(enrollment.expiresAt).toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </span>
+          </div>
+          <Alert>
+            <KeyRoundIcon aria-hidden="true" />
+            <AlertTitle>Shown once</AlertTitle>
+            <AlertDescription>
+              Machine enrollment is different from `ods login`. Login
+              authorizes the CLI; this command connects the machine Client.
+            </AlertDescription>
+          </Alert>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Add machine</CardTitle>
+        <CardDescription>
+          Define the Client&apos;s local boundary, then generate its one-time
+          connection command.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={createEnrollment}>
+          <FieldGroup>
+            <Field data-invalid={Boolean(nameError)}>
+              <FieldLabel htmlFor="machine-name">Machine name</FieldLabel>
+              <Input
+                id="machine-name"
+                name="machine-name"
+                autoComplete="off"
+                spellCheck={false}
+                value={machineName}
+                onChange={(event) => {
+                  setMachineName(event.target.value);
+                  setNameError(null);
+                }}
+                aria-invalid={Boolean(nameError)}
+              />
+              <FieldError>{nameError}</FieldError>
+            </Field>
+
+            <FieldSet data-invalid={Boolean(capabilitiesError)}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <FieldLegend>Local capabilities</FieldLegend>
+                  <FieldDescription>
+                    The Client enforces this maximum policy on the machine.
+                  </FieldDescription>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setCapabilities(readOnlyCapabilities);
+                    setCapabilitiesError(null);
+                  }}
+                >
+                  Select read-only
+                </Button>
+              </div>
+              <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                {capabilityGroups.map((group) => (
+                  <div key={group.name} className="flex flex-col gap-3">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      {group.name}
+                    </p>
+                    {group.capabilities.map((capability) => (
+                      <Field key={capability.value} orientation="horizontal">
+                        <Checkbox
+                          id={`enroll-${capability.value}`}
+                          checked={capabilities.includes(capability.value)}
+                          onCheckedChange={(checked) => {
+                            setCapabilities((current) =>
+                              checked
+                                ? [
+                                    ...new Set([
+                                      ...current,
+                                      capability.value,
+                                    ]),
+                                  ]
+                                : current.filter(
+                                    (value) => value !== capability.value,
+                                  ),
+                            );
+                            setCapabilitiesError(null);
+                          }}
+                          aria-invalid={Boolean(capabilitiesError)}
+                        />
+                        <FieldContent>
+                          <FieldLabel
+                            htmlFor={`enroll-${capability.value}`}
+                          >
+                            <FieldTitle>{capability.label}</FieldTitle>
+                          </FieldLabel>
+                          <FieldDescription>
+                            {capability.description}
+                          </FieldDescription>
+                        </FieldContent>
+                      </Field>
+                    ))}
+                  </div>
+                ))}
+              </div>
+              <FieldError>{capabilitiesError}</FieldError>
+            </FieldSet>
+
+            {error ? (
+              <Alert variant="destructive">
+                <AlertTitle>Could not create the command</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            ) : null}
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="submit" disabled={pending || atLimit}>
+                {pending ? (
+                  <>
+                    <Spinner />
+                    Generating…
+                  </>
+                ) : atLimit ? (
+                  "Machine limit reached"
+                ) : (
+                  "Generate command"
+                )}
+              </Button>
+              <Link
+                href="/dashboard/machines"
+                className={cn(buttonVariants({ variant: "ghost" }))}
+              >
+                <ArrowLeftIcon data-icon="inline-start" />
+                Cancel
+              </Link>
+            </div>
+          </FieldGroup>
+        </form>
+      </CardContent>
+    </Card>
   );
 }

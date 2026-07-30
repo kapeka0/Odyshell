@@ -1,16 +1,21 @@
 "use client";
 
+import { PlusIcon } from "lucide-react";
+import Link from "next/link";
 import {
   DashboardPage,
   DashboardPageHeader,
   DashboardStateNotice,
 } from "@/components/dashboard-state";
-import { EnrollMachine } from "@/components/enroll-machine";
 import { MachineList } from "@/components/machine-list";
 import { useDashboard } from "@/components/dashboard-provider";
+import { Button, buttonVariants } from "@/components/ui/button";
 
 export default function MachinesPage() {
-  const { state, serverUrl } = useDashboard();
+  const { state } = useDashboard();
+  const atLimit =
+    state.status === "ready" &&
+    state.context.usage.machines >= state.context.plan.machineLimit;
 
   return (
     <DashboardPage>
@@ -20,13 +25,19 @@ export default function MachinesPage() {
         description="Manage the clients that keep an outbound connection to Odyshell."
         action={
           state.status === "ready" ? (
-            <EnrollMachine
-              serverUrl={serverUrl}
-              atLimit={
-                state.context.usage.machines >=
-                state.context.plan.machineLimit
-              }
-            />
+            atLimit ? (
+              <Button type="button" disabled>
+                Machine limit reached
+              </Button>
+            ) : (
+              <Link
+                href="/dashboard/machines/add"
+                className={buttonVariants()}
+              >
+                <PlusIcon data-icon="inline-start" />
+                Add machine
+              </Link>
+            )
           ) : undefined
         }
       />

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createCloudAgentAccessSchema,
   cloudIdentitySchema,
+  cloudConnectionView,
   cloudWebRequestDecision,
   cloudWebKey,
   cloudWebUrl,
@@ -107,6 +108,26 @@ describe("cloud identity and device authorization boundaries", () => {
       kind: "process.exec",
       reason: "machine_scope",
       machineId,
+    });
+  });
+
+  it("exposes only topology-safe connection metadata to the dashboard", () => {
+    const internalConnection = {
+      id: "session-1",
+      machineId: "machine-1",
+      principalId: "agent-1",
+      status: "ready",
+      command: "cat /etc/shadow",
+      stdout: "secret",
+    };
+    expect(
+      cloudConnectionView(internalConnection, "Release agent"),
+    ).toEqual({
+      id: "session-1",
+      machineId: "machine-1",
+      agentId: "agent-1",
+      agentName: "Release agent",
+      status: "ready",
     });
   });
 

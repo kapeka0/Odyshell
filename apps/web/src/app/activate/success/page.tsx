@@ -17,7 +17,8 @@ export default function ActivationSuccessPage() {
           <AlertTitle>Return to your terminal</AlertTitle>
           <AlertDescription>
             ods will finish signing in automatically. This browser can now be
-            closed.
+            closed. Login authorizes the CLI; it does not connect this device
+            as a machine.
           </AlertDescription>
         </Alert>
         <Link

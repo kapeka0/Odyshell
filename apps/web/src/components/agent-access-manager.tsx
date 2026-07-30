@@ -147,11 +147,6 @@ export function AgentAccessManager({
     setPending(true);
     setError(null);
     setValidation({});
-    const progressToast = toast.add({
-      title: "Creating agent access",
-      description: "Applying machine, capability and expiry boundaries.",
-      type: "loading",
-    });
     try {
       const response = await fetch("/api/agent-access", {
         method: "POST",
@@ -169,7 +164,6 @@ export function AgentAccessManager({
       setMachineIds([]);
       setCapabilities([]);
       setExpiresInSeconds(agentAccessDurations[0].value);
-      toast.close(progressToast);
       toast.add({
         title: "Agent access created",
         description: "Copy the credential now. It will not be shown again.",
@@ -177,7 +171,6 @@ export function AgentAccessManager({
       });
       router.refresh();
     } catch (reason) {
-      toast.close(progressToast);
       toast.add({
         title: "Agent access was not created",
         description: "Review the form or try again.",
@@ -561,11 +554,6 @@ function AccessRow({
   async function revokeAccess() {
     setPending(true);
     setError(null);
-    const progressToast = toast.add({
-      title: "Revoking agent access",
-      description: `Closing access for ${access.name}.`,
-      type: "loading",
-    });
     try {
       const response = await fetch(`/api/agent-access/${access.id}`, {
         method: "DELETE",
@@ -577,7 +565,6 @@ function AccessRow({
         throw new Error(body.error ?? "Could not revoke Agent Access");
       }
       setOpen(false);
-      toast.close(progressToast);
       toast.add({
         title: "Agent access revoked",
         description: `${access.name} can no longer create sessions.`,
@@ -585,7 +572,6 @@ function AccessRow({
       });
       router.refresh();
     } catch (reason) {
-      toast.close(progressToast);
       toast.add({
         title: "Agent access was not revoked",
         description: "The existing credential remains unchanged.",

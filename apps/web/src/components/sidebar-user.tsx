@@ -21,8 +21,6 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -34,6 +32,9 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Spinner } from "@/components/ui/spinner";
+import { toast } from "@/components/ui/toast";
+import { vercelAvatarUrl } from "@/lib/avatar";
+import { activeUserTheme, nextUserTheme } from "@/lib/theme-cycle";
 
 export function SidebarUser() {
   const { isMobile } = useSidebar();
@@ -55,6 +56,14 @@ export function SidebarUser() {
   const name = user.fullName ?? user.primaryEmailAddress?.emailAddress ?? "Account";
   const email = user.primaryEmailAddress?.emailAddress ?? "";
   const initials = initialsFor(name);
+  const activeTheme = activeUserTheme(theme);
+  const nextTheme = nextUserTheme(activeTheme);
+  const ThemeIcon =
+    activeTheme === "system"
+      ? MonitorIcon
+      : activeTheme === "dark"
+        ? MoonIcon
+        : SunIcon;
 
   return (
     <SidebarMenu>
@@ -70,7 +79,11 @@ export function SidebarUser() {
             }
           >
             <Avatar>
-              <AvatarImage src={user.imageUrl} alt="" />
+              <AvatarImage
+                src={vercelAvatarUrl(user.id, initials)}
+                alt=""
+                referrerPolicy="no-referrer"
+              />
               <AvatarFallback>{initials}</AvatarFallback>
             </Avatar>
             <div className="grid min-w-0 flex-1 text-left text-sm leading-tight">
@@ -94,21 +107,22 @@ export function SidebarUser() {
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuLabel>Theme</DropdownMenuLabel>
-              <DropdownMenuRadioGroup value={theme} onValueChange={setTheme}>
-                <DropdownMenuRadioItem value="system">
-                  <MonitorIcon aria-hidden="true" />
-                  System
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="light">
-                  <SunIcon aria-hidden="true" />
-                  Light
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="dark">
-                  <MoonIcon aria-hidden="true" />
-                  Dark
-                </DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
+              <DropdownMenuItem
+                onClick={() => {
+                  setTheme(nextTheme);
+                  toast.add({
+                    title: `Theme set to ${nextTheme}`,
+                    description:
+                      nextTheme === "system"
+                        ? "Odyshell now follows your device."
+                        : `Odyshell now uses the ${nextTheme} theme.`,
+                    type: "success",
+                  });
+                }}
+              >
+                <ThemeIcon aria-hidden="true" />
+                Theme: {capitalize(activeTheme)}
+              </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
@@ -137,4 +151,8 @@ function initialsFor(name: string): string {
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase())
     .join("");
+}
+
+function capitalize(value: string): string {
+  return `${value[0]?.toUpperCase() ?? ""}${value.slice(1)}`;
 }

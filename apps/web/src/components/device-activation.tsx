@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
-import { toast } from "@/components/ui/toast";
 import {
   deviceApprovalErrorPath,
   deviceCodeSchema,
@@ -32,12 +31,6 @@ export function DeviceActivation({ initialCode = "" }: { initialCode?: string })
 
     setPending(true);
     setValidationError(null);
-    const progressToast = toast.add({
-      title: "Approving CLI",
-      description: "Verifying the one-time device code.",
-      type: "loading",
-    });
-
     try {
       const response = await fetch("/api/device/approve", {
         method: "POST",
@@ -49,7 +42,6 @@ export function DeviceActivation({ initialCode = "" }: { initialCode?: string })
         error?: string;
       };
 
-      toast.close(progressToast);
       if (!response.ok || !body.approved) {
         router.replace(deviceApprovalErrorPath(body.error));
         return;
@@ -57,7 +49,6 @@ export function DeviceActivation({ initialCode = "" }: { initialCode?: string })
 
       router.replace("/activate/success");
     } catch {
-      toast.close(progressToast);
       router.replace(deviceApprovalErrorPath("approval_failed"));
     } finally {
       setPending(false);

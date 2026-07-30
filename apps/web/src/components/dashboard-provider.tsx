@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext } from "react";
+import { DashboardLiveRefresh } from "@/components/dashboard-live-refresh";
 import type { DashboardState } from "@/lib/dashboard-context";
 
 type DashboardContextValue = {
@@ -19,6 +20,7 @@ export function DashboardProvider({
 }) {
   return (
     <DashboardContext.Provider value={value}>
+      <DashboardLiveRefresh />
       {children}
     </DashboardContext.Provider>
   );

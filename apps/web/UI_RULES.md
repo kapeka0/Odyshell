@@ -101,3 +101,24 @@ particular component, library or interaction pattern.
 - Keep the last trustworthy state visible when refreshing data, while clearly
   indicating that an update is in progress.
 - Fail safely and make unavailable actions visibly unavailable.
+
+## Current product decisions
+
+- Machine enrollment gets a dedicated, uncluttered view. The one-time command
+  must remain fully visible and must not be clipped by an overlay.
+- Short creation flows preserve context and remain comfortable at narrow
+  widths.
+- Pending state stays visually attached to the initiating action. Completion
+  feedback announces success or failure once without duplicating progress.
+- Transient feedback remains visible above blocking overlays.
+- User settings contain one theme action that cycles through system, light and
+  dark.
+- Generated user avatars use an opaque identity. Never send an email address
+  to the avatar service.
+- The workspace overview is the operational canvas itself, inspired by
+  Railway rather than a dashboard card grid.
+- The overview makes the relationship between currently interacting agents,
+  active sessions and machines directly inspectable even when the topology is
+  crowded.
+- Online machines use a restrained green live indicator. Offline machines use
+  a quiet neutral indicator, and both states include text.

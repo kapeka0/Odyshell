@@ -76,6 +76,17 @@ export type CloudContext = {
     workspaces: number;
     activeAgents: number;
   };
+  connections: {
+    activeConnections: number;
+    connectedAgents: number;
+    connections: Array<{
+      id: string;
+      machineId: string;
+      agentId: string;
+      agentName: string;
+      status: string;
+    }>;
+  };
   machines: CloudMachine[];
   agentAccess: AgentAccess[];
   controlEvents: ControlEvent[];
