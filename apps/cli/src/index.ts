@@ -12,6 +12,7 @@ import {
   type OperationAction,
 } from "@odyshell/protocol";
 import {
+  clientConfigPathForServer,
   defaultClientConfigPath,
   clientServiceStatus,
   enrollClient,
@@ -41,7 +42,7 @@ import {
   printSessions,
   streamEvent,
 } from "./output.js";
-import { assertClientUpConfiguration } from "./up.js";
+import { resolveClientUpConfiguration } from "./up.js";
 import { serveOdyshellMcp } from "./mcp.js";
 import { deviceLoginUrl } from "./login.js";
 
@@ -63,6 +64,22 @@ program.enablePositionalOptions();
 
 function globals(command: Command): GlobalOptions {
   return command.optsWithGlobals() as GlobalOptions;
+}
+
+async function clientConfigurationFor(
+  global: GlobalOptions,
+  explicitConfigPath?: string,
+) {
+  const apiConfig = await resolveConfig(global);
+  const selected = await resolveClientUpConfiguration({
+    serverUrl: apiConfig.serverUrl,
+    ...(explicitConfigPath
+      ? { explicitConfigPath: resolve(explicitConfigPath) }
+      : {}),
+    legacyConfigPath: defaultClientConfigPath(),
+    instanceConfigPath: clientConfigPathForServer(apiConfig.serverUrl),
+  });
+  return { apiConfig, ...selected };
 }
 
 function normalizeGlobalOptions(argv: string[]): string[] {
@@ -268,6 +285,11 @@ program
           console.log(`${pc.green("✓")} Signed in to ${pc.bold(resolved.serverUrl)}`);
           console.log(pc.dim(`  Credentials expire ${token.expiresAt}`));
           console.log(pc.dim(`  Credentials saved to ${configPath}`));
+          console.log(
+            pc.dim(
+              "  Login authorizes this CLI; connect a machine separately with the dashboard's ods up command.",
+            ),
+          );
         }
         return;
       } catch (error) {
@@ -321,10 +343,18 @@ program
   .action(async (_options, command: Command) => {
     const options = globals(command);
     const api = await apiFor(command);
+    const localConfiguration = await clientConfigurationFor(options);
     const [health, machines, localClient] = await Promise.all([
       api.health(),
       api.machines(),
-      clientServiceStatus(),
+      localConfiguration.configExists
+        ? clientServiceStatus(localConfiguration.configPath)
+        : Promise.resolve({
+            supported: process.platform === "linux",
+            installed: false,
+            active: false,
+            enabled: false,
+          }),
     ]);
     if (options.json) printJson({ serverUrl: api.serverUrl, health, machines, localClient });
     else {
@@ -818,7 +848,7 @@ program
   .option("--allow <capabilities>", "comma-separated local capabilities")
   .option("--runner <runner>", "host or docker", "host")
   .option("--image <image>", "Docker profile image", "alpine:3.22")
-  .option("--config <path>", "client configuration", defaultClientConfigPath())
+  .option("--config <path>", "client configuration")
   .action(
     async (
       options: {
@@ -828,34 +858,20 @@ program
         allow?: string;
         runner: string;
         image: string;
-        config: string;
+        config?: string;
       },
       command: Command,
     ) => {
       const global = globals(command);
-      const configPath = resolve(options.config);
-      const configFound = await access(configPath).then(
-        () => true,
-        () => false,
-      );
-      const enrollmentRequested =
-        global.server !== undefined ||
-        options.token !== undefined ||
-        options.name !== undefined ||
-        options.workspace !== undefined ||
-        options.allow !== undefined ||
-        command.getOptionValueSource("runner") === "cli" ||
-        command.getOptionValueSource("image") === "cli";
-      assertClientUpConfiguration({
-        configExists: configFound,
-        enrollmentRequested,
+      const {
+        apiConfig,
         configPath,
-      });
+        configExists: configFound,
+      } = await clientConfigurationFor(global, options.config);
       let enrollment:
         | { machineId: string; configPath: string }
         | undefined;
       if (!configFound) {
-        const apiConfig = await resolveConfig(global);
         enrollment = await enrollClient({
           serverUrl: apiConfig.serverUrl,
           token: requiredValue(options.token, "--token"),
@@ -891,6 +907,7 @@ program
       else {
         console.log(`${pc.green("✓")} Odyshell Client is running`);
         if (enrollment) console.log(`  machine  ${enrollment.machineId}`);
+        else console.log("  machine  already enrolled with this server");
         console.log(`  config   ${configPath}`);
         if (service.lingering === false) {
           console.log(
@@ -906,10 +923,21 @@ program
 program
   .command("down")
   .description("stop and disable this machine's background Client")
-  .action(async (_options, command: Command) => {
+  .option("--config <path>", "client configuration")
+  .action(async (options: { config?: string }, command: Command) => {
     const global = globals(command);
+    const { apiConfig, configPath, configExists } = await clientConfigurationFor(
+      global,
+      options.config,
+    );
+    if (!configExists) {
+      throw new ExpectedError(
+        `This machine is not enrolled with ${apiConfig.serverUrl}`,
+        "client_not_enrolled",
+      );
+    }
     try {
-      await stopLinuxUserService();
+      await stopLinuxUserService(configPath);
     } catch (error) {
       throw new ExpectedError(
         `Could not stop the Odyshell Client service: ${error instanceof Error ? error.message : String(error)}`,
@@ -996,9 +1024,21 @@ client
 client
   .command("status")
   .description("show the local background Client status")
-  .action(async (_options, command: Command) => {
+  .option("--config <path>", "client configuration")
+  .action(async (options: { config?: string }, command: Command) => {
     const global = globals(command);
-    const status = await clientServiceStatus();
+    const { configPath, configExists } = await clientConfigurationFor(
+      global,
+      options.config,
+    );
+    const status = configExists
+      ? await clientServiceStatus(configPath)
+      : {
+          supported: process.platform === "linux",
+          installed: false,
+          active: false,
+          enabled: false,
+        };
     if (global.json) printJson(status);
     else {
       console.log(

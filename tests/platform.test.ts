@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  clientConfigPathForServer,
   clientConfigPathFor,
   containerUser,
   hostPlatform,
@@ -7,6 +8,7 @@ import {
 import { parseDockerRuntime } from "../apps/client/src/docker-runner.js";
 import {
   activateLinuxUserService,
+  linuxServiceNameForConfig,
   linuxUserServicePath,
   renderLinuxUserService,
 } from "../apps/client/src/service.js";
@@ -41,6 +43,51 @@ describe("client platform support", () => {
     expect(cliConfigPathFor("darwin", "/Users/ada", {})).toBe(
       "/Users/ada/Library/Application Support/Odyshell/config.json",
     );
+  });
+
+  it("isolates Client configuration by normalized server identity", () => {
+    const first = clientConfigPathForServer(
+      "https://server.example/",
+      "linux",
+      "/home/ada",
+      {},
+    );
+    const same = clientConfigPathForServer(
+      "https://server.example",
+      "linux",
+      "/home/ada",
+      {},
+    );
+    const second = clientConfigPathForServer(
+      "https://other.example",
+      "linux",
+      "/home/ada",
+      {},
+    );
+
+    expect(first).toBe(same);
+    expect(first).toMatch(
+      /^\/home\/ada\/\.config\/odyshell\/clients\/server-example-[a-f0-9]{12}\/client\.json$/,
+    );
+    expect(second).not.toBe(first);
+    expect(
+      clientConfigPathForServer(
+        "https://server.example",
+        "win32",
+        "C:\\Users\\ada",
+        { APPDATA: "C:\\Users\\ada\\AppData\\Roaming" },
+      ),
+    ).toMatch(
+      /^C:\\Users\\ada\\AppData\\Roaming\\Odyshell\\clients\\server-example-[a-f0-9]{12}\\client\.json$/,
+    );
+    expect(() =>
+      clientConfigPathForServer(
+        "https://user:secret@server.example",
+        "linux",
+        "/home/ada",
+        {},
+      ),
+    ).toThrow("must not contain credentials");
   });
 
   it("uses Odyshell Cloud by default while preserving explicit self-hosted overrides", () => {
@@ -95,18 +142,31 @@ describe("client platform support", () => {
     expect(unit).toContain("NoNewPrivileges=true");
   });
 
+  it("uses an isolated systemd service for every Client identity", () => {
+    const first = linuxServiceNameForConfig(
+      "/home/ada/.config/odyshell/clients/first/client.json",
+    );
+    const second = linuxServiceNameForConfig(
+      "/home/ada/.config/odyshell/clients/second/client.json",
+    );
+
+    expect(first).toMatch(/^odyshell-client-[a-f0-9]{12}\.service$/);
+    expect(second).toMatch(/^odyshell-client-[a-f0-9]{12}\.service$/);
+    expect(first).not.toBe(second);
+  });
+
   it("restarts an existing Linux service after replacing its configuration", async () => {
     const commands: string[][] = [];
 
-    await activateLinuxUserService(async (args) => {
+    await activateLinuxUserService("odyshell-client-test.service", async (args) => {
       commands.push(args);
     });
 
     expect(commands).toEqual([
       ["daemon-reload"],
-      ["enable", "odyshell-client.service"],
-      ["restart", "odyshell-client.service"],
-      ["is-active", "--quiet", "odyshell-client.service"],
+      ["enable", "odyshell-client-test.service"],
+      ["restart", "odyshell-client-test.service"],
+      ["is-active", "--quiet", "odyshell-client-test.service"],
     ]);
   });
 });

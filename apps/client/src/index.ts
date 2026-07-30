@@ -25,13 +25,23 @@ import type {
 } from "./executor.js";
 import { HostExecutor } from "./host-executor.js";
 import { OperationJournal, type JournalResult } from "./journal.js";
-import { defaultClientConfigPath, hostPlatform } from "./platform.js";
+import {
+  clientConfigPathForServer,
+  defaultClientConfigPath,
+  hostPlatform,
+  normalizeServerUrl,
+} from "./platform.js";
 
-export { defaultClientConfigPath } from "./platform.js";
+export {
+  clientConfigPathForServer,
+  defaultClientConfigPath,
+  normalizeServerUrl,
+} from "./platform.js";
 export {
   activateLinuxUserService,
   clientServiceStatus,
   installLinuxUserService,
+  linuxServiceNameForConfig,
   linuxUserServicePath,
   removeLinuxUserService,
   renderLinuxUserService,

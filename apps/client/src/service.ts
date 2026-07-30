@@ -1,9 +1,11 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, posix, resolve } from "node:path";
 import { promisify } from "node:util";
 import process from "node:process";
+import { defaultClientConfigPath } from "./platform.js";
 
 const execFileAsync = promisify(execFile);
 export const linuxServiceName = "odyshell-client.service";
@@ -19,9 +21,25 @@ export type ClientServiceStatus = {
 export function linuxUserServicePath(
   home = homedir(),
   environment: NodeJS.ProcessEnv = process.env,
+  serviceName = linuxServiceName,
 ): string {
   const configHome = environment.XDG_CONFIG_HOME ?? posix.join(home, ".config");
-  return posix.join(configHome, "systemd", "user", linuxServiceName);
+  return posix.join(configHome, "systemd", "user", serviceName);
+}
+
+export function linuxServiceNameForConfig(
+  configPath: string,
+  legacyConfigPath = defaultClientConfigPath(),
+): string {
+  const normalizedConfigPath = resolve(configPath);
+  if (normalizedConfigPath === resolve(legacyConfigPath)) {
+    return linuxServiceName;
+  }
+  const digest = createHash("sha256")
+    .update(normalizedConfigPath)
+    .digest("hex")
+    .slice(0, 12);
+  return `odyshell-client-${digest}.service`;
 }
 
 export function renderLinuxUserService(options: {
@@ -53,44 +71,61 @@ export async function installLinuxUserService(options: {
   configPath: string;
 }): Promise<{ servicePath: string; lingering: boolean | undefined }> {
   assertLinuxSystemd();
-  await readFile(resolve(options.configPath), "utf8");
-  const servicePath = linuxUserServicePath();
+  const configPath = resolve(options.configPath);
+  await readFile(configPath, "utf8");
+  const serviceName = linuxServiceNameForConfig(configPath);
+  const servicePath = linuxUserServicePath(homedir(), process.env, serviceName);
   await mkdir(dirname(servicePath), { recursive: true });
   await writeFile(
     servicePath,
-    renderLinuxUserService({ ...options, configPath: resolve(options.configPath) }),
+    renderLinuxUserService({ ...options, configPath }),
     { mode: 0o644 },
   );
-  await activateLinuxUserService();
+  await activateLinuxUserService(serviceName);
   return { servicePath, lingering: await userLingering() };
 }
 
 export async function activateLinuxUserService(
+  serviceName = linuxServiceName,
   runSystemctl: (args: string[]) => Promise<void> = systemctl,
 ): Promise<void> {
   await runSystemctl(["daemon-reload"]);
-  await runSystemctl(["enable", linuxServiceName]);
-  await runSystemctl(["restart", linuxServiceName]);
-  await runSystemctl(["is-active", "--quiet", linuxServiceName]);
+  await runSystemctl(["enable", serviceName]);
+  await runSystemctl(["restart", serviceName]);
+  await runSystemctl(["is-active", "--quiet", serviceName]);
 }
 
-export async function stopLinuxUserService(): Promise<void> {
+export async function stopLinuxUserService(
+  configPath = defaultClientConfigPath(),
+): Promise<void> {
   assertLinuxSystemd();
-  await systemctl(["disable", "--now", linuxServiceName]);
+  await systemctl([
+    "disable",
+    "--now",
+    linuxServiceNameForConfig(configPath),
+  ]);
 }
 
-export async function removeLinuxUserService(): Promise<void> {
+export async function removeLinuxUserService(
+  configPath = defaultClientConfigPath(),
+): Promise<void> {
   assertLinuxSystemd();
-  await systemctl(["disable", "--now", linuxServiceName]).catch(() => {});
-  await rm(linuxUserServicePath(), { force: true });
+  const serviceName = linuxServiceNameForConfig(configPath);
+  await systemctl(["disable", "--now", serviceName]).catch(() => {});
+  await rm(linuxUserServicePath(homedir(), process.env, serviceName), {
+    force: true,
+  });
   await systemctl(["daemon-reload"]);
 }
 
-export async function clientServiceStatus(): Promise<ClientServiceStatus> {
+export async function clientServiceStatus(
+  configPath = defaultClientConfigPath(),
+): Promise<ClientServiceStatus> {
   if (process.platform !== "linux") {
     return { supported: false, installed: false, active: false, enabled: false };
   }
-  const servicePath = linuxUserServicePath();
+  const serviceName = linuxServiceNameForConfig(configPath);
+  const servicePath = linuxUserServicePath(homedir(), process.env, serviceName);
   const installed = await readFile(servicePath, "utf8").then(
     () => true,
     () => false,
@@ -99,11 +134,11 @@ export async function clientServiceStatus(): Promise<ClientServiceStatus> {
     return { supported: true, installed: false, active: false, enabled: false, servicePath };
   }
   const [active, enabled] = await Promise.all([
-    systemctl(["is-active", "--quiet", linuxServiceName]).then(
+    systemctl(["is-active", "--quiet", serviceName]).then(
       () => true,
       () => false,
     ),
-    systemctl(["is-enabled", "--quiet", linuxServiceName]).then(
+    systemctl(["is-enabled", "--quiet", serviceName]).then(
       () => true,
       () => false,
     ),
