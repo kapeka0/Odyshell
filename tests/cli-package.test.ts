@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -8,6 +8,7 @@ const packageJson = JSON.parse(
 ) as {
   name: string;
   version: string;
+  license: string;
   private?: boolean;
   bin: Record<string, string>;
   files: string[];
@@ -20,6 +21,8 @@ const packageJson = JSON.parse(
 describe("CLI npm package", () => {
   it("publishes the ods binary to the public npm registry", () => {
     expect(packageJson.name).toBe("@odyshell/cli");
+    expect(packageJson.license).toBe("Apache-2.0");
+    expect(existsSync(resolve(cliRoot, "LICENSE"))).toBe(true);
     expect(packageJson.private).not.toBe(true);
     expect(packageJson.bin).toEqual({ ods: "./dist/index.js" });
     expect(packageJson.files).toEqual(["dist"]);

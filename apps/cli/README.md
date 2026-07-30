@@ -9,6 +9,14 @@
 The `ods` CLI gives agents a programmatic interface to Odyshell and lets workspace members connect
 machines. People, plans, machine inventory, and Agent Access are managed in the web app.
 
+## Install
+
+Requires Node.js 24 or newer:
+
+```bash
+npm install --global @odyshell/cli
+```
+
 ## Basic usage
 
 ```bash
@@ -71,10 +79,12 @@ Log in with a scoped agent token, then configure your agent to launch Odyshell:
 The MCP process receives only agent tools. It cannot enroll or revoke machines, create tokens, or
 use the administrator key. Each operation runs in a disposable session and remains auditable.
 
-From the monorepo root, build and install the CLI with:
+For monorepo development, build and install the local CLI with:
 
 ```bash
 pnpm install:ods
 ```
+
+[Apache-2.0 license](./LICENSE) · [Documentation](https://odyshell.com/docs)
 
 [Back to Odyshell](../../README.md)

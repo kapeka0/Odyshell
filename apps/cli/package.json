@@ -9,6 +9,7 @@
     "remote-execution"
   ],
   "homepage": "https://odyshell.com/docs/cli",
+  "license": "Apache-2.0",
   "bugs": {
     "url": "https://github.com/kapeka0/Odyshell/issues"
   },
