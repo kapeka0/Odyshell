@@ -101,6 +101,8 @@ particular component, library or interaction pattern.
 - Every route owns a loading skeleton that mirrors its final structure. A
   canvas skeleton belongs only to the overview; table, form and settings
   routes use their corresponding shapes.
+- Every visual change also reviews its route-level skeleton. When visible
+  layout, spacing or hierarchy changes, update the skeleton in the same change.
 - Preserve already available context during navigation and background refreshes.
 - Avoid visual resets, duplicate loading states and unexpected layout shifts.
 - Keep the last trustworthy state visible when refreshing data, while clearly

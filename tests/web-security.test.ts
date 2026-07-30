@@ -450,6 +450,10 @@ describe("dashboard navigation performance boundary", () => {
       process.cwd(),
       "apps/web/src/app/dashboard",
     );
+    const uiRules = readFileSync(
+      resolve(process.cwd(), "apps/web/UI_RULES.md"),
+      "utf8",
+    );
     for (const route of [
       "machines/loading.tsx",
       "machines/add/loading.tsx",
@@ -463,6 +467,9 @@ describe("dashboard navigation performance boundary", () => {
         readFileSync(resolve(dashboardRoot, route), "utf8"),
       ).toContain("Skeleton");
     }
+    expect(uiRules).toContain(
+      "Every visual change also reviews its route-level skeleton",
+    );
     const rootLayout = readFileSync(
       resolve(process.cwd(), "apps/web/src/app/layout.tsx"),
       "utf8",
