@@ -38,7 +38,8 @@ _Avoid_: Agent, permanent key, SSH credential
 
 **Active Connection**:
 The live relationship created while an Agent is using a temporary session or operation on a
-machine. A valid but idle Agent Credential is not an Active Connection.
+machine. A valid but idle Agent Credential is not an Active Connection, and rotating its
+credential ends the Agent's existing sessions.
 _Avoid_: Agent permission, available access
 
 **Capability**:
