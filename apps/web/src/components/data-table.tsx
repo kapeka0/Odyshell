@@ -170,14 +170,16 @@ export function DataTable<TData>({
           );
         })}
       </div>
-      {summaryLabel ? (
-        <div className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
-          <p className="tabular-nums">
-            {table.getFilteredRowModel().rows.length} results
-          </p>
-          <p>{summaryLabel}</p>
-        </div>
-      ) : null}
+      <div
+        className={`flex items-center gap-4 text-sm text-muted-foreground ${
+          summaryLabel ? "justify-between" : "justify-start"
+        }`}
+      >
+        <p className="tabular-nums">
+          {table.getFilteredRowModel().rows.length} results
+        </p>
+        {summaryLabel ? <p>{summaryLabel}</p> : null}
+      </div>
       <div className="overflow-hidden rounded-lg border">
         <Table>
           <TableHeader>
@@ -223,16 +225,7 @@ export function DataTable<TData>({
           </TableBody>
         </Table>
       </div>
-      <div
-        className={`flex items-center gap-4 text-sm text-muted-foreground ${
-          summaryLabel ? "justify-end" : "justify-between"
-        }`}
-      >
-        {summaryLabel ? null : (
-          <p className="tabular-nums">
-            {table.getFilteredRowModel().rows.length} results
-          </p>
-        )}
+      <div className="flex items-center justify-center gap-4 text-sm text-muted-foreground">
         <div className="flex items-center gap-2">
           <Button
             type="button"

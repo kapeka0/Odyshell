@@ -229,9 +229,15 @@ describe("dashboard navigation performance boundary", () => {
     expect(
       readFileSync(resolve(componentsRoot, "copyable-value.tsx"), "utf8"),
     ).toContain("whitespace-pre-wrap break-all");
-    expect(
-      readFileSync(resolve(componentsRoot, "app-shell.tsx"), "utf8"),
-    ).toContain('className="mx-0.5 h-4! w-px! self-center!"');
+    const appShell = readFileSync(
+      resolve(componentsRoot, "app-shell.tsx"),
+      "utf8",
+    );
+    expect(appShell).toContain(
+      '<AppSidebar variant="inset" className="border-r border-border" />',
+    );
+    expect(appShell).not.toContain("<Separator");
+    expect(appShell).not.toContain("{title}");
     expect(
       readFileSync(resolve(componentsRoot, "workspace-canvas.tsx"), "utf8"),
     ).toContain("animated: animateConnections");
@@ -275,17 +281,13 @@ describe("dashboard navigation performance boundary", () => {
         "utf8",
       ),
     ).not.toContain("Privacy-minimal");
-    const sidebarPrimitive = readFileSync(
-      resolve(componentsRoot, "ui/sidebar.tsx"),
-      "utf8",
-    );
-    const appShell = readFileSync(
+    const dashboardShell = readFileSync(
       resolve(componentsRoot, "app-shell.tsx"),
       "utf8",
     );
-    expect(appShell).toContain("border-b");
-    expect(sidebarPrimitive).toContain(
-      "border-border group-data-[collapsible=icon]",
+    expect(dashboardShell).toContain("border-b");
+    expect(dashboardShell).toContain(
+      'className="border-r border-border"',
     );
     const activityPage = readFileSync(
       resolve(
@@ -303,6 +305,9 @@ describe("dashboard navigation performance boundary", () => {
     expect(dataTable).toContain("summaryLabel");
     expect(dataTable).toContain(
       "{table.getFilteredRowModel().rows.length} results",
+    );
+    expect(dataTable).toContain(
+      'className="flex items-center justify-center gap-4 text-sm text-muted-foreground"',
     );
     for (const page of ["activity", "agents", "machines", "settings"]) {
       expect(

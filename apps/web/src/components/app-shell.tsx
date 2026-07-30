@@ -10,13 +10,10 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { Separator } from "@/components/ui/separator";
 
 export function AppShell({
-  title,
   children,
 }: {
-  title: string;
   children: React.ReactNode;
 }) {
   const { liveUpdatesDelayed } = useDashboard();
@@ -40,7 +37,7 @@ export function AppShell({
         </Alert>
       ) : null}
       <div className="flex min-h-0 flex-1">
-        <AppSidebar variant="inset" />
+        <AppSidebar variant="inset" className="border-r border-border" />
         <SidebarInset
           id="main-content"
           tabIndex={-1}
@@ -48,12 +45,6 @@ export function AppShell({
         >
           <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b bg-background/92 px-4 backdrop-blur-md md:px-6">
             <SidebarTrigger aria-label="Toggle workspace navigation" />
-            <Separator
-              orientation="vertical"
-              className="mx-0.5 h-4! w-px! self-center!"
-              aria-hidden="true"
-            />
-            <p className="truncate text-sm font-medium">{title}</p>
             <div className="ml-auto">
               <QuickActions />
             </div>

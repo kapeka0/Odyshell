@@ -130,8 +130,9 @@ particular component, library or interaction pattern.
   the next action.
 - Do not prefix dashboard page titles with an obvious context label such as
   Workspace.
-- Activity places the filtered result count above the table and shows the
-  workspace plan retention beside it.
+- Tables place the filtered result count above the table, show optional context
+  on the right and center pagination below. Activity uses that context for the
+  workspace plan retention.
 - The account menu cycles directly between System, Light and Dark before the
   Settings action. Theme changes do not need success toasts.
 - Browser icons follow the active system color scheme.
@@ -159,6 +160,8 @@ particular component, library or interaction pattern.
   compete with the view's primary creation action.
 - Collapsing workspace navigation preserves every icon, animates smoothly and
   does not introduce an unnecessary scrollbar.
+- The dashboard navbar keeps only the sidebar toggle on its left edge. The
+  sidebar retains a visible right border using the same token as the navbar.
 - Platform-wide degraded states use a compact warning bar above navigation,
   not a floating toast.
 - Personal settings and workspace settings have separate destinations.
