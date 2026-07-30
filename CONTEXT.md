@@ -7,7 +7,7 @@ glossary names the product concepts shared by the Cloud service, CLI, Server, an
 
 **Organization Member**:
 A person who can operate every workspace resource in their organization, including machines,
-Agent Access, and Control Events.
+Agents, Agent Credentials, and Control Events.
 _Avoid_: Read-only member, viewer
 
 **Organization Admin**:
@@ -22,27 +22,27 @@ _Avoid_: Project, environment, organization
 
 **Web Control Plane**:
 The human administration surface for an Odyshell Cloud Workspace. It manages machine enrollment,
-Agent Access, and Control Events.
+Agents, Agent Credentials, and Control Events.
 _Avoid_: Dashboard, web app, admin panel
 
-**Agent Access**:
-A temporary authorization bounded to a workspace, selected machines, allowed capabilities, and
-an expiry time. It can authorize repeated operations until it expires or is revoked, but it can
-never be permanent.
-_Avoid_: Agent token, permanent access, SSH access
-
 **Agent**:
-A programmatic client represented in the MVP by one temporary Agent Access. It is not yet a
-durable identity that can hold multiple authorizations.
-_Avoid_: Permanent agent account, service account
+A durable programmatic identity in a Workspace. It keeps its name, selected machines, and allowed
+capabilities until it is deleted.
+_Avoid_: Agent token, temporary access
+
+**Agent Credential**:
+A temporary secret issued for an Agent. It expires or can be revoked without deleting the Agent
+or changing its policy. Renewing it preserves the Agent configuration; editing the Agent changes
+that configuration.
+_Avoid_: Agent, permanent key, SSH credential
 
 **Active Connection**:
 The live relationship created while an Agent is using a temporary session or operation on a
-machine. A valid but idle Agent Access is not an Active Connection.
+machine. A valid but idle Agent Credential is not an Active Connection.
 _Avoid_: Agent permission, available access
 
 **Capability**:
-A named class of operation that must be explicitly included in Agent Access and allowed by the
+A named class of operation that must be explicitly included in an Agent policy and allowed by the
 target machine.
 _Avoid_: Implicit permission, unrestricted access
 
