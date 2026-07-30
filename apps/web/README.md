@@ -34,9 +34,9 @@ Open `http://localhost:3000`, create an organization, then connect the CLI:
 ods login --server http://localhost:4100
 ```
 
-The CLI opens `/activate` with a short-lived device code. Approval creates a workspace-bound CLI
-token. The dashboard can then issue single-use machine enrollment commands and scoped Agent
-Access credentials.
+The CLI opens `/activate?code=...` with its short-lived device code already filled in. Approval
+creates a workspace-bound CLI token. The dashboard can then issue single-use machine enrollment
+commands and scoped Agent Access credentials.
 
 Agent Access always targets explicit machines and capabilities, expires after at most one year,
 and is shown once. Control Events never include command text, arguments, paths, file contents,

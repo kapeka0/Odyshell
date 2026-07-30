@@ -1,130 +1,86 @@
-import { auth } from "@clerk/nextjs/server";
 import { ActivityIcon, CircleDotIcon, CpuIcon, KeyRoundIcon } from "lucide-react";
-import { redirect } from "next/navigation";
-import { AgentAccessManager } from "@/components/agent-access-manager";
-import { AppShell } from "@/components/app-shell";
-import { ControlEventList } from "@/components/control-event-list";
-import { EnrollMachine } from "@/components/enroll-machine";
-import { MachineList } from "@/components/machine-list";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import Link from "next/link";
+import {
+  DashboardPage as DashboardPageFrame,
+  DashboardPageHeader,
+  DashboardStateNotice,
+} from "@/components/dashboard-state";
 import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
 import {
   Card,
+  CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { currentCloudIdentity } from "@/lib/clerk-identity";
-import {
-  CloudApiError,
-  cloudRequest,
-  publicServerUrl,
-  type CloudContext,
-} from "@/lib/cloud-api";
+import { cn } from "@/lib/utils";
+import { dashboardState } from "@/lib/dashboard-context";
 
-export default async function DashboardPage() {
-  const { userId } = await auth();
-  if (!userId) redirect("/sign-in?redirect_url=%2Fdashboard");
-  const identity = await currentCloudIdentity();
-  let context: CloudContext | null = null;
-  let error: string | null = null;
-  if (identity) {
-    try {
-      context = await cloudRequest<CloudContext>("/v1/internal/cloud/context", identity);
-    } catch (reason) {
-      error =
-        reason instanceof CloudApiError
-          ? reason.code
-          : "Odyshell server is unavailable";
-    }
-  }
+export default async function OverviewPage() {
+  const state = await dashboardState();
 
   return (
-    <AppShell title={context?.organization.name ?? "Workspace"}>
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-10 px-4 py-8 md:px-8 md:py-10">
-        <section
-          id="overview"
-          className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between"
-        >
-          <div>
-            <p className="text-sm text-muted-foreground">Workspace overview</p>
-            <h1 className="mt-1 text-3xl font-semibold tracking-tight">
-              {context?.organization.name ?? "Your workspace"}
-            </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-              Connect machines and grant agents only the access they need.
-            </p>
-          </div>
-          {context ? <Badge variant="outline">{context.organization.plan} plan</Badge> : null}
-        </section>
+    <DashboardPageFrame>
+      <DashboardPageHeader
+        eyebrow="Workspace overview"
+        title={state.status === "ready" ? state.context.organization.name : "Your workspace"}
+        description="See connected capacity at a glance, then go directly to the task you need."
+        action={
+          state.status === "ready" ? (
+            <Badge variant="outline">{state.context.organization.plan} plan</Badge>
+          ) : undefined
+        }
+      />
 
-        {!identity ? (
-          <Alert>
-            <KeyRoundIcon />
-            <AlertTitle>Select an organization</AlertTitle>
-            <AlertDescription>
-              Choose or create an organization above to create your Odyshell workspace.
-            </AlertDescription>
-          </Alert>
-        ) : error ? (
-          <Alert variant="destructive">
-            <AlertTitle>Control plane unavailable</AlertTitle>
-            <AlertDescription>
-              {error}. Check the web-to-server configuration and try again.
-            </AlertDescription>
-          </Alert>
-        ) : context ? (
-          <>
-            <section className="grid gap-3 sm:grid-cols-3" aria-label="Workspace usage">
-              <Metric
-                icon={<CpuIcon />}
-                label="Machines"
-                value={`${context.usage.machines} / ${context.plan.machineLimit}`}
-              />
-              <Metric
-                icon={<CircleDotIcon />}
-                label="Online now"
-                value={String(context.machines.filter((machine) => machine.online).length)}
-              />
-              <Metric
-                icon={<ActivityIcon />}
-                label="Agent access"
-                value={`${context.usage.activeAgents} / ${context.plan.activeAgentLimit}`}
-              />
-            </section>
+      {state.status !== "ready" ? (
+        <DashboardStateNotice state={state} />
+      ) : (
+        <>
+          <section className="grid gap-3 sm:grid-cols-3" aria-label="Workspace usage">
+            <Metric
+              icon={<CpuIcon />}
+              label="Machines"
+              value={`${state.context.usage.machines} / ${state.context.plan.machineLimit}`}
+            />
+            <Metric
+              icon={<CircleDotIcon />}
+              label="Online now"
+              value={String(
+                state.context.machines.filter((machine) => machine.online).length,
+              )}
+            />
+            <Metric
+              icon={<ActivityIcon />}
+              label="Agent access"
+              value={`${state.context.usage.activeAgents} / ${state.context.plan.activeAgentLimit}`}
+            />
+          </section>
 
-            <section
-              id="machines"
-              className="grid gap-6 lg:grid-cols-[minmax(0,1.3fr)_minmax(20rem,0.7fr)]"
-            >
-              <MachineList machines={context.machines} />
-              <EnrollMachine
-                serverUrl={publicServerUrl()}
-                atLimit={context.usage.machines >= context.plan.machineLimit}
-              />
-            </section>
-
-            <section id="agent-access">
-              <AgentAccessManager
-                machines={context.machines}
-                accesses={context.agentAccess ?? []}
-                atLimit={
-                  context.usage.activeAgents >= context.plan.activeAgentLimit
-                }
-              />
-            </section>
-
-            <section id="control-events">
-              <ControlEventList
-                events={context.controlEvents ?? []}
-                machines={context.machines}
-                accesses={context.agentAccess ?? []}
-              />
-            </section>
-          </>
-        ) : null}
-      </div>
-    </AppShell>
+          <section className="grid gap-4 md:grid-cols-3" aria-label="Workspace tasks">
+            <TaskCard
+              icon={<CpuIcon />}
+              title="Machines"
+              description="Connect, inspect and remove machines."
+              href="/dashboard/machines"
+            />
+            <TaskCard
+              icon={<KeyRoundIcon />}
+              title="Agent access"
+              description="Issue scoped access that expires automatically."
+              href="/dashboard/access"
+            />
+            <TaskCard
+              icon={<ActivityIcon />}
+              title="Activity"
+              description="Review control events without recording secrets."
+              href="/dashboard/activity"
+            />
+          </section>
+        </>
+      )}
+    </DashboardPageFrame>
   );
 }
 
@@ -146,6 +102,37 @@ function Metric({
         </CardDescription>
         <CardTitle className="mt-2 text-2xl">{value}</CardTitle>
       </CardHeader>
+    </Card>
+  );
+}
+
+function TaskCard({
+  icon,
+  title,
+  description,
+  href,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  href: string;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <span aria-hidden="true" className="text-muted-foreground">{icon}</span>
+        <CardTitle className="mt-5">{title}</CardTitle>
+        <CardDescription>{description}</CardDescription>
+      </CardHeader>
+      <CardContent />
+      <CardFooter>
+        <Link
+          href={href}
+          className={cn(buttonVariants({ variant: "outline", size: "sm" }), "whitespace-nowrap")}
+        >
+          Open
+        </Link>
+      </CardFooter>
     </Card>
   );
 }

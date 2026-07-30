@@ -1,5 +1,4 @@
 import { Brand } from "@/components/brand";
-import { ThemeToggle } from "@/components/theme-toggle";
 import {
   Card,
   CardContent,
@@ -22,9 +21,8 @@ export function AuthShell({
       <a className="skip-link" href="#main-content">
         Skip to content
       </a>
-      <header className="flex h-16 items-center justify-between border-b px-4 md:px-8">
+      <header className="flex h-16 items-center border-b px-4 md:px-8">
         <Brand />
-        <ThemeToggle />
       </header>
       <div
         id="main-content"

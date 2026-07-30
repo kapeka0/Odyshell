@@ -32,5 +32,21 @@
       "density": "operational",
       "motion": "entrance and route pulse"
     }
+  },
+  {
+    "date": "2026-07-30",
+    "scope": "apps/web landing and cloud navigation",
+    "genre": "modern-minimal",
+    "macrostructure": "Split statement and live route demonstration",
+    "theme": "Vercel neutral with public-reference rhythm",
+    "navigation": "N9 contained minimal + authenticated N13 command palette",
+    "footer": "Ft5 statement",
+    "signature": "large left statement paired with a stateful agent-to-machine route",
+    "variationKnobs": {
+      "hero": "split fold instead of centered specimen",
+      "accent": "connection status only",
+      "density": "large whitespace with thin operational rows",
+      "motion": "pausable three-state operation explanation"
+    }
   }
 ]

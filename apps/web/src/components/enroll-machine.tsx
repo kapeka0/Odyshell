@@ -26,6 +26,8 @@ import {
   FieldTitle,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
+import { toast } from "@/components/ui/toast";
 import {
   capabilityGroups,
   readOnlyCapabilities,
@@ -85,6 +87,11 @@ export function EnrollMachine({
     setNameError(null);
     setCapabilitiesError(null);
     setEnrollment(null);
+    const progressToast = toast.add({
+      title: "Creating enrollment",
+      description: "Issuing a one-time machine token.",
+      type: "loading",
+    });
     try {
       const response = await fetch("/api/enrollment-token", {
         method: "POST",
@@ -95,7 +102,19 @@ export function EnrollMachine({
         throw new Error(body.error ?? "Could not create enrollment token");
       }
       setEnrollment(body);
+      toast.close(progressToast);
+      toast.add({
+        title: "Enrollment command ready",
+        description: "The one-time token expires in ten minutes.",
+        type: "success",
+      });
     } catch (reason) {
+      toast.close(progressToast);
+      toast.add({
+        title: "Enrollment was not created",
+        description: "No machine token was issued.",
+        type: "error",
+      });
       setError(reason instanceof Error ? reason.message : "Could not create enrollment token");
     } finally {
       setPending(false);
@@ -105,6 +124,11 @@ export function EnrollMachine({
   async function copyCommand() {
     await navigator.clipboard.writeText(command);
     setCopied(true);
+    toast.add({
+      title: "Command copied",
+      description: "Run it on the machine you want to connect.",
+      type: "success",
+    });
     window.setTimeout(() => setCopied(false), 1800);
   }
 
@@ -204,7 +228,7 @@ export function EnrollMachine({
             disabled={pending || atLimit}
           >
             <PlusIcon data-icon="inline-start" />
-            {pending ? "Creating…" : atLimit ? "Machine limit reached" : "Generate command"}
+            {pending ? <><Spinner />Creating…</> : atLimit ? "Machine limit reached" : "Generate command"}
           </Button>
         ) : (
           <div className="flex flex-col gap-3">

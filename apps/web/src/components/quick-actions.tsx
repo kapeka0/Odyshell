@@ -4,6 +4,7 @@ import { BookOpenIcon, CommandIcon, LayoutDashboardIcon, SearchIcon, TerminalIco
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
+  Command,
   CommandDialog,
   CommandEmpty,
   CommandGroup,
@@ -16,7 +17,10 @@ import { Button } from "@/components/ui/button";
 
 const actions = [
   { label: "Open dashboard", href: "/dashboard", shortcut: "D", icon: LayoutDashboardIcon },
-  { label: "Authorize CLI", href: "/activate", shortcut: "A", icon: TerminalIcon },
+  { label: "View machines", href: "/dashboard/machines", shortcut: "M", icon: TerminalIcon },
+  { label: "Manage agent access", href: "/dashboard/access", shortcut: "A", icon: CommandIcon },
+  { label: "Review activity", href: "/dashboard/activity", shortcut: "R", icon: SearchIcon },
+  { label: "Authorize CLI", href: "/activate", shortcut: "C", icon: TerminalIcon },
   { label: "Read the architecture", href: "/#how-it-works", shortcut: "H", icon: BookOpenIcon },
 ] as const;
 
@@ -71,19 +75,21 @@ export function QuickActions() {
         title="Quick actions"
         description="Open an Odyshell destination"
       >
-        <CommandInput placeholder="Search destinations…" />
-        <CommandList>
-          <CommandEmpty>No destination matches that search.</CommandEmpty>
-          <CommandGroup heading="Odyshell">
-            {actions.map((action) => (
-              <CommandItem key={action.href} onSelect={() => navigate(action.href)}>
-                <action.icon aria-hidden="true" />
-                <span>{action.label}</span>
-                <CommandShortcut>⌘{action.shortcut}</CommandShortcut>
-              </CommandItem>
-            ))}
-          </CommandGroup>
-        </CommandList>
+        <Command>
+          <CommandInput placeholder="Search destinations…" />
+          <CommandList>
+            <CommandEmpty>No destination matches that search.</CommandEmpty>
+            <CommandGroup heading="Odyshell">
+              {actions.map((action) => (
+                <CommandItem key={action.href} onSelect={() => navigate(action.href)}>
+                  <action.icon aria-hidden="true" />
+                  <span>{action.label}</span>
+                  <CommandShortcut>⌘{action.shortcut}</CommandShortcut>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
       </CommandDialog>
     </>
   );

@@ -1,4 +1,9 @@
-import { ArrowRightIcon, CheckIcon, LockKeyholeIcon } from "lucide-react";
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
+import {
+  ArrowRightIcon,
+  CheckIcon,
+  LockKeyholeIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { ConnectionRoute } from "@/components/connection-route";
 import { ProductPreview } from "@/components/product-preview";
@@ -6,32 +11,13 @@ import { Reveal } from "@/components/reveal";
 import { SiteHeader } from "@/components/site-header";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 
 const boundaries = [
-  ["Connectivity", "Outbound from the machine", "No inbound ports"],
-  ["Identity", "Machine key + workspace token", "No SSH credentials"],
-  ["Authority", "Capabilities and machine scopes", "Default deny"],
-  ["Time", "Expiring agent sessions", "Access ends automatically"],
-  ["Evidence", "Operation metadata and results", "No secret recording"],
+  ["Connection", "The machine connects outbound. No inbound port is opened."],
+  ["Identity", "Clients and agents receive separate, revocable identities."],
+  ["Authority", "The server and local Client both enforce capability limits."],
+  ["Privacy", "Audit events describe control actions without recording secrets."],
 ] as const;
 
 export default function HomePage() {
@@ -39,180 +25,182 @@ export default function HomePage() {
     <>
       <SiteHeader />
       <main id="main-content" tabIndex={-1}>
-        <section className="page-shell flex flex-col items-center gap-10 pt-14 pb-24 text-center md:pt-16 md:pb-28">
-          <Reveal className="flex min-w-0 max-w-4xl flex-col items-stretch gap-7">
-            <Badge variant="outline" className="self-start">
-              Open infrastructure for AI agents
+        <section className="page-shell grid min-h-[calc(100svh-5rem)] gap-8 py-8 lg:grid-cols-[0.92fr_1.08fr] lg:items-stretch lg:py-10">
+          <Reveal className="flex min-w-0 flex-col justify-center py-10 lg:py-16">
+            <Badge variant="outline" className="mb-8 w-fit">
+              Infrastructure for AI agents
             </Badge>
-            <div className="flex flex-col items-center gap-5">
-              <h1 className="display-balance max-w-[12ch] text-[clamp(3.25rem,8vw,5.5rem)] leading-[0.96] font-semibold tracking-[-0.055em]">
-                Private machines. Agent-ready.
-              </h1>
-              <p className="body-pretty max-w-[60ch] text-lg leading-8 text-muted-foreground md:text-xl">
-                Give AI agents scoped, temporary access to real machines without SSH credentials, inbound ports or a VPN.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-3 self-end">
-              <Link className={cn(buttonVariants({ size: "lg" }), "whitespace-nowrap")} href="/sign-up">
-                Start free
+            <h1 className="display-balance max-w-[10ch] text-[clamp(3.4rem,7vw,6.8rem)] leading-[0.9] font-semibold tracking-[-0.065em]">
+              Private machines, ready for agents.
+            </h1>
+            <p className="body-pretty mt-8 max-w-[38rem] text-lg leading-8 text-muted-foreground md:text-xl">
+              Let an AI agent use a real machine without giving it SSH credentials,
+              network access or a permanent key.
+            </p>
+            <div className="mt-9 flex flex-wrap gap-3">
+              <Link
+                className={cn(buttonVariants({ size: "lg" }), "whitespace-nowrap")}
+                href="/sign-up"
+              >
+                Create a workspace
                 <ArrowRightIcon data-icon="inline-end" />
               </Link>
-              <Link className={cn(buttonVariants({ variant: "outline", size: "lg" }), "whitespace-nowrap")} href="/#how-it-works">
-                See the flow
+              <Link
+                className={cn(
+                  buttonVariants({ variant: "outline", size: "lg" }),
+                  "whitespace-nowrap",
+                )}
+                href="/#how-it-works"
+              >
+                See how it works
               </Link>
             </div>
-            <p className="self-center font-mono text-xs text-muted-foreground">
-              Linux · macOS · Windows · outbound connections only
+            <p className="mt-6 font-mono text-xs text-muted-foreground">
+              Linux · macOS · Windows · outbound only
             </p>
           </Reveal>
-          <Reveal delay={0.08} className="w-full min-w-0 max-w-6xl text-left">
+
+          <Reveal delay={0.08} className="min-h-[34rem] min-w-0">
             <ProductPreview />
           </Reveal>
         </section>
 
-        <section className="page-shell pb-20 md:pb-28">
-          <ConnectionRoute />
+        <section className="page-shell pb-8 md:pb-16">
+          <Reveal className="overflow-hidden rounded-[2.5rem] bg-[var(--color-graphite)] text-[var(--color-graphite-ink)]">
+            <div className="grid gap-12 px-6 py-14 md:px-10 md:py-20 lg:grid-cols-[0.78fr_1.22fr] lg:items-center lg:px-16">
+              <div>
+                <p className="font-mono text-xs text-white/55">ONE SAFE ROUTE</p>
+                <h2 className="display-balance mt-5 max-w-[12ch] text-4xl leading-[1.02] font-semibold tracking-[-0.045em] md:text-6xl">
+                  Give agents access. Keep the network private.
+                </h2>
+                <p className="mt-6 max-w-md leading-7 text-white/62">
+                  Odyshell sits between the agent and the machine. It verifies identity,
+                  scope and time before forwarding a structured operation.
+                </p>
+              </div>
+              <ConnectionRoute />
+            </div>
+          </Reveal>
         </section>
 
-        <section id="how-it-works" className="border-y bg-muted/35">
-          <div className="page-shell grid gap-14 py-24 lg:grid-cols-[0.7fr_1.3fr]">
-            <div className="max-w-md">
-              <h2 className="display-balance text-4xl leading-tight font-semibold tracking-tight">
-                One route. Explicit authority.
-              </h2>
-              <p className="mt-5 leading-7 text-muted-foreground">
-                The web owns people and access. The CLI requests approval. The client on each machine maintains the outbound connection.
-              </p>
-            </div>
-            <ol className="border-t">
-              {[
-                ["Run ods login", "The CLI creates a short-lived device code and opens the Odyshell web app."],
-                ["Approve in the browser", "Clerk confirms the user and organization. Odyshell binds the CLI to that workspace."],
-                ["Connect a machine", "A one-time enrollment token gives the local client an identity. It connects outbound and waits."],
-              ].map(([title, description], index) => (
-                <li key={title} className="flex flex-col gap-3 border-b py-7">
-                  <span className="font-mono text-sm text-muted-foreground">
-                    {String(index + 1).padStart(2, "0")}
-                  </span>
-                  <div>
-                    <h3 className="text-xl font-semibold">{title}</h3>
-                    <p className="mt-2 max-w-[60ch] leading-7 text-muted-foreground">
-                      {description}
-                    </p>
+        <section id="how-it-works" className="page-shell grid gap-12 py-20 md:py-28 lg:grid-cols-[0.72fr_1.28fr]">
+          <div>
+            <p className="font-mono text-xs text-muted-foreground">HOW IT WORKS</p>
+            <h2 className="display-balance mt-5 max-w-[12ch] text-4xl leading-[1.05] font-semibold tracking-[-0.04em] md:text-5xl">
+              Three steps from private to agent-ready.
+            </h2>
+          </div>
+          <ol className="border-t">
+            {[
+              ["01", "Connect the machine", "Run ods up once. The lightweight Client keeps an authenticated outbound connection open."],
+              ["02", "Grant temporary access", "Choose the machine, allowed operations and expiry for one agent credential."],
+              ["03", "Let the agent work", "The SDK or MCP sends structured operations. Odyshell checks and records each control decision."],
+            ].map(([number, title, description]) => (
+              <li
+                key={number}
+                className="grid gap-3 border-b py-7 sm:grid-cols-[3rem_minmax(0,1fr)]"
+              >
+                <span className="font-mono text-xs text-muted-foreground">{number}</span>
+                <div>
+                  <h3 className="text-xl font-semibold">{title}</h3>
+                  <p className="mt-2 max-w-2xl leading-7 text-muted-foreground">
+                    {description}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </section>
+
+        <section className="border-y bg-muted/35">
+          <div className="page-shell py-20 md:py-28">
+            <div className="grid gap-10 lg:grid-cols-[0.7fr_1.3fr]">
+              <div>
+                <LockKeyholeIcon aria-hidden="true" className="text-muted-foreground" />
+                <h2 className="display-balance mt-6 max-w-[12ch] text-4xl leading-[1.05] font-semibold tracking-[-0.04em] md:text-5xl">
+                  Safety outside the model.
+                </h2>
+                <p className="mt-5 max-w-md leading-7 text-muted-foreground">
+                  Prompts can request an action. Odyshell decides whether it may run.
+                </p>
+              </div>
+              <div className="border-t">
+                {boundaries.map(([title, description]) => (
+                  <div
+                    key={title}
+                    className="grid gap-2 border-b py-5 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-6"
+                  >
+                    <p className="font-medium">{title}</p>
+                    <p className="leading-6 text-muted-foreground">{description}</p>
                   </div>
-                </li>
-              ))}
-            </ol>
+                ))}
+              </div>
+            </div>
           </div>
         </section>
 
-        <section id="security" className="page-shell grid gap-12 py-24 lg:grid-cols-[0.75fr_1.25fr]">
+        <section id="plans" className="page-shell grid gap-12 py-20 md:py-28 lg:grid-cols-[0.72fr_1.28fr]">
           <div>
-            <div className="flex gap-3">
-              <LockKeyholeIcon aria-hidden="true" className="text-muted-foreground" />
-              <h2 className="display-balance text-4xl leading-tight font-semibold tracking-tight">
-                Control lives outside the model.
-              </h2>
-            </div>
-            <p className="mt-5 max-w-[48ch] leading-7 text-muted-foreground">
-              Prompts can ask. Odyshell decides. Machine identity, capability checks, expiry and path boundaries are enforced before an operation reaches the client.
+            <p className="font-mono text-xs text-muted-foreground">START SMALL</p>
+            <h2 className="display-balance mt-5 max-w-[11ch] text-4xl leading-[1.05] font-semibold tracking-[-0.04em] md:text-5xl">
+              Prove the route for free.
+            </h2>
+            <p className="mt-5 max-w-md leading-7 text-muted-foreground">
+              The MVP includes the complete operation model. Plans limit capacity, not
+              security.
             </p>
           </div>
-          <div className="overflow-hidden rounded-lg border bg-card">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Boundary</TableHead>
-                  <TableHead>Odyshell uses</TableHead>
-                  <TableHead className="hidden md:table-cell">Agent never receives</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {boundaries.map(([boundary, control, excluded]) => (
-                  <TableRow key={boundary}>
-                    <TableCell className="font-heading font-medium">{boundary}</TableCell>
-                    <TableCell>{control}</TableCell>
-                    <TableCell className="hidden text-muted-foreground md:table-cell">{excluded}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </section>
-
-        <Separator />
-
-        <section id="plans" className="page-shell py-24">
-          <div className="grid gap-12 lg:grid-cols-[0.7fr_1.3fr]">
-            <div>
-              <h2 className="display-balance text-4xl leading-tight font-semibold tracking-tight">Start with the useful limit.</h2>
-              <p className="mt-5 max-w-[45ch] leading-7 text-muted-foreground">
-                Plans limit managed capacity. They never weaken execution policy or shorten the audit trail to create an upgrade.
-              </p>
+          <div className="rounded-2xl border bg-card p-6 md:p-8">
+            <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="text-2xl font-semibold">Free</p>
+                <p className="mt-2 text-muted-foreground">For testing the complete workflow.</p>
+              </div>
+              <p className="text-4xl font-semibold tracking-tight">$0</p>
             </div>
-            <div className="grid gap-5 md:grid-cols-[0.9fr_1.1fr]">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Free</CardTitle>
-                  <CardDescription>For one person proving the workflow.</CardDescription>
-                  <CardAction><Badge>$0</Badge></CardAction>
-                </CardHeader>
-                <CardContent>
-                  <PlanList items={["2 machines", "1 workspace", "3 active agent tokens", "All operation capabilities"]} />
-                </CardContent>
-                <CardFooter>
-                  <Link className={cn(buttonVariants({ size: "lg" }), "w-full whitespace-nowrap")} href="/sign-up">
-                    Create workspace
-                  </Link>
-                </CardFooter>
-              </Card>
-              <Card className="ring-foreground/20">
-                <CardHeader>
-                  <CardTitle>Team</CardTitle>
-                  <CardDescription>Shared administration and more connected machines.</CardDescription>
-                  <CardAction><Badge variant="outline">Soon</Badge></CardAction>
-                </CardHeader>
-                <CardContent>
-                  <PlanList items={["10 machines", "3 workspaces", "25 active agent tokens", "Team roles and shared audit"]} />
-                </CardContent>
-                <CardFooter>
-                  <span className="text-sm text-muted-foreground">Billing will be enabled after the MVP validates usage.</span>
-                </CardFooter>
-              </Card>
-            </div>
+            <ul className="mt-8 grid gap-3 border-t pt-6 sm:grid-cols-2">
+              {["2 machines", "1 workspace", "3 active agent credentials", "All operation capabilities"].map((item) => (
+                <li key={item} className="flex items-center gap-3 text-sm">
+                  <CheckIcon aria-hidden="true" className="text-[var(--color-success)]" />
+                  {item}
+                </li>
+              ))}
+            </ul>
+            <Link
+              className={cn(buttonVariants({ size: "lg" }), "mt-8 w-full whitespace-nowrap sm:w-auto")}
+              href="/sign-up"
+            >
+              Create a workspace
+            </Link>
           </div>
         </section>
       </main>
 
-      <footer className="border-t">
-        <div className="page-shell py-16">
-          <p className="display-balance max-w-[26ch] font-heading text-3xl leading-tight font-semibold tracking-tight">
-            Agent access without network access.
+      <footer className="page-shell pb-8">
+        <div className="rounded-2xl border px-6 py-8 md:px-8">
+          <p className="display-balance max-w-[24ch] text-3xl leading-tight font-semibold tracking-[-0.03em]">
+            A safer route from agents to real machines.
           </p>
           <div className="mt-12 flex flex-col gap-4 border-t pt-5 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-            <span className="font-heading font-semibold text-foreground">Odyshell</span>
+            <span className="font-semibold text-foreground">Odyshell</span>
             <div className="flex flex-wrap gap-5">
-              <Link className="whitespace-nowrap hover:text-foreground" href="/#how-it-works">How it works</Link>
-              <Link className="whitespace-nowrap hover:text-foreground" href="/dashboard">Dashboard</Link>
-              <a className="whitespace-nowrap hover:text-foreground" href="https://github.com/kapeka0/odyshell">GitHub</a>
+              <Link className="whitespace-nowrap hover:text-foreground" href="/#how-it-works">
+                How it works
+              </Link>
+              <Link className="whitespace-nowrap hover:text-foreground" href="/dashboard">
+                Dashboard
+              </Link>
+              <a
+                className="whitespace-nowrap hover:text-foreground"
+                href="https://github.com/kapeka0/odyshell"
+              >
+                GitHub
+              </a>
             </div>
             <span>© 2026 Odyshell</span>
           </div>
         </div>
       </footer>
     </>
-  );
-}
-
-function PlanList({ items }: { items: readonly string[] }) {
-  return (
-    <ul className="flex flex-col gap-3">
-      {items.map((item) => (
-        <li key={item} className="flex items-center gap-3 text-sm">
-          <CheckIcon aria-hidden="true" className="text-[var(--color-success)]" />
-          <span>{item}</span>
-        </li>
-      ))}
-    </ul>
   );
 }

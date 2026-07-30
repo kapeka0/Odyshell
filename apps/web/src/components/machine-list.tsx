@@ -40,6 +40,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { CloudMachine } from "@/lib/cloud-api";
+import { Spinner } from "@/components/ui/spinner";
+import { toast } from "@/components/ui/toast";
 
 export function MachineList({ machines }: { machines: CloudMachine[] }) {
   const online = machines.filter((machine) => machine.online).length;
@@ -103,6 +105,11 @@ function MachineRow({ machine }: { machine: CloudMachine }) {
   async function removeMachine() {
     setPending(true);
     setError(null);
+    const progressToast = toast.add({
+      title: "Removing machine",
+      description: `Disconnecting ${machine.name}.`,
+      type: "loading",
+    });
     try {
       const response = await fetch(`/api/machines/${machine.id}`, {
         method: "DELETE",
@@ -114,8 +121,20 @@ function MachineRow({ machine }: { machine: CloudMachine }) {
         throw new Error(body.error ?? "Could not remove machine");
       }
       setOpen(false);
+      toast.close(progressToast);
+      toast.add({
+        title: "Machine removed",
+        description: `${machine.name} can no longer receive operations.`,
+        type: "success",
+      });
       router.refresh();
     } catch (reason) {
+      toast.close(progressToast);
+      toast.add({
+        title: "Machine was not removed",
+        description: `${machine.name} remains enrolled.`,
+        type: "error",
+      });
       setError(
         reason instanceof Error ? reason.message : "Could not remove machine",
       );
@@ -180,7 +199,7 @@ function MachineRow({ machine }: { machine: CloudMachine }) {
                 onClick={removeMachine}
                 disabled={pending}
               >
-                {pending ? "Removing…" : "Remove machine"}
+                {pending ? <><Spinner />Removing…</> : "Remove machine"}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

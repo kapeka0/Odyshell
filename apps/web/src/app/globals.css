@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 · genre: modern-minimal · tone: precise-neutral · anchor: ink · macrostructure: product-led landing + app workbench · theme: Vercel neutral · nav: N9 edge-aligned minimal · footer: Ft5 statement · enrichment: product UI only · contrast: pass (40–41) · slop: pass (42–45) · honest: pass (46) · chrome: pass (47) · tokens: pass (48) · responsive: pass (49) · mobile: pass (34, 49, 50–57) · icons: pass (30) · design-system: design.md · designed-as-app */
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 · genre: modern-minimal · tone: precise-neutral · anchor: ink · macrostructure: split statement + live route + app workbench · theme: Vercel neutral · nav: N9 contained minimal · footer: Ft5 statement · enrichment: product UI only · contrast: pass (40–41) · slop: pass (42–45) · honest: pass (46) · chrome: pass (47) · tokens: pass (48) · responsive: pass (49) · mobile: pass (34, 49, 50–57) · icons: pass (30) · design-system: design.md · designed-as-app */
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";

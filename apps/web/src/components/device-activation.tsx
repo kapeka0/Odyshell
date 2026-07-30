@@ -19,6 +19,8 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
+import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 
 const codeSchema = z
@@ -42,6 +44,11 @@ export function DeviceActivation({ initialCode = "" }: { initialCode?: string })
     }
     setPending(true);
     setError(null);
+    const progressToast = toast.add({
+      title: "Approving CLI",
+      description: "Binding this device code to the active workspace.",
+      type: "loading",
+    });
     try {
       const response = await fetch("/api/device/approve", {
         method: "POST",
@@ -53,7 +60,19 @@ export function DeviceActivation({ initialCode = "" }: { initialCode?: string })
         throw new Error(deviceErrorMessage(body.error));
       }
       setApproved(true);
+      toast.close(progressToast);
+      toast.add({
+        title: "CLI approved",
+        description: "The terminal can now finish signing in to this workspace.",
+        type: "success",
+      });
     } catch (reason) {
+      toast.close(progressToast);
+      toast.add({
+        title: "CLI approval failed",
+        description: "No CLI credential was issued.",
+        type: "error",
+      });
       setError(reason instanceof Error ? reason.message : "Could not approve this CLI");
     } finally {
       setPending(false);
@@ -106,7 +125,7 @@ export function DeviceActivation({ initialCode = "" }: { initialCode?: string })
               </Field>
               <Button className="w-full" size="lg" disabled={pending}>
                 <KeyRoundIcon data-icon="inline-start" />
-                {pending ? "Approving…" : "Approve CLI"}
+                {pending ? <><Spinner />Approving…</> : "Approve CLI"}
               </Button>
               {error ? (
                 <Alert variant="destructive">

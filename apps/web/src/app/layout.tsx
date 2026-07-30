@@ -58,6 +58,17 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           appearance={{
             theme: shadcn,
             cssLayerName: "clerk",
+            variables: {
+              colorBackground: "var(--background)",
+              colorForeground: "var(--foreground)",
+              colorMutedForeground: "var(--muted-foreground)",
+              colorPrimary: "var(--primary)",
+              colorInput: "var(--input)",
+              colorBorder: "var(--border)",
+              colorDanger: "var(--destructive)",
+              borderRadius: "var(--radius)",
+              fontFamily: "var(--font-body-family)",
+            },
             options: {
               elevation: "flush",
               logoImageUrl: "https://odyshell.com/brand/odyshell-square-light.svg",

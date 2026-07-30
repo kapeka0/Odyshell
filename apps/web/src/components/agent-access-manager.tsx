@@ -55,6 +55,8 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { Spinner } from "@/components/ui/spinner";
+import { toast } from "@/components/ui/toast";
 import {
   ToggleGroup,
   ToggleGroupItem,
@@ -137,6 +139,11 @@ export function AgentAccessManager({
     setPending(true);
     setError(null);
     setValidation({});
+    const progressToast = toast.add({
+      title: "Creating agent access",
+      description: "Applying machine, capability and expiry boundaries.",
+      type: "loading",
+    });
     try {
       const response = await fetch("/api/agent-access", {
         method: "POST",
@@ -154,8 +161,20 @@ export function AgentAccessManager({
       setMachineIds([]);
       setCapabilities([]);
       setExpiresInSeconds(agentAccessDurations[0].value);
+      toast.close(progressToast);
+      toast.add({
+        title: "Agent access created",
+        description: "Copy the credential now. It will not be shown again.",
+        type: "success",
+      });
       router.refresh();
     } catch (reason) {
+      toast.close(progressToast);
+      toast.add({
+        title: "Agent access was not created",
+        description: "Review the form or try again.",
+        type: "error",
+      });
       setError(
         reason instanceof Error
           ? reason.message
@@ -170,6 +189,11 @@ export function AgentAccessManager({
     if (!issued) return;
     await navigator.clipboard.writeText(issued.token);
     setCopied(true);
+    toast.add({
+      title: "Credential copied",
+      description: "The secret was copied without being added to the activity log.",
+      type: "success",
+    });
     window.setTimeout(() => setCopied(false), 1800);
   }
 
@@ -423,7 +447,7 @@ export function AgentAccessManager({
               >
                 <ShieldCheckIcon aria-hidden="true" data-icon="inline-start" />
                 {pending
-                  ? "Creating…"
+                  ? <><Spinner />Creating…</>
                   : atLimit
                     ? "Access limit reached"
                     : "Create Agent Access"}
@@ -494,6 +518,11 @@ function AccessRow({
   async function revokeAccess() {
     setPending(true);
     setError(null);
+    const progressToast = toast.add({
+      title: "Revoking agent access",
+      description: `Closing access for ${access.name}.`,
+      type: "loading",
+    });
     try {
       const response = await fetch(`/api/agent-access/${access.id}`, {
         method: "DELETE",
@@ -505,8 +534,20 @@ function AccessRow({
         throw new Error(body.error ?? "Could not revoke Agent Access");
       }
       setOpen(false);
+      toast.close(progressToast);
+      toast.add({
+        title: "Agent access revoked",
+        description: `${access.name} can no longer create sessions.`,
+        type: "success",
+      });
       router.refresh();
     } catch (reason) {
+      toast.close(progressToast);
+      toast.add({
+        title: "Agent access was not revoked",
+        description: "The existing credential remains unchanged.",
+        type: "error",
+      });
       setError(
         reason instanceof Error
           ? reason.message
@@ -566,7 +607,7 @@ function AccessRow({
                 onClick={revokeAccess}
                 disabled={pending}
               >
-                {pending ? "Revoking…" : "Revoke access"}
+                {pending ? <><Spinner />Revoking…</> : "Revoke access"}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
