@@ -172,46 +172,41 @@ export function ControlEventList({
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex justify-end">
-        <Badge variant="outline">Privacy-minimal</Badge>
-      </div>
-      <DataTable
-        columns={columns}
-        data={rows}
-        searchColumn="search"
-        searchPlaceholder="Search activity…"
-        filters={[
-          {
-            columnId: "result",
-            label: "Results",
-            options: [
-              { label: "Recorded", value: "recorded" },
-              { label: "Denied", value: "denied" },
-            ],
-          },
-          {
-            columnId: "type",
-            label: "Types",
-            options: [...new Set(rows.map((row) => row.type))].map((type) => ({
-              label: type,
-              value: type,
-            })),
-          },
-          {
-            columnId: "createdAt",
-            label: "Dates",
-            options: [
-              { label: "Last 24 hours", value: "24h" },
-              { label: "Last 7 days", value: "7d" },
-              { label: "Last 30 days", value: "30d" },
-            ],
-          },
-        ]}
-        hiddenColumns={["search", "type"]}
-        emptyMessage="No control events match these filters."
-      />
-    </div>
+    <DataTable
+      columns={columns}
+      data={rows}
+      searchColumn="search"
+      searchPlaceholder="Search activity…"
+      filters={[
+        {
+          columnId: "result",
+          label: "Results",
+          options: [
+            { label: "Recorded", value: "recorded" },
+            { label: "Denied", value: "denied" },
+          ],
+        },
+        {
+          columnId: "type",
+          label: "Types",
+          options: [...new Set(rows.map((row) => row.type))].map((type) => ({
+            label: type,
+            value: type,
+          })),
+        },
+        {
+          columnId: "createdAt",
+          label: "Dates",
+          options: [
+            { label: "Last 24 hours", value: "24h" },
+            { label: "Last 7 days", value: "7d" },
+            { label: "Last 30 days", value: "30d" },
+          ],
+        },
+      ]}
+      hiddenColumns={["search", "type"]}
+      emptyMessage="No control events match these filters."
+    />
   );
 }
 
@@ -243,9 +238,7 @@ function ActivityActions({ event }: { event: ActivityRow }) {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{event.label}</DialogTitle>
-            <DialogDescription>
-              Privacy-minimal metadata for this Control Event.
-            </DialogDescription>
+            <DialogDescription>Control event details.</DialogDescription>
           </DialogHeader>
           <dl className="grid gap-4 text-sm sm:grid-cols-2">
             <Detail label="Actor">{event.actor}</Detail>

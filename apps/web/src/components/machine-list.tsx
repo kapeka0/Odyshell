@@ -51,6 +51,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "@/components/ui/toast";
 import type { CloudMachine } from "@/lib/cloud-api";
+import { machinePlatform } from "@/lib/machine-platform";
 
 export function MachineList({ machines }: { machines: CloudMachine[] }) {
   const { refresh } = useDashboard();
@@ -58,7 +59,8 @@ export function MachineList({ machines }: { machines: CloudMachine[] }) {
     () => [
       {
         id: "search",
-        accessorFn: (machine) => `${machine.name} ${machine.id}`,
+        accessorFn: (machine) =>
+          `${machine.name} ${machine.id} ${machinePlatform(machine.runtime)}`,
         enableHiding: true,
       },
       {
@@ -75,6 +77,18 @@ export function MachineList({ machines }: { machines: CloudMachine[] }) {
               className="font-mono text-xs text-muted-foreground"
             />
           </div>
+        ),
+      },
+      {
+        id: "platform",
+        accessorFn: (machine) => machinePlatform(machine.runtime),
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Platform" />
+        ),
+        cell: ({ row }) => (
+          <span className="text-muted-foreground">
+            {machinePlatform(row.original.runtime)}
+          </span>
         ),
       },
       {
@@ -289,6 +303,9 @@ function MachineActions({
             <Detail label="Last seen">
               {formatTimestamp(machine.lastSeenAt)}
             </Detail>
+            <Detail label="Platform">
+              {machinePlatform(machine.runtime)}
+            </Detail>
             <Detail label="Enrolled">
               {formatTimestamp(machine.enrolledAt)}
             </Detail>
@@ -323,7 +340,7 @@ function MachineActions({
               disabled={pendingAction === "remove"}
             >
               {pendingAction === "remove" ? <Spinner /> : null}
-              {pendingAction === "remove" ? "Removing…" : "Remove machine"}
+              {pendingAction === "remove" ? "Removing…" : "Remove"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

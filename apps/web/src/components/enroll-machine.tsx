@@ -1,7 +1,7 @@
 "use client";
 
 import type { Capability } from "@odyshell/protocol";
-import { ArrowLeftIcon, CheckIcon, CopyIcon, KeyRoundIcon } from "lucide-react";
+import { KeyRoundIcon } from "lucide-react";
 import Link from "next/link";
 import { FormEvent, useState } from "react";
 import { z } from "zod";
@@ -15,6 +15,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { CopyableValue } from "@/components/copyable-value";
 import {
   Field,
   FieldContent,
@@ -31,10 +32,10 @@ import { Spinner } from "@/components/ui/spinner";
 import { toast } from "@/components/ui/toast";
 import {
   capabilityGroups,
-  readOnlyCapabilities,
+  isReadOnlyPreset,
+  toggleReadOnlyPreset,
 } from "@/lib/agent-access-options";
 import { machineEnrollmentCommand } from "@/lib/enrollment-command";
-import { cn } from "@/lib/utils";
 
 const machineNameSchema = z
   .string()
@@ -67,7 +68,7 @@ export function EnrollMachine({
     null,
   );
   const [pending, setPending] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const readOnlyEnabled = isReadOnlyPreset(capabilities);
 
   const command = enrollment
     ? machineEnrollmentCommand({
@@ -130,17 +131,6 @@ export function EnrollMachine({
     }
   }
 
-  async function copyCommand() {
-    await navigator.clipboard.writeText(command);
-    setCopied(true);
-    toast.add({
-      title: "Command copied",
-      description: "Run it on the machine you want to connect.",
-      type: "success",
-    });
-    window.setTimeout(() => setCopied(false), 1800);
-  }
-
   if (enrollment) {
     return (
       <Card>
@@ -152,26 +142,13 @@ export function EnrollMachine({
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-5">
-          <div className="rounded-xl bg-foreground p-5 text-background">
-            <code className="block whitespace-pre-wrap break-all font-mono text-sm leading-6">
-              {command}
-            </code>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <Button type="button" onClick={copyCommand}>
-              {copied ? (
-                <CheckIcon data-icon="inline-start" />
-              ) : (
-                <CopyIcon data-icon="inline-start" />
-              )}
-              {copied ? "Copied" : "Copy command"}
-            </Button>
-            <Link
-              href="/dashboard/machines"
-              className={buttonVariants({ variant: "outline" })}
-            >
-              View machines
-            </Link>
+          <CopyableValue
+            value={command}
+            label="Machine enrollment command"
+            wrap
+            className="w-full rounded-xl bg-foreground p-5 font-mono text-sm leading-6 text-background"
+          />
+          <div className="flex flex-wrap items-center justify-end gap-3 border-t pt-6">
             <span className="text-xs text-muted-foreground">
               Expires{" "}
               {new Date(enrollment.expiresAt).toLocaleTimeString([], {
@@ -179,6 +156,12 @@ export function EnrollMachine({
                 minute: "2-digit",
               })}
             </span>
+            <Link
+              href="/dashboard/machines"
+              className={buttonVariants({ variant: "outline" })}
+            >
+              Done
+            </Link>
           </div>
           <Alert>
             <KeyRoundIcon aria-hidden="true" />
@@ -232,14 +215,15 @@ export function EnrollMachine({
                 </div>
                 <Button
                   type="button"
-                  variant="outline"
+                  variant={readOnlyEnabled ? "default" : "outline"}
                   size="sm"
+                  aria-pressed={readOnlyEnabled}
                   onClick={() => {
-                    setCapabilities(readOnlyCapabilities);
+                    setCapabilities(toggleReadOnlyPreset(capabilities));
                     setCapabilitiesError(null);
                   }}
                 >
-                  Select read-only
+                  Read-only
                 </Button>
               </div>
               <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
@@ -295,26 +279,25 @@ export function EnrollMachine({
               </Alert>
             ) : null}
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-6">
+              <Link
+                href="/dashboard/machines"
+                className={buttonVariants({ variant: "outline" })}
+              >
+                Cancel
+              </Link>
               <Button type="submit" disabled={pending || atLimit}>
                 {pending ? (
                   <>
                     <Spinner />
-                    Generating…
+                    Adding…
                   </>
                 ) : atLimit ? (
-                  "Machine limit reached"
+                  "Unavailable"
                 ) : (
-                  "Generate command"
+                  "Add"
                 )}
               </Button>
-              <Link
-                href="/dashboard/machines"
-                className={cn(buttonVariants({ variant: "ghost" }))}
-              >
-                <ArrowLeftIcon data-icon="inline-start" />
-                Cancel
-              </Link>
             </div>
           </FieldGroup>
         </form>

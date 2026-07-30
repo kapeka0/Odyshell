@@ -11,11 +11,13 @@ export function CopyableValue({
   label,
   children,
   className,
+  wrap = false,
 }: {
   value: string;
   label: string;
   children?: React.ReactNode;
   className?: string;
+  wrap?: boolean;
 }) {
   const [status, setStatus] = useState<CopyStatus>("idle");
   const resetTimer = useRef<number | undefined>(undefined);
@@ -52,7 +54,9 @@ export function CopyableValue({
         className,
       )}
     >
-      <span className="truncate">{children ?? value}</span>
+      <span className={wrap ? "whitespace-pre-wrap break-all" : "truncate"}>
+        {children ?? value}
+      </span>
       <span
         aria-hidden="true"
         className="-translate-x-1 shrink-0 opacity-0 transition-[opacity,transform] duration-150 group-hover/copy:translate-x-0 group-hover/copy:opacity-100 group-focus-visible/copy:translate-x-0 group-focus-visible/copy:opacity-100 motion-reduce:transition-none [&_svg]:size-3"

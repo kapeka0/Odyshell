@@ -26,7 +26,6 @@ import {
   SelectGroup,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 import {
   Table,
@@ -36,6 +35,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { selectDisplayLabel } from "@/lib/select-label";
 
 type TableFilter = {
   columnId: string;
@@ -144,7 +144,13 @@ export function DataTable<TData>({
                 aria-label={currentFilter.label}
                 className="w-full sm:w-44"
               >
-                <SelectValue />
+                <span className="flex-1 truncate text-left">
+                  {selectDisplayLabel(
+                    currentFilter.label,
+                    currentFilter.options,
+                    value,
+                  )}
+                </span>
               </SelectTrigger>
               <SelectContent align="start">
                 <SelectGroup>

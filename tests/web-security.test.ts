@@ -11,6 +11,9 @@ import {
   machineEnrollmentCommand,
   posixShellArgument,
 } from "../apps/web/src/lib/enrollment-command.js";
+import { agentLoginCommand } from "../apps/web/src/lib/agent-command.js";
+import { machinePlatform } from "../apps/web/src/lib/machine-platform.js";
+import { selectDisplayLabel } from "../apps/web/src/lib/select-label.js";
 import {
   activeUserTheme,
   nextUserTheme,
@@ -86,6 +89,27 @@ describe("web authentication boundaries", () => {
     );
   });
 
+  it("quotes agent credentials before placing them in a shell command", () => {
+    const command = agentLoginCommand({
+      serverUrl: "https://self-hosted.example/api?mode=one&next=ignored",
+      token: "ods_agent_'_safe",
+    });
+
+    expect(command).toBe(
+      "ods --server 'https://self-hosted.example/api?mode=one&next=ignored' login --agent-token 'ods_agent_'\"'\"'_safe'",
+    );
+  });
+
+  it("allowlists machine platforms received from Client runtime data", () => {
+    expect(machinePlatform({ hostPlatform: "linux" })).toBe("Linux");
+    expect(machinePlatform({ hostPlatform: "macos" })).toBe("macOS");
+    expect(machinePlatform({ hostPlatform: "windows" })).toBe("Windows");
+    expect(machinePlatform({ hostPlatform: "<script>alert(1)</script>" })).toBe(
+      "Unknown",
+    );
+    expect(machinePlatform(null)).toBe("Unknown");
+  });
+
   it("normalizes persisted user theme values", () => {
     expect(activeUserTheme(undefined)).toBe("system");
     expect(activeUserTheme("light")).toBe("light");
@@ -143,6 +167,26 @@ describe("dashboard navigation performance boundary", () => {
     expect(provider).toContain("<DashboardLiveRefresh");
   });
 
+  it("keeps table filter labels stable while their selected values change", () => {
+    const dataTable = readFileSync(
+      resolve(
+        process.cwd(),
+        "apps/web/src/components/data-table.tsx",
+      ),
+      "utf8",
+    );
+    expect(selectDisplayLabel("Dates", [], "all")).toBe("All Dates");
+    expect(
+      selectDisplayLabel(
+        "Dates",
+        [{ label: "Last 7 days", value: "7d" }],
+        "7d",
+      ),
+    ).toBe("Last 7 days");
+    expect(dataTable).toContain("selectDisplayLabel(");
+    expect(dataTable).not.toContain("<SelectValue />");
+  });
+
   it("keeps loading feedback in forms and toast notifications above dialogs", () => {
     const componentsRoot = resolve(
       process.cwd(),
@@ -163,6 +207,9 @@ describe("dashboard navigation performance boundary", () => {
     ).toContain("z-[100]");
     expect(
       readFileSync(resolve(componentsRoot, "enroll-machine.tsx"), "utf8"),
+    ).toContain("wrap");
+    expect(
+      readFileSync(resolve(componentsRoot, "copyable-value.tsx"), "utf8"),
     ).toContain("whitespace-pre-wrap break-all");
     expect(
       readFileSync(resolve(componentsRoot, "app-shell.tsx"), "utf8"),
@@ -204,6 +251,15 @@ describe("dashboard navigation performance boundary", () => {
         "utf8",
       ),
     ).not.toContain("Security-relevant changes without commands");
+    expect(
+      readFileSync(
+        resolve(componentsRoot, "control-event-list.tsx"),
+        "utf8",
+      ),
+    ).not.toContain("Privacy-minimal");
+    expect(
+      readFileSync(resolve(componentsRoot, "ui/sidebar.tsx"), "utf8"),
+    ).toContain("border-sidebar-border");
     const userSettings = readFileSync(
       resolve(
         process.cwd(),
@@ -260,6 +316,56 @@ describe("dashboard navigation performance boundary", () => {
     }
   });
 
+  it("uses dedicated, bounded creation routes with concise form actions", () => {
+    const webRoot = resolve(process.cwd(), "apps/web/src");
+    const componentsRoot = resolve(webRoot, "components");
+    const agentList = readFileSync(
+      resolve(componentsRoot, "agent-access-manager.tsx"),
+      "utf8",
+    );
+    const agentForm = readFileSync(
+      resolve(componentsRoot, "create-agent-access.tsx"),
+      "utf8",
+    );
+    const machineForm = readFileSync(
+      resolve(componentsRoot, "enroll-machine.tsx"),
+      "utf8",
+    );
+    const agentsPage = readFileSync(
+      resolve(webRoot, "app/dashboard/agents/page.tsx"),
+      "utf8",
+    );
+
+    expect(agentList).not.toContain("Create agent access");
+    expect(agentsPage).toContain('href="/dashboard/agents/add"');
+    expect(agentForm).toContain("<Select");
+    expect(agentForm).not.toContain("ToggleGroup");
+    expect(agentForm).toContain("agentLoginCommand");
+    expect(agentForm).toContain('copyLabel="Agent login command"');
+    expect(agentForm).toContain('"Create"');
+    expect(machineForm).toContain("justify-end");
+    expect(machineForm.indexOf("Cancel")).toBeLessThan(
+      machineForm.lastIndexOf('"Add"'),
+    );
+    expect(machineForm).not.toContain("ArrowLeftIcon");
+  });
+
+  it("shows allowlisted machine platform data and starts public documentation", () => {
+    const webRoot = resolve(process.cwd(), "apps/web/src");
+    const machineList = readFileSync(
+      resolve(webRoot, "components/machine-list.tsx"),
+      "utf8",
+    );
+    const docs = readFileSync(
+      resolve(webRoot, "app/docs/page.tsx"),
+      "utf8",
+    );
+    expect(machineList).toContain('title="Platform"');
+    expect(machineList).toContain("machinePlatform(machine.runtime)");
+    expect(docs).toContain("Start with Odyshell");
+    expect(docs).toContain("ods login --agent-token");
+  });
+
   it("uses route-specific skeletons and theme-aware browser icons", () => {
     const dashboardRoot = resolve(
       process.cwd(),
@@ -269,6 +375,7 @@ describe("dashboard navigation performance boundary", () => {
       "machines/loading.tsx",
       "machines/add/loading.tsx",
       "agents/loading.tsx",
+      "agents/add/loading.tsx",
       "activity/loading.tsx",
       "settings/loading.tsx",
       "user-settings/loading.tsx",

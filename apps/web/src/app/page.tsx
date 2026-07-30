@@ -190,6 +190,9 @@ export default function HomePage() {
               <Link className="whitespace-nowrap hover:text-foreground" href="/dashboard">
                 Dashboard
               </Link>
+              <Link className="whitespace-nowrap hover:text-foreground" href="/docs">
+                Docs
+              </Link>
               <a
                 className="whitespace-nowrap hover:text-foreground"
                 href="https://github.com/kapeka0/odyshell"

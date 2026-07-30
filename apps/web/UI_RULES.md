@@ -113,6 +113,14 @@ particular component, library or interaction pattern.
   must remain fully visible and must not be clipped by an overlay.
 - Short creation flows preserve context and remain comfortable at narrow
   widths.
+- Creation forms use a dedicated route when their fields cannot fit comfortably
+  in a small dialog.
+- Dialog and form actions stay at the bottom-right. Place Cancel before the
+  primary action.
+- Form actions use no decorative icons and prefer one-word labels such as Add,
+  Create or Cancel.
+- Select triggers show the user-facing label for the current value, never its
+  internal value.
 - Pending state stays visually attached to the initiating action. Completion
   feedback announces success or failure once without duplicating progress.
 - Transient feedback remains visible above blocking overlays.

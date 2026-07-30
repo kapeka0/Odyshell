@@ -1,6 +1,5 @@
 "use client";
 
-import { PlusIcon } from "lucide-react";
 import Link from "next/link";
 import {
   DashboardPage,
@@ -33,8 +32,7 @@ export default function MachinesPage() {
                 href="/dashboard/machines/add"
                 className={buttonVariants()}
               >
-                <PlusIcon data-icon="inline-start" />
-                Add machine
+                Add
               </Link>
             )
           ) : undefined

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { AgentAccessManager } from "@/components/agent-access-manager";
 import { useDashboard } from "@/components/dashboard-provider";
 import {
@@ -7,15 +8,35 @@ import {
   DashboardPageHeader,
   DashboardStateNotice,
 } from "@/components/dashboard-state";
+import { Button, buttonVariants } from "@/components/ui/button";
 
 export default function AgentsPage() {
   const { state } = useDashboard();
+  const atLimit =
+    state.status === "ready" &&
+    state.context.usage.activeAgents >= state.context.plan.activeAgentLimit;
 
   return (
     <DashboardPage>
       <DashboardPageHeader
         eyebrow="Workspace"
         title="Agents"
+        action={
+          state.status === "ready" ? (
+            atLimit ? (
+              <Button type="button" disabled>
+                Limit reached
+              </Button>
+            ) : (
+              <Link
+                href="/dashboard/agents/add"
+                className={buttonVariants()}
+              >
+                Add
+              </Link>
+            )
+          ) : undefined
+        }
       />
       {state.status !== "ready" ? (
         <DashboardStateNotice state={state} />
@@ -23,10 +44,6 @@ export default function AgentsPage() {
         <AgentAccessManager
           machines={state.context.machines}
           accesses={state.context.agentAccess ?? []}
-          atLimit={
-            state.context.usage.activeAgents >=
-            state.context.plan.activeAgentLimit
-          }
         />
       )}
     </DashboardPage>

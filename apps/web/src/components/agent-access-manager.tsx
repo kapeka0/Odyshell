@@ -1,21 +1,8 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import {
-  agentTokenRequestSchema,
-  type Capability,
-} from "@odyshell/protocol";
-import {
-  CheckIcon,
-  CopyIcon,
-  EllipsisIcon,
-  EyeIcon,
-  KeyRoundIcon,
-  PlusIcon,
-  ShieldCheckIcon,
-} from "lucide-react";
+import { EllipsisIcon, EyeIcon, KeyRoundIcon } from "lucide-react";
 import { useMemo, useState } from "react";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { CopyableValue } from "@/components/copyable-value";
 import {
   DataTable,
@@ -34,7 +21,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -56,452 +42,16 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import {
-  Field,
-  FieldContent,
-  FieldDescription,
-  FieldError,
-  FieldGroup,
-  FieldLabel,
-  FieldLegend,
-  FieldSet,
-  FieldTitle,
-} from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "@/components/ui/toast";
-import {
-  ToggleGroup,
-  ToggleGroupItem,
-} from "@/components/ui/toggle-group";
-import {
-  agentAccessDurations,
-  capabilityGroups,
-  isReadOnlyPreset,
-  toggleReadOnlyPreset,
-} from "@/lib/agent-access-options";
 import type { AgentAccess, CloudMachine } from "@/lib/cloud-api";
-
-type IssuedAccess = {
-  id: string;
-  name: string;
-  token: string;
-  expiresAt: string;
-};
-
-type ValidationErrors = {
-  name?: string;
-  machines?: string;
-  capabilities?: string;
-};
 
 export function AgentAccessManager({
   machines,
   accesses,
-  atLimit,
 }: {
   machines: CloudMachine[];
   accesses: AgentAccess[];
-  atLimit: boolean;
-}) {
-  const { refresh } = useDashboard();
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [machineIds, setMachineIds] = useState<string[]>([]);
-  const [capabilities, setCapabilities] = useState<Capability[]>([]);
-  const [expiresInSeconds, setExpiresInSeconds] = useState(
-    agentAccessDurations[0].value,
-  );
-  const [validation, setValidation] = useState<ValidationErrors>({});
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-  const [issued, setIssued] = useState<IssuedAccess | null>(null);
-  const [copied, setCopied] = useState(false);
-  const readOnlyEnabled = isReadOnlyPreset(capabilities);
-
-  async function createAccess(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError(null);
-    const required: ValidationErrors = {
-      name: name.trim() ? undefined : "Enter an access name",
-      machines:
-        machineIds.length > 0 ? undefined : "Select at least one machine",
-      capabilities:
-        capabilities.length > 0
-          ? undefined
-          : "Select at least one capability",
-    };
-    if (required.name || required.machines || required.capabilities) {
-      setValidation(required);
-      return;
-    }
-    const parsed = agentTokenRequestSchema.safeParse({
-      name,
-      machineIds,
-      capabilities,
-      expiresInSeconds,
-    });
-    if (!parsed.success) {
-      const flattened = parsed.error.flatten().fieldErrors;
-      setValidation({
-        name: flattened.name?.[0] ?? "Check the access name",
-        machines: flattened.machineIds?.[0] ?? "Check the selected machines",
-        capabilities:
-          flattened.capabilities?.[0] ?? "Check the selected capabilities",
-      });
-      return;
-    }
-
-    setPending(true);
-    setError(null);
-    setValidation({});
-    try {
-      const response = await fetch("/api/agent-access", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(parsed.data),
-      });
-      const body = (await response.json().catch(() => ({}))) as IssuedAccess & {
-        error?: string;
-      };
-      if (!response.ok) {
-        throw new Error(body.error ?? "Could not create Agent Access");
-      }
-      setIssued(body);
-      setName("");
-      setMachineIds([]);
-      setCapabilities([]);
-      setExpiresInSeconds(agentAccessDurations[0].value);
-      toast.add({
-        title: "Agent access created",
-        description: "Copy the credential now. It will not be shown again.",
-        type: "success",
-      });
-      await refresh();
-    } catch (reason) {
-      toast.add({
-        title: "Agent access was not created",
-        description: "Review the form or try again.",
-        type: "error",
-      });
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : "Could not create Agent Access",
-      );
-    } finally {
-      setPending(false);
-    }
-  }
-
-  async function copyToken() {
-    if (!issued) return;
-    await navigator.clipboard.writeText(issued.token);
-    setCopied(true);
-    toast.add({
-      title: "Credential copied",
-      description: "The secret was copied without being added to the activity log.",
-      type: "success",
-    });
-    window.setTimeout(() => setCopied(false), 1800);
-  }
-
-  function handleOpenChange(nextOpen: boolean) {
-    if (pending) return;
-    setOpen(nextOpen);
-    if (!nextOpen) {
-      setIssued(null);
-      setError(null);
-      setValidation({});
-      setCopied(false);
-    }
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <Badge variant="outline">
-          {accesses.filter((access) => access.status === "active").length}{" "}
-          active
-        </Badge>
-        <Button
-          type="button"
-          onClick={() => setOpen(true)}
-          disabled={atLimit || machines.length === 0}
-        >
-          <PlusIcon data-icon="inline-start" />
-          {atLimit ? "Agent limit reached" : "Add agent"}
-        </Button>
-      </div>
-      <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Create agent access</DialogTitle>
-            <DialogDescription>
-              Choose the exact machines, capabilities and lifetime this agent
-              needs.
-            </DialogDescription>
-          </DialogHeader>
-        {issued ? (
-          <Alert>
-            <KeyRoundIcon aria-hidden="true" />
-            <AlertTitle>{issued.name} is ready</AlertTitle>
-            <AlertDescription className="flex flex-col gap-3">
-              <p>
-                Copy this credential now. Odyshell stores only its hash and
-                cannot show it again.
-              </p>
-              <div className="overflow-x-auto rounded-md bg-foreground p-3 text-background">
-                <code className="whitespace-pre font-mono text-xs">
-                  {issued.token}
-                </code>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button type="button" size="sm" onClick={copyToken}>
-                  {copied ? (
-                    <CheckIcon data-icon="inline-start" />
-                  ) : (
-                    <CopyIcon data-icon="inline-start" />
-                  )}
-                  {copied ? "Copied" : "Copy credential"}
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setIssued(null);
-                    setCopied(false);
-                  }}
-                >
-                  Create another
-                </Button>
-              </div>
-            </AlertDescription>
-          </Alert>
-        ) : (
-          <form onSubmit={createAccess}>
-            <FieldGroup>
-              <Field data-invalid={Boolean(validation.name)}>
-                <FieldLabel htmlFor="access-name">Access name</FieldLabel>
-                <Input
-                  id="access-name"
-                  name="access-name"
-                  value={name}
-                  onChange={(event) => {
-                    setName(event.target.value);
-                    setValidation((current) => ({
-                      ...current,
-                      name: undefined,
-                    }));
-                  }}
-                  placeholder="deploy-agent"
-                  autoComplete="off"
-                  spellCheck={false}
-                  aria-invalid={Boolean(validation.name)}
-                />
-                <FieldDescription>
-                  Use a name that identifies the agent or automation.
-                </FieldDescription>
-                <FieldError>{validation.name}</FieldError>
-              </Field>
-
-              <FieldSet data-invalid={Boolean(validation.machines)}>
-                <FieldLegend>Machines</FieldLegend>
-                <FieldDescription>
-                  Select one or more existing machines. Future machines are
-                  never included automatically.
-                </FieldDescription>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {machines.map((machine) => (
-                    <Field
-                      key={machine.id}
-                      orientation="horizontal"
-                      className="rounded-lg border p-3"
-                    >
-                      <Checkbox
-                        id={`access-machine-${machine.id}`}
-                        checked={machineIds.includes(machine.id)}
-                        onCheckedChange={(checked) => {
-                          setMachineIds((current) =>
-                            checked
-                              ? [...new Set([...current, machine.id])]
-                              : current.filter((id) => id !== machine.id),
-                          );
-                          setValidation((current) => ({
-                            ...current,
-                            machines: undefined,
-                          }));
-                        }}
-                        aria-invalid={Boolean(validation.machines)}
-                      />
-                      <FieldContent>
-                        <FieldLabel htmlFor={`access-machine-${machine.id}`}>
-                          <FieldTitle>{machine.name}</FieldTitle>
-                        </FieldLabel>
-                        <FieldDescription>
-                          {machine.online ? "Online" : "Offline"}
-                        </FieldDescription>
-                      </FieldContent>
-                    </Field>
-                  ))}
-                </div>
-                {machines.length === 0 ? (
-                  <FieldDescription>
-                    Connect a machine before creating access.
-                  </FieldDescription>
-                ) : null}
-                <FieldError>{validation.machines}</FieldError>
-              </FieldSet>
-
-              <FieldSet data-invalid={Boolean(validation.capabilities)}>
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <FieldLegend>Capabilities</FieldLegend>
-                    <FieldDescription>
-                      Nothing is selected by default. Grant only what the task
-                      needs.
-                    </FieldDescription>
-                  </div>
-                  <Button
-                    type="button"
-                    variant={readOnlyEnabled ? "default" : "outline"}
-                    size="sm"
-                    aria-pressed={readOnlyEnabled}
-                    onClick={() => {
-                      setCapabilities(toggleReadOnlyPreset(capabilities));
-                      setValidation((current) => ({
-                        ...current,
-                        capabilities: undefined,
-                      }));
-                    }}
-                  >
-                    Select read-only
-                  </Button>
-                </div>
-                <div className="grid gap-5 md:grid-cols-3">
-                  {capabilityGroups.map((group) => (
-                    <div key={group.name} className="flex flex-col gap-3">
-                      <p className="text-xs font-medium text-muted-foreground">
-                        {group.name}
-                      </p>
-                      {group.capabilities.map((capability) => (
-                        <Field
-                          key={capability.value}
-                          orientation="horizontal"
-                        >
-                          <Checkbox
-                            id={`access-${capability.value}`}
-                            checked={capabilities.includes(capability.value)}
-                            onCheckedChange={(checked) => {
-                              setCapabilities((current) =>
-                                checked
-                                  ? [
-                                      ...new Set([
-                                        ...current,
-                                        capability.value,
-                                      ]),
-                                    ]
-                                  : current.filter(
-                                      (value) =>
-                                        value !== capability.value,
-                                    ),
-                              );
-                              setValidation((current) => ({
-                                ...current,
-                                capabilities: undefined,
-                              }));
-                            }}
-                            aria-invalid={Boolean(validation.capabilities)}
-                          />
-                          <FieldContent>
-                            <FieldLabel
-                              htmlFor={`access-${capability.value}`}
-                            >
-                              <FieldTitle>{capability.label}</FieldTitle>
-                            </FieldLabel>
-                            <FieldDescription>
-                              {capability.description}
-                            </FieldDescription>
-                          </FieldContent>
-                        </Field>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-                <FieldError>{validation.capabilities}</FieldError>
-              </FieldSet>
-
-              <FieldSet>
-                <FieldLegend>Expires after</FieldLegend>
-                <FieldDescription>
-                  Access stops automatically at this time. It can also be
-                  revoked immediately.
-                </FieldDescription>
-                <ToggleGroup
-                  aria-label="Agent access duration"
-                  value={[String(expiresInSeconds)]}
-                  onValueChange={(values) => {
-                    const nextValue = Number(values[0]);
-                    if (Number.isFinite(nextValue)) {
-                      setExpiresInSeconds(nextValue);
-                    }
-                  }}
-                  variant="outline"
-                  size="sm"
-                  className="flex-wrap"
-                >
-                  {agentAccessDurations.map((duration) => (
-                    <ToggleGroupItem
-                      key={duration.value}
-                      value={String(duration.value)}
-                      aria-label={`Expire after ${duration.label}`}
-                    >
-                      {duration.label}
-                    </ToggleGroupItem>
-                  ))}
-                </ToggleGroup>
-              </FieldSet>
-
-              {error ? (
-                <Alert variant="destructive">
-                  <AlertTitle>Could not create access</AlertTitle>
-                  <AlertDescription>{error}</AlertDescription>
-                </Alert>
-              ) : null}
-
-              <Button
-                type="submit"
-                disabled={
-                  pending ||
-                  atLimit ||
-                  machines.length === 0
-                }
-              >
-                <ShieldCheckIcon aria-hidden="true" data-icon="inline-start" />
-                {pending
-                  ? <><Spinner />Creating…</>
-                  : atLimit
-                    ? "Access limit reached"
-                    : "Create Agent Access"}
-              </Button>
-            </FieldGroup>
-          </form>
-        )}
-
-        </DialogContent>
-      </Dialog>
-      <AccessList accesses={accesses} machines={machines} />
-    </div>
-  );
-}
-
-function AccessList({
-  accesses,
-  machines,
-}: {
-  accesses: AgentAccess[];
-  machines: CloudMachine[];
 }) {
   const { refresh } = useDashboard();
   const machineNames = useMemo(
@@ -591,7 +141,7 @@ function AccessList({
           </EmptyMedia>
           <EmptyTitle>No agents yet</EmptyTitle>
           <EmptyDescription>
-            Create a scoped credential when an agent needs a machine.
+            Create scoped access when an agent needs a machine.
           </EmptyDescription>
         </EmptyHeader>
       </Empty>
@@ -606,7 +156,7 @@ function AccessList({
       searchPlaceholder="Search agents…"
       filter={{
         columnId: "status",
-        label: "Status",
+        label: "Statuses",
         options: [
           { label: "Active", value: "active" },
           { label: "Expired", value: "expired" },
@@ -643,7 +193,7 @@ function AccessActions({
         error?: string;
       };
       if (!response.ok) {
-        throw new Error(body.error ?? "Could not revoke Agent Access");
+        throw new Error(body.error ?? "Could not revoke agent access");
       }
       setRevokeOpen(false);
       toast.add({
@@ -661,7 +211,7 @@ function AccessActions({
       setError(
         reason instanceof Error
           ? reason.message
-          : "Could not revoke Agent Access",
+          : "Could not revoke agent access",
       );
     } finally {
       setPending(false);
@@ -708,41 +258,31 @@ function AccessActions({
           <DialogHeader>
             <DialogTitle>{access.name}</DialogTitle>
             <DialogDescription>
-              Temporary authorization details. The credential itself is never
-              shown again.
+              Temporary authorization details. The credential is never shown
+              again.
             </DialogDescription>
           </DialogHeader>
           <dl className="grid gap-4 text-sm sm:grid-cols-2">
-            <div>
-              <dt className="text-muted-foreground">Status</dt>
-              <dd className="mt-1">
-                <Badge variant={statusVariant(access.status)}>
-                  {access.status}
-                </Badge>
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">Expires</dt>
-              <dd className="mt-1">{formatTimestamp(access.expiresAt)}</dd>
-            </div>
-            <div className="sm:col-span-2">
-              <dt className="text-muted-foreground">Machines</dt>
-              <dd className="mt-1">
-                {access.machineIds
-                  .map((id) => machineNames.get(id) ?? "Removed machine")
-                  .join(", ")}
-              </dd>
-            </div>
-            <div className="sm:col-span-2">
-              <dt className="text-muted-foreground">Capabilities</dt>
-              <dd className="mt-2 flex flex-wrap gap-1.5">
+            <Detail label="Status">
+              <Badge variant={statusVariant(access.status)}>
+                {access.status}
+              </Badge>
+            </Detail>
+            <Detail label="Expires">{formatTimestamp(access.expiresAt)}</Detail>
+            <Detail label="Machines" wide>
+              {access.machineIds
+                .map((id) => machineNames.get(id) ?? "Removed machine")
+                .join(", ")}
+            </Detail>
+            <Detail label="Capabilities" wide>
+              <span className="flex flex-wrap gap-1.5">
                 {access.capabilities.map((capability) => (
                   <Badge key={capability} variant="outline">
                     {capability}
                   </Badge>
                 ))}
-              </dd>
-            </div>
+              </span>
+            </Detail>
           </dl>
         </DialogContent>
       </Dialog>
@@ -752,8 +292,8 @@ function AccessActions({
           <AlertDialogHeader>
             <AlertDialogTitle>Revoke {access.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              The credential will stop working immediately and its active
-              sessions will close. This cannot be undone.
+              The credential stops working immediately and active sessions
+              close. This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {error ? (
@@ -769,12 +309,29 @@ function AccessActions({
               disabled={pending}
             >
               {pending ? <Spinner /> : null}
-              {pending ? "Revoking…" : "Revoke access"}
+              {pending ? "Revoking…" : "Revoke"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </>
+  );
+}
+
+function Detail({
+  label,
+  children,
+  wide = false,
+}: {
+  label: string;
+  children: React.ReactNode;
+  wide?: boolean;
+}) {
+  return (
+    <div className={wide ? "sm:col-span-2" : undefined}>
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="mt-1">{children}</dd>
+    </div>
   );
 }
 
@@ -787,7 +344,7 @@ function statusVariant(
 }
 
 function formatTimestamp(value: string | null): string {
-  if (!value) return "unknown";
+  if (!value) return "Unknown";
   return new Intl.DateTimeFormat("en", {
     dateStyle: "medium",
     timeStyle: "short",
