@@ -86,6 +86,27 @@ describe("protocol validation", () => {
     ).toBe(false);
   });
 
+  it("allows long-lived access only within the explicit one-year ceiling", () => {
+    const request = {
+      name: "maintenance-agent",
+      machineIds: ["2dc24de7-ec0e-45b3-88c1-acbb900e51f8"],
+      capabilities: ["process.exec"],
+    };
+
+    expect(
+      agentTokenRequestSchema.safeParse({
+        ...request,
+        expiresInSeconds: 365 * 24 * 60 * 60,
+      }).success,
+    ).toBe(true);
+    expect(
+      agentTokenRequestSchema.safeParse({
+        ...request,
+        expiresInSeconds: 366 * 24 * 60 * 60,
+      }).success,
+    ).toBe(false);
+  });
+
   it("accepts canonical tenant slugs and rejects ambiguous identifiers", () => {
     expect(
       organizationRequestSchema.safeParse({

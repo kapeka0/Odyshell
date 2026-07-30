@@ -54,10 +54,12 @@ after one hour and control events after 30 days by default. Configure these wind
 `ODYSHELL_OPERATION_RETENTION_SECONDS` and `ODYSHELL_AUDIT_RETENTION_DAYS`.
 
 Database credentials belong only to the Server; agents and Clients never receive them.
+Cloud credential issuance is rate-limited per member and workspace. Expired enrollment records
+and unreferenced inactive Agent Access records are removed by the retention sweep.
 
-Organizations own execution Workspaces. Existing administrator endpoints use the
+Organizations own execution Workspaces. Existing self-hosted administrator endpoints use the
 `x-odyshell-workspace-id` header and default to the backwards-compatible `default` workspace when
-it is absent. Enrollment tokens, machines, agent grants, sessions, operations, and control events
+it is absent. Enrollment tokens, machines, Agent Access, sessions, operations, and control events
 remain inside the selected Workspace. Agent requests do not accept a workspace selector: their
 workspace comes from the hashed token record.
 

@@ -188,6 +188,7 @@ export class ClientGateway {
               "session.opened",
               "session",
               message.sessionId,
+              { machineId: state.machineId },
             );
           }
           this.events.emit(`session:${message.sessionId}`);
@@ -209,7 +210,10 @@ export class ClientGateway {
               "session.open_failed",
               "session",
               message.sessionId,
-              { reason: "client_rejected" },
+              {
+                reason: "client_rejected",
+                machineId: state.machineId,
+              },
             );
           }
           this.events.emit(`session:${message.sessionId}`);
@@ -231,6 +235,7 @@ export class ClientGateway {
               message.sessionId,
               {
                 reason: message.reason,
+                machineId: state.machineId,
                 status: session.status,
               },
             );
@@ -272,6 +277,8 @@ export class ClientGateway {
               "operation",
               message.operationId,
               {
+                kind: result.kind,
+                machineId: state.machineId,
                 status: message.status,
                 exitCode: message.exitCode,
                 outputTruncated: message.outputTruncated,

@@ -19,8 +19,15 @@ import {
   serverAdminKey,
 } from "./access.js";
 import {
+  createAgentAccess,
+  revokeAgentAccess,
+  type AgentAccessDependencies,
+} from "./agent-access.js";
+import {
   approveDeviceSchema,
+  createCloudAgentAccessSchema,
   cloudIdentitySchema,
+  cloudWebRequestDecision,
   cloudWebKey,
   cloudWebUrl,
   createDeviceUserCode,
@@ -28,9 +35,19 @@ import {
   exchangeDeviceAuthorizationSchema,
   FixedWindowRateLimiter,
   normalizeDeviceUserCode,
+  privacySafeControlMetadata,
+  revokeCloudAgentAccessSchema,
+  revokeCloudMachineSchema,
+  ScopedRateLimiter,
   startDeviceAuthorizationSchema,
 } from "./cloud.js";
-import { audit, createDatabase, DEFAULT_WORKSPACE_ID } from "./database.js";
+import {
+  audit,
+  createDatabase,
+  DEFAULT_WORKSPACE_ID,
+  type AgentTokenRecord,
+  type AuditRecord,
+} from "./database.js";
 import { ClientGateway } from "./gateway.js";
 import { dataRetentionPolicy } from "./privacy.js";
 
@@ -55,7 +72,14 @@ const purgeExpiredData = async (): Promise<void> => {
     operationDataBefore: now - retention.operationDataMilliseconds,
     auditBefore: now - retention.auditMilliseconds,
   });
-  if (purged.operations + purged.sessions + purged.auditEvents > 0) {
+  if (
+    purged.agentTokens +
+      purged.enrollmentTokens +
+      purged.operations +
+      purged.sessions +
+      purged.auditEvents >
+    0
+  ) {
     app.log.info(purged, "Expired retained operation and audit data");
   }
 };
@@ -77,6 +101,16 @@ const requestAdminWorkspaces = new WeakMap<FastifyRequest, string>();
 const requestAdminPrincipals = new WeakMap<FastifyRequest, string>();
 const deviceStartLimiter = new FixedWindowRateLimiter(12, 60_000);
 const devicePollLimiter = new FixedWindowRateLimiter(40, 60_000);
+const enrollmentIssuanceLimiter = new ScopedRateLimiter(
+  60,
+  20,
+  60 * 60_000,
+);
+const agentAccessIssuanceLimiter = new ScopedRateLimiter(
+  120,
+  40,
+  60 * 60_000,
+);
 
 function matchesSecret(actual: string | undefined, expected: string | undefined): boolean {
   if (!actual || !expected) return false;
@@ -92,11 +126,15 @@ async function requireAdmin(request: FastifyRequest, reply: FastifyReply): Promi
 }
 
 async function requireWeb(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  if (!webKey) {
+  const decision = cloudWebRequestDecision(
+    webKey,
+    request.headers["x-odyshell-web-key"] as string | undefined,
+  );
+  if (decision === "disabled") {
     await reply.code(503).send({ error: "cloud_authentication_disabled" });
     return;
   }
-  if (!matchesSecret(request.headers["x-odyshell-web-key"] as string | undefined, webKey)) {
+  if (decision === "unauthorized") {
     await reply.code(401).send({ error: "invalid_web_key" });
   }
 }
@@ -257,6 +295,123 @@ async function expireAgentSessions(
   return expired.length;
 }
 
+function agentAccessView(token: AgentTokenRecord): {
+  id: string;
+  name: string;
+  machineIds: string[];
+  capabilities: Capability[];
+  expiresAt: string | null;
+  revokedAt: string | null;
+  createdAt: string | null;
+  status: "active" | "expired" | "revoked";
+} {
+  return {
+    id: token.id,
+    name: token.name,
+    machineIds: token.machineIds,
+    capabilities: token.capabilities,
+    expiresAt: isoTimestamp(token.expiresAt),
+    revokedAt: isoTimestamp(token.revokedAt),
+    createdAt: isoTimestamp(token.createdAt),
+    status:
+      token.revokedAt !== undefined
+        ? "revoked"
+        : token.expiresAt <= Date.now()
+          ? "expired"
+          : "active",
+  };
+}
+
+function controlEventView(event: AuditRecord): {
+  id: string;
+  principalId: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  metadata: Record<string, string>;
+  createdAt: string | null;
+} {
+  return {
+    id: event.id,
+    principalId: event.principalId,
+    action: event.action,
+    targetType: event.targetType,
+    targetId: event.targetId,
+    metadata: privacySafeControlMetadata(event.metadata),
+    createdAt: isoTimestamp(event.createdAt),
+  };
+}
+
+const agentAccessDependencies: AgentAccessDependencies = {
+  activeMachinesExist: (workspaceId, machineIds) =>
+    db.activeMachinesExist(workspaceId, machineIds),
+  createAgentToken: (input) => db.createAgentToken(input),
+  revokeAgentToken: (workspaceId, tokenId) =>
+    db.revokeAgentToken(workspaceId, tokenId),
+  expireAgentSessions,
+  audit: (workspaceId, principalId, action, targetType, targetId, metadata) =>
+    audit(
+      db,
+      workspaceId,
+      principalId,
+      action,
+      targetType,
+      targetId,
+      metadata,
+    ),
+  createId: randomUUID,
+  createToken: () => createOpaqueToken("agent"),
+  hashToken,
+  now: Date.now,
+};
+
+async function revokeWorkspaceMachine(
+  workspaceId: string,
+  principalId: string,
+  machineId: string,
+): Promise<{
+  id: string;
+  name: string;
+  status: "revoked";
+  revokedAt: string | null;
+  cancelledOperations: number;
+  closedSessions: number;
+  disconnected: boolean;
+} | null> {
+  const machine = await db.revokeMachine(workspaceId, machineId);
+  if (!machine) return null;
+
+  for (const operationId of machine.operationIds) {
+    gateway.send(machine.id, { type: "operation.cancel", operationId });
+    gateway.events.emit(`operation:${operationId}`);
+  }
+  for (const sessionId of machine.sessionIds) {
+    gateway.send(machine.id, {
+      type: "session.close",
+      sessionId,
+      reason: "machine_revoked",
+    });
+    gateway.events.emit(`session:${sessionId}`);
+  }
+  const disconnected = gateway.disconnect(machine.id);
+  await audit(db, workspaceId, principalId, "machine.revoked", "machine", machine.id, {
+    name: machine.name,
+    revokedAt: isoTimestamp(machine.revokedAt),
+    cancelledOperations: machine.operationIds.length,
+    closedSessions: machine.sessionIds.length,
+    disconnected,
+  });
+  return {
+    id: machine.id,
+    name: machine.name,
+    status: "revoked",
+    revokedAt: isoTimestamp(machine.revokedAt),
+    cancelledOperations: machine.operationIds.length,
+    closedSessions: machine.sessionIds.length,
+    disconnected,
+  };
+}
+
 app.get("/health", async () => {
   await db.health();
   return { status: "ok", protocol: 1 };
@@ -368,8 +523,12 @@ app.post(
       slug: parsed.data.organization.slug,
       name: parsed.data.organization.name,
     });
-    const machines = await db.listMachines(context.workspace.id);
-    const usage = await db.workspacePlan(context.workspace.id);
+    const [machines, usage, agentAccess, controlEvents] = await Promise.all([
+      db.listMachines(context.workspace.id),
+      db.workspacePlan(context.workspace.id),
+      db.listAgentTokens(context.workspace.id),
+      db.listAudit(context.workspace.id, 50),
+    ]);
     const plan = entitlementsFor(context.organization.plan);
     return {
       organization: context.organization,
@@ -392,6 +551,8 @@ app.post(
         enrolledAt: isoTimestamp(machine.enrolledAt),
         online: gateway.isOnline(machine.id),
       })),
+      agentAccess: agentAccess.map(agentAccessView),
+      controlEvents: controlEvents.map(controlEventView),
     };
   },
 );
@@ -444,6 +605,16 @@ app.post(
       slug: parsed.data.organization.slug,
       name: parsed.data.organization.name,
     });
+    if (
+      !enrollmentIssuanceLimiter.allow(
+        context.workspace.id,
+        parsed.data.userId,
+      )
+    ) {
+      return reply
+        .code(429)
+        .send({ error: "enrollment_issuance_rate_limited" });
+    }
     const usage = await db.workspacePlan(context.workspace.id);
     const entitlement = entitlementsFor(context.organization.plan);
     if (usage?.cloudManaged && usage.activeMachines >= entitlement.machineLimit) {
@@ -464,6 +635,98 @@ app.post(
       hashToken(token),
     );
     return reply.code(201).send({ token, expiresAt: isoTimestamp(expiresAt) });
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/agent-access",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = createCloudAgentAccessSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request", details: parsed.error.issues });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    if (
+      !agentAccessIssuanceLimiter.allow(
+        context.workspace.id,
+        parsed.data.userId,
+      )
+    ) {
+      return reply
+        .code(429)
+        .send({ error: "agent_access_issuance_rate_limited" });
+    }
+    const result = await createAgentAccess(
+      agentAccessDependencies,
+      context.workspace.id,
+      parsed.data.userId,
+      parsed.data,
+    );
+    if (result.status === "unknown_machine") {
+      return reply.code(400).send({ error: "unknown_machine" });
+    }
+    if (result.status === "limit_reached") {
+      return reply.code(409).send({
+        error: "agent_token_limit_reached",
+        details: {
+          plan: result.plan,
+          activeAgentLimit: result.activeAgentLimit,
+        },
+      });
+    }
+    return reply.code(201).send(result.access);
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/agent-access/revoke",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = revokeCloudAgentAccessSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request", details: parsed.error.issues });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const result = await revokeAgentAccess(
+      agentAccessDependencies,
+      context.workspace.id,
+      parsed.data.userId,
+      parsed.data.tokenId,
+    );
+    if (!result) return reply.code(404).send({ error: "agent_token_not_found" });
+    return result;
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/machines/revoke",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = revokeCloudMachineSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request", details: parsed.error.issues });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const result = await revokeWorkspaceMachine(
+      context.workspace.id,
+      parsed.data.userId,
+      parsed.data.machineId,
+    );
+    if (!result) return reply.code(404).send({ error: "active_machine_not_found" });
+    return result;
   },
 );
 
@@ -592,21 +855,7 @@ app.get(
   async (request) => {
     const tokens = await db.listAgentTokens(adminWorkspaceFor(request));
     return {
-      data: tokens.map((token) => ({
-        id: token.id,
-        name: token.name,
-        machineIds: token.machineIds,
-        capabilities: token.capabilities,
-        expiresAt: isoTimestamp(token.expiresAt),
-        revokedAt: isoTimestamp(token.revokedAt),
-        createdAt: isoTimestamp(token.createdAt),
-        status:
-          token.revokedAt !== undefined
-            ? "revoked"
-            : token.expiresAt <= Date.now()
-              ? "expired"
-              : "active",
-      })),
+      data: tokens.map(agentAccessView),
     };
   },
 );
@@ -638,39 +887,13 @@ app.delete<{ Params: { machineId: string } }>(
   { preHandler: requireWorkspaceAccess },
   async (request, reply) => {
     const workspaceId = adminWorkspaceFor(request);
-    const machine = await db.revokeMachine(workspaceId, request.params.machineId);
-    if (!machine) return reply.code(404).send({ error: "active_machine_not_found" });
-
-    for (const operationId of machine.operationIds) {
-      gateway.send(machine.id, { type: "operation.cancel", operationId });
-      gateway.events.emit(`operation:${operationId}`);
-    }
-
-    for (const sessionId of machine.sessionIds) {
-      gateway.send(machine.id, {
-        type: "session.close",
-        sessionId,
-        reason: "machine_revoked",
-      });
-      gateway.events.emit(`session:${sessionId}`);
-    }
-    const disconnected = gateway.disconnect(machine.id);
-    await audit(db, workspaceId, adminPrincipalFor(request), "machine.revoked", "machine", machine.id, {
-      name: machine.name,
-      revokedAt: isoTimestamp(machine.revokedAt),
-      cancelledOperations: machine.operationIds.length,
-      closedSessions: machine.sessionIds.length,
-      disconnected,
-    });
-    return {
-      id: machine.id,
-      name: machine.name,
-      status: "revoked",
-      revokedAt: isoTimestamp(machine.revokedAt),
-      cancelledOperations: machine.operationIds.length,
-      closedSessions: machine.sessionIds.length,
-      disconnected,
-    };
+    const result = await revokeWorkspaceMachine(
+      workspaceId,
+      adminPrincipalFor(request),
+      request.params.machineId,
+    );
+    if (!result) return reply.code(404).send({ error: "active_machine_not_found" });
+    return result;
   },
 );
 
@@ -683,48 +906,25 @@ app.post("/v1/admin/agent-tokens", {
     return reply.code(400).send({ error: "invalid_request", details: parsed.error.issues });
   }
 
-  const input = parsed.data;
-  const uniqueMachineIds = [...new Set(input.machineIds)];
-  const uniqueCapabilities = [...new Set(input.capabilities)];
-  if (!(await db.activeMachinesExist(workspaceId, uniqueMachineIds))) {
+  const result = await createAgentAccess(
+    agentAccessDependencies,
+    workspaceId,
+    adminPrincipalFor(request),
+    parsed.data,
+  );
+  if (result.status === "unknown_machine") {
     return reply.code(400).send({ error: "unknown_machine" });
   }
-
-  const id = randomUUID();
-  const token = createOpaqueToken("agent");
-  const expiresAt = new Date(Date.now() + input.expiresInSeconds * 1000);
-  const creation = await db.createAgentToken({
-    workspaceId,
-    id,
-    name: input.name,
-    tokenHash: hashToken(token),
-    machineIds: uniqueMachineIds,
-    capabilities: uniqueCapabilities,
-    expiresAt: expiresAt.getTime(),
-  });
-  if (!creation.created) {
+  if (result.status === "limit_reached") {
     return reply.code(409).send({
       error: "agent_token_limit_reached",
       details: {
-        plan: creation.plan,
-        activeAgentLimit: creation.activeAgentLimit,
+        plan: result.plan,
+        activeAgentLimit: result.activeAgentLimit,
       },
     });
   }
-  await audit(db, workspaceId, adminPrincipalFor(request), "agent_token.created", "agent_token", id, {
-    name: input.name,
-    machineIds: uniqueMachineIds,
-    capabilities: uniqueCapabilities,
-    expiresAt: expiresAt.toISOString(),
-  });
-  return reply.code(201).send({
-    id,
-    name: input.name,
-    token,
-    machineIds: uniqueMachineIds,
-    capabilities: uniqueCapabilities,
-    expiresAt: expiresAt.toISOString(),
-  });
+  return reply.code(201).send(result.access);
 });
 
 app.delete<{ Params: { tokenId: string } }>(
@@ -732,26 +932,14 @@ app.delete<{ Params: { tokenId: string } }>(
   { preHandler: requireWorkspaceAccess },
   async (request, reply) => {
     const workspaceId = adminWorkspaceFor(request);
-    const token = await db.revokeAgentToken(workspaceId, request.params.tokenId);
-    if (!token) return reply.code(404).send({ error: "agent_token_not_found" });
-
-    const closedSessions = await expireAgentSessions(
+    const result = await revokeAgentAccess(
+      agentAccessDependencies,
       workspaceId,
-      token.id,
-      "agent_token_revoked",
+      adminPrincipalFor(request),
+      request.params.tokenId,
     );
-    await audit(db, workspaceId, adminPrincipalFor(request), "agent_token.revoked", "agent_token", token.id, {
-      name: token.name,
-      revokedAt: isoTimestamp(token.revokedAt),
-      closedSessions,
-    });
-    return {
-      id: token.id,
-      name: token.name,
-      status: "revoked",
-      revokedAt: isoTimestamp(token.revokedAt),
-      closedSessions,
-    };
+    if (!result) return reply.code(404).send({ error: "agent_token_not_found" });
+    return result;
   },
 );
 
@@ -897,7 +1085,7 @@ app.post("/v1/sessions", { preHandler: requireAgent }, async (request, reply) =>
   if (deniedCapability) {
     await audit(db, principal.workspaceId, principal.id, "session.denied", "machine", input.machineId, {
       reason: "capability_scope",
-      capability: deniedCapability,
+      kind: deniedCapability,
     });
     return reply
       .code(403)
@@ -989,6 +1177,7 @@ app.delete<{ Params: { sessionId: string } }>(
       "session.close_requested",
       "session",
       request.params.sessionId,
+      { machineId: session.machineId },
     );
     return reply.code(202).send({ id: request.params.sessionId, status: "closing" });
   },
@@ -1031,6 +1220,7 @@ app.post<{ Params: { sessionId: string } }>(
         reason: "session_capability",
         capability: neededCapability,
         kind: parsed.data.action.kind,
+        machineId: session.machineId,
       });
       return reply.code(403).send({ error: "capability_denied", capability: neededCapability });
     }
@@ -1071,6 +1261,8 @@ app.post<{ Params: { sessionId: string } }>(
     }
     await audit(db, principal.workspaceId, principal.id, "operation.created", "operation", operationId, {
       sessionId: request.params.sessionId,
+      kind: parsed.data.action.kind,
+      machineId: session.machineId,
       operation: operationAuditMetadata(parsed.data.action),
     });
     return reply.code(202).send({ id: operationId, status: sent ? "delivered" : "queued" });
@@ -1133,6 +1325,7 @@ app.post<{ Params: { operationId: string } }>(
       "operation.cancel_requested",
       "operation",
       request.params.operationId,
+      { machineId: operation.machineId },
     );
     return reply.code(202).send({ id: request.params.operationId, status: "cancellation_requested" });
   },

@@ -1301,6 +1301,7 @@ export class PostgresDatabase {
       .set({ revokedAt: sql`coalesce(revoked_at, ${now})` })
       .where("workspaceId", "=", workspaceId)
       .where("id", "=", tokenId)
+      .where("revokedAt", "is", null)
       .returningAll()
       .executeTakeFirst();
     return token ? agentTokenRecord(token) : null;
@@ -1748,9 +1749,12 @@ export class PostgresDatabase {
     exitCode: number | null;
     error?: string;
     outputTruncated: boolean;
-  }): Promise<{ principalId: string; workspaceId: string } | null> {
-    return (
-      (await this.db
+  }): Promise<{
+    principalId: string;
+    workspaceId: string;
+    kind: Capability;
+  } | null> {
+    const operation = await this.db
         .updateTable("operations")
         .set({
           status: input.status,
@@ -1769,9 +1773,15 @@ export class PostgresDatabase {
               .where("sessions.machineId", "=", input.machineId),
           ),
         )
-        .returning(["principalId", "workspaceId"])
-        .executeTakeFirst()) ?? null
-    );
+        .returning(["principalId", "workspaceId", "action"])
+        .executeTakeFirst();
+    return operation
+      ? {
+          principalId: operation.principalId,
+          workspaceId: operation.workspaceId,
+          kind: operation.action.kind,
+        }
+      : null;
   }
 
   async getOperation(
@@ -1895,6 +1905,8 @@ export class PostgresDatabase {
     operationDataBefore: number;
     auditBefore: number;
   }): Promise<{
+    agentTokens: number;
+    enrollmentTokens: number;
     operations: number;
     sessions: number;
     auditEvents: number;
@@ -1905,6 +1917,11 @@ export class PostgresDatabase {
       await transaction
         .deleteFrom("deviceAuthorizations")
         .where("expiresAt", "<", operationDataBefore)
+        .execute();
+      const deletedEnrollmentTokens = await transaction
+        .deleteFrom("enrollmentTokens")
+        .where("expiresAt", "<", operationDataBefore)
+        .returning("tokenHash")
         .execute();
       const deletedOperations = await transaction
         .deleteFrom("operations")
@@ -1932,7 +1949,71 @@ export class PostgresDatabase {
         .where("createdAt", "<", auditBefore)
         .returning("id")
         .execute();
+      const deletedAgentTokens = await transaction
+        .deleteFrom("agentTokens")
+        .where((expression) =>
+          expression.or([
+            expression("expiresAt", "<", auditBefore),
+            expression("revokedAt", "<", auditBefore),
+          ]),
+        )
+        .where(({ not, exists, selectFrom, or }) =>
+          not(
+            or([
+              exists(
+                selectFrom("sessions")
+                  .select("sessions.id")
+                  .whereRef(
+                    "sessions.workspaceId",
+                    "=",
+                    "agentTokens.workspaceId",
+                  )
+                  .whereRef(
+                    "sessions.principalId",
+                    "=",
+                    "agentTokens.id",
+                  ),
+              ),
+              exists(
+                selectFrom("auditEvents")
+                  .select("auditEvents.id")
+                  .whereRef(
+                    "auditEvents.workspaceId",
+                    "=",
+                    "agentTokens.workspaceId",
+                  )
+                  .where((audit) =>
+                    audit.or([
+                      audit
+                        .eb(
+                          "auditEvents.principalId",
+                          "=",
+                          audit.ref("agentTokens.id"),
+                        ),
+                      audit.and([
+                        audit(
+                          "auditEvents.targetType",
+                          "=",
+                          "agent_token",
+                        ),
+                        audit
+                          .eb(
+                            "auditEvents.targetId",
+                            "=",
+                            audit.ref("agentTokens.id"),
+                          ),
+                      ]),
+                    ]),
+                  ),
+              ),
+            ]),
+          ),
+        )
+        .returning("id")
+        .execute();
       return {
+        agentTokens: deletedAgentTokens.length,
+        enrollmentTokens: deletedEnrollmentTokens.length,
         operations: deletedOperations.length,
         sessions: deletedSessions.length,
         auditEvents: deletedAuditEvents.length,

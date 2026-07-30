@@ -1,4 +1,12 @@
-import { randomBytes } from "node:crypto";
+import {
+  createHash,
+  randomBytes,
+  timingSafeEqual,
+} from "node:crypto";
+import {
+  agentTokenRequestSchema,
+  capabilitySchema,
+} from "@odyshell/protocol";
 import { z } from "zod";
 
 export const cloudPlanIds = ["free", "team", "scale"] as const;
@@ -34,11 +42,23 @@ export const cloudIdentitySchema = z.object({
     externalId: z.string().min(1).max(256),
     slug: z.string().min(1).max(128).regex(/^[a-z0-9][a-z0-9-]*$/),
     name: z.string().trim().min(1).max(200),
-  }),
-});
+  }).strict(),
+}).strict();
 
 export const approveDeviceSchema = cloudIdentitySchema.extend({
   userCode: z.string().min(8).max(16),
+});
+
+export const createCloudAgentAccessSchema = cloudIdentitySchema.extend(
+  agentTokenRequestSchema.shape,
+);
+
+export const revokeCloudAgentAccessSchema = cloudIdentitySchema.extend({
+  tokenId: z.string().uuid(),
+});
+
+export const revokeCloudMachineSchema = cloudIdentitySchema.extend({
+  machineId: z.string().uuid(),
 });
 
 export const startDeviceAuthorizationSchema = z.object({
@@ -62,6 +82,32 @@ export function createDeviceUserCode(bytes = randomBytes(8)): string {
 export function normalizeDeviceUserCode(value: string): string {
   return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
+
+export function privacySafeControlMetadata(
+  metadata: Record<string, unknown>,
+): Record<string, string> {
+  const safe: Record<string, string> = {};
+  const kind = capabilitySchema.safeParse(metadata.kind);
+  if (kind.success) safe.kind = kind.data;
+  const reason = controlEventReasonSchema.safeParse(metadata.reason);
+  if (reason.success) safe.reason = reason.data;
+  const machineId = z.string().uuid().safeParse(metadata.machineId);
+  if (machineId.success) {
+    safe.machineId = machineId.data;
+  }
+  return safe;
+}
+
+const controlEventReasonSchema = z.enum([
+  "agent_request",
+  "agent_token_revoked",
+  "capability_scope",
+  "client_rejected",
+  "expired",
+  "machine_revoked",
+  "machine_scope",
+  "session_capability",
+]);
 
 export function entitlementsFor(plan: string): PlanEntitlements {
   return planEntitlements[cloudPlanIds.includes(plan as CloudPlanId) ? plan as CloudPlanId : "free"];
@@ -110,6 +156,19 @@ export function cloudWebKey(environment: NodeJS.ProcessEnv): string | undefined 
   return value;
 }
 
+export function cloudWebRequestDecision(
+  expected: string | undefined,
+  provided: string | undefined,
+): "authorized" | "disabled" | "unauthorized" {
+  if (!expected) return "disabled";
+  if (!provided) return "unauthorized";
+  const expectedDigest = createHash("sha256").update(expected).digest();
+  const providedDigest = createHash("sha256").update(provided).digest();
+  return timingSafeEqual(expectedDigest, providedDigest)
+    ? "authorized"
+    : "unauthorized";
+}
+
 export function cloudWebUrl(
   environment: NodeJS.ProcessEnv,
   cloudEnabled: boolean,
@@ -139,16 +198,58 @@ export class FixedWindowRateLimiter {
   ) {}
 
   allow(key: string, now = Date.now()): boolean {
+    if (!this.canAllow(key, now)) return false;
+    this.consume(key, now);
+    return true;
+  }
+
+  canAllow(key: string, now = Date.now()): boolean {
+    const current = this.windows.get(key);
+    return !current || current.resetsAt <= now || current.count < this.limit;
+  }
+
+  consume(key: string, now = Date.now()): void {
     const current = this.windows.get(key);
     if (!current || current.resetsAt <= now) {
       this.windows.set(key, {
         count: 1,
         resetsAt: now + this.windowMilliseconds,
       });
-      return true;
+      return;
     }
-    if (current.count >= this.limit) return false;
     current.count += 1;
+  }
+}
+
+export class ScopedRateLimiter {
+  private readonly workspaceLimiter: FixedWindowRateLimiter;
+  private readonly userLimiter: FixedWindowRateLimiter;
+
+  constructor(
+    workspaceLimit: number,
+    userLimit: number,
+    windowMilliseconds: number,
+  ) {
+    this.workspaceLimiter = new FixedWindowRateLimiter(
+      workspaceLimit,
+      windowMilliseconds,
+    );
+    this.userLimiter = new FixedWindowRateLimiter(
+      userLimit,
+      windowMilliseconds,
+    );
+  }
+
+  allow(workspaceId: string, userId: string, now = Date.now()): boolean {
+    const userKey = `${workspaceId}:${userId}`;
+    if (
+      !this.userLimiter.canAllow(userKey, now) ||
+      !this.workspaceLimiter.canAllow(workspaceId, now)
+    ) {
+      return false;
+    }
+    this.userLimiter.consume(userKey, now);
+    this.workspaceLimiter.consume(workspaceId, now);
     return true;
   }
 }

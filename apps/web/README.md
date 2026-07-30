@@ -4,11 +4,13 @@
 
 <h1 align="center">Odyshell Web</h1>
 
-<p align="center"><strong>Human identity and workspace administration for Odyshell Cloud.</strong></p>
+<p align="center"><strong>The human control plane for Odyshell Cloud.</strong></p>
 
-The web app is where administrators register, select an organization, approve CLI access and
-connect machines. Agents do not use this interface: they use scoped tokens through the API, SDK
-or MCP server.
+The web app is where workspace members approve CLI access, connect or remove machines, create or
+revoke temporary Agent Access, and review privacy-minimal Control Events. Organization
+administrators additionally manage people and organization settings.
+
+Agents do not use this interface. They use Agent Access through the API, SDK, CLI, or MCP server.
 
 ## Run locally
 
@@ -33,7 +35,12 @@ ods login --server http://localhost:4100
 ```
 
 The CLI opens `/activate` with a short-lived device code. Approval creates a workspace-bound CLI
-token; the dashboard can then issue single-use machine enrollment commands.
+token. The dashboard can then issue single-use machine enrollment commands and scoped Agent
+Access credentials.
+
+Agent Access always targets explicit machines and capabilities, expires after at most one year,
+and is shown once. Control Events never include command text, arguments, paths, file contents,
+stdout, or stderr.
 
 ## Trust boundary
 

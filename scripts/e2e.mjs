@@ -20,7 +20,6 @@ const composeEnvironment = {
 };
 const configDirectory = resolve(root, `.odyshell/e2e/${process.pid}`);
 const configPath = resolve(configDirectory, "client.json");
-const adminConfigPath = resolve(configDirectory, "admin.json");
 const workspace = resolve(root, `tmp/e2e-workspace-${process.pid}`);
 let client;
 let e2eMachineId;
@@ -264,7 +263,7 @@ try {
 
   const tsxCli = resolve(root, "node_modules/tsx/dist/cli.mjs");
   const odsEntry = resolve(root, "apps/cli/src/index.ts");
-  const selectedWorkspace = JSON.parse(
+  const selectedWorkspaceMachines = JSON.parse(
     await run(process.execPath, [
       tsxCli,
       odsEntry,
@@ -272,23 +271,8 @@ try {
       apiUrl,
       "--admin-key",
       adminKey,
-      "--config-file",
-      adminConfigPath,
-      "--json",
-      "workspace",
-      "use",
+      "--workspace-id",
       isolatedWorkspace.id,
-    ]),
-  );
-  if (selectedWorkspace.selected.id !== isolatedWorkspace.id) {
-    throw new Error("ods workspace use did not persist the selected workspace");
-  }
-  const selectedWorkspaceMachines = JSON.parse(
-    await run(process.execPath, [
-      tsxCli,
-      odsEntry,
-      "--config-file",
-      adminConfigPath,
       "--json",
       "machines",
       "--admin",
@@ -298,7 +282,7 @@ try {
     selectedWorkspaceMachines.data.length !== 1 ||
     selectedWorkspaceMachines.data[0]?.id !== isolatedMachine.machineId
   ) {
-    throw new Error("CLI administrator commands ignored the selected workspace");
+    throw new Error("CLI administrator commands ignored the explicit workspace");
   }
 
   const enrolled = JSON.parse(
@@ -1029,6 +1013,21 @@ try {
       "where status not in ('opening', 'ready', 'closing');",
       "update odyshell.audit_events",
       "set created_at = now() - interval '31 days';",
+      "insert into odyshell.enrollment_tokens",
+      "(workspace_id, token_hash, expires_at, used_at)",
+      "values",
+      "('default', 'retention-expired-enrollment', now() - interval '2 hours', null),",
+      "('default', 'retention-current-enrollment', now() + interval '1 day', null);",
+      "insert into odyshell.agent_tokens",
+      "(workspace_id, id, name, token_hash, machine_ids, capabilities, expires_at, revoked_at)",
+      "values",
+      "('default', 'retention-active-access', 'active', 'retention-active-hash', '[]'::jsonb, '[\"fs.read\"]'::jsonb, now() + interval '1 day', null),",
+      "('default', 'retention-inactive-access', 'inactive', 'retention-inactive-hash', '[]'::jsonb, '[\"fs.read\"]'::jsonb, now() - interval '31 days', null),",
+      "('default', 'retention-referenced-access', 'referenced', 'retention-referenced-hash', '[]'::jsonb, '[\"fs.read\"]'::jsonb, now() - interval '31 days', null);",
+      "insert into odyshell.audit_events",
+      "(workspace_id, id, principal_id, action, target_type, target_id, metadata)",
+      "values",
+      "('default', 'retention-reference-event', 'retention-referenced-access', 'agent_token.revoked', 'agent_token', 'retention-referenced-access', '{}'::jsonb);",
     ].join(" "),
   ]);
   await compose(["restart", "server"]);
@@ -1081,11 +1080,21 @@ try {
         "where status not in ('opening', 'ready', 'closing')",
         "and updated_at < now() - interval '1 hour'),",
         "(select count(*) from odyshell.audit_events",
-        "where created_at < now() - interval '30 days');",
+        "where created_at < now() - interval '30 days'),",
+        "(select count(*) from odyshell.enrollment_tokens",
+        "where token_hash = 'retention-expired-enrollment'),",
+        "(select count(*) from odyshell.enrollment_tokens",
+        "where token_hash = 'retention-current-enrollment'),",
+        "(select count(*) from odyshell.agent_tokens",
+        "where id = 'retention-active-access'),",
+        "(select count(*) from odyshell.agent_tokens",
+        "where id = 'retention-inactive-access'),",
+        "(select count(*) from odyshell.agent_tokens",
+        "where id = 'retention-referenced-access');",
       ].join(" "),
     ])
   ).trim();
-  if (retainedRows !== "0|0|0|0") {
+  if (retainedRows !== "0|0|0|0|0|1|1|0|1") {
     throw new Error(`Privacy retention left expired rows: ${retainedRows}`);
   }
 
@@ -1127,6 +1136,7 @@ try {
           enrollmentReplayRejected: true,
           idempotencyReplaySafe: true,
           privacyRetention: true,
+          credentialRetention: true,
           cancellation: true,
           sessionDestroyed: true,
           administratorMachineList: true,

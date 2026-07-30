@@ -2,6 +2,9 @@ import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, posix, resolve, win32 } from "node:path";
 import process from "node:process";
 import { homedir } from "node:os";
+import { DEFAULT_CLOUD_SERVER_URL } from "@odyshell/protocol";
+
+export { DEFAULT_CLOUD_SERVER_URL };
 
 export type StoredConfig = {
   serverUrl: string;
@@ -73,6 +76,20 @@ export async function removeStoredConfig(path = defaultConfigPath()): Promise<vo
   await rm(path, { force: true });
 }
 
+export function serverUrlFor(
+  options: Pick<GlobalOptions, "server">,
+  environment: NodeJS.ProcessEnv = process.env,
+  stored?: Pick<StoredConfig, "serverUrl">,
+): string {
+  return (
+    options.server ??
+    environment.ODYSHELL_URL ??
+    environment.ODYSHELL_SERVER_URL ??
+    stored?.serverUrl ??
+    DEFAULT_CLOUD_SERVER_URL
+  );
+}
+
 export async function resolveConfig(options: GlobalOptions): Promise<StoredConfig> {
   const configPath = options.configFile ? resolve(options.configFile) : defaultConfigPath();
   const stored = await loadStoredConfig(configPath);
@@ -93,12 +110,7 @@ export async function resolveConfig(options: GlobalOptions): Promise<StoredConfi
     process.env.ODYSHELL_WORKSPACE_ID ??
     stored?.workspaceId;
   return {
-    serverUrl:
-      options.server ??
-      process.env.ODYSHELL_URL ??
-      process.env.ODYSHELL_SERVER_URL ??
-      stored?.serverUrl ??
-      "http://127.0.0.1:4100",
+    serverUrl: serverUrlFor(options, process.env, stored),
     ...(workspaceId ? { workspaceId } : {}),
     ...(agentToken ? { agentToken } : {}),
     ...(cliToken ? { cliToken } : {}),

@@ -1,6 +1,9 @@
 import { z } from "zod";
 
 export const PROTOCOL_VERSION = 1;
+export const DEFAULT_CLOUD_SERVER_URL =
+  "https://server-production-30ab.up.railway.app";
+export const MAX_AGENT_ACCESS_SECONDS = 365 * 24 * 60 * 60;
 
 export const capabilitySchema = z.enum([
   "process.exec",
@@ -63,7 +66,7 @@ export const agentTokenRequestSchema = z.object({
   name: z.string().trim().min(1).max(64),
   machineIds: z.array(z.string().uuid()).min(1).max(100),
   capabilities: z.array(capabilitySchema).min(1),
-  expiresInSeconds: z.number().int().min(60).max(30 * 24 * 60 * 60).default(60 * 60),
+  expiresInSeconds: z.number().int().min(60).max(MAX_AGENT_ACCESS_SECONDS).default(60 * 60),
 });
 export type AgentTokenRequest = z.infer<typeof agentTokenRequestSchema>;
 

@@ -139,30 +139,31 @@ Odyshell workspace; organization membership is intentionally not managed by the 
 Connect `ods` without copying a permanent administrator key:
 
 ```bash
-ods login --server https://server.example.com
+ods login
 ```
 
 The CLI prints a short-lived code and opens Odyshell in the browser. After you approve it, `ods`
 receives an expiring workspace credential. The browser session and Clerk credentials never leave
-the web app.
+the web app. Self-hosted installations can still select their Server with `--server`.
 
 From the dashboard, generate the one-time `ods up` command for a machine. The enrollment token
-expires after ten minutes and can only be used once.
+expires after ten minutes and can only be used once. You explicitly select the local operations
+that machine will accept.
 
 ## Give an agent access
 
-Create a token that only works with specific machines and actions:
+In the dashboard, create **Agent Access** with:
+
+- a recognizable agent name;
+- one or more existing machines;
+- only the capabilities the task needs;
+- an expiry from one hour up to one year.
+
+The credential is shown once and can be revoked immediately. Give it to the agent, which can use
+it through the API, SDK, CLI, or MCP:
 
 ```bash
-ods machines
-ods agent create coding-agent --machines <machine-id> --allow process.exec,fs.stat,fs.list,fs.search,fs.read --for 1h
-```
-
-The token is shown once. Give that token to the agent, which can use it through the API or CLI:
-
-```bash
-ods --server http://127.0.0.1:4100 --agent-token <agent-token> exec my-machine -- uname -a
-ods --server http://127.0.0.1:4100 --agent-token <agent-token> audit
+ODYSHELL_AGENT_TOKEN=<agent-access> ods exec my-machine -- uname -a
 ```
 
 MCP-compatible agents can launch the same interface locally with `ods mcp`:
@@ -178,10 +179,10 @@ MCP-compatible agents can launch the same interface locally with `ods mcp`:
 }
 ```
 
-The Server restricts the token to its assigned machines and capabilities. The Client applies its
+The Server restricts Agent Access to its assigned machines, capabilities, and expiry. The Client applies its
 own local policy as a second boundary. When the token expires, its sessions are closed too, so an
-agent cannot keep access through an older session. `ods audit` shows the current agent's history;
-administrators can use `ods audit --all`, `ods agent list`, and `ods agent revoke <agent-id>`.
+agent cannot keep access through an older session. The web app shows privacy-minimal Control
+Events and never includes commands, arguments, paths, file contents, stdout, or stderr.
 
 ## MVP status
 
@@ -192,10 +193,11 @@ The Server keeps machine identities, temporary access, operations, and audit his
 through Kysely. Operation payloads are retained for one hour by default; content-minimal control
 events are retained for 30 days. Odyshell does not provide session recording by default.
 
-Organizations provide the ownership boundary and workspaces isolate machines, grants, sessions,
+Organizations provide the ownership boundary and workspaces isolate machines, Agent Access, sessions,
 operations, and control events. Human and organization identity now live in the Clerk-backed web
-app. Device authorization binds the CLI to one workspace, while agent tokens remain separate,
-scoped, revocable and expiring. Billing is not enabled yet. It is an early development MVP; the
+app. Device authorization binds the CLI to one workspace, while Agent Access remains separate,
+scoped, revocable and expiring. Organization members can operate workspace resources; organization
+administrators additionally manage people and organization settings. Billing is not enabled yet. It is an early development MVP; the
 default local credentials are only for development.
 
 ## Product documents

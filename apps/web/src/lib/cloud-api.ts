@@ -1,4 +1,10 @@
+import {
+  DEFAULT_CLOUD_SERVER_URL,
+  type Capability,
+} from "@odyshell/protocol";
 import { z } from "zod";
+
+export { DEFAULT_CLOUD_SERVER_URL };
 
 const cloudIdentitySchema = z.object({
   userId: z.string().min(1),
@@ -10,6 +16,41 @@ const cloudIdentitySchema = z.object({
 });
 
 export type CloudIdentity = z.infer<typeof cloudIdentitySchema>;
+
+export type CloudMachine = {
+  id: string;
+  name: string;
+  status: string;
+  runtime: unknown;
+  lastSeenAt: string | null;
+  enrolledAt: string;
+  online: boolean;
+};
+
+export type AgentAccess = {
+  id: string;
+  name: string;
+  machineIds: string[];
+  capabilities: Capability[];
+  expiresAt: string | null;
+  revokedAt: string | null;
+  createdAt: string | null;
+  status: "active" | "expired" | "revoked";
+};
+
+export type ControlEvent = {
+  id: string;
+  principalId: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  metadata: {
+    kind?: string;
+    reason?: string;
+    machineId?: string;
+  };
+  createdAt: string | null;
+};
 
 export type CloudContext = {
   organization: {
@@ -35,15 +76,9 @@ export type CloudContext = {
     workspaces: number;
     activeAgents: number;
   };
-  machines: Array<{
-    id: string;
-    name: string;
-    status: string;
-    runtime: unknown;
-    lastSeenAt: string | null;
-    enrolledAt: string;
-    online: boolean;
-  }>;
+  machines: CloudMachine[];
+  agentAccess: AgentAccess[];
+  controlEvents: ControlEvent[];
 };
 
 export class CloudApiError extends Error {
@@ -66,7 +101,7 @@ export async function cloudRequest<T>(
   const serverUrl =
     process.env.ODYSHELL_SERVER_URL ??
     process.env.NEXT_PUBLIC_ODYSHELL_SERVER_URL ??
-    "http://127.0.0.1:4100";
+    DEFAULT_CLOUD_SERVER_URL;
   const webKey = process.env.ODYSHELL_WEB_KEY;
   if (!webKey) {
     throw new CloudApiError(503, "web_key_not_configured");
@@ -104,6 +139,6 @@ export function publicServerUrl(): string {
   return (
     process.env.NEXT_PUBLIC_ODYSHELL_SERVER_URL ??
     process.env.ODYSHELL_SERVER_URL ??
-    "http://127.0.0.1:4100"
+    DEFAULT_CLOUD_SERVER_URL
   );
 }

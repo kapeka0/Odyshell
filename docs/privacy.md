@@ -19,9 +19,11 @@ or stderr in the durable control-event trail.
 
 ### Machine and access state
 
-The Server persists machine identities, public keys, configured grants, hashed tokens, session
+The Server persists machine identities, public keys, capability policy, hashed tokens, session
 state, and revocation state. Private machine keys remain on the Client. Plaintext enrollment and
-agent tokens are returned once and are not stored.
+Agent Access credentials are returned once and are not stored.
+Expired enrollment records are purged with temporary operation data. Inactive Agent Access
+records are removed only after no retained session or Control Event still references them.
 
 ### Temporary operation data
 

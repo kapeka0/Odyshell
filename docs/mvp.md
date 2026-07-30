@@ -31,8 +31,8 @@ private network.
 | Docker | Container log access and an optional Docker execution profile |
 | Identity | Ed25519 machine identity |
 | Enrollment | Single-use, expiring enrollment tokens |
-| Agent access | Expiring and revocable tokens scoped to machines and capabilities |
-| Sessions | Temporary and bounded by the creating agent token |
+| Agent Access | Expiring and revocable credentials scoped to explicit machines and capabilities |
+| Sessions | Temporary and bounded by the creating Agent Access |
 | Reliability | Reconnection, heartbeat, ping, cancellation, and idempotency |
 | Interfaces | HTTP API, TypeScript SDK, `ods` CLI, and local MCP server |
 | Persistence | PostgreSQL through Kysely |
@@ -46,7 +46,7 @@ for the configured workspace and operations.
 
 An operation is accepted only when:
 
-1. the agent token is valid and unexpired;
+1. Agent Access is valid and unexpired;
 2. the token includes the target machine;
 3. the token, machine, session, operation, and control events belong to the same Workspace;
 4. the token includes the required capability;
@@ -77,7 +77,7 @@ See [Privacy and event data](./privacy.md) for the exact boundary.
 ## What the MVP does not yet include
 
 - billing and plan checkout;
-- fine-grained human roles beyond Clerk organization administrators;
+- fine-grained custom human roles beyond Clerk organization members and administrators;
 - human approval workflows;
 - customer-owned webhook, object-storage, or SIEM event sinks;
 - SSO, SCIM, billing, or compliance certification;
@@ -87,15 +87,15 @@ See [Privacy and event data](./privacy.md) for the exact boundary.
 
 These are not implied by the current API.
 
-## Next validation milestone
+## Current validation milestone
 
-The next product milestone is to support design partners without changing the agent protocol:
+The web control plane now supports the smallest complete design-partner workflow:
 
-1. validate CLI device authorization with design partners;
-2. add agent grant creation and revocation to the web app;
-3. add customer-owned delivery for content-minimal control events;
-4. add event visibility and the first human roles beyond organization administrator.
+1. a member signs in to a Clerk Organization and authorizes `ods login`;
+2. the member enrolls a machine with an explicit local capability policy;
+3. the member creates temporary Agent Access for explicit machines and capabilities;
+4. the agent works through the API, SDK, CLI, or MCP;
+5. the member revokes access or lets it expire and reviews privacy-minimal Control Events.
 
-The milestone succeeds when an agent vendor can onboard a customer machine, complete a recurring
-real task, revoke access, and show the customer a useful control trail without exposing task
-content to Odyshell long term.
+The milestone succeeds when a design partner can complete this workflow reliably on a real task.
+Billing, customer-owned event delivery, and additional governance come after product validation.

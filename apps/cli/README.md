@@ -6,14 +6,13 @@
 
 <p align="center"><strong>The agent-facing command line for Odyshell.</strong></p>
 
-The `ods` CLI gives agents and administrators a simple interface to the Odyshell API. Agents use
-it to work with private machines. Administrators use it to enroll machines and create scoped
-access tokens.
+The `ods` CLI gives agents a programmatic interface to Odyshell and lets workspace members connect
+machines. People, plans, machine inventory, and Agent Access are managed in the web app.
 
 ## Basic usage
 
 ```bash
-ods login --server <server-url> --agent-token <agent-token>
+ods login
 ods machines
 ods ping raspberry
 ods exec raspberry -- uname -a
@@ -21,6 +20,9 @@ ods fs search raspberry package.json
 ods fs read raspberry notes/status.txt
 ods audit
 ```
+
+`ods` uses Odyshell Cloud by default. Self-hosted installations select their Server with
+`--server <url>` or `ODYSHELL_SERVER_URL`.
 
 Commands support `--json` for stable, programmatic output:
 
@@ -31,29 +33,18 @@ ods --json exec raspberry -- uname -a
 ## Main commands
 
 - `ods up`, `ods status`, and `ods down` manage the outbound Client.
-- `ods organization` creates and lists customer ownership boundaries.
-- `ods workspace` creates, lists, and selects isolated execution boundaries.
-- `ods machines --admin` lists every machine; `ods machine revoke <name>` removes access.
 - `ods ping` checks end-to-end access without running a command.
 - `ods exec`, `ods shell`, `ods fs`, and `ods docker` perform typed operations.
 - `ods session` manages longer-lived temporary sessions.
-- `ods agent create --machines <name-or-id> --for 1h` creates temporary scoped access.
-- `ods agent list` and `ods agent revoke` inspect or remove agent access.
 - `ods client` configures the client running on a private machine.
-- `ods audit` shows actions performed by the current agent; `--all` uses administrator access.
+- `ods audit` shows actions visible to the current agent.
 - `ods mcp` exposes the same scoped operations to MCP-compatible agents over stdio.
 
-Select a workspace before creating enrollment or agent tokens:
-
-```bash
-ods organization create acme --name "Acme"
-ods workspace create production --organization <organization-id> --name "Production"
-ods workspace use production
-ods token create
-```
-
 `ods up --workspace <path>` refers to the local directory exposed by the Client. It is separate
-from the Server-side Workspace selected with `ods workspace use`.
+from the Cloud Workspace selected during `ods login`.
+
+The legacy administrator commands remain available for self-hosted development, but Cloud
+organization management does not live in the CLI.
 
 ## MCP
 

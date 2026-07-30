@@ -10,7 +10,11 @@ import {
   linuxUserServicePath,
   renderLinuxUserService,
 } from "../apps/client/src/service.js";
-import { cliConfigPathFor } from "../apps/cli/src/config.js";
+import {
+  DEFAULT_CLOUD_SERVER_URL,
+  cliConfigPathFor,
+  serverUrlFor,
+} from "../apps/cli/src/config.js";
 
 describe("client platform support", () => {
   it("maps Node platform names to public Odyshell platform names", () => {
@@ -37,6 +41,24 @@ describe("client platform support", () => {
     expect(cliConfigPathFor("darwin", "/Users/ada", {})).toBe(
       "/Users/ada/Library/Application Support/Odyshell/config.json",
     );
+  });
+
+  it("uses Odyshell Cloud by default while preserving explicit self-hosted overrides", () => {
+    expect(serverUrlFor({}, {}, undefined)).toBe(DEFAULT_CLOUD_SERVER_URL);
+    expect(
+      serverUrlFor(
+        { server: "https://self-hosted.example" },
+        { ODYSHELL_SERVER_URL: "https://environment.example" },
+        { serverUrl: "https://stored.example" },
+      ),
+    ).toBe("https://self-hosted.example");
+    expect(
+      serverUrlFor(
+        {},
+        { ODYSHELL_SERVER_URL: "https://environment.example" },
+        { serverUrl: "https://stored.example" },
+      ),
+    ).toBe("https://environment.example");
   });
 
   it("uses an unprivileged container identity on every host", () => {
