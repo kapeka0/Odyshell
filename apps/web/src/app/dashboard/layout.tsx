@@ -11,9 +11,17 @@ export default async function DashboardLayout({
   const state = await dashboardState();
   const title =
     state.status === "ready" ? state.context.organization.name : "Workspace";
+  const providerKey =
+    state.status === "ready" ? state.context.workspace.id : state.status;
 
   return (
-    <DashboardProvider value={{ state, serverUrl: publicServerUrl() }}>
+    <DashboardProvider
+      key={providerKey}
+      value={{
+        state,
+        serverUrl: publicServerUrl(),
+      }}
+    >
       <AppShell title={title}>{children}</AppShell>
     </DashboardProvider>
   );

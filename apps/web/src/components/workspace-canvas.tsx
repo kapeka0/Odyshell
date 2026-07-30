@@ -111,8 +111,8 @@ export function WorkspaceCanvas({ context }: { context: CloudContext }) {
         <Background
           variant={BackgroundVariant.Dots}
           gap={20}
-          size={1}
-          color="var(--border)"
+          size={1.4}
+          color="var(--muted-foreground)"
         />
         <Controls
           position="bottom-left"
@@ -227,7 +227,7 @@ function AgentNode({ data }: NodeProps<AgentFlowNode>) {
         </span>
         <span className="min-w-0 flex-1">
           <Link
-            href="/dashboard/access"
+            href="/dashboard/agents"
             className="nodrag block truncate font-medium hover:underline"
           >
             {data.name}

@@ -33,7 +33,7 @@ export function SidebarNav({
   return (
     <SidebarGroup className={className}>
       <SidebarGroupLabel>{label}</SidebarGroupLabel>
-      <SidebarMenu>
+      <SidebarMenu className="gap-1.5">
         {items.map((item) => {
           const active =
             (item.href === "/dashboard"

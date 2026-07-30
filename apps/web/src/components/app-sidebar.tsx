@@ -2,9 +2,10 @@
 
 import {
   ActivityIcon,
+  BotIcon,
   CpuIcon,
   GaugeIcon,
-  KeyRoundIcon,
+  SettingsIcon,
 } from "lucide-react";
 import { SidebarNav } from "@/components/sidebar-nav";
 import { SidebarUser } from "@/components/sidebar-user";
@@ -20,8 +21,13 @@ import {
 const workspaceItems = [
   { label: "Overview", href: "/dashboard", icon: GaugeIcon },
   { label: "Machines", href: "/dashboard/machines", icon: CpuIcon },
-  { label: "Agent access", href: "/dashboard/access", icon: KeyRoundIcon },
+  { label: "Agents", href: "/dashboard/agents", icon: BotIcon },
   { label: "Activity", href: "/dashboard/activity", icon: ActivityIcon },
+  {
+    label: "Workspace settings",
+    href: "/dashboard/settings",
+    icon: SettingsIcon,
+  },
 ] as const;
 
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
@@ -30,7 +36,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
       <SidebarHeader>
         <SidebarWorkspaceSwitcher />
       </SidebarHeader>
-      <SidebarContent>
+      <SidebarContent className="overflow-hidden">
         <SidebarNav label="Workspace" items={workspaceItems} />
       </SidebarContent>
       <SidebarFooter>

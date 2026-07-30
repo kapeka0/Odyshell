@@ -59,7 +59,11 @@ export class ClientGateway {
         clearTimeout(authTimer);
         if (state.machineId && this.connections.get(state.machineId) === socket) {
           this.connections.delete(state.machineId);
-          void this.db.setMachineOffline(state.machineId);
+          void this.db
+            .setMachineOffline(state.machineId)
+            .finally(() => {
+              if (state.workspaceId) this.notifyWorkspace(state.workspaceId);
+            });
         }
       });
     });
@@ -82,6 +86,10 @@ export class ClientGateway {
     this.connections.delete(machineId);
     socket.close(4004, reason);
     return true;
+  }
+
+  notifyWorkspace(workspaceId: string): void {
+    this.events.emit(`workspace:${workspaceId}`);
   }
 
   async ping(machineId: string, timeoutMilliseconds = 5_000): Promise<number> {
@@ -154,6 +162,7 @@ export class ClientGateway {
     await this.db.setMachineOnline(message.machineId, message.runtime);
     this.sendSocket(socket, { type: "authenticated", machineId: message.machineId });
     this.events.emit("machine.online", message.machineId);
+    this.notifyWorkspace(machine.workspaceId);
   }
 
   private async persistMessage(
@@ -192,6 +201,7 @@ export class ClientGateway {
             );
           }
           this.events.emit(`session:${message.sessionId}`);
+          this.notifyWorkspace(state.workspaceId);
         }
         break;
       case "session.open_failed":
@@ -217,6 +227,7 @@ export class ClientGateway {
             );
           }
           this.events.emit(`session:${message.sessionId}`);
+          this.notifyWorkspace(state.workspaceId);
         }
         break;
       case "session.closed":
@@ -241,6 +252,7 @@ export class ClientGateway {
             );
           }
           this.events.emit(`session:${message.sessionId}`);
+          this.notifyWorkspace(state.workspaceId);
         }
         break;
       case "operation.started":
@@ -286,6 +298,7 @@ export class ClientGateway {
             );
           }
           this.events.emit(`operation:${message.operationId}`);
+          this.notifyWorkspace(state.workspaceId);
         }
         break;
       case "authenticate":

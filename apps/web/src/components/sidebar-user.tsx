@@ -4,17 +4,11 @@ import { useClerk, useUser } from "@clerk/nextjs";
 import {
   ChevronsUpDownIcon,
   LogOutIcon,
-  MonitorIcon,
-  MoonIcon,
-  SunIcon,
+  SettingsIcon,
 } from "lucide-react";
-import { useTheme } from "next-themes";
+import Link from "next/link";
 import { useState } from "react";
-import {
-  Avatar,
-  AvatarFallback,
-  AvatarImage,
-} from "@/components/ui/avatar";
+import { UserIdentityAvatar } from "@/components/identity-avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,15 +26,11 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Spinner } from "@/components/ui/spinner";
-import { toast } from "@/components/ui/toast";
-import { vercelAvatarUrl } from "@/lib/avatar";
-import { activeUserTheme, nextUserTheme } from "@/lib/theme-cycle";
 
 export function SidebarUser() {
   const { isMobile } = useSidebar();
   const { isLoaded, user } = useUser();
   const { signOut } = useClerk();
-  const { theme, setTheme } = useTheme();
   const [pending, setPending] = useState(false);
 
   if (!isLoaded || !user) {
@@ -55,16 +45,6 @@ export function SidebarUser() {
 
   const name = user.fullName ?? user.primaryEmailAddress?.emailAddress ?? "Account";
   const email = user.primaryEmailAddress?.emailAddress ?? "";
-  const initials = initialsFor(name);
-  const activeTheme = activeUserTheme(theme);
-  const nextTheme = nextUserTheme(activeTheme);
-  const ThemeIcon =
-    activeTheme === "system"
-      ? MonitorIcon
-      : activeTheme === "dark"
-        ? MoonIcon
-        : SunIcon;
-
   return (
     <SidebarMenu>
       <SidebarMenuItem>
@@ -78,21 +58,21 @@ export function SidebarUser() {
               />
             }
           >
-            <Avatar>
-              <AvatarImage
-                src={vercelAvatarUrl(user.id, initials)}
-                alt=""
-                referrerPolicy="no-referrer"
-              />
-              <AvatarFallback>{initials}</AvatarFallback>
-            </Avatar>
-            <div className="grid min-w-0 flex-1 text-left text-sm leading-tight">
+            <UserIdentityAvatar
+              identity={user.id}
+              imageUrl={user.hasImage ? user.imageUrl : undefined}
+              name={name}
+            />
+            <div className="grid min-w-0 flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
               <span className="truncate font-medium">{name}</span>
               <span className="truncate text-xs text-muted-foreground">
                 {email}
               </span>
             </div>
-            <ChevronsUpDownIcon aria-hidden="true" className="ml-auto" />
+            <ChevronsUpDownIcon
+              aria-hidden="true"
+              className="ml-auto group-data-[collapsible=icon]:hidden"
+            />
           </DropdownMenuTrigger>
           <DropdownMenuContent
             side={isMobile ? "bottom" : "right"}
@@ -106,24 +86,12 @@ export function SidebarUser() {
               </DropdownMenuLabel>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuItem
-                onClick={() => {
-                  setTheme(nextTheme);
-                  toast.add({
-                    title: `Theme set to ${nextTheme}`,
-                    description:
-                      nextTheme === "system"
-                        ? "Odyshell now follows your device."
-                        : `Odyshell now uses the ${nextTheme} theme.`,
-                    type: "success",
-                  });
-                }}
-              >
-                <ThemeIcon aria-hidden="true" />
-                Theme: {capitalize(activeTheme)}
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
+            <DropdownMenuItem
+              render={<Link href="/dashboard/user-settings" />}
+            >
+              <SettingsIcon aria-hidden="true" />
+              User settings
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuItem
@@ -142,17 +110,4 @@ export function SidebarUser() {
       </SidebarMenuItem>
     </SidebarMenu>
   );
-}
-
-function initialsFor(name: string): string {
-  return name
-    .split(/\s+/u)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join("");
-}
-
-function capitalize(value: string): string {
-  return `${value[0]?.toUpperCase() ?? ""}${value.slice(1)}`;
 }

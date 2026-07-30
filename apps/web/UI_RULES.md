@@ -113,12 +113,29 @@ particular component, library or interaction pattern.
 - Transient feedback remains visible above blocking overlays.
 - User settings contain one theme action that cycles through system, light and
   dark.
-- Generated user avatars use an opaque identity. Never send an email address
-  to the avatar service.
+- Prefer a user's identity-provider photo. When none exists, generate a
+  recognizable face from an opaque identifier without displaying initials or
+  sending an email address to an external service.
+- Give every workspace a stable colored identity mark without displaying
+  initials.
 - The workspace overview is the operational canvas itself, inspired by
   Railway rather than a dashboard card grid.
 - The overview makes the relationship between currently interacting agents,
   active sessions and machines directly inspectable even when the topology is
   crowded.
+- The overview updates from live workspace state and shows agent-to-machine
+  connections only while activity is actually in progress.
 - Online machines use a restrained green live indicator. Offline machines use
   a quiet neutral indicator, and both states include text.
+- Operational collections support search, relevant filters, sorting and
+  pagination. Row details and secondary actions stay behind a consistent
+  actions menu.
+- Destructive row actions remain secondary, require confirmation and never
+  compete with the view's primary creation action.
+- Collapsing workspace navigation preserves every icon, animates smoothly and
+  does not introduce an unnecessary scrollbar.
+- Personal settings and workspace settings have separate destinations.
+  Workspace security settings are visible to members and editable only by
+  administrators.
+- Control Events remain privacy-minimal in the MVP. Do not present unavailable
+  logging policies as editable choices.

@@ -16,6 +16,21 @@ export const readOnlyCapabilities: Capability[] = [
   "docker.logs",
 ];
 
+export function isReadOnlyPreset(capabilities: Capability[]): boolean {
+  return (
+    capabilities.length === readOnlyCapabilities.length &&
+    readOnlyCapabilities.every((capability) =>
+      capabilities.includes(capability),
+    )
+  );
+}
+
+export function toggleReadOnlyPreset(
+  capabilities: Capability[],
+): Capability[] {
+  return isReadOnlyPreset(capabilities) ? [] : [...readOnlyCapabilities];
+}
+
 export const capabilityGroups: Array<{
   name: string;
   capabilities: Array<{

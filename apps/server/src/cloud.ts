@@ -1,5 +1,6 @@
 import {
   createHash,
+  createHmac,
   randomBytes,
   timingSafeEqual,
 } from "node:crypto";
@@ -60,6 +61,140 @@ export const revokeCloudAgentAccessSchema = cloudIdentitySchema.extend({
 export const revokeCloudMachineSchema = cloudIdentitySchema.extend({
   machineId: z.string().uuid(),
 });
+
+const cloudLiveClaimsSchema = z.object({
+  workspaceId: z.string().min(1).max(128),
+  userId: z.string().min(1).max(256),
+  nonce: z.string().regex(/^[A-Za-z0-9_-]{16,64}$/u),
+  expiresAt: z.number().int().positive(),
+}).strict();
+
+export type CloudLiveClaims = z.infer<typeof cloudLiveClaimsSchema>;
+
+const CLOUD_LIVE_TOKEN_PREFIX = "ods_live_";
+const MAX_CLOUD_LIVE_TOKEN_LENGTH = 2_048;
+
+export function createCloudLiveToken(
+  secret: string,
+  claims: Omit<CloudLiveClaims, "expiresAt" | "nonce">,
+  now = Date.now(),
+  lifetimeMilliseconds = 60_000,
+): string {
+  const payload = Buffer.from(
+    JSON.stringify({
+      ...claims,
+      nonce: randomBytes(18).toString("base64url"),
+      expiresAt: now + Math.max(1_000, Math.min(lifetimeMilliseconds, 60_000)),
+    }),
+  ).toString("base64url");
+  const signature = createHmac("sha256", secret)
+    .update(payload)
+    .digest("base64url");
+  return `${CLOUD_LIVE_TOKEN_PREFIX}${payload}.${signature}`;
+}
+
+export function verifyCloudLiveToken(
+  secret: string,
+  token: string,
+  now = Date.now(),
+): CloudLiveClaims | null {
+  if (
+    token.length > MAX_CLOUD_LIVE_TOKEN_LENGTH ||
+    !token.startsWith(CLOUD_LIVE_TOKEN_PREFIX)
+  ) {
+    return null;
+  }
+  const [payload, signature, extra] = token
+    .slice(CLOUD_LIVE_TOKEN_PREFIX.length)
+    .split(".");
+  if (!payload || !signature || extra !== undefined) return null;
+  const expected = createHmac("sha256", secret).update(payload).digest();
+  let provided: Buffer;
+  try {
+    provided = Buffer.from(signature, "base64url");
+  } catch {
+    return null;
+  }
+  if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
+    return null;
+  }
+  try {
+    const claims = cloudLiveClaimsSchema.parse(
+      JSON.parse(Buffer.from(payload, "base64url").toString("utf8")),
+    );
+    return claims.expiresAt > now ? claims : null;
+  } catch {
+    return null;
+  }
+}
+
+export function cloudLiveOriginDecision(
+  configuredOrigin: string | undefined,
+  requestOrigin: string | undefined,
+): "allowed" | "denied" | "disabled" {
+  if (!configuredOrigin) return "disabled";
+  return requestOrigin === configuredOrigin ? "allowed" : "denied";
+}
+
+export class CloudLiveTokenReplayGuard {
+  private readonly usedUntil = new Map<string, number>();
+
+  consume(token: string, expiresAt: number, now = Date.now()): boolean {
+    for (const [digest, expiry] of this.usedUntil) {
+      if (expiry <= now) this.usedUntil.delete(digest);
+    }
+    const digest = createHash("sha256").update(token).digest("base64url");
+    if (this.usedUntil.has(digest)) return false;
+    this.usedUntil.set(digest, expiresAt);
+    return true;
+  }
+}
+
+export class ScopedConcurrencyLimiter {
+  private readonly workspaces = new Map<string, number>();
+  private readonly users = new Map<string, number>();
+
+  constructor(
+    private readonly workspaceLimit: number,
+    private readonly userLimit: number,
+  ) {}
+
+  acquire(workspaceId: string, userId: string): boolean {
+    const userKey = `${workspaceId}:${userId}`;
+    const workspaceCount = this.workspaces.get(workspaceId) ?? 0;
+    const userCount = this.users.get(userKey) ?? 0;
+    if (
+      workspaceCount >= this.workspaceLimit ||
+      userCount >= this.userLimit
+    ) {
+      return false;
+    }
+    this.workspaces.set(workspaceId, workspaceCount + 1);
+    this.users.set(userKey, userCount + 1);
+    return true;
+  }
+
+  release(workspaceId: string, userId: string): void {
+    const userKey = `${workspaceId}:${userId}`;
+    if (!this.users.has(userKey)) return;
+    decrementOrDelete(this.users, userKey);
+    decrementOrDelete(this.workspaces, workspaceId);
+  }
+
+  activeForWorkspace(workspaceId: string): number {
+    return this.workspaces.get(workspaceId) ?? 0;
+  }
+}
+
+function decrementOrDelete(counts: Map<string, number>, key: string): void {
+  const count = counts.get(key);
+  if (!count) return;
+  if (count === 1) {
+    counts.delete(key);
+  } else {
+    counts.set(key, count - 1);
+  }
+}
 
 export const startDeviceAuthorizationSchema = z.object({
   clientName: z.string().trim().min(1).max(120).default("Odyshell CLI"),

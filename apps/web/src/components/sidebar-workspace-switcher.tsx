@@ -5,13 +5,13 @@ import {
   useOrganizationList,
 } from "@clerk/nextjs";
 import {
-  Building2Icon,
   CheckIcon,
   ChevronsUpDownIcon,
   PlusIcon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { WorkspaceIdentityAvatar } from "@/components/identity-avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -84,8 +84,15 @@ export function SidebarWorkspaceSwitcher() {
               />
             }
           >
-            <Building2Icon aria-hidden="true" />
-            <div className="grid min-w-0 flex-1 text-left text-sm leading-tight">
+            {organization ? (
+              <WorkspaceIdentityAvatar
+                identity={organization.id}
+                name={organization.name}
+              />
+            ) : (
+              <span className="size-8 rounded-lg bg-muted" aria-hidden="true" />
+            )}
+            <div className="grid min-w-0 flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
               <span className="truncate font-medium">
                 {organization?.name ?? "Select workspace"}
               </span>
@@ -93,7 +100,10 @@ export function SidebarWorkspaceSwitcher() {
                 Workspace
               </span>
             </div>
-            <ChevronsUpDownIcon aria-hidden="true" className="ml-auto" />
+            <ChevronsUpDownIcon
+              aria-hidden="true"
+              className="ml-auto group-data-[collapsible=icon]:hidden"
+            />
           </DropdownMenuTrigger>
           <DropdownMenuContent
             side={isMobile ? "bottom" : "right"}
@@ -113,7 +123,11 @@ export function SidebarWorkspaceSwitcher() {
                   {pendingId === membership.organization.id ? (
                     <Spinner />
                   ) : (
-                    <Building2Icon aria-hidden="true" />
+                    <WorkspaceIdentityAvatar
+                      identity={membership.organization.id}
+                      name={membership.organization.name}
+                      className="size-6"
+                    />
                   )}
                   <span className="truncate">
                     {membership.organization.name}

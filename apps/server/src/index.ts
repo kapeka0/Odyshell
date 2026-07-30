@@ -25,7 +25,10 @@ import {
 } from "./agent-access.js";
 import {
   approveDeviceSchema,
+  CloudLiveTokenReplayGuard,
+  cloudLiveOriginDecision,
   createCloudAgentAccessSchema,
+  createCloudLiveToken,
   cloudIdentitySchema,
   cloudConnectionView,
   cloudWebRequestDecision,
@@ -39,8 +42,10 @@ import {
   privacySafeControlMetadata,
   revokeCloudAgentAccessSchema,
   revokeCloudMachineSchema,
+  ScopedConcurrencyLimiter,
   ScopedRateLimiter,
   startDeviceAuthorizationSchema,
+  verifyCloudLiveToken,
 } from "./cloud.js";
 import {
   audit,
@@ -112,6 +117,12 @@ const agentAccessIssuanceLimiter = new ScopedRateLimiter(
   40,
   60 * 60_000,
 );
+const liveTokenIssuanceLimiter = new ScopedRateLimiter(300, 30, 60_000);
+const liveTokenReplayGuard = new CloudLiveTokenReplayGuard();
+const liveStreamLimiter = new ScopedConcurrencyLimiter(100, 4);
+const cloudPingLimiter = new ScopedRateLimiter(120, 30, 60_000);
+const machinePingLimiter = new FixedWindowRateLimiter(12, 60_000);
+const pingConcurrencyLimiter = new ScopedConcurrencyLimiter(20, 3);
 
 function matchesSecret(actual: string | undefined, expected: string | undefined): boolean {
   if (!actual || !expected) return false;
@@ -350,8 +361,8 @@ const agentAccessDependencies: AgentAccessDependencies = {
   revokeAgentToken: (workspaceId, tokenId) =>
     db.revokeAgentToken(workspaceId, tokenId),
   expireAgentSessions,
-  audit: (workspaceId, principalId, action, targetType, targetId, metadata) =>
-    audit(
+  audit: async (workspaceId, principalId, action, targetType, targetId, metadata) => {
+    await audit(
       db,
       workspaceId,
       principalId,
@@ -359,7 +370,9 @@ const agentAccessDependencies: AgentAccessDependencies = {
       targetType,
       targetId,
       metadata,
-    ),
+    );
+    gateway.notifyWorkspace(workspaceId);
+  },
   createId: randomUUID,
   createToken: () => createOpaqueToken("agent"),
   hashToken,
@@ -402,6 +415,7 @@ async function revokeWorkspaceMachine(
     closedSessions: machine.sessionIds.length,
     disconnected,
   });
+  gateway.notifyWorkspace(workspaceId);
   return {
     id: machine.id,
     name: machine.name,
@@ -571,6 +585,116 @@ app.post(
 );
 
 app.post(
+  "/v1/internal/cloud/live-token",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = cloudIdentitySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request", details: parsed.error.issues });
+    }
+    if (!webKey || !webUrl) {
+      return reply.code(503).send({ error: "cloud_authentication_disabled" });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    if (
+      !liveTokenIssuanceLimiter.allow(
+        context.workspace.id,
+        parsed.data.userId,
+      )
+    ) {
+      return reply.code(429).send({ error: "live_token_rate_limited" });
+    }
+    const now = Date.now();
+    const expiresAt = now + 60_000;
+    return {
+      token: createCloudLiveToken(
+        webKey,
+        {
+          workspaceId: context.workspace.id,
+          userId: parsed.data.userId,
+        },
+        now,
+        60_000,
+      ),
+      expiresAt: new Date(expiresAt).toISOString(),
+    };
+  },
+);
+
+app.post<{ Body: string }>("/v1/cloud/events", async (request, reply) => {
+  const origin = Array.isArray(request.headers.origin)
+    ? request.headers.origin[0]
+    : request.headers.origin;
+  const originDecision = cloudLiveOriginDecision(webUrl, origin);
+  if (originDecision === "disabled" || !webKey || !webUrl) {
+    return reply.code(503).send({ error: "cloud_authentication_disabled" });
+  }
+  if (originDecision === "denied") {
+    return reply.code(403).send({ error: "origin_not_allowed" });
+  }
+  const claims =
+    typeof request.body === "string"
+      ? verifyCloudLiveToken(webKey, request.body)
+      : null;
+  if (!claims) {
+    return reply.code(401).send({ error: "invalid_or_expired_live_token" });
+  }
+  if (!liveTokenReplayGuard.consume(request.body, claims.expiresAt)) {
+    return reply.code(401).send({ error: "live_token_replayed" });
+  }
+  if (!liveStreamLimiter.acquire(claims.workspaceId, claims.userId)) {
+    return reply.code(429).send({ error: "live_stream_limit_reached" });
+  }
+
+  const eventName = `workspace:${claims.workspaceId}`;
+  const emitRefresh = (): void => {
+    reply.raw.write(`event: refresh\ndata: ${JSON.stringify({ at: Date.now() })}\n\n`);
+  };
+  let cleaned = false;
+  let heartbeat: NodeJS.Timeout | undefined;
+  let expiry: NodeJS.Timeout | undefined;
+  const cleanup = (): void => {
+    if (cleaned) return;
+    cleaned = true;
+    if (heartbeat) clearInterval(heartbeat);
+    if (expiry) clearTimeout(expiry);
+    gateway.events.off(eventName, emitRefresh);
+    liveStreamLimiter.release(claims.workspaceId, claims.userId);
+    if (!reply.raw.writableEnded) reply.raw.end();
+  };
+
+  try {
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      "access-control-allow-origin": webUrl,
+      vary: "Origin",
+      "x-content-type-options": "nosniff",
+    });
+    gateway.events.on(eventName, emitRefresh);
+    reply.raw.on("close", cleanup);
+    heartbeat = setInterval(
+      () => reply.raw.write(": heartbeat\n\n"),
+      15_000,
+    );
+    expiry = setTimeout(
+      cleanup,
+      Math.max(0, claims.expiresAt - Date.now()),
+    );
+    reply.raw.write(": connected\n\n");
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+});
+
+app.post(
   "/v1/internal/cloud/device/approve",
   { preHandler: requireWeb },
   async (request, reply) => {
@@ -601,6 +725,7 @@ app.post(
       "workspace",
       context.workspace.id,
     );
+    gateway.notifyWorkspace(context.workspace.id);
     return { approved: true, workspace: context.workspace };
   },
 );
@@ -647,6 +772,7 @@ app.post(
       "enrollment_token",
       hashToken(token),
     );
+    gateway.notifyWorkspace(context.workspace.id);
     return reply.code(201).send({ token, expiresAt: isoTimestamp(expiresAt) });
   },
 );
@@ -740,6 +866,72 @@ app.post(
     );
     if (!result) return reply.code(404).send({ error: "active_machine_not_found" });
     return result;
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/machines/ping",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = revokeCloudMachineSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request", details: parsed.error.issues });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    if (
+      !cloudPingLimiter.allow(context.workspace.id, parsed.data.userId) ||
+      !machinePingLimiter.allow(
+        `${context.workspace.id}:${parsed.data.machineId}`,
+      )
+    ) {
+      return reply.code(429).send({ error: "machine_ping_rate_limited" });
+    }
+    if (
+      !(await db.activeMachinesExist(context.workspace.id, [
+        parsed.data.machineId,
+      ]))
+    ) {
+      return reply.code(404).send({ error: "active_machine_not_found" });
+    }
+    if (!gateway.isOnline(parsed.data.machineId)) {
+      return reply.code(409).send({ error: "machine_offline" });
+    }
+    if (
+      !pingConcurrencyLimiter.acquire(
+        context.workspace.id,
+        parsed.data.userId,
+      )
+    ) {
+      return reply.code(429).send({ error: "machine_ping_limit_reached" });
+    }
+    try {
+      const latencyMs = await gateway.ping(parsed.data.machineId);
+      await audit(
+        db,
+        context.workspace.id,
+        parsed.data.userId,
+        "machine.ping",
+        "machine",
+        parsed.data.machineId,
+      );
+      gateway.notifyWorkspace(context.workspace.id);
+      return {
+        reply: "pong",
+        machineId: parsed.data.machineId,
+        latencyMs,
+      };
+    } catch {
+      return reply.code(504).send({ error: "machine_ping_timeout" });
+    } finally {
+      pingConcurrencyLimiter.release(
+        context.workspace.id,
+        parsed.data.userId,
+      );
+    }
   },
 );
 
@@ -995,6 +1187,7 @@ app.post("/v1/clients/enroll", async (request, reply) => {
     machineId,
     { name: body.name },
   );
+  gateway.notifyWorkspace(enrolled.workspaceId);
   return reply.code(201).send({
     machineId: enrolled.machineId,
     name: enrolled.name,
@@ -1134,6 +1327,7 @@ app.post("/v1/sessions", { preHandler: requireAgent }, async (request, reply) =>
     capabilities: input.capabilities,
     expiresAt: expiresAt.toISOString(),
   });
+  gateway.notifyWorkspace(principal.workspaceId);
   return reply.code(202).send({
     id: sessionId,
     machineId: input.machineId,
@@ -1278,6 +1472,7 @@ app.post<{ Params: { sessionId: string } }>(
       machineId: session.machineId,
       operation: operationAuditMetadata(parsed.data.action),
     });
+    gateway.notifyWorkspace(principal.workspaceId);
     return reply.code(202).send({ id: operationId, status: sent ? "delivered" : "queued" });
   },
 );

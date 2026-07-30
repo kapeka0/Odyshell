@@ -1,8 +1,20 @@
 "use client";
 
-import { CpuIcon, Trash2Icon } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import type { ColumnDef } from "@tanstack/react-table";
+import {
+  ClipboardIcon,
+  CpuIcon,
+  EllipsisIcon,
+  EyeIcon,
+  RadioIcon,
+  Trash2Icon,
+} from "lucide-react";
+import { useMemo, useState } from "react";
+import {
+  DataTable,
+  DataTableColumnHeader,
+} from "@/components/data-table";
+import { useDashboard } from "@/components/dashboard-provider";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -12,18 +24,23 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Empty,
   EmptyDescription,
@@ -31,79 +48,166 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import type { CloudMachine } from "@/lib/cloud-api";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "@/components/ui/toast";
+import type { CloudMachine } from "@/lib/cloud-api";
 
 export function MachineList({ machines }: { machines: CloudMachine[] }) {
-  const online = machines.filter((machine) => machine.online).length;
+  const { refresh } = useDashboard();
+  const columns = useMemo<ColumnDef<CloudMachine>[]>(
+    () => [
+      {
+        id: "search",
+        accessorFn: (machine) => `${machine.name} ${machine.id}`,
+        enableHiding: true,
+      },
+      {
+        accessorKey: "name",
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Machine" />
+        ),
+        cell: ({ row }) => (
+          <div className="min-w-0">
+            <p className="truncate font-medium">{row.original.name}</p>
+            <p className="truncate font-mono text-xs text-muted-foreground">
+              {row.original.id}
+            </p>
+          </div>
+        ),
+      },
+      {
+        id: "connection",
+        accessorFn: (machine) => (machine.online ? "online" : "offline"),
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Status" />
+        ),
+        cell: ({ row }) => (
+          <span className="inline-flex items-center gap-2">
+            <span
+              className={
+                row.original.online
+                  ? "size-2 rounded-full bg-emerald-500 motion-safe:animate-pulse"
+                  : "size-2 rounded-full bg-muted-foreground/45"
+              }
+              aria-hidden="true"
+            />
+            {row.original.online ? "Online" : "Offline"}
+          </span>
+        ),
+        filterFn: "equals",
+      },
+      {
+        accessorKey: "lastSeenAt",
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Last seen" />
+        ),
+        cell: ({ row }) => (
+          <span className="text-muted-foreground">
+            {formatTimestamp(row.original.lastSeenAt)}
+          </span>
+        ),
+      },
+      {
+        id: "actions",
+        enableSorting: false,
+        header: () => <span className="sr-only">Actions</span>,
+        cell: ({ row }) => (
+          <MachineActions machine={row.original} refresh={refresh} />
+        ),
+      },
+    ],
+    [refresh],
+  );
+
+  if (machines.length === 0) {
+    return (
+      <Empty className="min-h-64 rounded-lg border">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <CpuIcon aria-hidden="true" />
+          </EmptyMedia>
+          <EmptyTitle>No machines yet</EmptyTitle>
+          <EmptyDescription>
+            Use Add machine to create a one-time connection command.
+          </EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    );
+  }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Machines</CardTitle>
-        <CardDescription>Clients enrolled in this workspace.</CardDescription>
-        <CardAction>
-          <Badge variant={online > 0 ? "default" : "outline"}>
-            {online} online
-          </Badge>
-        </CardAction>
-      </CardHeader>
-      <CardContent>
-        {machines.length === 0 ? (
-          <Empty className="min-h-48 border-y">
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <CpuIcon aria-hidden="true" />
-              </EmptyMedia>
-              <EmptyTitle>No machines yet</EmptyTitle>
-              <EmptyDescription>
-                Use Add machine to create a one-time connection command.
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Machine</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="hidden sm:table-cell">
-                  Last seen
-                </TableHead>
-                <TableHead>
-                  <span className="sr-only">Actions</span>
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {machines.map((machine) => (
-                <MachineRow key={machine.id} machine={machine} />
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </CardContent>
-    </Card>
+    <DataTable
+      columns={columns}
+      data={machines}
+      searchColumn="search"
+      searchPlaceholder="Search machines…"
+      filter={{
+        columnId: "connection",
+        label: "Status",
+        options: [
+          { label: "Online", value: "online" },
+          { label: "Offline", value: "offline" },
+        ],
+      }}
+      emptyMessage="No machines match these filters."
+    />
   );
 }
 
-function MachineRow({ machine }: { machine: CloudMachine }) {
-  const router = useRouter();
-  const [open, setOpen] = useState(false);
-  const [pending, setPending] = useState(false);
+function MachineActions({
+  machine,
+  refresh,
+}: {
+  machine: CloudMachine;
+  refresh: () => Promise<unknown>;
+}) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [pendingAction, setPendingAction] = useState<
+    "ping" | "remove" | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
 
+  async function pingMachine() {
+    setPendingAction("ping");
+    try {
+      const response = await fetch(`/api/machines/${machine.id}/ping`, {
+        method: "POST",
+      });
+      const body = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        latencyMs?: number;
+      };
+      if (!response.ok) throw new Error(body.error ?? "Ping failed");
+      toast.add({
+        title: "Pong! 🏓",
+        description: `${machine.name} replied in ${body.latencyMs ?? 0} ms.`,
+        type: "success",
+      });
+      await refresh();
+    } catch (reason) {
+      toast.add({
+        title: "Machine did not reply",
+        description:
+          reason instanceof Error ? reason.message : "The ping failed.",
+        type: "error",
+      });
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
+  async function copyId() {
+    await navigator.clipboard.writeText(machine.id);
+    toast.add({
+      title: "Machine ID copied",
+      description: machine.name,
+      type: "success",
+    });
+  }
+
   async function removeMachine() {
-    setPending(true);
+    setPendingAction("remove");
     setError(null);
     try {
       const response = await fetch(`/api/machines/${machine.id}`, {
@@ -115,90 +219,142 @@ function MachineRow({ machine }: { machine: CloudMachine }) {
       if (!response.ok) {
         throw new Error(body.error ?? "Could not remove machine");
       }
-      setOpen(false);
+      setRemoveOpen(false);
       toast.add({
         title: "Machine removed",
         description: `${machine.name} can no longer receive operations.`,
         type: "success",
       });
-      router.refresh();
+      await refresh();
     } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Could not remove machine",
+      );
       toast.add({
         title: "Machine was not removed",
         description: `${machine.name} remains enrolled.`,
         type: "error",
       });
-      setError(
-        reason instanceof Error ? reason.message : "Could not remove machine",
-      );
     } finally {
-      setPending(false);
+      setPendingAction(null);
     }
   }
 
   return (
-    <TableRow>
-      <TableCell className="font-heading font-medium">
-        <div>{machine.name}</div>
-        {error ? (
-          <div className="mt-1 max-w-52 whitespace-normal text-xs text-destructive">
-            {error}
-          </div>
-        ) : null}
-      </TableCell>
-      <TableCell>
-        <span className="inline-flex items-center gap-2">
-          <span
-            className={
-              machine.online
-                ? "size-2 rounded-full bg-[var(--color-success)]"
-                : "size-2 rounded-full bg-muted-foreground"
-            }
-            aria-hidden="true"
-          />
-          {machine.online ? "Online" : machine.status}
-        </span>
-      </TableCell>
-      <TableCell className="hidden text-muted-foreground sm:table-cell">
-        {formatTimestamp(machine.lastSeenAt)}
-      </TableCell>
-      <TableCell className="text-right">
-        <AlertDialog open={open} onOpenChange={setOpen}>
-          <AlertDialogTrigger
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                aria-label={`Remove ${machine.name}`}
-              />
-            }
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={`Actions for ${machine.name}`}
+              disabled={pendingAction !== null}
+            />
+          }
+        >
+          {pendingAction ? <Spinner /> : <EllipsisIcon aria-hidden="true" />}
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={() => setDetailsOpen(true)}>
+            <EyeIcon aria-hidden="true" />
+            View details
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={!machine.online}
+            onClick={() => void pingMachine()}
+          >
+            <RadioIcon aria-hidden="true" />
+            Ping
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => void copyId()}>
+            <ClipboardIcon aria-hidden="true" />
+            Copy ID
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            variant="destructive"
+            onClick={() => setRemoveOpen(true)}
           >
             <Trash2Icon aria-hidden="true" />
-            <span className="hidden md:inline">Remove</span>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Remove {machine.name}?</AlertDialogTitle>
-              <AlertDialogDescription>
-                The Client will disconnect and active operations will be
-                cancelled. Reconnecting it later requires a new enrollment.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                variant="destructive"
-                onClick={removeMachine}
-                disabled={pending}
-              >
-                {pending ? <><Spinner />Removing…</> : "Remove machine"}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      </TableCell>
-    </TableRow>
+            Remove
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{machine.name}</DialogTitle>
+            <DialogDescription>
+              Enrollment and presence details for this machine.
+            </DialogDescription>
+          </DialogHeader>
+          <dl className="grid gap-4 text-sm sm:grid-cols-2">
+            <Detail label="Status">
+              <Badge variant={machine.online ? "default" : "outline"}>
+                {machine.online ? "Online" : "Offline"}
+              </Badge>
+            </Detail>
+            <Detail label="Last seen">
+              {formatTimestamp(machine.lastSeenAt)}
+            </Detail>
+            <Detail label="Enrolled">
+              {formatTimestamp(machine.enrolledAt)}
+            </Detail>
+            <Detail label="Machine ID">
+              <span className="break-all font-mono text-xs">{machine.id}</span>
+            </Detail>
+          </dl>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={removeOpen} onOpenChange={setRemoveOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove {machine.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The Client will disconnect and active operations will be
+              cancelled. Reconnecting it later requires a new enrollment.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {error ? (
+            <p className="text-sm text-destructive" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pendingAction === "remove"}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => void removeMachine()}
+              disabled={pendingAction === "remove"}
+            >
+              {pendingAction === "remove" ? <Spinner /> : null}
+              {pendingAction === "remove" ? "Removing…" : "Remove machine"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
+
+function Detail({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="mt-1">{children}</dd>
+    </div>
   );
 }
 

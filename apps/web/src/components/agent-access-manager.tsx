@@ -1,5 +1,6 @@
 "use client";
 
+import type { ColumnDef } from "@tanstack/react-table";
 import {
   agentTokenRequestSchema,
   type Capability,
@@ -7,13 +8,19 @@ import {
 import {
   CheckIcon,
   CopyIcon,
+  EllipsisIcon,
+  EyeIcon,
   KeyRoundIcon,
   PlusIcon,
   ShieldCheckIcon,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  DataTable,
+  DataTableColumnHeader,
+} from "@/components/data-table";
+import { useDashboard } from "@/components/dashboard-provider";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,18 +30,9 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
@@ -43,6 +41,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Empty,
   EmptyDescription,
@@ -71,7 +76,8 @@ import {
 import {
   agentAccessDurations,
   capabilityGroups,
-  readOnlyCapabilities,
+  isReadOnlyPreset,
+  toggleReadOnlyPreset,
 } from "@/lib/agent-access-options";
 import type { AgentAccess, CloudMachine } from "@/lib/cloud-api";
 
@@ -97,7 +103,7 @@ export function AgentAccessManager({
   accesses: AgentAccess[];
   atLimit: boolean;
 }) {
-  const router = useRouter();
+  const { refresh } = useDashboard();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [machineIds, setMachineIds] = useState<string[]>([]);
@@ -110,6 +116,7 @@ export function AgentAccessManager({
   const [pending, setPending] = useState(false);
   const [issued, setIssued] = useState<IssuedAccess | null>(null);
   const [copied, setCopied] = useState(false);
+  const readOnlyEnabled = isReadOnlyPreset(capabilities);
 
   async function createAccess(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -169,7 +176,7 @@ export function AgentAccessManager({
         description: "Copy the credential now. It will not be shown again.",
         type: "success",
       });
-      router.refresh();
+      await refresh();
     } catch (reason) {
       toast.add({
         title: "Agent access was not created",
@@ -210,31 +217,21 @@ export function AgentAccessManager({
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Agent Access</CardTitle>
-        <CardDescription>
-          Issue scoped, temporary credentials for agents. The Client still
-          enforces its local capability policy.
-        </CardDescription>
-        <CardAction>
-          <div className="flex items-center gap-2">
-            <Badge variant="outline">
-              {accesses.filter((access) => access.status === "active").length}{" "}
-              active
-            </Badge>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => setOpen(true)}
-              disabled={atLimit || machines.length === 0}
-            >
-              <PlusIcon data-icon="inline-start" />
-              {atLimit ? "Access limit reached" : "Create access"}
-            </Button>
-          </div>
-        </CardAction>
-      </CardHeader>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Badge variant="outline">
+          {accesses.filter((access) => access.status === "active").length}{" "}
+          active
+        </Badge>
+        <Button
+          type="button"
+          onClick={() => setOpen(true)}
+          disabled={atLimit || machines.length === 0}
+        >
+          <PlusIcon data-icon="inline-start" />
+          {atLimit ? "Agent limit reached" : "Add agent"}
+        </Button>
+      </div>
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-3xl">
           <DialogHeader>
@@ -367,10 +364,11 @@ export function AgentAccessManager({
                   </div>
                   <Button
                     type="button"
-                    variant="outline"
+                    variant={readOnlyEnabled ? "default" : "outline"}
                     size="sm"
+                    aria-pressed={readOnlyEnabled}
                     onClick={() => {
-                      setCapabilities(readOnlyCapabilities);
+                      setCapabilities(toggleReadOnlyPreset(capabilities));
                       setValidation((current) => ({
                         ...current,
                         capabilities: undefined,
@@ -492,10 +490,8 @@ export function AgentAccessManager({
 
         </DialogContent>
       </Dialog>
-      <CardContent>
-        <AccessList accesses={accesses} machines={machines} />
-      </CardContent>
-    </Card>
+      <AccessList accesses={accesses} machines={machines} />
+    </div>
   );
 }
 
@@ -506,14 +502,91 @@ function AccessList({
   accesses: AgentAccess[];
   machines: CloudMachine[];
 }) {
+  const { refresh } = useDashboard();
+  const machineNames = useMemo(
+    () => new Map(machines.map((machine) => [machine.id, machine.name])),
+    [machines],
+  );
+  const columns = useMemo<ColumnDef<AgentAccess>[]>(
+    () => [
+      {
+        id: "search",
+        accessorFn: (access) => access.name,
+      },
+      {
+        accessorKey: "name",
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Agent" />
+        ),
+        cell: ({ row }) => (
+          <div className="min-w-0">
+            <p className="truncate font-medium">{row.original.name}</p>
+            <p className="truncate font-mono text-xs text-muted-foreground">
+              {row.original.id}
+            </p>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "status",
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Status" />
+        ),
+        cell: ({ row }) => (
+          <Badge variant={statusVariant(row.original.status)}>
+            {row.original.status}
+          </Badge>
+        ),
+        filterFn: "equals",
+      },
+      {
+        id: "machines",
+        accessorFn: (access) => access.machineIds.length,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Machines" />
+        ),
+        cell: ({ row }) => (
+          <span className="text-muted-foreground">
+            {row.original.machineIds
+              .map((id) => machineNames.get(id) ?? "Removed machine")
+              .join(", ")}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "expiresAt",
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Expires" />
+        ),
+        cell: ({ row }) => (
+          <span className="text-muted-foreground">
+            {formatTimestamp(row.original.expiresAt)}
+          </span>
+        ),
+      },
+      {
+        id: "actions",
+        header: () => <span className="sr-only">Actions</span>,
+        cell: ({ row }) => (
+          <AccessActions
+            access={row.original}
+            machineNames={machineNames}
+            refresh={refresh}
+          />
+        ),
+      },
+    ],
+    [machineNames, refresh],
+  );
+
   if (accesses.length === 0) {
     return (
-      <Empty className="min-h-40 border-y">
+      <Empty className="min-h-64 rounded-lg border">
         <EmptyHeader>
           <EmptyMedia variant="icon">
             <KeyRoundIcon aria-hidden="true" />
           </EmptyMedia>
-          <EmptyTitle>No Agent Access yet</EmptyTitle>
+          <EmptyTitle>No agents yet</EmptyTitle>
           <EmptyDescription>
             Create a scoped credential when an agent needs a machine.
           </EmptyDescription>
@@ -522,32 +595,37 @@ function AccessList({
     );
   }
 
-  const machineNames = new Map(
-    machines.map((machine) => [machine.id, machine.name]),
-  );
-
   return (
-    <div className="divide-y">
-      {accesses.map((access) => (
-        <AccessRow
-          key={access.id}
-          access={access}
-          machineNames={machineNames}
-        />
-      ))}
-    </div>
+    <DataTable
+      columns={columns}
+      data={accesses}
+      searchColumn="search"
+      searchPlaceholder="Search agents…"
+      filter={{
+        columnId: "status",
+        label: "Status",
+        options: [
+          { label: "Active", value: "active" },
+          { label: "Expired", value: "expired" },
+          { label: "Revoked", value: "revoked" },
+        ],
+      }}
+      emptyMessage="No agents match these filters."
+    />
   );
 }
 
-function AccessRow({
+function AccessActions({
   access,
   machineNames,
+  refresh,
 }: {
   access: AgentAccess;
   machineNames: Map<string, string>;
+  refresh: () => Promise<unknown>;
 }) {
-  const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [revokeOpen, setRevokeOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -564,13 +642,13 @@ function AccessRow({
       if (!response.ok) {
         throw new Error(body.error ?? "Could not revoke Agent Access");
       }
-      setOpen(false);
+      setRevokeOpen(false);
       toast.add({
         title: "Agent access revoked",
         description: `${access.name} can no longer create sessions.`,
         type: "success",
       });
-      router.refresh();
+      await refresh();
     } catch (reason) {
       toast.add({
         title: "Agent access was not revoked",
@@ -588,61 +666,112 @@ function AccessRow({
   }
 
   return (
-    <div className="grid gap-3 py-4 first:pt-0 last:pb-0 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="font-heading font-medium">{access.name}</p>
-          <Badge variant={statusVariant(access.status)}>{access.status}</Badge>
-        </div>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {access.machineIds
-            .map((id) => machineNames.get(id) ?? "Removed machine")
-            .join(", ")}
-          {" · "}
-          expires {formatTimestamp(access.expiresAt)}
-        </p>
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {access.capabilities.map((capability) => (
-            <Badge key={capability} variant="outline">
-              {capability}
-            </Badge>
-          ))}
-        </div>
-        {error ? (
-          <p className="mt-2 text-sm text-destructive" role="alert">{error}</p>
-        ) : null}
-      </div>
-      {access.status === "active" ? (
-        <AlertDialog open={open} onOpenChange={setOpen}>
-          <AlertDialogTrigger
-            render={
-              <Button type="button" variant="outline" size="sm" />
-            }
-          >
-            Revoke
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Revoke {access.name}?</AlertDialogTitle>
-              <AlertDialogDescription>
-                The credential will stop working immediately and its active
-                sessions will close. This cannot be undone.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
-              <AlertDialogAction
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={`Actions for ${access.name}`}
+              disabled={pending}
+            />
+          }
+        >
+          {pending ? <Spinner /> : <EllipsisIcon aria-hidden="true" />}
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={() => setDetailsOpen(true)}>
+            <EyeIcon aria-hidden="true" />
+            View details
+          </DropdownMenuItem>
+          {access.status === "active" ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
                 variant="destructive"
-                onClick={revokeAccess}
-                disabled={pending}
+                onClick={() => setRevokeOpen(true)}
               >
-                {pending ? <><Spinner />Revoking…</> : "Revoke access"}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      ) : null}
-    </div>
+                Revoke
+              </DropdownMenuItem>
+            </>
+          ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{access.name}</DialogTitle>
+            <DialogDescription>
+              Temporary authorization details. The credential itself is never
+              shown again.
+            </DialogDescription>
+          </DialogHeader>
+          <dl className="grid gap-4 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-muted-foreground">Status</dt>
+              <dd className="mt-1">
+                <Badge variant={statusVariant(access.status)}>
+                  {access.status}
+                </Badge>
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Expires</dt>
+              <dd className="mt-1">{formatTimestamp(access.expiresAt)}</dd>
+            </div>
+            <div className="sm:col-span-2">
+              <dt className="text-muted-foreground">Machines</dt>
+              <dd className="mt-1">
+                {access.machineIds
+                  .map((id) => machineNames.get(id) ?? "Removed machine")
+                  .join(", ")}
+              </dd>
+            </div>
+            <div className="sm:col-span-2">
+              <dt className="text-muted-foreground">Capabilities</dt>
+              <dd className="mt-2 flex flex-wrap gap-1.5">
+                {access.capabilities.map((capability) => (
+                  <Badge key={capability} variant="outline">
+                    {capability}
+                  </Badge>
+                ))}
+              </dd>
+            </div>
+          </dl>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={revokeOpen} onOpenChange={setRevokeOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revoke {access.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The credential will stop working immediately and its active
+              sessions will close. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {error ? (
+            <p className="text-sm text-destructive" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => void revokeAccess()}
+              disabled={pending}
+            >
+              {pending ? <Spinner /> : null}
+              {pending ? "Revoking…" : "Revoke access"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 

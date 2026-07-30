@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  CloudLiveTokenReplayGuard,
+  createCloudLiveToken,
   createCloudAgentAccessSchema,
+  cloudLiveOriginDecision,
   cloudIdentitySchema,
   cloudConnectionView,
   cloudWebRequestDecision,
@@ -15,7 +18,9 @@ import {
   privacySafeControlMetadata,
   revokeCloudAgentAccessSchema,
   revokeCloudMachineSchema,
+  ScopedConcurrencyLimiter,
   ScopedRateLimiter,
+  verifyCloudLiveToken,
 } from "../apps/server/src/cloud.js";
 import { cloudRouteIdentityDecision } from "../apps/web/src/lib/cloud-route-policy.js";
 
@@ -192,6 +197,77 @@ describe("cloud identity and device authorization boundaries", () => {
       workspaceLimit: 1,
       activeAgentLimit: 3,
     });
+  });
+
+  it("binds short-lived live streams to one workspace and rejects tampering or expiry", () => {
+    const secret = "a-secure-internal-web-key-with-32-characters";
+    const token = createCloudLiveToken(
+      secret,
+      { workspaceId: "workspace-a", userId: "user-a" },
+      1_000,
+      60_000,
+    );
+
+    expect(verifyCloudLiveToken(secret, token, 60_999)).toEqual({
+      workspaceId: "workspace-a",
+      userId: "user-a",
+      expiresAt: 61_000,
+      nonce: expect.stringMatching(/^[A-Za-z0-9_-]+$/u),
+    });
+    expect(verifyCloudLiveToken(secret, token, 61_000)).toBeNull();
+    expect(
+      verifyCloudLiveToken(
+        "a-different-internal-web-key-with-32-characters",
+        token,
+        2_000,
+      ),
+    ).toBeNull();
+    expect(
+      verifyCloudLiveToken(secret, `${token.slice(0, -1)}x`, 2_000),
+    ).toBeNull();
+  });
+
+  it("rejects replayed live-stream tokens and releases expired replay state", () => {
+    const replayGuard = new CloudLiveTokenReplayGuard();
+    const token = "ods_live_payload.signature";
+
+    expect(replayGuard.consume(token, 61_000, 1_000)).toBe(true);
+    expect(replayGuard.consume(token, 61_000, 1_001)).toBe(false);
+    expect(replayGuard.consume(token, 122_000, 61_000)).toBe(true);
+  });
+
+  it("bounds concurrent live resources by both user and workspace", () => {
+    const limiter = new ScopedConcurrencyLimiter(2, 1);
+
+    expect(limiter.acquire("workspace-a", "user-a")).toBe(true);
+    expect(limiter.acquire("workspace-a", "user-a")).toBe(false);
+    expect(limiter.acquire("workspace-a", "user-b")).toBe(true);
+    expect(limiter.acquire("workspace-a", "user-c")).toBe(false);
+    limiter.release("workspace-a", "user-a");
+    expect(limiter.acquire("workspace-a", "user-c")).toBe(true);
+    limiter.release("workspace-a", "user-a");
+    expect(limiter.activeForWorkspace("workspace-a")).toBe(2);
+  });
+
+  it("accepts live streams only from the exact configured web origin", () => {
+    expect(
+      cloudLiveOriginDecision(
+        "https://odyshell.com",
+        "https://odyshell.com",
+      ),
+    ).toBe("allowed");
+    expect(
+      cloudLiveOriginDecision(
+        "https://odyshell.com",
+        "https://odyshell.com.attacker.test",
+      ),
+    ).toBe("denied");
+    expect(
+      cloudLiveOriginDecision("https://odyshell.com", undefined),
+    ).toBe("denied");
+    expect(cloudLiveOriginDecision(undefined, "https://odyshell.com")).toBe(
+      "disabled",
+    );
   });
 
   it("rate-limits repeated device attempts and resets only after the window", () => {

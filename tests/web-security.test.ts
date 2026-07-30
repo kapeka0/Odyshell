@@ -2,7 +2,11 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { safeAuthRedirect } from "../apps/web/src/lib/auth-redirect.js";
-import { vercelAvatarUrl } from "../apps/web/src/lib/avatar.js";
+import {
+  facehashAvatarPath,
+  safeFacehashIdentity,
+  vercelAvatarUrl,
+} from "../apps/web/src/lib/avatar.js";
 import {
   machineEnrollmentCommand,
   posixShellArgument,
@@ -11,6 +15,11 @@ import {
   activeUserTheme,
   nextUserTheme,
 } from "../apps/web/src/lib/theme-cycle.js";
+import {
+  isReadOnlyPreset,
+  readOnlyCapabilities,
+  toggleReadOnlyPreset,
+} from "../apps/web/src/lib/agent-access-options.js";
 import {
   deviceApprovalErrorPath,
   deviceApprovalReason,
@@ -48,12 +57,17 @@ describe("web authentication boundaries", () => {
     expect(deviceApprovalErrorPath(secret)).not.toContain(secret);
   });
 
-  it("uses an opaque identity for colored avatars without leaking email addresses", () => {
-    const url = vercelAvatarUrl("user_2abc", "KA");
-    expect(url).toBe(
-      "https://avatar.vercel.sh/user_2abc.svg?text=KA&size=64",
-    );
+  it("uses an opaque identity for colored avatars without letters or email addresses", () => {
+    const url = vercelAvatarUrl("org_2abc");
+    expect(url).toBe("https://avatar.vercel.sh/org_2abc.svg?size=64");
+    expect(url).not.toContain("text=");
     expect(url).not.toContain("@");
+    expect(facehashAvatarPath("user_2abc")).toBe(
+      "/api/avatar?name=user_2abc&size=128&showInitial=false",
+    );
+    expect(safeFacehashIdentity("user_2abc")).toBe("user_2abc");
+    expect(safeFacehashIdentity("person@example.com")).toBeNull();
+    expect(safeFacehashIdentity("x".repeat(257))).toBeNull();
   });
 
   it("quotes self-hosted enrollment arguments before placing them in a shell command", () => {
@@ -78,6 +92,14 @@ describe("web authentication boundaries", () => {
     expect(nextUserTheme("light")).toBe("dark");
     expect(nextUserTheme("dark")).toBe("system");
   });
+
+  it("replaces unsafe capabilities with read-only and clears the preset on a second click", () => {
+    const enabled = toggleReadOnlyPreset(["fs.write", "process.shell"]);
+    expect(enabled).toEqual(readOnlyCapabilities);
+    expect(isReadOnlyPreset(enabled)).toBe(true);
+    expect(toggleReadOnlyPreset(enabled)).toEqual([]);
+    expect(isReadOnlyPreset(["fs.read"])).toBe(false);
+  });
 });
 
 describe("dashboard navigation performance boundary", () => {
@@ -92,14 +114,18 @@ describe("dashboard navigation performance boundary", () => {
     for (const route of [
       "page.tsx",
       "machines/page.tsx",
-      "access/page.tsx",
+      "agents/page.tsx",
       "activity/page.tsx",
+      "settings/page.tsx",
     ]) {
       const source = readFileSync(resolve(dashboardRoot, route), "utf8");
       expect(source).not.toContain("dashboardState(");
       expect(source).not.toContain("cloudRequest(");
       expect(source).toContain("useDashboard()");
     }
+    expect(
+      readFileSync(resolve(dashboardRoot, "access/page.tsx"), "utf8"),
+    ).toContain('redirect("/dashboard/agents")');
   });
 
   it("refreshes live dashboard state from the shared provider", () => {
@@ -111,7 +137,7 @@ describe("dashboard navigation performance boundary", () => {
       resolve(componentsRoot, "dashboard-provider.tsx"),
       "utf8",
     );
-    expect(provider).toContain("<DashboardLiveRefresh />");
+    expect(provider).toContain("<DashboardLiveRefresh");
   });
 
   it("keeps loading feedback in forms and toast notifications above dialogs", () => {
@@ -137,7 +163,7 @@ describe("dashboard navigation performance boundary", () => {
     ).toContain("whitespace-pre-wrap break-all");
     expect(
       readFileSync(resolve(componentsRoot, "app-shell.tsx"), "utf8"),
-    ).toContain('className="flex h-4 items-center"');
+    ).toContain('className="h-4 self-center"');
     expect(
       readFileSync(resolve(componentsRoot, "workspace-canvas.tsx"), "utf8"),
     ).toContain("animated: animateConnections");
