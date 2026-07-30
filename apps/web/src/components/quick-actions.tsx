@@ -50,7 +50,7 @@ export function QuickActions() {
         aria-label="Open quick actions"
       >
         <span className="inline-flex items-center gap-2 text-muted-foreground">
-          <SearchIcon data-icon="inline-start" />
+          <SearchIcon aria-hidden="true" data-icon="inline-start" />
           Quick actions
         </span>
         <kbd className="font-mono text-xs text-muted-foreground">⌘K</kbd>
@@ -63,7 +63,7 @@ export function QuickActions() {
         onClick={() => setOpen(true)}
         aria-label="Open quick actions"
       >
-        <CommandIcon />
+        <CommandIcon aria-hidden="true" />
       </Button>
       <CommandDialog
         open={open}
@@ -77,7 +77,7 @@ export function QuickActions() {
           <CommandGroup heading="Odyshell">
             {actions.map((action) => (
               <CommandItem key={action.href} onSelect={() => navigate(action.href)}>
-                <action.icon />
+                <action.icon aria-hidden="true" />
                 <span>{action.label}</span>
                 <CommandShortcut>⌘{action.shortcut}</CommandShortcut>
               </CommandItem>

@@ -1,6 +1,24 @@
 [
   {
     "date": "2026-07-30",
+    "scope": "app",
+    "genre": "modern-minimal",
+    "macrostructure": "Product-led landing + app workbench",
+    "theme": "Vercel neutral",
+    "enrichment": "real product UI",
+    "brief": "Neutral redesign with tweakcn rhythm and a shadcn sidebar for authenticated routes",
+    "navigation": "N9 edge-aligned minimal + authenticated N13 command palette",
+    "footer": "Ft5 statement",
+    "signature": "off-axis hero controls above a policy-decision product specimen",
+    "variationKnobs": {
+      "hero": "centered display with off-axis eyebrow and CTA",
+      "accent": "semantic status only",
+      "density": "marketing spacious, workbench operational",
+      "motion": "transform-only entrance and route pulse"
+    }
+  },
+  {
+    "date": "2026-07-30",
     "scope": "apps/web",
     "genre": "modern-minimal",
     "macrostructure": "Workbench",

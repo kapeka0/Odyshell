@@ -1,9 +1,13 @@
 import { SignIn } from "@clerk/nextjs";
+import { AuthShell } from "@/components/auth-shell";
 
 export default function SignInPage() {
   return (
-    <main className="grid min-h-svh place-items-center px-4 py-12">
+    <AuthShell
+      title="Welcome back"
+      description="Sign in to your Odyshell workspace."
+    >
       <SignIn />
-    </main>
+    </AuthShell>
   );
 }

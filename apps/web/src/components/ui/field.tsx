@@ -208,15 +208,12 @@ function FieldError({
     )
   }, [children, errors])
 
-  if (!content) {
-    return null
-  }
-
   return (
     <div
-      role="alert"
+      role={content ? "alert" : undefined}
+      aria-live="polite"
       data-slot="field-error"
-      className={cn("text-sm font-normal text-destructive", className)}
+      className={cn("min-h-[1lh] text-sm font-normal text-destructive", className)}
       {...props}
     >
       {content}

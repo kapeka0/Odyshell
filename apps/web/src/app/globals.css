@@ -1,9 +1,11 @@
-/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 · genre: modern-minimal · tone: technical-austere · anchor: cobalt · macrostructure: Workbench · theme: Cobalt · enrichment: none · nav: N13 · footer: Ft5 · contrast: pass (40–41) · slop: pass (42–45) · honest: pass (46) · chrome: pass (47) · tokens: pass (48) · responsive: pass (49) · icons: pass (30) · mobile: pass (34, 49, 50–57) */
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 · genre: modern-minimal · tone: precise-neutral · anchor: ink · macrostructure: product-led landing + app workbench · theme: Vercel neutral · nav: N9 edge-aligned minimal · footer: Ft5 statement · enrichment: product UI only · contrast: pass (40–41) · slop: pass (42–45) · honest: pass (46) · chrome: pass (47) · tokens: pass (48) · responsive: pass (49) · mobile: pass (34, 49, 50–57) · icons: pass (30) · design-system: design.md · designed-as-app */
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@clerk/themes/shadcn.css";
 @import "../../tokens.css";
+
+@layer theme, base, clerk, components, utilities;
 
 @custom-variant dark (&:is(.dark *));
 
@@ -40,28 +42,36 @@
   --radius-sm: var(--radius-control);
   --radius-md: var(--radius-surface);
   --radius-lg: var(--radius-panel);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-destructive-foreground: var(--destructive-foreground);
 }
 
 :root {
+  color-scheme: light;
   --background: var(--color-paper);
   --foreground: var(--color-ink);
-  --card: var(--color-paper);
+  --card: var(--color-paper-raised);
   --card-foreground: var(--color-ink);
   --popover: var(--color-paper-raised);
   --popover-foreground: var(--color-ink);
   --primary: var(--color-accent);
   --primary-foreground: var(--color-accent-ink);
-  --secondary: var(--color-paper-raised);
+  --secondary: var(--color-paper-soft);
   --secondary-foreground: var(--color-ink);
   --muted: var(--color-paper-soft);
   --muted-foreground: var(--color-muted);
   --accent: var(--color-paper-soft);
   --accent-foreground: var(--color-ink);
   --destructive: var(--color-danger);
+  --destructive-foreground: var(--color-accent-ink);
   --border: var(--color-rule);
   --input: var(--color-rule);
   --ring: var(--color-focus);
-  --sidebar: var(--color-paper-raised);
+  --sidebar: var(--color-paper);
   --sidebar-foreground: var(--color-ink);
   --sidebar-primary: var(--color-accent);
   --sidebar-primary-foreground: var(--color-accent-ink);
@@ -69,6 +79,26 @@
   --sidebar-accent-foreground: var(--color-ink);
   --sidebar-border: var(--color-rule);
   --sidebar-ring: var(--color-focus);
+  --chart-1: var(--color-chart-1);
+  --chart-2: var(--color-chart-2);
+  --chart-3: var(--color-chart-3);
+  --chart-4: var(--color-chart-4);
+  --chart-5: var(--color-chart-5);
+  --radius: var(--radius-control);
+  --spacing: 0.25rem;
+  --shadow-2xs: 0 1px 2px oklch(0 0 0 / 0.06);
+  --shadow-xs: 0 1px 2px oklch(0 0 0 / 0.08);
+  --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.08), 0 1px 3px oklch(0 0 0 / 0.06);
+  --shadow: 0 1px 2px oklch(0 0 0 / 0.08), 0 1px 3px oklch(0 0 0 / 0.06);
+  --shadow-md: 0 2px 6px oklch(0 0 0 / 0.1);
+  --shadow-lg: 0 8px 24px oklch(0 0 0 / 0.12);
+  --shadow-xl: 0 16px 40px oklch(0 0 0 / 0.14);
+  --shadow-2xl: 0 24px 64px oklch(0 0 0 / 0.18);
+  --tracking-normal: 0em;
+}
+
+.dark {
+  color-scheme: dark;
 }
 
 @layer base {
@@ -88,9 +118,9 @@
 
   body {
     @apply min-h-svh bg-background text-foreground antialiased;
-    --font-display-family: var(--font-space-grotesk), sans-serif;
-    --font-body-family: var(--font-inter), sans-serif;
-    --font-code-family: var(--font-jetbrains-mono), monospace;
+    --font-display-family: var(--font-geist), sans-serif;
+    --font-body-family: var(--font-geist), sans-serif;
+    --font-code-family: var(--font-geist-mono), monospace;
     font-family: var(--font-body-family);
   }
 
@@ -109,10 +139,15 @@
     min-width: 0;
   }
 
+  [id] {
+    scroll-margin-top: 5rem;
+  }
+
   a,
   button,
   [role="button"] {
     -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
   }
 
   button:not(:disabled),
@@ -147,6 +182,14 @@
 
   .body-pretty {
     text-wrap: pretty;
+  }
+
+  .skip-link {
+    @apply fixed top-3 left-3 -translate-y-16 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground opacity-0;
+  }
+
+  .skip-link:focus {
+    @apply translate-y-0 opacity-100;
   }
 
   .route-pulse {

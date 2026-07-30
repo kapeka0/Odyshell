@@ -2,20 +2,20 @@
   "date": "2026-07-30",
   "scope": "apps/web",
   "framework": "Next.js 16 App Router",
-  "fontStack": "none to preserve",
-  "palette": "none to preserve",
-  "motion": "none to preserve",
-  "spacing": "none to preserve",
+  "fontStack": "Geist and Geist Mono via next/font",
+  "palette": "Vercel neutral OKLCH tokens",
+  "motion": "Motion for React, limited to transform and opacity",
+  "spacing": "4pt semantic scale in apps/web/tokens.css",
   "preserve": [
     "pnpm monorepo conventions",
     "TypeScript strictness",
-    "existing Odyshell brand assets"
+    "existing Odyshell brand assets",
+    "shadcn base-nova component conventions"
   ],
   "introduce": [
-    "Cobalt OKLCH tokens",
-    "4pt spacing scale",
-    "Space Grotesk, Inter, and JetBrains Mono",
-    "Motion for React",
-    "Workbench macrostructure"
+    "collapsible shadcn Sidebar",
+    "product-led neutral landing",
+    "shared app workbench shell",
+    "official Clerk shadcn appearance"
   ]
 }

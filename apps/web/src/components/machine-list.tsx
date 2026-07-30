@@ -60,7 +60,7 @@ export function MachineList({ machines }: { machines: CloudMachine[] }) {
           <Empty className="min-h-48 border-y">
             <EmptyHeader>
               <EmptyMedia variant="icon">
-                <CpuIcon />
+                <CpuIcon aria-hidden="true" />
               </EmptyMedia>
               <EmptyTitle>No machines yet</EmptyTitle>
               <EmptyDescription>
@@ -162,7 +162,7 @@ function MachineRow({ machine }: { machine: CloudMachine }) {
               />
             }
           >
-            <Trash2Icon />
+            <Trash2Icon aria-hidden="true" />
             <span className="hidden md:inline">Remove</span>
           </AlertDialogTrigger>
           <AlertDialogContent>

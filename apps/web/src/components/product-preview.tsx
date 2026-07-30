@@ -9,11 +9,16 @@ const machines = [
 
 export function ProductPreview() {
   return (
-    <figure aria-label="Odyshell workspace preview" className="overflow-hidden rounded-[var(--radius-panel)] border bg-card">
+    <figure
+      aria-label="Odyshell workspace preview"
+      className="overflow-hidden rounded-xl border bg-card shadow-sm"
+    >
       <figcaption className="flex items-center justify-between gap-4 border-b px-5 py-4">
         <div>
           <p className="font-heading text-sm font-semibold">Default workspace</p>
-          <p className="font-mono text-xs text-muted-foreground">3 machines · 1 active session</p>
+          <p className="font-mono text-xs text-muted-foreground">
+            3 machines · 1 active access
+          </p>
         </div>
         <Badge variant="outline">Free</Badge>
       </figcaption>
@@ -38,27 +43,29 @@ export function ProductPreview() {
             ))}
           </div>
         </div>
-        <div className="bg-[var(--color-graphite)] p-5 text-[var(--color-graphite-ink)]">
+        <div className="bg-muted/35 p-5">
           <div className="flex items-center justify-between gap-3">
-            <p className="font-mono text-xs uppercase tracking-wider text-[var(--color-muted)]">Operation trace</p>
-            <Badge className="bg-[var(--color-success)] text-[var(--color-accent-ink)]">Succeeded</Badge>
+            <p className="font-mono text-xs text-muted-foreground">Policy decision</p>
+            <Badge>Allowed</Badge>
           </div>
           <pre className="mt-8 overflow-x-auto font-mono text-sm leading-7">
             <code>
-              <span className="text-[var(--color-muted)]">$ </span>
-              <span>ods exec production-api -- npm update</span>
-              {"\n\n"}
-              <span className="text-[var(--color-accent)]">session.created</span>
+              <span className="text-muted-foreground">agent       </span>
+              <span>deploy-agent</span>
               {"\n"}
-              <span className="text-[var(--color-muted)]">scope </span>
+              <span className="text-muted-foreground">machine     </span>
+              <span>production-api</span>
+              {"\n"}
+              <span className="text-muted-foreground">capability  </span>
               <span>process.exec</span>
               {"\n"}
-              <span className="text-[var(--color-muted)]">ttl   </span>
-              <span>00:15:00</span>
+              <span className="text-muted-foreground">expires     </span>
+              <span>in 42 minutes</span>
               {"\n\n"}
-              <span>updated 4 packages</span>
+              <span className="text-muted-foreground">event       </span>
+              <span>operation.created</span>
               {"\n"}
-              <span className="text-[var(--color-success)]">exit 0</span>
+              <span className="text-[var(--color-success)]">decision    allowed</span>
             </code>
           </pre>
         </div>

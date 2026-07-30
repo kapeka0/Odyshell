@@ -116,13 +116,15 @@ export function EnrollMachine({
           Generate a one-time command, then run it on the machine you want to expose to agents.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="flex flex-col gap-4">
         <FieldGroup>
           <Field data-invalid={Boolean(nameError)}>
             <FieldLabel htmlFor="machine-name">Machine name</FieldLabel>
             <Input
               id="machine-name"
+              name="machine-name"
               autoComplete="off"
+              spellCheck={false}
               value={machineName}
               onChange={(event) => {
                 setMachineName(event.target.value);
@@ -159,8 +161,8 @@ export function EnrollMachine({
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               {capabilityGroups.map((group) => (
-                <div key={group.name} className="space-y-2">
-                  <p className="font-mono text-xs uppercase tracking-[0.12em] text-muted-foreground">
+                <div key={group.name} className="flex flex-col gap-2">
+                  <p className="text-xs font-medium text-muted-foreground">
                     {group.name}
                   </p>
                   {group.capabilities.map((capability) => (
@@ -205,8 +207,8 @@ export function EnrollMachine({
             {pending ? "Creating…" : atLimit ? "Machine limit reached" : "Generate command"}
           </Button>
         ) : (
-          <div className="space-y-3">
-            <div className="overflow-x-auto rounded-[var(--radius-control)] bg-[var(--color-graphite)] p-4 text-[var(--color-graphite-ink)]">
+          <div className="flex flex-col gap-3">
+            <div className="overflow-x-auto rounded-md bg-foreground p-4 text-background">
               <code className="whitespace-pre font-mono text-xs">{command}</code>
             </div>
             <div className="flex flex-wrap items-center gap-3">
@@ -219,7 +221,7 @@ export function EnrollMachine({
               </span>
             </div>
             <Alert>
-              <KeyRoundIcon />
+              <KeyRoundIcon aria-hidden="true" />
               <AlertTitle>Shown once</AlertTitle>
               <AlertDescription>
                 Run this command from the directory the Client may expose. The

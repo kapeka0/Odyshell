@@ -1,8 +1,8 @@
-import * as motion from "motion/react-client";
 import { ArrowRightIcon, CheckIcon, LockKeyholeIcon } from "lucide-react";
 import Link from "next/link";
 import { ConnectionRoute } from "@/components/connection-route";
 import { ProductPreview } from "@/components/product-preview";
+import { Reveal } from "@/components/reveal";
 import { SiteHeader } from "@/components/site-header";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -38,24 +38,21 @@ export default function HomePage() {
   return (
     <>
       <SiteHeader />
-      <main>
-        <section className="page-shell grid gap-12 py-20 md:py-28 lg:grid-cols-[0.85fr_1.15fr] lg:items-center">
-          <motion.div
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.42, ease: [0.16, 1, 0.3, 1] }}
-            className="flex min-w-0 flex-col items-start gap-7"
-          >
-            <Badge variant="outline">Infrastructure for AI agents</Badge>
-            <div className="flex flex-col gap-5">
-              <h1 className="display-balance max-w-[11ch] text-[clamp(3rem,7vw,5.25rem)] leading-[0.96] font-semibold tracking-[-0.045em]">
-                Give agents access. Keep the keys.
+      <main id="main-content" tabIndex={-1}>
+        <section className="page-shell flex flex-col items-center gap-10 pt-14 pb-24 text-center md:pt-16 md:pb-28">
+          <Reveal className="flex min-w-0 max-w-4xl flex-col items-stretch gap-7">
+            <Badge variant="outline" className="self-start">
+              Open infrastructure for AI agents
+            </Badge>
+            <div className="flex flex-col items-center gap-5">
+              <h1 className="display-balance max-w-[12ch] text-[clamp(3.25rem,8vw,5.5rem)] leading-[0.96] font-semibold tracking-[-0.055em]">
+                Private machines. Agent-ready.
               </h1>
-              <p className="body-pretty max-w-[58ch] text-lg leading-8 text-muted-foreground">
-                Run scoped operations on private machines without SSH credentials, inbound ports or a VPN. Every request passes through policy and leaves an audit event.
+              <p className="body-pretty max-w-[60ch] text-lg leading-8 text-muted-foreground md:text-xl">
+                Give AI agents scoped, temporary access to real machines without SSH credentials, inbound ports or a VPN.
               </p>
             </div>
-            <div className="flex flex-wrap gap-3">
+            <div className="flex flex-wrap gap-3 self-end">
               <Link className={cn(buttonVariants({ size: "lg" }), "whitespace-nowrap")} href="/sign-up">
                 Start free
                 <ArrowRightIcon data-icon="inline-end" />
@@ -64,41 +61,44 @@ export default function HomePage() {
                 See the flow
               </Link>
             </div>
-            <p className="font-mono text-xs text-muted-foreground">Linux · macOS · Windows · outbound only</p>
-          </motion.div>
-          <motion.div
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.42, delay: 0.08, ease: [0.16, 1, 0.3, 1] }}
-            className="min-w-0"
-          >
+            <p className="self-center font-mono text-xs text-muted-foreground">
+              Linux · macOS · Windows · outbound connections only
+            </p>
+          </Reveal>
+          <Reveal delay={0.08} className="w-full min-w-0 max-w-6xl text-left">
             <ProductPreview />
-          </motion.div>
+          </Reveal>
         </section>
 
-        <section className="page-shell pb-24">
+        <section className="page-shell pb-20 md:pb-28">
           <ConnectionRoute />
         </section>
 
-        <section id="how-it-works" className="bg-[var(--color-graphite)] text-[var(--color-graphite-ink)]">
+        <section id="how-it-works" className="border-y bg-muted/35">
           <div className="page-shell grid gap-14 py-24 lg:grid-cols-[0.7fr_1.3fr]">
             <div className="max-w-md">
-              <h2 className="display-balance text-4xl leading-tight font-semibold tracking-tight">One approval. One workspace. No network access.</h2>
-              <p className="mt-5 leading-7 text-[var(--color-muted)]">
-                The web owns people and plans. The CLI requests access. The client on each machine maintains the outbound route.
+              <h2 className="display-balance text-4xl leading-tight font-semibold tracking-tight">
+                One route. Explicit authority.
+              </h2>
+              <p className="mt-5 leading-7 text-muted-foreground">
+                The web owns people and access. The CLI requests approval. The client on each machine maintains the outbound connection.
               </p>
             </div>
-            <ol className="border-t border-[var(--color-graphite-raised)]">
+            <ol className="border-t">
               {[
                 ["Run ods login", "The CLI creates a short-lived device code and opens the Odyshell web app."],
                 ["Approve in the browser", "Clerk confirms the user and organization. Odyshell binds the CLI to that workspace."],
                 ["Connect a machine", "A one-time enrollment token gives the local client an identity. It connects outbound and waits."],
               ].map(([title, description], index) => (
-                <li key={title} className="grid gap-4 border-b border-[var(--color-graphite-raised)] py-7 sm:grid-cols-[4rem_1fr]">
-                  <span className="font-mono text-sm text-[var(--color-accent)]">{String(index + 1).padStart(2, "0")}</span>
+                <li key={title} className="flex flex-col gap-3 border-b py-7">
+                  <span className="font-mono text-sm text-muted-foreground">
+                    {String(index + 1).padStart(2, "0")}
+                  </span>
                   <div>
                     <h3 className="text-xl font-semibold">{title}</h3>
-                    <p className="mt-2 max-w-[60ch] leading-7 text-[var(--color-muted)]">{description}</p>
+                    <p className="mt-2 max-w-[60ch] leading-7 text-muted-foreground">
+                      {description}
+                    </p>
                   </div>
                 </li>
               ))}
@@ -109,14 +109,16 @@ export default function HomePage() {
         <section id="security" className="page-shell grid gap-12 py-24 lg:grid-cols-[0.75fr_1.25fr]">
           <div>
             <div className="flex gap-3">
-              <LockKeyholeIcon className="text-primary" />
-              <h2 className="display-balance text-4xl leading-tight font-semibold tracking-tight">Control lives outside the model.</h2>
+              <LockKeyholeIcon aria-hidden="true" className="text-muted-foreground" />
+              <h2 className="display-balance text-4xl leading-tight font-semibold tracking-tight">
+                Control lives outside the model.
+              </h2>
             </div>
             <p className="mt-5 max-w-[48ch] leading-7 text-muted-foreground">
               Prompts can ask. Odyshell decides. Machine identity, capability checks, expiry and path boundaries are enforced before an operation reaches the client.
             </p>
           </div>
-          <div className="overflow-hidden rounded-[var(--radius-surface)] border">
+          <div className="overflow-hidden rounded-lg border bg-card">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -164,7 +166,7 @@ export default function HomePage() {
                   </Link>
                 </CardFooter>
               </Card>
-              <Card className="border-[var(--color-rule-strong)]">
+              <Card className="ring-foreground/20">
                 <CardHeader>
                   <CardTitle>Team</CardTitle>
                   <CardDescription>Shared administration and more connected machines.</CardDescription>
@@ -184,8 +186,8 @@ export default function HomePage() {
 
       <footer className="border-t">
         <div className="page-shell py-16">
-          <p className="display-balance max-w-[24ch] font-heading text-4xl leading-tight font-semibold tracking-tight">
-            Let the agent operate. Keep the machine private.
+          <p className="display-balance max-w-[26ch] font-heading text-3xl leading-tight font-semibold tracking-tight">
+            Agent access without network access.
           </p>
           <div className="mt-12 flex flex-col gap-4 border-t pt-5 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
             <span className="font-heading font-semibold text-foreground">Odyshell</span>
@@ -207,7 +209,7 @@ function PlanList({ items }: { items: readonly string[] }) {
     <ul className="flex flex-col gap-3">
       {items.map((item) => (
         <li key={item} className="flex items-center gap-3 text-sm">
-          <CheckIcon className="text-[var(--color-success)]" />
+          <CheckIcon aria-hidden="true" className="text-[var(--color-success)]" />
           <span>{item}</span>
         </li>
       ))}

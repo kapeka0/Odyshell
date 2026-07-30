@@ -2,8 +2,8 @@ import { auth } from "@clerk/nextjs/server";
 import { ActivityIcon, CircleDotIcon, CpuIcon, KeyRoundIcon } from "lucide-react";
 import { redirect } from "next/navigation";
 import { AgentAccessManager } from "@/components/agent-access-manager";
+import { AppShell } from "@/components/app-shell";
 import { ControlEventList } from "@/components/control-event-list";
-import { DashboardHeader } from "@/components/dashboard-header";
 import { EnrollMachine } from "@/components/enroll-machine";
 import { MachineList } from "@/components/machine-list";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -40,21 +40,23 @@ export default async function DashboardPage() {
   }
 
   return (
-    <>
-      <DashboardHeader />
-      <main className="page-shell space-y-10 py-10 md:py-14">
-        <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+    <AppShell title={context?.organization.name ?? "Workspace"}>
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-10 px-4 py-8 md:px-8 md:py-10">
+        <section
+          id="overview"
+          className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between"
+        >
           <div>
-            <p className="font-mono text-xs uppercase tracking-[0.16em] text-primary">Control plane</p>
-            <h1 className="mt-2 text-4xl font-semibold tracking-tight">
+            <p className="text-sm text-muted-foreground">Workspace overview</p>
+            <h1 className="mt-1 text-3xl font-semibold tracking-tight">
               {context?.organization.name ?? "Your workspace"}
             </h1>
-            <p className="mt-3 text-muted-foreground">
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
               Connect machines and grant agents only the access they need.
             </p>
           </div>
           {context ? <Badge variant="outline">{context.organization.plan} plan</Badge> : null}
-        </div>
+        </section>
 
         {!identity ? (
           <Alert>
@@ -73,7 +75,7 @@ export default async function DashboardPage() {
           </Alert>
         ) : context ? (
           <>
-            <section className="grid gap-4 sm:grid-cols-3" aria-label="Workspace usage">
+            <section className="grid gap-3 sm:grid-cols-3" aria-label="Workspace usage">
               <Metric
                 icon={<CpuIcon />}
                 label="Machines"
@@ -91,7 +93,10 @@ export default async function DashboardPage() {
               />
             </section>
 
-            <section className="grid gap-6 lg:grid-cols-[1.25fr_0.75fr]">
+            <section
+              id="machines"
+              className="grid gap-6 lg:grid-cols-[minmax(0,1.3fr)_minmax(20rem,0.7fr)]"
+            >
               <MachineList machines={context.machines} />
               <EnrollMachine
                 serverUrl={publicServerUrl()}
@@ -99,23 +104,27 @@ export default async function DashboardPage() {
               />
             </section>
 
-            <AgentAccessManager
-              machines={context.machines}
-              accesses={context.agentAccess ?? []}
-              atLimit={
-                context.usage.activeAgents >= context.plan.activeAgentLimit
-              }
-            />
+            <section id="agent-access">
+              <AgentAccessManager
+                machines={context.machines}
+                accesses={context.agentAccess ?? []}
+                atLimit={
+                  context.usage.activeAgents >= context.plan.activeAgentLimit
+                }
+              />
+            </section>
 
-            <ControlEventList
-              events={context.controlEvents ?? []}
-              machines={context.machines}
-              accesses={context.agentAccess ?? []}
-            />
+            <section id="control-events">
+              <ControlEventList
+                events={context.controlEvents ?? []}
+                machines={context.machines}
+                accesses={context.agentAccess ?? []}
+              />
+            </section>
           </>
         ) : null}
-      </main>
-    </>
+      </div>
+    </AppShell>
   );
 }
 
@@ -132,7 +141,7 @@ function Metric({
     <Card size="sm">
       <CardHeader>
         <CardDescription className="flex items-center gap-2">
-          {icon}
+          <span aria-hidden="true">{icon}</span>
           {label}
         </CardDescription>
         <CardTitle className="mt-2 text-2xl">{value}</CardTitle>

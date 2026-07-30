@@ -1,9 +1,13 @@
 import { SignUp } from "@clerk/nextjs";
+import { AuthShell } from "@/components/auth-shell";
 
 export default function SignUpPage() {
   return (
-    <main className="grid min-h-svh place-items-center px-4 py-12">
+    <AuthShell
+      title="Create your workspace"
+      description="Start with a private machine and scoped agent access."
+    >
       <SignUp />
-    </main>
+    </AuthShell>
   );
 }

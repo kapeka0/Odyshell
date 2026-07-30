@@ -13,6 +13,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Field,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
@@ -67,9 +72,9 @@ export function DeviceActivation({ initialCode = "" }: { initialCode?: string })
       </CardHeader>
       <CardContent>
         {approved ? (
-          <div className="space-y-5">
+          <div className="flex flex-col gap-5">
             <Alert>
-              <CheckCircle2Icon className="text-[var(--color-success)]" />
+              <CheckCircle2Icon aria-hidden="true" className="text-[var(--color-success)]" />
               <AlertTitle>Access approved</AlertTitle>
               <AlertDescription>You can return to your terminal. Login will finish automatically.</AlertDescription>
             </Alert>
@@ -79,33 +84,37 @@ export function DeviceActivation({ initialCode = "" }: { initialCode?: string })
             </Link>
           </div>
         ) : (
-          <form className="space-y-5" onSubmit={submit}>
-            <div className="grid gap-2">
-              <label className="text-sm font-medium" htmlFor="device-code">
+          <form onSubmit={submit}>
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="device-code">
                 Device code
-              </label>
-              <Input
-                id="device-code"
-                className="h-14 font-mono text-xl tracking-[0.16em] uppercase"
-                inputMode="text"
-                autoComplete="one-time-code"
-                autoFocus
-                maxLength={9}
-                placeholder="ABCD-EFGH"
-                value={code}
-                onChange={(event) => setCode(event.target.value)}
-              />
-            </div>
-            <Button className="w-full" size="lg" disabled={pending}>
-              <KeyRoundIcon data-icon="inline-start" />
-              {pending ? "Approving…" : "Approve CLI"}
-            </Button>
-            {error ? (
-              <Alert variant="destructive">
-                <AlertTitle>Approval failed</AlertTitle>
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            ) : null}
+                </FieldLabel>
+                <Input
+                  id="device-code"
+                  name="device-code"
+                  className="h-14 font-mono text-xl tracking-[0.16em] uppercase"
+                  inputMode="text"
+                  autoComplete="one-time-code"
+                  spellCheck={false}
+                  maxLength={9}
+                  placeholder="ABCD-EFGH"
+                  value={code}
+                  onChange={(event) => setCode(event.target.value)}
+                  aria-invalid={Boolean(error)}
+                />
+              </Field>
+              <Button className="w-full" size="lg" disabled={pending}>
+                <KeyRoundIcon data-icon="inline-start" />
+                {pending ? "Approving…" : "Approve CLI"}
+              </Button>
+              {error ? (
+                <Alert variant="destructive">
+                  <AlertTitle>Approval failed</AlertTitle>
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              ) : null}
+            </FieldGroup>
           </form>
         )}
       </CardContent>

@@ -56,6 +56,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@/components/ui/toggle-group";
+import {
   agentAccessDurations,
   capabilityGroups,
   readOnlyCapabilities,
@@ -184,17 +188,17 @@ export function AgentAccessManager({
           </Badge>
         </CardAction>
       </CardHeader>
-      <CardContent className="space-y-6">
+      <CardContent className="flex flex-col gap-6">
         {issued ? (
           <Alert>
-            <KeyRoundIcon />
+            <KeyRoundIcon aria-hidden="true" />
             <AlertTitle>{issued.name} is ready</AlertTitle>
-            <AlertDescription className="space-y-3">
+            <AlertDescription className="flex flex-col gap-3">
               <p>
                 Copy this credential now. Odyshell stores only its hash and
                 cannot show it again.
               </p>
-              <div className="overflow-x-auto rounded-[var(--radius-control)] bg-[var(--color-graphite)] p-3 text-[var(--color-graphite-ink)]">
+              <div className="overflow-x-auto rounded-md bg-foreground p-3 text-background">
                 <code className="whitespace-pre font-mono text-xs">
                   {issued.token}
                 </code>
@@ -226,6 +230,7 @@ export function AgentAccessManager({
                 <FieldLabel htmlFor="access-name">Access name</FieldLabel>
                 <Input
                   id="access-name"
+                  name="access-name"
                   value={name}
                   onChange={(event) => {
                     setName(event.target.value);
@@ -236,6 +241,7 @@ export function AgentAccessManager({
                   }}
                   placeholder="deploy-agent"
                   autoComplete="off"
+                  spellCheck={false}
                   aria-invalid={Boolean(validation.name)}
                 />
                 <FieldDescription>
@@ -318,8 +324,8 @@ export function AgentAccessManager({
                 </div>
                 <div className="grid gap-5 md:grid-cols-3">
                   {capabilityGroups.map((group) => (
-                    <div key={group.name} className="space-y-3">
-                      <p className="font-mono text-xs uppercase tracking-[0.12em] text-muted-foreground">
+                    <div key={group.name} className="flex flex-col gap-3">
+                      <p className="text-xs font-medium text-muted-foreground">
                         {group.name}
                       </p>
                       {group.capabilities.map((capability) => (
@@ -375,24 +381,29 @@ export function AgentAccessManager({
                   Access stops automatically at this time. It can also be
                   revoked immediately.
                 </FieldDescription>
-                <div className="flex flex-wrap gap-2">
+                <ToggleGroup
+                  aria-label="Agent access duration"
+                  value={[String(expiresInSeconds)]}
+                  onValueChange={(values) => {
+                    const nextValue = Number(values[0]);
+                    if (Number.isFinite(nextValue)) {
+                      setExpiresInSeconds(nextValue);
+                    }
+                  }}
+                  variant="outline"
+                  size="sm"
+                  className="flex-wrap"
+                >
                   {agentAccessDurations.map((duration) => (
-                    <Button
+                    <ToggleGroupItem
                       key={duration.value}
-                      type="button"
-                      size="sm"
-                      variant={
-                        expiresInSeconds === duration.value
-                          ? "default"
-                          : "outline"
-                      }
-                      aria-pressed={expiresInSeconds === duration.value}
-                      onClick={() => setExpiresInSeconds(duration.value)}
+                      value={String(duration.value)}
+                      aria-label={`Expire after ${duration.label}`}
                     >
                       {duration.label}
-                    </Button>
+                    </ToggleGroupItem>
                   ))}
-                </div>
+                </ToggleGroup>
               </FieldSet>
 
               {error ? (
@@ -410,7 +421,7 @@ export function AgentAccessManager({
                   machines.length === 0
                 }
               >
-                <ShieldCheckIcon data-icon="inline-start" />
+                <ShieldCheckIcon aria-hidden="true" data-icon="inline-start" />
                 {pending
                   ? "Creating…"
                   : atLimit
@@ -440,7 +451,7 @@ function AccessList({
       <Empty className="min-h-40 border-y">
         <EmptyHeader>
           <EmptyMedia variant="icon">
-            <KeyRoundIcon />
+            <KeyRoundIcon aria-hidden="true" />
           </EmptyMedia>
           <EmptyTitle>No Agent Access yet</EmptyTitle>
           <EmptyDescription>
@@ -528,7 +539,7 @@ function AccessRow({
           ))}
         </div>
         {error ? (
-          <p className="mt-2 text-sm text-destructive">{error}</p>
+          <p className="mt-2 text-sm text-destructive" role="alert">{error}</p>
         ) : null}
       </div>
       {access.status === "active" ? (

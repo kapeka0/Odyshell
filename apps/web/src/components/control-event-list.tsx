@@ -86,7 +86,10 @@ export function ControlEventList({
                     </p>
                   ) : null}
                 </div>
-                <time className="font-mono text-xs text-muted-foreground">
+                <time
+                  dateTime={event.createdAt ?? undefined}
+                  className="font-mono text-xs text-muted-foreground"
+                >
                   {formatTimestamp(event.createdAt)}
                 </time>
               </div>
