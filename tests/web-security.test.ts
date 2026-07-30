@@ -205,6 +205,22 @@ describe("dashboard navigation performance boundary", () => {
     expect(dataTable).not.toContain("<SelectValue />");
   });
 
+  it("uses one default geometry for form controls", () => {
+    const uiRoot = resolve(
+      process.cwd(),
+      "apps/web/src/components/ui",
+    );
+    const button = readFileSync(resolve(uiRoot, "button.tsx"), "utf8");
+    const input = readFileSync(resolve(uiRoot, "input.tsx"), "utf8");
+    const select = readFileSync(resolve(uiRoot, "select.tsx"), "utf8");
+
+    expect(button).toContain('"h-10 gap-2');
+    expect(input).toContain('"h-10 w-full');
+    expect(input).toContain("px-3 py-2");
+    expect(select).toContain("data-[size=default]:h-10");
+    expect(select).toContain("px-3");
+  });
+
   it("keeps loading feedback in forms and toast notifications above dialogs", () => {
     const componentsRoot = resolve(
       process.cwd(),
