@@ -45,9 +45,7 @@ export function AuthShell({
             <CardTitle>{title}</CardTitle>
             <CardDescription>{description}</CardDescription>
           </CardHeader>
-          <CardContent className="flex justify-center pt-4">
-            {children}
-          </CardContent>
+          <CardContent className="pt-4">{children}</CardContent>
         </Card>
       </div>
     </main>

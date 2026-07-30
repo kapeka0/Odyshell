@@ -1,46 +1,138 @@
 "use client";
 
-import { OrganizationSwitcher } from "@clerk/nextjs";
-import { Brand } from "@/components/brand";
+import {
+  useOrganization,
+  useOrganizationList,
+} from "@clerk/nextjs";
+import {
+  Building2Icon,
+  CheckIcon,
+  ChevronsUpDownIcon,
+  PlusIcon,
+} from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSkeleton,
+  useSidebar,
 } from "@/components/ui/sidebar";
+import { Spinner } from "@/components/ui/spinner";
+import { toast } from "@/components/ui/toast";
 
 export function SidebarWorkspaceSwitcher() {
+  const router = useRouter();
+  const { isMobile } = useSidebar();
+  const { organization, isLoaded: organizationLoaded } = useOrganization();
+  const { isLoaded, setActive, userMemberships } = useOrganizationList({
+    userMemberships: { infinite: true },
+  });
+  const [pendingId, setPendingId] = useState<string | null>(null);
+
+  async function selectWorkspace(organizationId: string) {
+    if (!setActive || organizationId === organization?.id) return;
+    setPendingId(organizationId);
+    try {
+      await setActive({ organization: organizationId });
+      router.refresh();
+      toast.add({
+        title: "Workspace changed",
+        description: "Dashboard data now belongs to the selected workspace.",
+        type: "success",
+      });
+    } catch {
+      toast.add({
+        title: "Workspace was not changed",
+        description: "Your previous workspace remains active.",
+        type: "error",
+      });
+    } finally {
+      setPendingId(null);
+    }
+  }
+
+  if (!isLoaded || !organizationLoaded || userMemberships.isLoading) {
+    return (
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuSkeleton showIcon />
+        </SidebarMenuItem>
+      </SidebarMenu>
+    );
+  }
+
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton
-          size="lg"
-          className="pointer-events-none group-data-[collapsible=icon]:justify-center"
-          render={<div />}
-        >
-          <Brand compact />
-          <div className="grid flex-1 text-left text-sm leading-tight">
-            <span className="truncate font-semibold">Odyshell</span>
-            <span className="truncate text-xs text-muted-foreground">Cloud workspace</span>
-          </div>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-      <SidebarMenuItem className="group-data-[collapsible=icon]:hidden">
-        <OrganizationSwitcher
-          afterCreateOrganizationUrl="/dashboard"
-          afterSelectOrganizationUrl="/dashboard"
-          hidePersonal
-          appearance={{
-            elements: {
-              rootBox: "w-full",
-              organizationSwitcherTrigger:
-                "w-full justify-between rounded-lg border-0 px-2 py-2 shadow-none hover:bg-sidebar-accent",
-              organizationPreview: "min-w-0",
-              organizationPreviewTextContainer: "min-w-0",
-              organizationPreviewMainIdentifier: "truncate text-sm font-medium",
-              organizationPreviewSecondaryIdentifier: "truncate text-xs",
-            },
-          }}
-        />
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <SidebarMenuButton
+                size="lg"
+                tooltip={organization?.name ?? "Select workspace"}
+              />
+            }
+          >
+            <Building2Icon aria-hidden="true" />
+            <div className="grid min-w-0 flex-1 text-left text-sm leading-tight">
+              <span className="truncate font-medium">
+                {organization?.name ?? "Select workspace"}
+              </span>
+              <span className="truncate text-xs text-muted-foreground">
+                Workspace
+              </span>
+            </div>
+            <ChevronsUpDownIcon aria-hidden="true" className="ml-auto" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            side={isMobile ? "bottom" : "right"}
+            align="start"
+            className="min-w-56"
+          >
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>Workspaces</DropdownMenuLabel>
+              {(userMemberships.data ?? []).map((membership) => (
+                <DropdownMenuItem
+                  key={membership.id}
+                  disabled={pendingId !== null}
+                  onClick={() =>
+                    void selectWorkspace(membership.organization.id)
+                  }
+                >
+                  {pendingId === membership.organization.id ? (
+                    <Spinner />
+                  ) : (
+                    <Building2Icon aria-hidden="true" />
+                  )}
+                  <span className="truncate">
+                    {membership.organization.name}
+                  </span>
+                  {membership.organization.id === organization?.id ? (
+                    <CheckIcon aria-hidden="true" className="ml-auto" />
+                  ) : null}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuItem onClick={() => router.push("/onboarding")}>
+                <PlusIcon aria-hidden="true" />
+                Create workspace
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </SidebarMenuItem>
     </SidebarMenu>
   );

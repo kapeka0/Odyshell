@@ -2,11 +2,9 @@
 
 import {
   ActivityIcon,
-  Code2Icon,
   CpuIcon,
   GaugeIcon,
   KeyRoundIcon,
-  TerminalIcon,
 } from "lucide-react";
 import { SidebarNav } from "@/components/sidebar-nav";
 import { SidebarUser } from "@/components/sidebar-user";
@@ -26,11 +24,6 @@ const workspaceItems = [
   { label: "Activity", href: "/dashboard/activity", icon: ActivityIcon },
 ] as const;
 
-const secondaryItems = [
-  { label: "Activate CLI", href: "/activate", icon: TerminalIcon },
-  { label: "GitHub", href: "https://github.com/kapeka0/odyshell", icon: Code2Icon, external: true },
-] as const;
-
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
   return (
     <Sidebar collapsible="icon" {...props}>
@@ -39,7 +32,6 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent>
         <SidebarNav label="Workspace" items={workspaceItems} />
-        <SidebarNav label="Resources" items={secondaryItems} className="mt-auto" />
       </SidebarContent>
       <SidebarFooter>
         <SidebarUser />

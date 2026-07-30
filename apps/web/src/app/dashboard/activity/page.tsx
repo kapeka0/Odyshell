@@ -1,16 +1,15 @@
-import type { Metadata } from "next";
+"use client";
+
 import { ControlEventList } from "@/components/control-event-list";
+import { useDashboard } from "@/components/dashboard-provider";
 import {
   DashboardPage,
   DashboardPageHeader,
   DashboardStateNotice,
 } from "@/components/dashboard-state";
-import { dashboardState } from "@/lib/dashboard-context";
 
-export const metadata: Metadata = { title: "Activity" };
-
-export default async function ActivityPage() {
-  const state = await dashboardState();
+export default function ActivityPage() {
+  const { state } = useDashboard();
 
   return (
     <DashboardPage>

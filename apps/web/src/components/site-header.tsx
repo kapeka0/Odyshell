@@ -1,8 +1,6 @@
-import { Show, UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 import { Brand } from "@/components/brand";
-import { buttonVariants } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { SiteSessionActions } from "@/components/site-session-actions";
 
 export function SiteHeader() {
   return (
@@ -22,30 +20,7 @@ export function SiteHeader() {
             </Link>
           </nav>
           <div className="ml-auto flex items-center gap-2">
-            <Show
-              when="signed-in"
-              fallback={
-                <>
-                  <Link
-                    className={cn(buttonVariants({ variant: "ghost", size: "lg" }), "hidden whitespace-nowrap sm:inline-flex")}
-                    href="/sign-in"
-                  >
-                    Sign in
-                  </Link>
-                  <Link className={cn(buttonVariants({ size: "lg" }), "whitespace-nowrap")} href="/sign-up">
-                    Start free
-                  </Link>
-                </>
-              }
-            >
-              <Link
-                className={cn(buttonVariants({ variant: "outline", size: "lg" }), "hidden whitespace-nowrap sm:inline-flex")}
-                href="/dashboard"
-              >
-                Dashboard
-              </Link>
-              <UserButton />
-            </Show>
+            <SiteSessionActions />
           </div>
         </div>
       </header>

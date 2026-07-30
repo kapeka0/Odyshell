@@ -1,3 +1,5 @@
+"use client";
+
 import { ActivityIcon, CircleDotIcon, CpuIcon, KeyRoundIcon } from "lucide-react";
 import Link from "next/link";
 import {
@@ -16,10 +18,10 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { dashboardState } from "@/lib/dashboard-context";
+import { useDashboard } from "@/components/dashboard-provider";
 
-export default async function OverviewPage() {
-  const state = await dashboardState();
+export default function OverviewPage() {
+  const { state } = useDashboard();
 
   return (
     <DashboardPageFrame>

@@ -66,7 +66,7 @@ export function MachineList({ machines }: { machines: CloudMachine[] }) {
               </EmptyMedia>
               <EmptyTitle>No machines yet</EmptyTitle>
               <EmptyDescription>
-                Generate the command beside this list to connect one.
+                Use Add machine to create a one-time connection command.
               </EmptyDescription>
             </EmptyHeader>
           </Empty>

@@ -16,7 +16,6 @@ export type SidebarNavItem = {
   label: string;
   href: string;
   icon: LucideIcon;
-  external?: boolean;
 };
 
 export function SidebarNav({
@@ -37,7 +36,6 @@ export function SidebarNav({
       <SidebarMenu>
         {items.map((item) => {
           const active =
-            !item.external &&
             (item.href === "/dashboard"
               ? pathname === item.href
               : pathname.startsWith(item.href));
@@ -46,11 +44,10 @@ export function SidebarNav({
             <SidebarMenuItem key={item.href}>
               <SidebarMenuButton
                 render={
-                  item.external ? (
-                    <a href={item.href} target="_blank" rel="noreferrer" />
-                  ) : (
-                    <Link href={item.href} onClick={() => setOpenMobile(false)} />
-                  )
+                  <Link
+                    href={item.href}
+                    onClick={() => setOpenMobile(false)}
+                  />
                 }
                 isActive={active}
                 tooltip={item.label}

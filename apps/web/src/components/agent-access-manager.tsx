@@ -8,6 +8,7 @@ import {
   CheckIcon,
   CopyIcon,
   KeyRoundIcon,
+  PlusIcon,
   ShieldCheckIcon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -36,6 +37,13 @@ import {
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Empty,
   EmptyDescription,
   EmptyHeader,
@@ -54,7 +62,6 @@ import {
   FieldTitle,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "@/components/ui/toast";
 import {
@@ -91,6 +98,7 @@ export function AgentAccessManager({
   atLimit: boolean;
 }) {
   const router = useRouter();
+  const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [machineIds, setMachineIds] = useState<string[]>([]);
   const [capabilities, setCapabilities] = useState<Capability[]>([]);
@@ -197,6 +205,17 @@ export function AgentAccessManager({
     window.setTimeout(() => setCopied(false), 1800);
   }
 
+  function handleOpenChange(nextOpen: boolean) {
+    if (pending) return;
+    setOpen(nextOpen);
+    if (!nextOpen) {
+      setIssued(null);
+      setError(null);
+      setValidation({});
+      setCopied(false);
+    }
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -206,13 +225,32 @@ export function AgentAccessManager({
           enforces its local capability policy.
         </CardDescription>
         <CardAction>
-          <Badge variant="outline">
-            {accesses.filter((access) => access.status === "active").length}{" "}
-            active
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline">
+              {accesses.filter((access) => access.status === "active").length}{" "}
+              active
+            </Badge>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setOpen(true)}
+              disabled={atLimit || machines.length === 0}
+            >
+              <PlusIcon data-icon="inline-start" />
+              {atLimit ? "Access limit reached" : "Create access"}
+            </Button>
+          </div>
         </CardAction>
       </CardHeader>
-      <CardContent className="flex flex-col gap-6">
+      <Dialog open={open} onOpenChange={handleOpenChange}>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Create agent access</DialogTitle>
+            <DialogDescription>
+              Choose the exact machines, capabilities and lifetime this agent
+              needs.
+            </DialogDescription>
+          </DialogHeader>
         {issued ? (
           <Alert>
             <KeyRoundIcon aria-hidden="true" />
@@ -240,7 +278,10 @@ export function AgentAccessManager({
                   type="button"
                   size="sm"
                   variant="outline"
-                  onClick={() => setIssued(null)}
+                  onClick={() => {
+                    setIssued(null);
+                    setCopied(false);
+                  }}
                 >
                   Create another
                 </Button>
@@ -456,7 +497,9 @@ export function AgentAccessManager({
           </form>
         )}
 
-        <Separator />
+        </DialogContent>
+      </Dialog>
+      <CardContent>
         <AccessList accesses={accesses} machines={machines} />
       </CardContent>
     </Card>

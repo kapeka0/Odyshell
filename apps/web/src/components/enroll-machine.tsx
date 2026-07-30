@@ -1,19 +1,26 @@
 "use client";
 
 import type { Capability } from "@odyshell/protocol";
-import { CheckIcon, CopyIcon, KeyRoundIcon, PlusIcon } from "lucide-react";
-import { useState } from "react";
+import {
+  CheckIcon,
+  CopyIcon,
+  KeyRoundIcon,
+  PlusIcon,
+} from "lucide-react";
+import { FormEvent, useState } from "react";
 import { z } from "zod";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import {
   Field,
   FieldContent,
@@ -39,7 +46,10 @@ const machineNameSchema = z
   .trim()
   .min(1, "Enter a machine name")
   .max(64, "Use at most 64 characters")
-  .regex(/^[a-zA-Z0-9._-]+$/, "Use letters, numbers, dots, dashes or underscores");
+  .regex(
+    /^[a-zA-Z0-9._-]+$/,
+    "Use letters, numbers, dots, dashes or underscores",
+  );
 
 type EnrollmentToken = {
   token: string;
@@ -53,6 +63,7 @@ export function EnrollMachine({
   serverUrl: string;
   atLimit: boolean;
 }) {
+  const [open, setOpen] = useState(false);
   const [machineName, setMachineName] = useState("my-machine");
   const [capabilities, setCapabilities] = useState<Capability[]>([]);
   const [enrollment, setEnrollment] = useState<EnrollmentToken | null>(null);
@@ -70,7 +81,24 @@ export function EnrollMachine({
     ? `ods${serverArgument} up --token ${enrollment.token} --name ${machineName} --workspace . --allow ${capabilities.join(",")}`
     : "";
 
-  async function createEnrollment() {
+  function resetDialog() {
+    setMachineName("my-machine");
+    setCapabilities([]);
+    setEnrollment(null);
+    setError(null);
+    setNameError(null);
+    setCapabilitiesError(null);
+    setCopied(false);
+  }
+
+  function handleOpenChange(nextOpen: boolean) {
+    if (pending) return;
+    setOpen(nextOpen);
+    if (!nextOpen) resetDialog();
+  }
+
+  async function createEnrollment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     const parsedName = machineNameSchema.safeParse(machineName);
     if (!parsedName.success) {
       setNameError(
@@ -82,6 +110,7 @@ export function EnrollMachine({
       setCapabilitiesError("Select at least one local capability");
       return;
     }
+
     setPending(true);
     setError(null);
     setNameError(null);
@@ -92,12 +121,15 @@ export function EnrollMachine({
       description: "Issuing a one-time machine token.",
       type: "loading",
     });
+
     try {
       const response = await fetch("/api/enrollment-token", {
         method: "POST",
         headers: { "content-type": "application/json" },
       });
-      const body = (await response.json()) as EnrollmentToken & { error?: string };
+      const body = (await response.json()) as EnrollmentToken & {
+        error?: string;
+      };
       if (!response.ok) {
         throw new Error(body.error ?? "Could not create enrollment token");
       }
@@ -115,7 +147,11 @@ export function EnrollMachine({
         description: "No machine token was issued.",
         type: "error",
       });
-      setError(reason instanceof Error ? reason.message : "Could not create enrollment token");
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not create enrollment token",
+      );
     } finally {
       setPending(false);
     }
@@ -133,115 +169,147 @@ export function EnrollMachine({
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Connect a machine</CardTitle>
-        <CardDescription>
-          Generate a one-time command, then run it on the machine you want to expose to agents.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <FieldGroup>
-          <Field data-invalid={Boolean(nameError)}>
-            <FieldLabel htmlFor="machine-name">Machine name</FieldLabel>
-            <Input
-              id="machine-name"
-              name="machine-name"
-              autoComplete="off"
-              spellCheck={false}
-              value={machineName}
-              onChange={(event) => {
-                setMachineName(event.target.value);
-                setNameError(null);
-              }}
-              disabled={Boolean(enrollment)}
-              aria-invalid={Boolean(nameError)}
-            />
-            <FieldError>{nameError}</FieldError>
-          </Field>
-          <FieldSet
-            disabled={Boolean(enrollment)}
-            data-invalid={Boolean(capabilitiesError)}
-          >
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <FieldLegend>Local capabilities</FieldLegend>
-                <FieldDescription>
-                  The Client enforces this maximum policy on the machine.
-                </FieldDescription>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setCapabilities(readOnlyCapabilities);
-                  setCapabilitiesError(null);
-                }}
-                disabled={Boolean(enrollment)}
-              >
-                Select read-only
-              </Button>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              {capabilityGroups.map((group) => (
-                <div key={group.name} className="flex flex-col gap-2">
-                  <p className="text-xs font-medium text-muted-foreground">
-                    {group.name}
-                  </p>
-                  {group.capabilities.map((capability) => (
-                    <Field key={capability.value} orientation="horizontal">
-                      <Checkbox
-                        id={`enroll-${capability.value}`}
-                        checked={capabilities.includes(capability.value)}
-                        onCheckedChange={(checked) =>
-                          {
-                            setCapabilities((current) =>
-                              checked
-                                ? [...new Set([...current, capability.value])]
-                                : current.filter(
-                                    (value) => value !== capability.value,
-                                  ),
-                            );
-                            setCapabilitiesError(null);
-                          }
-                        }
-                        aria-invalid={Boolean(capabilitiesError)}
-                      />
-                      <FieldContent>
-                        <FieldLabel htmlFor={`enroll-${capability.value}`}>
-                          <FieldTitle>{capability.label}</FieldTitle>
-                        </FieldLabel>
-                      </FieldContent>
-                    </Field>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogTrigger
+        disabled={atLimit}
+        render={<Button type="button" disabled={atLimit} />}
+      >
+        <PlusIcon data-icon="inline-start" />
+        {atLimit ? "Machine limit reached" : "Add machine"}
+      </DialogTrigger>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Add machine</DialogTitle>
+          <DialogDescription>
+            Create a one-time command and run it on the machine you want to
+            connect.
+          </DialogDescription>
+        </DialogHeader>
+
+        {!enrollment ? (
+          <form onSubmit={createEnrollment}>
+            <FieldGroup>
+              <Field data-invalid={Boolean(nameError)}>
+                <FieldLabel htmlFor="machine-name">Machine name</FieldLabel>
+                <Input
+                  id="machine-name"
+                  name="machine-name"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={machineName}
+                  onChange={(event) => {
+                    setMachineName(event.target.value);
+                    setNameError(null);
+                  }}
+                  aria-invalid={Boolean(nameError)}
+                />
+                <FieldError>{nameError}</FieldError>
+              </Field>
+
+              <FieldSet data-invalid={Boolean(capabilitiesError)}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <FieldLegend>Local capabilities</FieldLegend>
+                    <FieldDescription>
+                      The Client enforces this maximum policy on the machine.
+                    </FieldDescription>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setCapabilities(readOnlyCapabilities);
+                      setCapabilitiesError(null);
+                    }}
+                  >
+                    Select read-only
+                  </Button>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {capabilityGroups.map((group) => (
+                    <div key={group.name} className="flex flex-col gap-2">
+                      <p className="text-xs font-medium text-muted-foreground">
+                        {group.name}
+                      </p>
+                      {group.capabilities.map((capability) => (
+                        <Field key={capability.value} orientation="horizontal">
+                          <Checkbox
+                            id={`enroll-${capability.value}`}
+                            checked={capabilities.includes(capability.value)}
+                            onCheckedChange={(checked) => {
+                              setCapabilities((current) =>
+                                checked
+                                  ? [
+                                      ...new Set([
+                                        ...current,
+                                        capability.value,
+                                      ]),
+                                    ]
+                                  : current.filter(
+                                      (value) => value !== capability.value,
+                                    ),
+                              );
+                              setCapabilitiesError(null);
+                            }}
+                            aria-invalid={Boolean(capabilitiesError)}
+                          />
+                          <FieldContent>
+                            <FieldLabel
+                              htmlFor={`enroll-${capability.value}`}
+                            >
+                              <FieldTitle>{capability.label}</FieldTitle>
+                            </FieldLabel>
+                          </FieldContent>
+                        </Field>
+                      ))}
+                    </div>
                   ))}
                 </div>
-              ))}
-            </div>
-            <FieldError>{capabilitiesError}</FieldError>
-          </FieldSet>
-        </FieldGroup>
-        {!enrollment ? (
-          <Button
-            className="w-full sm:w-auto"
-            onClick={createEnrollment}
-            disabled={pending || atLimit}
-          >
-            <PlusIcon data-icon="inline-start" />
-            {pending ? <><Spinner />Creating…</> : atLimit ? "Machine limit reached" : "Generate command"}
-          </Button>
+                <FieldError>{capabilitiesError}</FieldError>
+              </FieldSet>
+
+              {error ? (
+                <Alert variant="destructive">
+                  <AlertTitle>Could not create the command</AlertTitle>
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              ) : null}
+
+              <DialogFooter>
+                <Button type="submit" disabled={pending}>
+                  {pending ? (
+                    <>
+                      <Spinner />
+                      Creating…
+                    </>
+                  ) : (
+                    "Generate command"
+                  )}
+                </Button>
+              </DialogFooter>
+            </FieldGroup>
+          </form>
         ) : (
-          <div className="flex flex-col gap-3">
-            <div className="overflow-x-auto rounded-md bg-foreground p-4 text-background">
+          <div className="flex flex-col gap-4">
+            <div className="overflow-x-auto rounded-lg bg-foreground p-4 text-background">
               <code className="whitespace-pre font-mono text-xs">{command}</code>
             </div>
             <div className="flex flex-wrap items-center gap-3">
-              <Button onClick={copyCommand}>
-                {copied ? <CheckIcon data-icon="inline-start" /> : <CopyIcon data-icon="inline-start" />}
+              <Button type="button" onClick={copyCommand}>
+                {copied ? (
+                  <CheckIcon data-icon="inline-start" />
+                ) : (
+                  <CopyIcon data-icon="inline-start" />
+                )}
                 {copied ? "Copied" : "Copy command"}
               </Button>
               <span className="text-xs text-muted-foreground">
-                Expires {new Date(enrollment.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                Expires{" "}
+                {new Date(enrollment.expiresAt).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
               </span>
             </div>
             <Alert>
@@ -254,13 +322,7 @@ export function EnrollMachine({
             </Alert>
           </div>
         )}
-        {error ? (
-          <Alert variant="destructive">
-            <AlertTitle>Could not create the command</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        ) : null}
-      </CardContent>
-    </Card>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -7,6 +7,7 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
+import { Separator } from "@/components/ui/separator";
 
 export function AppShell({
   title,
@@ -21,10 +22,10 @@ export function AppShell({
         Skip to content
       </a>
       <AppSidebar variant="inset" />
-      <SidebarInset id="main-content" tabIndex={-1} className="overflow-hidden border">
+      <SidebarInset id="main-content" tabIndex={-1} className="overflow-hidden">
         <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b bg-background/92 px-4 backdrop-blur-md md:px-6">
           <SidebarTrigger aria-label="Toggle workspace navigation" />
-          <div className="h-4 w-px bg-border" aria-hidden="true" />
+          <Separator orientation="vertical" className="h-4" />
           <p className="truncate text-sm font-medium">{title}</p>
           <div className="ml-auto">
             <QuickActions />

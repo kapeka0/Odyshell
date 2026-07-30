@@ -1,4 +1,6 @@
 import { AppShell } from "@/components/app-shell";
+import { DashboardProvider } from "@/components/dashboard-provider";
+import { publicServerUrl } from "@/lib/cloud-api";
 import { dashboardState } from "@/lib/dashboard-context";
 
 export default async function DashboardLayout({
@@ -10,5 +12,9 @@ export default async function DashboardLayout({
   const title =
     state.status === "ready" ? state.context.organization.name : "Workspace";
 
-  return <AppShell title={title}>{children}</AppShell>;
+  return (
+    <DashboardProvider value={{ state, serverUrl: publicServerUrl() }}>
+      <AppShell title={title}>{children}</AppShell>
+    </DashboardProvider>
+  );
 }

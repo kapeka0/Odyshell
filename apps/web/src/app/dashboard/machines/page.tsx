@@ -1,4 +1,5 @@
-import type { Metadata } from "next";
+"use client";
+
 import {
   DashboardPage,
   DashboardPageHeader,
@@ -6,13 +7,10 @@ import {
 } from "@/components/dashboard-state";
 import { EnrollMachine } from "@/components/enroll-machine";
 import { MachineList } from "@/components/machine-list";
-import { publicServerUrl } from "@/lib/cloud-api";
-import { dashboardState } from "@/lib/dashboard-context";
+import { useDashboard } from "@/components/dashboard-provider";
 
-export const metadata: Metadata = { title: "Machines" };
-
-export default async function MachinesPage() {
-  const state = await dashboardState();
+export default function MachinesPage() {
+  const { state, serverUrl } = useDashboard();
 
   return (
     <DashboardPage>
@@ -20,17 +18,22 @@ export default async function MachinesPage() {
         eyebrow="Workspace"
         title="Machines"
         description="Manage the clients that keep an outbound connection to Odyshell."
+        action={
+          state.status === "ready" ? (
+            <EnrollMachine
+              serverUrl={serverUrl}
+              atLimit={
+                state.context.usage.machines >=
+                state.context.plan.machineLimit
+              }
+            />
+          ) : undefined
+        }
       />
       {state.status !== "ready" ? (
         <DashboardStateNotice state={state} />
       ) : (
-        <section className="grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.65fr)]">
-          <MachineList machines={state.context.machines} />
-          <EnrollMachine
-            serverUrl={publicServerUrl()}
-            atLimit={state.context.usage.machines >= state.context.plan.machineLimit}
-          />
-        </section>
+        <MachineList machines={state.context.machines} />
       )}
     </DashboardPage>
   );

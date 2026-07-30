@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpenIcon, CommandIcon, LayoutDashboardIcon, SearchIcon, TerminalIcon } from "lucide-react";
+import { CommandIcon, LayoutDashboardIcon, SearchIcon, TerminalIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
@@ -20,8 +20,6 @@ const actions = [
   { label: "View machines", href: "/dashboard/machines", shortcut: "M", icon: TerminalIcon },
   { label: "Manage agent access", href: "/dashboard/access", shortcut: "A", icon: CommandIcon },
   { label: "Review activity", href: "/dashboard/activity", shortcut: "R", icon: SearchIcon },
-  { label: "Authorize CLI", href: "/activate", shortcut: "C", icon: TerminalIcon },
-  { label: "Read the architecture", href: "/#how-it-works", shortcut: "H", icon: BookOpenIcon },
 ] as const;
 
 export function QuickActions() {

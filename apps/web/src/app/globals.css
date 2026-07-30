@@ -2,7 +2,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@clerk/themes/shadcn.css";
 @import "../../tokens.css";
 
 @layer theme, base, clerk, components, utilities;

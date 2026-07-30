@@ -1,16 +1,15 @@
-import type { Metadata } from "next";
+"use client";
+
 import { AgentAccessManager } from "@/components/agent-access-manager";
+import { useDashboard } from "@/components/dashboard-provider";
 import {
   DashboardPage,
   DashboardPageHeader,
   DashboardStateNotice,
 } from "@/components/dashboard-state";
-import { dashboardState } from "@/lib/dashboard-context";
 
-export const metadata: Metadata = { title: "Agent access" };
-
-export default async function AgentAccessPage() {
-  const state = await dashboardState();
+export default function AgentAccessPage() {
+  const { state } = useDashboard();
 
   return (
     <DashboardPage>

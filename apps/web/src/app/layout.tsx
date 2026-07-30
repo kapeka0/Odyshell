@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
-import { shadcn } from "@clerk/themes";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Providers } from "@/components/providers";
 import "./globals.css";
@@ -55,31 +54,11 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body className={`${bodyFont.variable} ${monoFont.variable}`}>
         <ClerkProvider
           dynamic
-          appearance={{
-            theme: shadcn,
-            cssLayerName: "clerk",
-            variables: {
-              colorBackground: "var(--background)",
-              colorForeground: "var(--foreground)",
-              colorMutedForeground: "var(--muted-foreground)",
-              colorPrimary: "var(--primary)",
-              colorInput: "var(--input)",
-              colorBorder: "var(--border)",
-              colorDanger: "var(--destructive)",
-              borderRadius: "var(--radius)",
-              fontFamily: "var(--font-body-family)",
-            },
-            options: {
-              elevation: "flush",
-              logoImageUrl: "https://odyshell.com/brand/odyshell-square-light.svg",
-              logoLinkUrl: "https://odyshell.com",
-              shimmer: false,
-            },
-          }}
           signInUrl="/sign-in"
           signUpUrl="/sign-up"
           signInFallbackRedirectUrl="/dashboard"
           signUpFallbackRedirectUrl="/dashboard"
+          taskUrls={{ "choose-organization": "/onboarding" }}
         >
           <Providers>{children}</Providers>
         </ClerkProvider>

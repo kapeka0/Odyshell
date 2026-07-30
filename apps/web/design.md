@@ -68,7 +68,8 @@ shared tokens or Tailwind spacing derived from the same base.
 
 ## What pages must share
 
-- Odyshell wordmark and square mark
+- Marketing, authentication and activation may share the Odyshell wordmark.
+- The authenticated sidebar intentionally omits the logo and product name.
 - Neutral theme and semantic state colors
 - Geist and Geist Mono
 - Radius, border and focus treatment

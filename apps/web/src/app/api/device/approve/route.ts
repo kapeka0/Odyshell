@@ -5,13 +5,10 @@ import {
   cloudRouteError,
   requireCloudRouteIdentity,
 } from "@/lib/cloud-route";
+import { deviceCodeSchema } from "@/lib/device-activation";
 
 const requestSchema = z.object({
-  code: z
-    .string()
-    .trim()
-    .transform((value) => value.toUpperCase().replaceAll("-", ""))
-    .pipe(z.string().regex(/^[A-HJ-NP-Z2-9]{8}$/, "Invalid device code")),
+  code: deviceCodeSchema,
 });
 
 export async function POST(request: Request) {
