@@ -20,7 +20,7 @@
   },
   "type": "module",
   "bin": {
-    "ods": "./dist/index.js"
+    "ods": "dist/index.js"
   },
   "files": [
     "dist"

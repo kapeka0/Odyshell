@@ -24,7 +24,7 @@ describe("CLI npm package", () => {
     expect(packageJson.license).toBe("Apache-2.0");
     expect(existsSync(resolve(cliRoot, "LICENSE"))).toBe(true);
     expect(packageJson.private).not.toBe(true);
-    expect(packageJson.bin).toEqual({ ods: "./dist/index.js" });
+    expect(packageJson.bin).toEqual({ ods: "dist/index.js" });
     expect(packageJson.files).toEqual(["dist"]);
     expect(packageJson.scripts.prepack).toBe("pnpm build");
     expect(packageJson.publishConfig).toEqual({
