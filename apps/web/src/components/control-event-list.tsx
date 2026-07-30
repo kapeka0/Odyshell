@@ -85,7 +85,7 @@ export function ControlEventList({
         cell: ({ row }) => (
           <CopyableValue
             value={row.original.actor}
-            label="actor"
+            label="Actor"
             className="text-muted-foreground"
           />
         ),
@@ -98,7 +98,7 @@ export function ControlEventList({
         cell: ({ row }) => (
           <CopyableValue
             value={row.original.target}
-            label="target"
+            label="Target"
             className="text-muted-foreground"
           />
         ),

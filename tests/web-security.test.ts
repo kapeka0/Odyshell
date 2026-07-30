@@ -11,7 +11,10 @@ import {
   machineEnrollmentCommand,
   posixShellArgument,
 } from "../apps/web/src/lib/enrollment-command.js";
-import { activeUserTheme } from "../apps/web/src/lib/theme-cycle.js";
+import {
+  activeUserTheme,
+  nextUserTheme,
+} from "../apps/web/src/lib/theme-cycle.js";
 import {
   isReadOnlyPreset,
   readOnlyCapabilities,
@@ -88,6 +91,9 @@ describe("web authentication boundaries", () => {
     expect(activeUserTheme("light")).toBe("light");
     expect(activeUserTheme("dark")).toBe("dark");
     expect(activeUserTheme("unsafe")).toBe("system");
+    expect(nextUserTheme("system")).toBe("light");
+    expect(nextUserTheme("light")).toBe("dark");
+    expect(nextUserTheme("dark")).toBe("system");
   });
 
   it("replaces unsafe capabilities with read-only and clears the preset on a second click", () => {
@@ -182,21 +188,53 @@ describe("dashboard navigation performance boundary", () => {
     expect(sidebar).not.toContain("SidebarRail");
     expect(sidebar).not.toContain("Workspace settings");
     expect(userMenu).not.toContain("User settings");
+    expect(userMenu).toContain("nextUserTheme(activeTheme)");
+    expect(userMenu.indexOf("nextUserTheme(activeTheme)")).toBeLessThan(
+      userMenu.indexOf('href="/dashboard/user-settings"'),
+    );
+    expect(userMenu.indexOf('href="/dashboard/user-settings"')).toBeLessThan(
+      userMenu.indexOf("void signOut"),
+    );
+    for (const label of ["System", "Light", "Dark", "Settings", "Sign out"]) {
+      expect(userMenu).toContain(label);
+    }
     expect(
       readFileSync(
         resolve(componentsRoot, "control-event-list.tsx"),
         "utf8",
       ),
     ).not.toContain("Security-relevant changes without commands");
-    expect(
-      readFileSync(
-        resolve(
-          process.cwd(),
-          "apps/web/src/app/dashboard/user-settings/page.tsx",
-        ),
-        "utf8",
+    const userSettings = readFileSync(
+      resolve(
+        process.cwd(),
+        "apps/web/src/app/dashboard/user-settings/page.tsx",
       ),
-    ).not.toContain("toast.");
+      "utf8",
+    );
+    expect(userSettings).toContain("<Empty");
+    expect(userSettings).not.toContain("useTheme");
+    expect(userSettings).not.toContain("useClerk");
+    expect(userSettings).not.toContain("Appearance");
+    expect(userSettings).not.toContain("Sign out");
+    const interfaceRules = readFileSync(
+      resolve(process.cwd(), "apps/web/UI_RULES.md"),
+      "utf8",
+    );
+    expect(interfaceRules).toContain(
+      "Begin every user-facing label with a capital letter",
+    );
+  });
+
+  it("keeps the workspace canvas dot contrast between borders and text", () => {
+    const canvas = readFileSync(
+      resolve(
+        process.cwd(),
+        "apps/web/src/components/workspace-canvas.tsx",
+      ),
+      "utf8",
+    );
+    expect(canvas).toContain('color="var(--color-rule-strong)"');
+    expect(canvas).not.toContain('color="var(--muted-foreground)"');
   });
 
   it("copies important table values without recording them in feedback", () => {

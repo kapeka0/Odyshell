@@ -24,7 +24,8 @@ particular component, library or interaction pattern.
 - Keep public and promotional destinations outside the authenticated workspace.
 - Keep CLI activation outside the authenticated workspace and end it in an
   unambiguous success or failure state.
-- Put personal preferences, including theme selection, in user settings.
+- Keep quick local preferences, including theme selection, in the account menu.
+- Reserve user settings for changes persisted to the user's backend profile.
 - Keep product branding subordinate to workspace identity and operational work
   inside the authenticated experience.
 
@@ -66,6 +67,7 @@ particular component, library or interaction pattern.
 ## Language
 
 - Use plain, concise and sentence-case language.
+- Begin every user-facing label with a capital letter.
 - Prefer specific domain terms over generic labels.
 - Explain consequences before asking for confirmation.
 - Write errors in terms of what happened and what the user can do next.
@@ -117,8 +119,8 @@ particular component, library or interaction pattern.
 - Prefer the shortest label that remains clear in context. Avoid redundant
   qualifiers, repeated explanations and descriptive copy that does not help
   the next action.
-- User settings use one explicit theme selector for system, light and dark.
-  Theme changes do not need success toasts.
+- The account menu cycles directly between System, Light and Dark before the
+  Settings action. Theme changes do not need success toasts.
 - Browser icons follow the active system color scheme.
 - Prefer a user's identity-provider photo. When none exists, generate a
   recognizable face from an opaque identifier without displaying initials or

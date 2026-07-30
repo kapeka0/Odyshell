@@ -4,9 +4,13 @@ import { useClerk, useUser } from "@clerk/nextjs";
 import {
   ChevronsUpDownIcon,
   LogOutIcon,
+  MonitorIcon,
+  MoonIcon,
   SettingsIcon,
+  SunIcon,
 } from "lucide-react";
 import Link from "next/link";
+import { useTheme } from "next-themes";
 import { useState } from "react";
 import { UserIdentityAvatar } from "@/components/identity-avatar";
 import {
@@ -26,11 +30,23 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  activeUserTheme,
+  nextUserTheme,
+  type UserTheme,
+} from "@/lib/theme-cycle";
+
+const themeOptions = {
+  system: { icon: MonitorIcon, label: "System" },
+  light: { icon: SunIcon, label: "Light" },
+  dark: { icon: MoonIcon, label: "Dark" },
+} satisfies Record<UserTheme, { icon: typeof MonitorIcon; label: string }>;
 
 export function SidebarUser() {
   const { isMobile } = useSidebar();
   const { isLoaded, user } = useUser();
   const { signOut } = useClerk();
+  const { theme, setTheme } = useTheme();
   const [pending, setPending] = useState(false);
 
   if (!isLoaded || !user) {
@@ -45,6 +61,10 @@ export function SidebarUser() {
 
   const name = user.fullName ?? user.primaryEmailAddress?.emailAddress ?? "Account";
   const email = user.primaryEmailAddress?.emailAddress ?? "";
+  const activeTheme = activeUserTheme(theme);
+  const themeOption = themeOptions[activeTheme];
+  const ThemeIcon = themeOption.icon;
+
   return (
     <SidebarMenu>
       <SidebarMenuItem>
@@ -86,12 +106,20 @@ export function SidebarUser() {
               </DropdownMenuLabel>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuItem
-              render={<Link href="/dashboard/user-settings" />}
-            >
-              <SettingsIcon aria-hidden="true" />
-              Settings
-            </DropdownMenuItem>
+            <DropdownMenuGroup>
+              <DropdownMenuItem
+                onClick={() => setTheme(nextUserTheme(activeTheme))}
+              >
+                <ThemeIcon aria-hidden="true" />
+                {themeOption.label}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                render={<Link href="/dashboard/user-settings" />}
+              >
+                <SettingsIcon aria-hidden="true" />
+                Settings
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuItem

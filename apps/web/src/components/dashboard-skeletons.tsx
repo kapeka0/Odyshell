@@ -100,6 +100,25 @@ export function SettingsPageSkeleton({ cards = 3 }: { cards?: number }) {
   );
 }
 
+export function EmptySettingsPageSkeleton() {
+  return (
+    <div
+      className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 md:px-8 md:py-12"
+      aria-busy="true"
+      aria-label="Loading settings"
+    >
+      <div className="flex flex-col gap-2">
+        <Skeleton className="h-4 w-20" />
+        <Skeleton className="h-9 w-32" />
+      </div>
+      <div className="flex min-h-80 flex-col items-center justify-center gap-3 rounded-xl border">
+        <Skeleton className="size-8 rounded-lg" />
+        <Skeleton className="h-5 w-40" />
+      </div>
+    </div>
+  );
+}
+
 export function FormPageSkeleton() {
   return (
     <div
