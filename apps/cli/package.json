@@ -1,6 +1,22 @@
 {
   "name": "@odyshell/cli",
   "version": "0.8.0",
+  "description": "Agent-first command line access to machines connected through Odyshell.",
+  "keywords": [
+    "ai-agents",
+    "cli",
+    "mcp",
+    "remote-execution"
+  ],
+  "homepage": "https://odyshell.com/docs/cli",
+  "bugs": {
+    "url": "https://github.com/kapeka0/Odyshell/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kapeka0/Odyshell.git",
+    "directory": "apps/cli"
+  },
   "type": "module",
   "bin": {
     "ods": "./dist/index.js"
@@ -22,7 +38,12 @@
   ],
   "scripts": {
     "start": "tsx src/index.ts",
-    "build": "tsup"
+    "build": "tsup",
+    "prepack": "pnpm build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
