@@ -32,8 +32,8 @@ _Avoid_: Agent token, temporary access
 
 **Agent Credential**:
 A temporary secret issued for an Agent. It expires or can be revoked without deleting the Agent
-or changing its policy. Renewing it preserves the Agent configuration; editing the Agent changes
-that configuration.
+or changing its policy. An Agent has at most one active credential; renewing rotates it immediately
+while preserving configuration, and editing the Agent changes that configuration.
 _Avoid_: Agent, permanent key, SSH credential
 
 **Active Connection**:
