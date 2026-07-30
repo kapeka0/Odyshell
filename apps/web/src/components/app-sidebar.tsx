@@ -22,6 +22,9 @@ const workspaceItems = [
   { label: "Machines", href: "/dashboard/machines", icon: CpuIcon },
   { label: "Agents", href: "/dashboard/agents", icon: BotIcon },
   { label: "Activity", href: "/dashboard/activity", icon: ActivityIcon },
+] as const;
+
+const workspaceSettingsItems = [
   { label: "Settings", href: "/dashboard/settings", icon: SettingsIcon },
 ] as const;
 
@@ -33,6 +36,11 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent className="overflow-hidden">
         <SidebarNav label="Workspace" items={workspaceItems} />
+        <SidebarNav
+          label="Manage"
+          items={workspaceSettingsItems}
+          className="mt-auto"
+        />
       </SidebarContent>
       <SidebarFooter>
         <SidebarUser />

@@ -258,6 +258,9 @@ describe("dashboard navigation performance boundary", () => {
     );
     expect(sidebar).not.toContain("SidebarRail");
     expect(sidebar).not.toContain("Workspace settings");
+    expect(sidebar).toContain("workspaceSettingsItems");
+    expect(sidebar).toContain('label="Manage"');
+    expect(sidebar).toContain('className="mt-auto"');
     expect(userMenu).not.toContain("User settings");
     expect(userMenu).toContain("nextUserTheme(activeTheme)");
     expect(userMenu.indexOf("nextUserTheme(activeTheme)")).toBeLessThan(

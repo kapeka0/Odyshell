@@ -162,6 +162,8 @@ particular component, library or interaction pattern.
   does not introduce an unnecessary scrollbar.
 - The dashboard navbar keeps only the sidebar toggle on its left edge. The
   sidebar retains a visible right border using the same token as the navbar.
+- Keep workspace administration in a separate group at the bottom of sidebar
+  content, ready for Settings, Members and future management routes.
 - Platform-wide degraded states use a compact warning bar above navigation,
   not a floating toast.
 - Personal settings and workspace settings have separate destinations.
