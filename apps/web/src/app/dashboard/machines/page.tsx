@@ -22,7 +22,6 @@ export default function MachinesPage() {
       <DashboardPageHeader
         eyebrow="Workspace"
         title="Machines"
-        description="Manage the clients that keep an outbound connection to Odyshell."
         action={
           state.status === "ready" ? (
             atLimit ? (

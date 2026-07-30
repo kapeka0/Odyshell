@@ -25,7 +25,16 @@ export const metadata: Metadata = {
   description:
     "Give AI agents scoped, temporary and auditable access to private machines without SSH, inbound ports or a VPN.",
   icons: {
-    icon: "/brand/odyshell-square-light.svg",
+    icon: [
+      {
+        url: "/brand/odyshell-square-light.svg",
+        media: "(prefers-color-scheme: light)",
+      },
+      {
+        url: "/brand/odyshell-square-dark.svg",
+        media: "(prefers-color-scheme: dark)",
+      },
+    ],
   },
   alternates: {
     canonical: "/",

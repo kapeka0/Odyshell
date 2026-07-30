@@ -1,7 +1,10 @@
 "use client";
 
+import { WifiOffIcon } from "lucide-react";
 import { QuickActions } from "@/components/quick-actions";
 import { AppSidebar } from "@/components/app-sidebar";
+import { useDashboard } from "@/components/dashboard-provider";
+import { Alert, AlertTitle } from "@/components/ui/alert";
 import {
   SidebarInset,
   SidebarProvider,
@@ -16,27 +19,48 @@ export function AppShell({
   title: string;
   children: React.ReactNode;
 }) {
+  const { liveUpdatesDelayed } = useDashboard();
+
   return (
-    <SidebarProvider>
+    <SidebarProvider
+      className="flex-col"
+      style={
+        {
+          "--platform-status-height": liveUpdatesDelayed ? "2rem" : "0rem",
+        } as React.CSSProperties
+      }
+    >
       <a className="skip-link" href="#main-content">
         Skip to content
       </a>
-      <AppSidebar variant="inset" />
-      <SidebarInset id="main-content" tabIndex={-1} className="overflow-hidden">
-        <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b bg-background/92 px-4 backdrop-blur-md md:px-6">
-          <SidebarTrigger aria-label="Toggle workspace navigation" />
-          <Separator
-            orientation="vertical"
-            className="h-4 self-center"
-            aria-hidden="true"
-          />
-          <p className="truncate text-sm font-medium">{title}</p>
-          <div className="ml-auto">
-            <QuickActions />
-          </div>
-        </header>
-        {children}
-      </SidebarInset>
+      {liveUpdatesDelayed ? (
+        <Alert className="h-8 shrink-0 items-center rounded-none border-x-0 border-t-0 px-4 py-0 text-xs [&>svg]:translate-y-0">
+          <WifiOffIcon aria-hidden="true" />
+          <AlertTitle className="text-xs">Live updates delayed</AlertTitle>
+        </Alert>
+      ) : null}
+      <div className="flex min-h-0 flex-1">
+        <AppSidebar variant="inset" />
+        <SidebarInset
+          id="main-content"
+          tabIndex={-1}
+          className="min-h-0 overflow-hidden"
+        >
+          <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b bg-background/92 px-4 backdrop-blur-md md:px-6">
+            <SidebarTrigger aria-label="Toggle workspace navigation" />
+            <Separator
+              orientation="vertical"
+              className="mx-0.5 h-4! w-px! self-center!"
+              aria-hidden="true"
+            />
+            <p className="truncate text-sm font-medium">{title}</p>
+            <div className="ml-auto">
+              <QuickActions />
+            </div>
+          </header>
+          {children}
+        </SidebarInset>
+      </div>
     </SidebarProvider>
   );
 }

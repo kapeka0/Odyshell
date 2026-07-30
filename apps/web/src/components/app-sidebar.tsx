@@ -15,7 +15,6 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarHeader,
-  SidebarRail,
 } from "@/components/ui/sidebar";
 
 const workspaceItems = [
@@ -23,11 +22,7 @@ const workspaceItems = [
   { label: "Machines", href: "/dashboard/machines", icon: CpuIcon },
   { label: "Agents", href: "/dashboard/agents", icon: BotIcon },
   { label: "Activity", href: "/dashboard/activity", icon: ActivityIcon },
-  {
-    label: "Workspace settings",
-    href: "/dashboard/settings",
-    icon: SettingsIcon,
-  },
+  { label: "Settings", href: "/dashboard/settings", icon: SettingsIcon },
 ] as const;
 
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
@@ -42,7 +37,6 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
       <SidebarFooter>
         <SidebarUser />
       </SidebarFooter>
-      <SidebarRail />
     </Sidebar>
   );
 }

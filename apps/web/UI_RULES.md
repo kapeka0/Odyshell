@@ -96,6 +96,9 @@ particular component, library or interaction pattern.
 ## Performance and resilience
 
 - Show useful structure promptly and avoid blocking unrelated parts of a view.
+- Every route owns a loading skeleton that mirrors its final structure. A
+  canvas skeleton belongs only to the overview; table, form and settings
+  routes use their corresponding shapes.
 - Preserve already available context during navigation and background refreshes.
 - Avoid visual resets, duplicate loading states and unexpected layout shifts.
 - Keep the last trustworthy state visible when refreshing data, while clearly
@@ -111,8 +114,12 @@ particular component, library or interaction pattern.
 - Pending state stays visually attached to the initiating action. Completion
   feedback announces success or failure once without duplicating progress.
 - Transient feedback remains visible above blocking overlays.
-- User settings contain one theme action that cycles through system, light and
-  dark.
+- Prefer the shortest label that remains clear in context. Avoid redundant
+  qualifiers, repeated explanations and descriptive copy that does not help
+  the next action.
+- User settings use one explicit theme selector for system, light and dark.
+  Theme changes do not need success toasts.
+- Browser icons follow the active system color scheme.
 - Prefer a user's identity-provider photo. When none exists, generate a
   recognizable face from an opaque identifier without displaying initials or
   sending an email address to an external service.
@@ -130,10 +137,14 @@ particular component, library or interaction pattern.
 - Operational collections support search, relevant filters, sorting and
   pagination. Row details and secondary actions stay behind a consistent
   actions menu.
+- Important table identifiers are copyable from the value itself. Reveal the
+  copy affordance with a restrained horizontal hover or focus animation.
 - Destructive row actions remain secondary, require confirmation and never
   compete with the view's primary creation action.
 - Collapsing workspace navigation preserves every icon, animates smoothly and
   does not introduce an unnecessary scrollbar.
+- Platform-wide degraded states use a compact warning bar above navigation,
+  not a floating toast.
 - Personal settings and workspace settings have separate destinations.
   Workspace security settings are visible to members and editable only by
   administrators.

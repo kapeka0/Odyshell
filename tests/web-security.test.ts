@@ -11,10 +11,7 @@ import {
   machineEnrollmentCommand,
   posixShellArgument,
 } from "../apps/web/src/lib/enrollment-command.js";
-import {
-  activeUserTheme,
-  nextUserTheme,
-} from "../apps/web/src/lib/theme-cycle.js";
+import { activeUserTheme } from "../apps/web/src/lib/theme-cycle.js";
 import {
   isReadOnlyPreset,
   readOnlyCapabilities,
@@ -86,11 +83,11 @@ describe("web authentication boundaries", () => {
     );
   });
 
-  it("cycles the single user theme action deterministically", () => {
+  it("normalizes persisted user theme values", () => {
     expect(activeUserTheme(undefined)).toBe("system");
-    expect(nextUserTheme("system")).toBe("light");
-    expect(nextUserTheme("light")).toBe("dark");
-    expect(nextUserTheme("dark")).toBe("system");
+    expect(activeUserTheme("light")).toBe("light");
+    expect(activeUserTheme("dark")).toBe("dark");
+    expect(activeUserTheme("unsafe")).toBe("system");
   });
 
   it("replaces unsafe capabilities with read-only and clears the preset on a second click", () => {
@@ -163,9 +160,92 @@ describe("dashboard navigation performance boundary", () => {
     ).toContain("whitespace-pre-wrap break-all");
     expect(
       readFileSync(resolve(componentsRoot, "app-shell.tsx"), "utf8"),
-    ).toContain('className="h-4 self-center"');
+    ).toContain('className="mx-0.5 h-4! w-px! self-center!"');
     expect(
       readFileSync(resolve(componentsRoot, "workspace-canvas.tsx"), "utf8"),
     ).toContain("animated: animateConnections");
+  });
+
+  it("keeps dashboard navigation concise and removes the sidebar rail", () => {
+    const componentsRoot = resolve(
+      process.cwd(),
+      "apps/web/src/components",
+    );
+    const sidebar = readFileSync(
+      resolve(componentsRoot, "app-sidebar.tsx"),
+      "utf8",
+    );
+    const userMenu = readFileSync(
+      resolve(componentsRoot, "sidebar-user.tsx"),
+      "utf8",
+    );
+    expect(sidebar).not.toContain("SidebarRail");
+    expect(sidebar).not.toContain("Workspace settings");
+    expect(userMenu).not.toContain("User settings");
+    expect(
+      readFileSync(
+        resolve(componentsRoot, "control-event-list.tsx"),
+        "utf8",
+      ),
+    ).not.toContain("Security-relevant changes without commands");
+    expect(
+      readFileSync(
+        resolve(
+          process.cwd(),
+          "apps/web/src/app/dashboard/user-settings/page.tsx",
+        ),
+        "utf8",
+      ),
+    ).not.toContain("toast.");
+  });
+
+  it("copies important table values without recording them in feedback", () => {
+    const componentsRoot = resolve(
+      process.cwd(),
+      "apps/web/src/components",
+    );
+    const copyable = readFileSync(
+      resolve(componentsRoot, "copyable-value.tsx"),
+      "utf8",
+    );
+    expect(copyable).toContain("navigator.clipboard.writeText(value)");
+    expect(copyable).toContain('aria-live="polite"');
+    expect(copyable).not.toContain("toast");
+    for (const file of [
+      "machine-list.tsx",
+      "agent-access-manager.tsx",
+      "control-event-list.tsx",
+    ]) {
+      expect(
+        readFileSync(resolve(componentsRoot, file), "utf8"),
+      ).toContain("<CopyableValue");
+    }
+  });
+
+  it("uses route-specific skeletons and theme-aware browser icons", () => {
+    const dashboardRoot = resolve(
+      process.cwd(),
+      "apps/web/src/app/dashboard",
+    );
+    for (const route of [
+      "machines/loading.tsx",
+      "machines/add/loading.tsx",
+      "agents/loading.tsx",
+      "activity/loading.tsx",
+      "settings/loading.tsx",
+      "user-settings/loading.tsx",
+    ]) {
+      expect(
+        readFileSync(resolve(dashboardRoot, route), "utf8"),
+      ).toContain("Skeleton");
+    }
+    const rootLayout = readFileSync(
+      resolve(process.cwd(), "apps/web/src/app/layout.tsx"),
+      "utf8",
+    );
+    expect(rootLayout).toContain("prefers-color-scheme: light");
+    expect(rootLayout).toContain("prefers-color-scheme: dark");
+    expect(rootLayout).toContain("odyshell-square-light.svg");
+    expect(rootLayout).toContain("odyshell-square-dark.svg");
   });
 });

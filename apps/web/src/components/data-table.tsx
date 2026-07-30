@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -146,14 +147,16 @@ export function DataTable<TData>({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent align="start">
-                <SelectItem value="all">
-                  All {currentFilter.label.toLowerCase()}
-                </SelectItem>
-                {currentFilter.options.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
+                <SelectGroup>
+                  <SelectItem value="all">
+                    All {currentFilter.label.toLowerCase()}
                   </SelectItem>
-                ))}
+                  {currentFilter.options.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
               </SelectContent>
             </Select>
           );

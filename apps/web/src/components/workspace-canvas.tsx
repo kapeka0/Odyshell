@@ -110,9 +110,9 @@ export function WorkspaceCanvas({ context }: { context: CloudContext }) {
       >
         <Background
           variant={BackgroundVariant.Dots}
-          gap={20}
-          size={1.4}
-          color="var(--muted-foreground)"
+          gap={24}
+          size={1}
+          color="var(--border)"
         />
         <Controls
           position="bottom-left"

@@ -16,7 +16,6 @@ export default function ActivityPage() {
       <DashboardPageHeader
         eyebrow="Workspace"
         title="Activity"
-        description="Review who changed access and which control actions were accepted."
       />
       {state.status !== "ready" ? (
         <DashboardStateNotice state={state} />

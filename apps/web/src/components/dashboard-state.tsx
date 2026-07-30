@@ -38,7 +38,7 @@ export function DashboardPageHeader({
 }: {
   eyebrow: string;
   title: string;
-  description: string;
+  description?: string;
   action?: React.ReactNode;
 }) {
   return (
@@ -46,9 +46,11 @@ export function DashboardPageHeader({
       <div className="min-w-0">
         <p className="text-sm text-muted-foreground">{eyebrow}</p>
         <h1 className="mt-1 text-3xl font-semibold tracking-[-0.03em]">{title}</h1>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-          {description}
-        </p>
+        {description ? (
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+            {description}
+          </p>
+        ) : null}
       </div>
       {action}
     </header>

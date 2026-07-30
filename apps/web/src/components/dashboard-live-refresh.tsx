@@ -1,7 +1,6 @@
 "use client";
 
-import { WifiOffIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 
 type LiveToken = {
   token: string;
@@ -9,6 +8,7 @@ type LiveToken = {
 };
 
 const RETRY_DELAY_MS = 2_000;
+const MAX_RETRY_DELAY_MS = 30_000;
 const FALLBACK_INTERVAL_MS = 30_000;
 
 async function liveToken(signal: AbortSignal): Promise<LiveToken> {
@@ -62,14 +62,16 @@ async function consumeWorkspaceEvents(
 export function DashboardLiveRefresh({
   refresh,
   serverUrl,
+  onDelayedChange,
 }: {
   refresh: () => Promise<boolean>;
   serverUrl: string;
+  onDelayedChange: (delayed: boolean) => void;
 }) {
-  const [updatesDelayed, setUpdatesDelayed] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
     let retry: number | undefined;
+    let retryDelay = RETRY_DELAY_MS;
 
     const connect = async (): Promise<void> => {
       try {
@@ -79,22 +81,26 @@ export function DashboardLiveRefresh({
           authorization.token,
           controller.signal,
           refresh,
-          () => setUpdatesDelayed(false),
-          () => setUpdatesDelayed(true),
+          () => {
+            retryDelay = RETRY_DELAY_MS;
+            onDelayedChange(false);
+          },
+          () => onDelayedChange(true),
         );
       } catch {
         if (controller.signal.aborted) return;
-        setUpdatesDelayed(true);
+        onDelayedChange(true);
       }
       if (!controller.signal.aborted) {
-        retry = window.setTimeout(() => void connect(), RETRY_DELAY_MS);
+        retry = window.setTimeout(() => void connect(), retryDelay);
+        retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY_MS);
       }
     };
 
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") {
         void refresh().then((fresh) => {
-          if (!fresh) setUpdatesDelayed(true);
+          if (!fresh) onDelayedChange(true);
         });
       }
     };
@@ -111,15 +117,7 @@ export function DashboardLiveRefresh({
       window.clearInterval(interval);
       window.removeEventListener("focus", refreshWhenVisible);
     };
-  }, [refresh, serverUrl]);
+  }, [onDelayedChange, refresh, serverUrl]);
 
-  return updatesDelayed ? (
-    <div
-      role="status"
-      className="fixed right-4 bottom-4 z-30 flex items-center gap-2 rounded-full border bg-background px-3 py-2 text-xs text-muted-foreground shadow-sm"
-    >
-      <WifiOffIcon aria-hidden="true" className="size-3.5" />
-      Live updates delayed
-    </div>
-  ) : null;
+  return null;
 }

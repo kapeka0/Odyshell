@@ -23,9 +23,16 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { toast } from "@/components/ui/toast";
-import { activeUserTheme, nextUserTheme } from "@/lib/theme-cycle";
+import { activeUserTheme } from "@/lib/theme-cycle";
 
 export default function UserSettingsPage() {
   const { user, isLoaded } = useUser();
@@ -46,20 +53,12 @@ export default function UserSettingsPage() {
     user.fullName ?? user.primaryEmailAddress?.emailAddress ?? "Account";
   const email = user.primaryEmailAddress?.emailAddress ?? "No email";
   const activeTheme = activeUserTheme(theme);
-  const nextTheme = nextUserTheme(activeTheme);
-  const ThemeIcon =
-    activeTheme === "system"
-      ? MonitorIcon
-      : activeTheme === "dark"
-        ? MoonIcon
-        : SunIcon;
 
   return (
     <DashboardPage>
       <DashboardPageHeader
         eyebrow="Account"
-        title="User settings"
-        description="Manage preferences for your Odyshell account."
+        title="Settings"
       />
       <Card>
         <CardHeader>
@@ -84,29 +83,33 @@ export default function UserSettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle>Appearance</CardTitle>
-          <CardDescription>
-            Cycle between system, light and dark appearance.
-          </CardDescription>
+          <CardDescription>Choose a theme.</CardDescription>
         </CardHeader>
         <CardContent>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => {
-              setTheme(nextTheme);
-              toast.add({
-                title: `Theme set to ${nextTheme}`,
-                description:
-                  nextTheme === "system"
-                    ? "Odyshell now follows your device."
-                    : `Odyshell now uses the ${nextTheme} theme.`,
-                type: "success",
-              });
-            }}
+          <Select
+            value={activeTheme}
+            onValueChange={(value) => setTheme(value ?? "system")}
           >
-            <ThemeIcon aria-hidden="true" />
-            {capitalize(activeTheme)}
-          </Button>
+            <SelectTrigger aria-label="Theme" className="w-44">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="start">
+              <SelectGroup>
+                <SelectItem value="system">
+                  <MonitorIcon aria-hidden="true" />
+                  System
+                </SelectItem>
+                <SelectItem value="light">
+                  <SunIcon aria-hidden="true" />
+                  Light
+                </SelectItem>
+                <SelectItem value="dark">
+                  <MoonIcon aria-hidden="true" />
+                  Dark
+                </SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </CardContent>
       </Card>
       <Card>
@@ -131,8 +134,4 @@ export default function UserSettingsPage() {
       </Card>
     </DashboardPage>
   );
-}
-
-function capitalize(value: string): string {
-  return `${value[0]?.toUpperCase() ?? ""}${value.slice(1)}`;
 }

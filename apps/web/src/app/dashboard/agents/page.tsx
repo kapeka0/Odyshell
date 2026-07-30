@@ -16,7 +16,6 @@ export default function AgentsPage() {
       <DashboardPageHeader
         eyebrow="Workspace"
         title="Agents"
-        description="Grant only the machines, capabilities and lifetime an agent needs."
       />
       {state.status !== "ready" ? (
         <DashboardStateNotice state={state} />

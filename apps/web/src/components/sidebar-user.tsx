@@ -90,7 +90,7 @@ export function SidebarUser() {
               render={<Link href="/dashboard/user-settings" />}
             >
               <SettingsIcon aria-hidden="true" />
-              User settings
+              Settings
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>

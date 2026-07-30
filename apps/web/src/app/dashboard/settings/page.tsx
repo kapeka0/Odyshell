@@ -27,8 +27,7 @@ export default function WorkspaceSettingsPage() {
     <DashboardPage>
       <DashboardPageHeader
         eyebrow="Workspace"
-        title="Workspace settings"
-        description="Review workspace identity, limits and privacy controls."
+        title="Settings"
       />
       {state.status !== "ready" ? (
         <DashboardStateNotice state={state} />
@@ -37,9 +36,7 @@ export default function WorkspaceSettingsPage() {
           <Card>
             <CardHeader>
               <CardTitle>Workspace</CardTitle>
-              <CardDescription>
-                The resource boundary shared by your machines and agents.
-              </CardDescription>
+              <CardDescription>Identity and role.</CardDescription>
             </CardHeader>
             <CardContent className="flex items-center gap-4">
               <WorkspaceIdentityAvatar
@@ -63,9 +60,7 @@ export default function WorkspaceSettingsPage() {
           <Card>
             <CardHeader>
               <CardTitle>Plan</CardTitle>
-              <CardDescription>
-                Current usage on the {state.context.plan.id} plan.
-              </CardDescription>
+              <CardDescription>{state.context.plan.id} usage.</CardDescription>
             </CardHeader>
             <CardContent className="grid gap-3 text-sm sm:grid-cols-3">
               <Limit
@@ -88,10 +83,7 @@ export default function WorkspaceSettingsPage() {
           <Card>
             <CardHeader>
               <CardTitle>Logging policy</CardTitle>
-              <CardDescription>
-                Odyshell records enough to audit control activity without
-                becoming a session recorder.
-              </CardDescription>
+              <CardDescription>Control Event detail.</CardDescription>
             </CardHeader>
             <CardContent className="flex items-start gap-3">
               <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border">

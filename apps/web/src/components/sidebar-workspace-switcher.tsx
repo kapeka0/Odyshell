@@ -11,7 +11,9 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { useDashboard } from "@/components/dashboard-provider";
 import { WorkspaceIdentityAvatar } from "@/components/identity-avatar";
+import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,6 +35,7 @@ import { toast } from "@/components/ui/toast";
 
 export function SidebarWorkspaceSwitcher() {
   const router = useRouter();
+  const { state } = useDashboard();
   const { isMobile } = useSidebar();
   const { organization, isLoaded: organizationLoaded } = useOrganization();
   const { isLoaded, setActive, userMemberships } = useOrganizationList({
@@ -96,9 +99,14 @@ export function SidebarWorkspaceSwitcher() {
               <span className="truncate font-medium">
                 {organization?.name ?? "Select workspace"}
               </span>
-              <span className="truncate text-xs text-muted-foreground">
-                Workspace
-              </span>
+              {state.status === "ready" ? (
+                <Badge
+                  variant="outline"
+                  className="mt-0.5 h-4 w-fit px-1.5 text-[10px] capitalize"
+                >
+                  {state.context.plan.id}
+                </Badge>
+              ) : null}
             </div>
             <ChevronsUpDownIcon
               aria-hidden="true"

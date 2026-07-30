@@ -2,7 +2,6 @@
 
 import type { ColumnDef } from "@tanstack/react-table";
 import {
-  ClipboardIcon,
   CpuIcon,
   EllipsisIcon,
   EyeIcon,
@@ -10,6 +9,7 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { CopyableValue } from "@/components/copyable-value";
 import {
   DataTable,
   DataTableColumnHeader,
@@ -69,9 +69,11 @@ export function MachineList({ machines }: { machines: CloudMachine[] }) {
         cell: ({ row }) => (
           <div className="min-w-0">
             <p className="truncate font-medium">{row.original.name}</p>
-            <p className="truncate font-mono text-xs text-muted-foreground">
-              {row.original.id}
-            </p>
+            <CopyableValue
+              value={row.original.id}
+              label={`${row.original.name} ID`}
+              className="font-mono text-xs text-muted-foreground"
+            />
           </div>
         ),
       },
@@ -197,15 +199,6 @@ function MachineActions({
     }
   }
 
-  async function copyId() {
-    await navigator.clipboard.writeText(machine.id);
-    toast.add({
-      title: "Machine ID copied",
-      description: machine.name,
-      type: "success",
-    });
-  }
-
   async function removeMachine() {
     setPendingAction("remove");
     setError(null);
@@ -267,10 +260,6 @@ function MachineActions({
           >
             <RadioIcon aria-hidden="true" />
             Ping
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => void copyId()}>
-            <ClipboardIcon aria-hidden="true" />
-            Copy ID
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem

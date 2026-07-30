@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { CopyableValue } from "@/components/copyable-value";
 import {
   DataTable,
   DataTableColumnHeader,
@@ -521,9 +522,11 @@ function AccessList({
         cell: ({ row }) => (
           <div className="min-w-0">
             <p className="truncate font-medium">{row.original.name}</p>
-            <p className="truncate font-mono text-xs text-muted-foreground">
-              {row.original.id}
-            </p>
+            <CopyableValue
+              value={row.original.id}
+              label={`${row.original.name} ID`}
+              className="font-mono text-xs text-muted-foreground"
+            />
           </div>
         ),
       },

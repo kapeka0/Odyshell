@@ -13,6 +13,7 @@ import type { DashboardState } from "@/lib/dashboard-context";
 type DashboardContextValue = {
   state: DashboardState;
   serverUrl: string;
+  liveUpdatesDelayed: boolean;
   refresh: () => Promise<boolean>;
 };
 
@@ -26,6 +27,7 @@ export function DashboardProvider({
   children: React.ReactNode;
 }) {
   const [state, setState] = useState(value.state);
+  const [liveUpdatesDelayed, setLiveUpdatesDelayed] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -43,11 +45,17 @@ export function DashboardProvider({
 
   return (
     <DashboardContext.Provider
-      value={{ state, serverUrl: value.serverUrl, refresh }}
+      value={{
+        state,
+        serverUrl: value.serverUrl,
+        liveUpdatesDelayed,
+        refresh,
+      }}
     >
       <DashboardLiveRefresh
         refresh={refresh}
         serverUrl={value.serverUrl}
+        onDelayedChange={setLiveUpdatesDelayed}
       />
       {children}
     </DashboardContext.Provider>

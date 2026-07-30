@@ -3,6 +3,7 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { ActivityIcon, EllipsisIcon, EyeIcon } from "lucide-react";
 import { useMemo, useState } from "react";
+import { CopyableValue } from "@/components/copyable-value";
 import {
   DataTable,
   DataTableColumnHeader,
@@ -82,7 +83,11 @@ export function ControlEventList({
           <DataTableColumnHeader column={column} title="Actor" />
         ),
         cell: ({ row }) => (
-          <span className="text-muted-foreground">{row.original.actor}</span>
+          <CopyableValue
+            value={row.original.actor}
+            label="actor"
+            className="text-muted-foreground"
+          />
         ),
       },
       {
@@ -91,7 +96,11 @@ export function ControlEventList({
           <DataTableColumnHeader column={column} title="Target" />
         ),
         cell: ({ row }) => (
-          <span className="text-muted-foreground">{row.original.target}</span>
+          <CopyableValue
+            value={row.original.target}
+            label="target"
+            className="text-muted-foreground"
+          />
         ),
       },
       {
@@ -164,11 +173,7 @@ export function ControlEventList({
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-muted-foreground">
-          Security-relevant changes without commands, paths, file contents or
-          operation output.
-        </p>
+      <div className="flex justify-end">
         <Badge variant="outline">Privacy-minimal</Badge>
       </div>
       <DataTable
