@@ -27,6 +27,10 @@ The bundled database password and Odyshell keys are development defaults. Agent 
 expiring, scoped tokens:
 
 ```bash
+npm install --global @odyshell/cli
+```
+
+```bash
 ods agent create coding-agent --machines <machine-id> --allow process.exec,fs.read --for 1h
 ```
 

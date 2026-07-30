@@ -57,6 +57,10 @@ Agents can use the Odyshell API directly. The `ods` CLI is the quickest way to t
 workflow:
 
 ```bash
+npm install --global @odyshell/cli
+```
+
+```bash
 ods machines
 ods exec raspberry -- uname -a
 ods shell raspberry "pwd && id"

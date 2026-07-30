@@ -12,6 +12,12 @@ flowchart LR
 Clients never need inbound ports. Only the Server needs an address reachable by agents and
 Clients.
 
+Install the CLI wherever you administer or connect machines:
+
+```bash
+npm install --global @odyshell/cli
+```
+
 ## Try it locally
 
 ```bash

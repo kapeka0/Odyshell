@@ -35,6 +35,10 @@ pnpm dev:web
 Open `http://localhost:3000`, create an organization, then connect the CLI:
 
 ```bash
+npm install --global @odyshell/cli
+```
+
+```bash
 ods login --server http://localhost:4100
 ```
 

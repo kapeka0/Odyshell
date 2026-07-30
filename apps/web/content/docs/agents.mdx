@@ -11,7 +11,13 @@ Server stores only its hash.
 
 ## Give the credential to an agent
 
-Use the generated command in the agent's environment:
+Install the CLI in the agent's environment:
+
+```bash
+npm install --global @odyshell/cli
+```
+
+Then use the generated command:
 
 ```bash
 ods login --server https://server.example.com --agent-token "$ODYSHELL_AGENT_TOKEN"

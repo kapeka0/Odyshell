@@ -49,6 +49,20 @@ describe("public documentation corpus", () => {
     expect(corpus).not.toMatch(/\b(?:business model|roadmap)\b/iu);
   });
 
+  it("documents the public CLI installation command", () => {
+    for (const page of [
+      "quickstart.mdx",
+      "cli.mdx",
+      "machines.mdx",
+      "agents.mdx",
+      "mcp.mdx",
+      "self-hosting.mdx",
+    ]) {
+      const content = readFileSync(resolve(docsRoot, page), "utf8");
+      expect(content).toContain("npm install --global @odyshell/cli");
+    }
+  });
+
   it("builds agent-facing outputs only from the reviewed documentation source", () => {
     const webRoot = resolve(process.cwd(), "apps/web");
     const sourceConfig = readFileSync(

@@ -14,6 +14,12 @@ private network.
 
 ## Connect a machine
 
+Install the CLI on the private machine:
+
+```bash
+npm install --global @odyshell/cli
+```
+
 Create an enrollment token on the administrator machine:
 
 ```bash
