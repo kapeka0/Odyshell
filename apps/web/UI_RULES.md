@@ -1,55 +1,103 @@
-# Odyshell frontend rules
+# Odyshell interface rules
 
-These rules are the source of truth for product UI decisions. Read them before
-changing the web app and update them whenever a new UI direction is agreed.
+These rules are the source of truth for product interface decisions. They
+describe the behavior and qualities users should experience without requiring a
+particular component, library or interaction pattern.
 
-## Product surfaces
+## Task and hierarchy
 
-- Keep operational screens clean, quiet and content-first. Show only controls
-  that are useful for the current task.
-- Every dashboard navigation item opens a distinct route.
-- GitHub and other public-site links belong on the landing page, not in the
-  authenticated dashboard.
-- The CLI activation flow lives outside the dashboard and never renders its
-  sidebar. It ends on a dedicated success or error route.
+- Give every view one clear purpose and one clearly prioritized next action.
+- Show only information and actions useful to the current task.
+- Prefer progressive disclosure when secondary detail would compete with the
+  primary task.
+- Keep operational screens quiet, content-first and free of decorative
+  enrichment.
+- Preserve the user's context when configuration or creation work does not
+  require a separate journey.
 
-## Navigation
+## Information architecture
 
-- Compose the authenticated navigation from the official shadcn `sidebar-07`
-  block and sidebar primitives.
-- Do not show the Odyshell logo or wordmark inside the app sidebar.
-- Keep the sidebar limited to workspace selection, product routes and the user
-  menu.
-- Put theme selection only in user settings.
+- Give every authenticated destination a distinct, addressable location.
+- Make the user's current location and available destinations clear.
+- Keep workspace selection, product navigation and account management easy to
+  distinguish.
+- Keep public and promotional destinations outside the authenticated workspace.
+- Keep CLI activation outside the authenticated workspace and end it in an
+  unambiguous success or failure state.
+- Put personal preferences, including theme selection, in user settings.
+- Keep product branding subordinate to workspace identity and operational work
+  inside the authenticated experience.
 
-## Components and actions
+## Actions and forms
 
-- Prefer official shadcn components and blocks before creating custom UI
-  primitives.
-- Put creation and configuration forms in a shadcn `Dialog`, opened by one
-  concise primary action such as **Add machine**.
-- Keep destructive actions behind an explicit shadcn confirmation dialog.
-- Every asynchronous action must disable repeat submission, show a spinner
-  while pending and report its result with a shadcn toast.
-- Use Clerk for identity, sessions and organization data through hooks and
-  server APIs. Do not render Clerk's visual components.
+- Use concise, active labels that describe the outcome.
+- Establish one primary action per task and give secondary actions quieter
+  emphasis.
+- Make forms understandable in reading order, with persistent labels, useful
+  guidance and errors connected to the relevant input.
+- Prevent repeat submission while an action is pending.
+- Communicate progress and the eventual result of every asynchronous action.
+- Require explicit, unambiguous confirmation before destructive or irreversible
+  actions.
+- Preserve entered data after recoverable failures whenever it is safe to do so.
 
-## Visual language
+## System state and feedback
 
-- Use the neutral Vercel palette, Geist typography and restrained borders.
-- Favor whitespace and clear hierarchy over decorative cards or illustrations
-  in the dashboard.
-- Keep labels and actions concise and sentence case.
-- Use status color only when it communicates real state.
-- Animations must be subtle, use opacity or transform and respect reduced
-  motion preferences.
-
-## Performance and accessibility
-
-- Route transitions must not repeat workspace or server requests that the
-  dashboard layout has already completed.
-- Use semantic forms, explicit button types, visible focus states and accessible
-  labels.
-- Dialogs must remain usable on small screens and with keyboard navigation.
-- Loading, empty, success and failure states must always be visible and
+- Make loading, empty, success, failure and unavailable states visible and
   understandable.
+- Distinguish between “no data,” “not yet loaded” and “failed to load.”
+- Keep status close to the object or action it describes.
+- Use semantic color only when it conveys real state, and pair it with text or
+  another non-color signal.
+- Make recovery paths clear when the user can resolve a failure.
+- Do not expose secrets, credentials or sensitive implementation details in
+  interface feedback.
+
+## Navigation and continuity
+
+- Keep navigation placement and ordering predictable across authenticated views.
+- Preserve workspace and account context while moving between related
+  destinations.
+- Avoid repeating global context inside each page when the surrounding
+  experience already communicates it.
+- Ensure narrow screens retain access to the same essential destinations and
+  actions without obscuring page content.
+
+## Language
+
+- Use plain, concise and sentence-case language.
+- Prefer specific domain terms over generic labels.
+- Explain consequences before asking for confirmation.
+- Write errors in terms of what happened and what the user can do next.
+- Avoid promotional language in operational and security-sensitive flows.
+
+## Accessibility
+
+- Use semantic structure and controls that match their purpose.
+- Keep focus visible and move it predictably after navigation, submission and
+  state changes.
+- Provide accessible names for every interactive element.
+- Ensure all essential tasks work with a keyboard and assistive technology.
+- Maintain readable contrast in every state and theme.
+- Do not rely on color, position, motion or hover alone to communicate meaning.
+- Keep task flows usable at narrow widths and high zoom levels.
+- Respect reduced-motion and other user preferences.
+
+## Responsive behavior
+
+- Preserve task priority as space decreases; remove decoration before useful
+  information or actions.
+- Reflow content in a logical reading order rather than shrinking it beyond
+  legibility.
+- Keep touch targets comfortably operable.
+- Prevent essential actions, feedback and validation from being hidden by
+  overflow or transient interface elements.
+
+## Performance and resilience
+
+- Show useful structure promptly and avoid blocking unrelated parts of a view.
+- Preserve already available context during navigation and background refreshes.
+- Avoid visual resets, duplicate loading states and unexpected layout shifts.
+- Keep the last trustworthy state visible when refreshing data, while clearly
+  indicating that an update is in progress.
+- Fail safely and make unavailable actions visibly unavailable.
