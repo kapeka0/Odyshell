@@ -31,7 +31,7 @@ npm install --global @odyshell/cli
 ```
 
 ```bash
-ods agent create coding-agent --machines <machine-id> --allow process.exec,fs.read --for 1h
+ods agent create coding-agent --machines <machine-id> --allow 'process.exec,fs.read' --for 1h
 ```
 
 Sessions cannot outlive the token that created them. Revoking a token also closes its active

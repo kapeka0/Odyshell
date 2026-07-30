@@ -60,7 +60,15 @@ describe("public documentation corpus", () => {
     ]) {
       const content = readFileSync(resolve(docsRoot, page), "utf8");
       expect(content).toContain("npm install --global @odyshell/cli");
+      expect(content).toContain("```npm");
     }
+
+    const sourceConfig = readFileSync(
+      resolve(process.cwd(), "apps/web/source.config.ts"),
+      "utf8",
+    );
+    expect(sourceConfig).toContain("remarkNpmOptions");
+    expect(sourceConfig).toContain('id: "package-manager"');
   });
 
   it("builds agent-facing outputs only from the reviewed documentation source", () => {

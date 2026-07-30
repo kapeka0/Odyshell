@@ -84,7 +84,7 @@ ods up \
   --token <enrollment-token> \
   --name my-machine \
   --workspace /srv/my-app \
-  --allow process.exec,fs.stat,fs.list,fs.search,fs.read
+  --allow 'process.exec,fs.stat,fs.list,fs.search,fs.read'
 ```
 
 Create one hour of scoped access and verify it:
@@ -95,7 +95,7 @@ ods \
   --admin-key <admin-key> \
   agent create my-agent \
   --machines my-machine \
-  --allow process.exec,fs.stat,fs.list,fs.search,fs.read \
+  --allow 'process.exec,fs.stat,fs.list,fs.search,fs.read' \
   --for 1h
 
 ods login --server https://ods.example.com --agent-token <agent-token>

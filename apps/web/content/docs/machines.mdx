@@ -5,7 +5,7 @@ description: Enroll a machine, choose its local boundary, and keep its Client co
 
 Install the CLI on the target machine with Node.js 24 or newer:
 
-```bash
+```npm
 npm install --global @odyshell/cli
 ```
 
@@ -35,7 +35,7 @@ ods client enroll \
   --token "$ODYSHELL_ENROLLMENT_TOKEN" \
   --name my-machine \
   --workspace . \
-  --allow process.exec,fs.stat,fs.list,fs.search,fs.read
+  --allow 'process.exec,fs.stat,fs.list,fs.search,fs.read'
 ods client start
 ```
 
@@ -47,7 +47,7 @@ The `--workspace` directory is the filesystem boundary for typed filesystem oper
 Capabilities are default-deny and comma-separated:
 
 ```bash
---allow process.exec,fs.stat,fs.list,fs.search,fs.read
+--allow 'process.exec,fs.stat,fs.list,fs.search,fs.read'
 ```
 
 An agent can only use the intersection of its credential policy and the machine's local policy.

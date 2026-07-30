@@ -19,9 +19,13 @@ async function expectResponse(path, expectedStatus, expectedType) {
 }
 
 await expectResponse("/docs", 200, "text/html");
-await expectResponse("/docs/quickstart", 200, "text/html");
+const quickstart = await expectResponse("/docs/quickstart", 200, "text/html");
 await expectResponse("/docs.md", 200, "text/markdown");
-await expectResponse("/docs/quickstart.md", 200, "text/markdown");
+const quickstartMarkdown = await expectResponse(
+  "/docs/quickstart.md",
+  200,
+  "text/markdown",
+);
 await expectResponse("/llms.txt", 200, "text/plain");
 const llmsFull = await expectResponse("/llms-full.txt", 200, "text/plain");
 await expectResponse("/api/search?query=machine", 200, "application/json");
@@ -58,6 +62,26 @@ if (
   corpus.includes("dev-admin-key")
 ) {
   throw new Error("/llms-full.txt contains a credential pattern");
+}
+
+const quickstartHtml = await quickstart.text();
+const quickstartSource = await quickstartMarkdown.text();
+for (const packageManager of ["npm", "pnpm", "yarn", "bun"]) {
+  if (!quickstartHtml.includes(`>${packageManager}<`)) {
+    throw new Error(
+      `/docs/quickstart is missing the ${packageManager} package-manager shortcut`,
+    );
+  }
+}
+for (const command of [
+  "npm install --global @odyshell/cli",
+  "pnpm add --global @odyshell/cli",
+  "yarn global add @odyshell/cli",
+  "bun add --global @odyshell/cli",
+]) {
+  if (!quickstartSource.includes(command)) {
+    throw new Error(`/docs/quickstart is missing generated command: ${command}`);
+  }
 }
 
 console.log(`Documentation smoke test passed for ${baseUrl.origin}`);

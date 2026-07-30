@@ -161,6 +161,8 @@ particular component, library or interaction pattern.
   actions menu.
 - Important table identifiers are copyable from the value itself. Reveal the
   copy affordance with a restrained horizontal hover or focus animation.
+- Copyable values preserve readable text contrast in every interaction state,
+  including when the surrounding surface inverts foreground and background.
 - Destructive row actions remain secondary, require confirmation and never
   compete with the view's primary creation action.
 - Users can permanently delete any Agent from its actions. Deletion closes
@@ -187,5 +189,7 @@ particular component, library or interaction pattern.
 - Documentation must serve people and agents from one reviewed source. Keep
   Markdown pages and LLM indexes discoverable without adding provider-specific
   actions.
+- Package installation commands use persistent, synchronized shortcuts for
+  npm, pnpm, Yarn and Bun instead of documenting a single package manager.
 - The landing introduces documentation once, after the product workflow, with one
   clear action.

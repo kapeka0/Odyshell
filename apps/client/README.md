@@ -34,7 +34,7 @@ ods up \
   --token <token> \
   --name raspberry \
   --workspace /srv/my-app \
-  --allow process.exec,fs.stat,fs.list,fs.search,fs.read,fs.write
+  --allow 'process.exec,fs.stat,fs.list,fs.search,fs.read,fs.write'
 ```
 
 `ods up` enrolls the machine and starts a restartable systemd user service. The workspace,

@@ -112,7 +112,7 @@ ods up \
   --token <token> \
   --name my-machine \
   --workspace /srv/my-app \
-  --allow process.exec,fs.stat,fs.list,fs.search,fs.read,fs.write
+  --allow 'process.exec,fs.stat,fs.list,fs.search,fs.read,fs.write'
 ```
 
 `ods up` installs a restartable user service. In another terminal:

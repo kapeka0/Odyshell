@@ -28,6 +28,6 @@ export function machineEnrollmentCommand(options: {
 }
 
 export function posixShellArgument(value: string): string {
-  if (/^[a-zA-Z0-9_./:@%+,=-]+$/u.test(value)) return value;
+  if (/^[a-zA-Z0-9_./:@%+=-]+$/u.test(value)) return value;
   return `'${value.replaceAll("'", "'\"'\"'")}'`;
 }

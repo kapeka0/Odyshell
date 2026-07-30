@@ -95,12 +95,13 @@ describe("web authentication boundaries", () => {
       serverUrl: "https://self-hosted.example/api?mode=one&next=ignored",
       token: "ods_enroll_safe",
       machineName: "rpi5",
-      capabilities: ["fs.read"],
+      capabilities: ["fs.read", "docker.logs"],
     });
 
     expect(command).toContain(
       "--server 'https://self-hosted.example/api?mode=one&next=ignored'",
     );
+    expect(command).toContain("--allow 'fs.read,docker.logs'");
     expect(posixShellArgument("value'with-quote")).toBe(
       "'value'\"'\"'with-quote'",
     );
@@ -404,6 +405,7 @@ describe("dashboard navigation performance boundary", () => {
     expect(copyable).toContain("navigator.clipboard.writeText(value)");
     expect(copyable).toContain('aria-live="polite"');
     expect(copyable).not.toContain("toast");
+    expect(copyable).not.toContain("hover:text-foreground");
     for (const file of [
       "machine-list.tsx",
       "agent-access-manager.tsx",

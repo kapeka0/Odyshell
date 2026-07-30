@@ -50,7 +50,7 @@ export function CopyableValue({
       aria-label={`Copy ${label}`}
       onClick={() => void copy()}
       className={cn(
-        "group/copy inline-flex max-w-full items-center gap-1 rounded-sm text-left transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:outline-none",
+        "group/copy inline-flex max-w-full items-center gap-1 rounded-sm text-left transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:outline-none",
         className,
       )}
     >
