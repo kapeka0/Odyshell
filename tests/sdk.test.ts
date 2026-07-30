@@ -19,6 +19,7 @@ describe("Odyshell SDK", () => {
       serverUrl: "https://ods.example",
       agentToken: "agent-secret",
       adminKey: "admin-secret",
+      workspaceId: "workspace-123",
       fetch,
     });
 
@@ -29,8 +30,10 @@ describe("Odyshell SDK", () => {
       authorization: "Bearer agent-secret",
     });
     expect(requests[0]?.headers).not.toHaveProperty("x-odyshell-admin-key");
+    expect(requests[0]?.headers).not.toHaveProperty("x-odyshell-workspace-id");
     expect(requests[1]?.headers).toMatchObject({
       "x-odyshell-admin-key": "admin-secret",
+      "x-odyshell-workspace-id": "workspace-123",
     });
     expect(requests[1]?.headers).not.toHaveProperty("authorization");
   });

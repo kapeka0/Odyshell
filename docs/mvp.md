@@ -36,6 +36,7 @@ private network.
 | Reliability | Reconnection, heartbeat, ping, cancellation, and idempotency |
 | Interfaces | HTTP API, TypeScript SDK, `ods` CLI, and local MCP server |
 | Persistence | PostgreSQL through Kysely |
+| Tenancy | Organizations own isolated execution Workspaces |
 
 Host execution is the default because the product is intended to operate on a real machine. The
 Client process should run as a dedicated operating-system user with only the privileges required
@@ -47,11 +48,12 @@ An operation is accepted only when:
 
 1. the agent token is valid and unexpired;
 2. the token includes the target machine;
-3. the token includes the required capability;
-4. the session is active and unexpired;
-5. the machine is online;
-6. the Client's local policy allows the same capability;
-7. filesystem paths remain inside the configured workspace.
+3. the token, machine, session, operation, and control events belong to the same Workspace;
+4. the token includes the required capability;
+5. the session is active and unexpired;
+6. the machine is online;
+7. the Client's local policy allows the same capability;
+8. filesystem paths remain inside the configured local directory.
 
 The model cannot override these checks with a prompt.
 
@@ -74,8 +76,8 @@ See [Privacy and event data](./privacy.md) for the exact boundary.
 
 ## What the MVP does not yet include
 
-- multiple organizations or isolated workspaces in one deployment;
 - Clerk authentication or a web frontend;
+- human organization membership and roles;
 - human approval workflows;
 - customer-owned webhook, object-storage, or SIEM event sinks;
 - SSO, SCIM, billing, or compliance certification;
@@ -89,11 +91,10 @@ These are not implied by the current API.
 
 The next product milestone is to support design partners without changing the agent protocol:
 
-1. add Organizations as the customer and billing boundary;
-2. make Workspaces the isolation boundary for machines and grants;
-3. add customer-owned delivery for content-minimal control events;
-4. authenticate human administrators without changing agent or machine identities;
-5. add a small frontend only for machines, grants, members, and event visibility.
+1. add customer-owned delivery for content-minimal control events;
+2. authenticate human administrators without changing agent or machine identities;
+3. add organization membership and the initial human roles;
+4. add a small frontend only for machines, grants, members, and event visibility.
 
 The milestone succeeds when an agent vendor can onboard a customer machine, complete a recurring
 real task, revoke access, and show the customer a useful control trail without exposing task

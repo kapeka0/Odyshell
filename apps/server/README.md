@@ -54,6 +54,12 @@ after one hour and control events after 30 days by default. Configure these wind
 
 Database credentials belong only to the Server; agents and Clients never receive them.
 
+Organizations own execution Workspaces. Existing administrator endpoints use the
+`x-odyshell-workspace-id` header and default to the backwards-compatible `default` workspace when
+it is absent. Enrollment tokens, machines, agent grants, sessions, operations, and control events
+remain inside the selected Workspace. Agent requests do not accept a workspace selector: their
+workspace comes from the hashed token record.
+
 Keep one Server replica for the MVP because active Client connections are held by the running
 process. The future frontend will call the Odyshell API and will not access PostgreSQL directly.
 

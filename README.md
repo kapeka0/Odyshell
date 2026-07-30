@@ -133,6 +133,17 @@ security checklist.
 
 ## Give an agent access
 
+Create an organization and an isolated execution workspace:
+
+```bash
+ods organization create acme --name "Acme"
+ods workspace create production --organization <organization-id> --name "Production"
+ods workspace use production
+```
+
+Administrator commands now apply only to the selected workspace. Enrollment tokens bind new
+machines to that workspace, and agent tokens inherit the same boundary automatically.
+
 Create a token that only works with specific machines and actions:
 
 ```bash
@@ -174,7 +185,9 @@ The Server keeps machine identities, temporary access, operations, and audit his
 through Kysely. Operation payloads are retained for one hour by default; content-minimal control
 events are retained for 30 days. Odyshell does not provide session recording by default.
 
-It is an early development MVP. The default local credentials are only intended for development.
+Organizations provide the ownership boundary and workspaces isolate machines, grants, sessions,
+operations, and control events. Human membership, OAuth, billing, and a frontend are not included
+yet. It is an early development MVP; the default local credentials are only for development.
 
 ## Product documents
 

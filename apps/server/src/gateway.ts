@@ -14,6 +14,7 @@ type AuthState = {
   connectionId: string;
   nonce: string;
   machineId?: string;
+  workspaceId?: string;
   authenticated: boolean;
   lastHeartbeatPersistedAt?: number;
 };
@@ -130,14 +131,14 @@ export class ClientGateway {
     message: Extract<ClientToServerMessage, { type: "authenticate" }>,
   ): Promise<void> {
     if (message.protocolVersion !== PROTOCOL_VERSION) throw new Error("Unsupported protocol version");
-    const publicKey = await this.db.machinePublicKey(message.machineId);
-    if (!publicKey) throw new Error("Unknown machine");
+    const machine = await this.db.machinePublicKey(message.machineId);
+    if (!machine) throw new Error("Unknown machine");
 
     const payload = Buffer.from(`odyshell:${state.connectionId}:${state.nonce}`);
     const valid = verify(
       null,
       payload,
-      createPublicKey(publicKey),
+      createPublicKey(machine.publicKey),
       Buffer.from(message.signature, "base64url"),
     );
     if (!valid) throw new Error("Invalid client signature");
@@ -147,6 +148,7 @@ export class ClientGateway {
 
     state.authenticated = true;
     state.machineId = message.machineId;
+    state.workspaceId = machine.workspaceId;
     state.lastHeartbeatPersistedAt = Date.now();
     this.connections.set(message.machineId, socket);
     await this.db.setMachineOnline(message.machineId, message.runtime);
@@ -158,6 +160,9 @@ export class ClientGateway {
     message: ClientToServerMessage,
     state: AuthState,
   ): Promise<void> {
+    if (!state.machineId || !state.workspaceId) {
+      throw new Error("Authenticated client has no machine context");
+    }
     switch (message.type) {
       case "heartbeat":
         if (
@@ -173,44 +178,73 @@ export class ClientGateway {
         break;
       case "session.opened":
         {
-          const result = await this.db.markSessionOpened(message.sessionId);
+          const result = await this.db.markSessionOpened(state.machineId, message.sessionId);
           const principalId = result?.principalId;
           if (principalId) {
-            await audit(this.db, principalId, "session.opened", "session", message.sessionId);
+            await audit(
+              this.db,
+              result.workspaceId,
+              principalId,
+              "session.opened",
+              "session",
+              message.sessionId,
+            );
           }
           this.events.emit(`session:${message.sessionId}`);
         }
         break;
       case "session.open_failed":
         {
-          const result = await this.db.markSessionOpenFailed(message.sessionId, message.error);
+          const result = await this.db.markSessionOpenFailed(
+            state.machineId,
+            message.sessionId,
+            message.error,
+          );
           const principalId = result?.principalId;
           if (principalId) {
-            await audit(this.db, principalId, "session.open_failed", "session", message.sessionId, {
-              reason: "client_rejected",
-            });
+            await audit(
+              this.db,
+              result.workspaceId,
+              principalId,
+              "session.open_failed",
+              "session",
+              message.sessionId,
+              { reason: "client_rejected" },
+            );
           }
           this.events.emit(`session:${message.sessionId}`);
         }
         break;
       case "session.closed":
         {
-          const session = await this.db.markSessionClosed(message.sessionId);
+          const session = await this.db.markSessionClosed(
+            state.machineId,
+            message.sessionId,
+          );
           if (session) {
-            await audit(this.db, session.principalId, "session.closed", "session", message.sessionId, {
-              reason: message.reason,
-              status: session.status,
-            });
+            await audit(
+              this.db,
+              session.workspaceId,
+              session.principalId,
+              "session.closed",
+              "session",
+              message.sessionId,
+              {
+                reason: message.reason,
+                status: session.status,
+              },
+            );
           }
           this.events.emit(`session:${message.sessionId}`);
         }
         break;
       case "operation.started":
-        await this.db.markOperationStarted(message.operationId);
+        await this.db.markOperationStarted(state.machineId, message.operationId);
         this.events.emit(`operation:${message.operationId}`);
         break;
       case "operation.event":
         await this.db.addOperationEvent({
+          machineId: state.machineId,
           operationId: message.operationId,
           sequence: message.sequence,
           stream: message.stream,
@@ -221,6 +255,7 @@ export class ClientGateway {
       case "operation.completed":
         {
           const result = await this.db.markOperationCompleted({
+            machineId: state.machineId,
             operationId: message.operationId,
             status: message.status,
             exitCode: message.exitCode,
@@ -231,6 +266,7 @@ export class ClientGateway {
           if (principalId) {
             await audit(
               this.db,
+              result.workspaceId,
               principalId,
               "operation.completed",
               "operation",

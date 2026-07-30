@@ -6,7 +6,9 @@ import {
   allCapabilities,
   capabilityForAction,
   operationRequestSchema,
+  organizationRequestSchema,
   sessionRequestSchema,
+  workspaceRequestSchema,
   type Capability,
   type OperationAction,
 } from "@odyshell/protocol";
@@ -16,7 +18,7 @@ import {
   developmentCredentialsEnabled,
   serverAdminKey,
 } from "./access.js";
-import { audit, createDatabase } from "./database.js";
+import { audit, createDatabase, DEFAULT_WORKSPACE_ID } from "./database.js";
 import { ClientGateway } from "./gateway.js";
 import { dataRetentionPolicy } from "./privacy.js";
 
@@ -50,12 +52,14 @@ gateway.register(app);
 type AgentPrincipal = {
   id: string;
   name: string;
+  workspaceId: string;
   machineIds: Set<string> | null;
   capabilities: Set<Capability>;
   expiresAt: Date | null;
 };
 
 const requestPrincipals = new WeakMap<FastifyRequest, AgentPrincipal>();
+const requestAdminWorkspaces = new WeakMap<FastifyRequest, string>();
 
 function matchesSecret(actual: string | undefined, expected: string | undefined): boolean {
   if (!actual || !expected) return false;
@@ -68,6 +72,27 @@ async function requireAdmin(request: FastifyRequest, reply: FastifyReply): Promi
   if (!matchesSecret(request.headers["x-odyshell-admin-key"] as string | undefined, adminKey)) {
     await reply.code(401).send({ error: "invalid_admin_key" });
   }
+}
+
+async function requireAdminWorkspace(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const header = request.headers["x-odyshell-workspace-id"];
+  if (Array.isArray(header)) {
+    await reply.code(400).send({ error: "invalid_workspace_header" });
+    return;
+  }
+  const workspaceId = header ?? DEFAULT_WORKSPACE_ID;
+  if (workspaceId.length === 0 || workspaceId.length > 128) {
+    await reply.code(400).send({ error: "invalid_workspace_header" });
+    return;
+  }
+  if (!(await db.workspace(workspaceId))) {
+    await reply.code(404).send({ error: "workspace_not_found" });
+    return;
+  }
+  requestAdminWorkspaces.set(request, workspaceId);
 }
 
 async function requireAgent(request: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -83,6 +108,7 @@ async function requireAgent(request: FastifyRequest, reply: FastifyReply): Promi
     requestPrincipals.set(request, {
       id: "dev-agent",
       name: "Development agent",
+      workspaceId: DEFAULT_WORKSPACE_ID,
       machineIds: null,
       capabilities: new Set(allCapabilities),
       expiresAt: null,
@@ -96,6 +122,7 @@ async function requireAgent(request: FastifyRequest, reply: FastifyReply): Promi
       requestPrincipals.set(request, {
         id: principal.id,
         name: principal.name,
+        workspaceId: principal.workspaceId,
         machineIds: new Set(principal.machineIds),
         capabilities: new Set(principal.capabilities),
         expiresAt: new Date(principal.expiresAt),
@@ -121,6 +148,12 @@ function principalFor(request: FastifyRequest): AgentPrincipal {
   return principal;
 }
 
+function adminWorkspaceFor(request: FastifyRequest): string {
+  const workspaceId = requestAdminWorkspaces.get(request);
+  if (!workspaceId) throw new Error("Authenticated administrator has no workspace context");
+  return workspaceId;
+}
+
 function canAccessMachine(principal: AgentPrincipal, machineId: string): boolean {
   return principal.machineIds === null || principal.machineIds.has(machineId);
 }
@@ -129,8 +162,16 @@ function operationAuditMetadata(action: OperationAction): Record<string, unknown
   return { kind: action.kind };
 }
 
-async function expireAgentSessions(principalId: string, reason: string): Promise<number> {
-  const expired = await db.expireAgentSessions(principalId);
+function isUniqueConflict(error: unknown): boolean {
+  return (error as { code?: unknown })?.code === "23505";
+}
+
+async function expireAgentSessions(
+  workspaceId: string,
+  principalId: string,
+  reason: string,
+): Promise<number> {
+  const expired = await db.expireAgentSessions(workspaceId, principalId);
   for (const session of expired) {
     gateway.send(session.machineId, {
       type: "session.close",
@@ -146,62 +187,168 @@ app.get("/health", async () => {
   return { status: "ok", protocol: 1 };
 });
 
+app.get("/v1/admin/organizations", { preHandler: requireAdmin }, async () => ({
+  data: (await db.listOrganizations()).map((organization) => ({
+    ...organization,
+    createdAt: isoTimestamp(organization.createdAt),
+  })),
+}));
+
 app.post(
-  "/v1/admin/enrollment-tokens",
+  "/v1/admin/organizations",
   { preHandler: requireAdmin },
   async (request, reply) => {
+    const parsed = organizationRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: "invalid_request",
+        details: parsed.error.issues,
+      });
+    }
+    try {
+      const organization = await db.createOrganization({
+        id: randomUUID(),
+        ...parsed.data,
+      });
+      return reply.code(201).send({
+        ...organization,
+        createdAt: isoTimestamp(organization.createdAt),
+      });
+    } catch (error) {
+      if (isUniqueConflict(error)) {
+        return reply.code(409).send({ error: "organization_slug_exists" });
+      }
+      throw error;
+    }
+  },
+);
+
+app.get("/v1/admin/workspaces", { preHandler: requireAdmin }, async () => ({
+  data: (await db.listWorkspaces()).map((workspace) => ({
+    ...workspace,
+    createdAt: isoTimestamp(workspace.createdAt),
+  })),
+}));
+
+app.get<{ Params: { organizationId: string } }>(
+  "/v1/admin/organizations/:organizationId/workspaces",
+  { preHandler: requireAdmin },
+  async (request) => ({
+    data: (await db.listWorkspaces(request.params.organizationId)).map((workspace) => ({
+      ...workspace,
+      createdAt: isoTimestamp(workspace.createdAt),
+    })),
+  }),
+);
+
+app.post<{ Params: { organizationId: string } }>(
+  "/v1/admin/organizations/:organizationId/workspaces",
+  { preHandler: requireAdmin },
+  async (request, reply) => {
+    const parsed = workspaceRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: "invalid_request",
+        details: parsed.error.issues,
+      });
+    }
+    try {
+      const workspace = await db.createWorkspace({
+        id: randomUUID(),
+        organizationId: request.params.organizationId,
+        ...parsed.data,
+      });
+      if (!workspace) {
+        return reply.code(404).send({ error: "organization_not_found" });
+      }
+      return reply.code(201).send({
+        ...workspace,
+        createdAt: isoTimestamp(workspace.createdAt),
+      });
+    } catch (error) {
+      if (isUniqueConflict(error)) {
+        return reply.code(409).send({ error: "workspace_slug_exists" });
+      }
+      throw error;
+    }
+  },
+);
+
+app.post(
+  "/v1/admin/enrollment-tokens",
+  { preHandler: [requireAdmin, requireAdminWorkspace] },
+  async (request, reply) => {
+    const workspaceId = adminWorkspaceFor(request);
     const body = (request.body ?? {}) as { expiresInSeconds?: number };
     const expiresInSeconds = Math.min(Math.max(body.expiresInSeconds ?? 600, 60), 86_400);
     const token = createOpaqueToken("enroll");
     const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
-    await db.createEnrollmentToken(hashToken(token), expiresAt.getTime());
-    await audit(db, "admin", "enrollment_token.created", "enrollment_token", hashToken(token));
+    await db.createEnrollmentToken(workspaceId, hashToken(token), expiresAt.getTime());
+    await audit(
+      db,
+      workspaceId,
+      "admin",
+      "enrollment_token.created",
+      "enrollment_token",
+      hashToken(token),
+    );
     return reply.code(201).send({ token, expiresAt: expiresAt.toISOString() });
   },
 );
 
-app.get("/v1/admin/agent-tokens", { preHandler: requireAdmin }, async () => {
-  const tokens = await db.listAgentTokens();
-  return {
-    data: tokens.map((token) => ({
-      id: token.id,
-      name: token.name,
-      machineIds: token.machineIds,
-      capabilities: token.capabilities,
-      expiresAt: isoTimestamp(token.expiresAt),
-      revokedAt: isoTimestamp(token.revokedAt),
-      createdAt: isoTimestamp(token.createdAt),
-      status:
-        token.revokedAt !== undefined
-          ? "revoked"
-          : token.expiresAt <= Date.now()
-            ? "expired"
-            : "active",
-    })),
-  };
-});
+app.get(
+  "/v1/admin/agent-tokens",
+  { preHandler: [requireAdmin, requireAdminWorkspace] },
+  async (request) => {
+    const tokens = await db.listAgentTokens(adminWorkspaceFor(request));
+    return {
+      data: tokens.map((token) => ({
+        id: token.id,
+        name: token.name,
+        machineIds: token.machineIds,
+        capabilities: token.capabilities,
+        expiresAt: isoTimestamp(token.expiresAt),
+        revokedAt: isoTimestamp(token.revokedAt),
+        createdAt: isoTimestamp(token.createdAt),
+        status:
+          token.revokedAt !== undefined
+            ? "revoked"
+            : token.expiresAt <= Date.now()
+              ? "expired"
+              : "active",
+      })),
+    };
+  },
+);
 
-app.get("/v1/admin/machines", { preHandler: requireAdmin }, async () => {
-  const machines = await db.listMachines({ includeRevoked: true });
-  return {
-    data: machines.map((machine) => ({
-      id: machine.id,
-      name: machine.name,
-      status: machine.status,
-      runtime: machine.runtime ?? null,
-      lastSeenAt: isoTimestamp(machine.lastSeenAt),
-      enrolledAt: isoTimestamp(machine.enrolledAt),
-      revokedAt: isoTimestamp(machine.revokedAt),
-      online: machine.revokedAt === undefined && gateway.isOnline(machine.id),
-    })),
-  };
-});
+app.get(
+  "/v1/admin/machines",
+  { preHandler: [requireAdmin, requireAdminWorkspace] },
+  async (request) => {
+    const machines = await db.listMachines(adminWorkspaceFor(request), {
+      includeRevoked: true,
+    });
+    return {
+      data: machines.map((machine) => ({
+        id: machine.id,
+        name: machine.name,
+        status: machine.status,
+        runtime: machine.runtime ?? null,
+        lastSeenAt: isoTimestamp(machine.lastSeenAt),
+        enrolledAt: isoTimestamp(machine.enrolledAt),
+        revokedAt: isoTimestamp(machine.revokedAt),
+        online: machine.revokedAt === undefined && gateway.isOnline(machine.id),
+      })),
+    };
+  },
+);
 
 app.delete<{ Params: { machineId: string } }>(
   "/v1/admin/machines/:machineId",
-  { preHandler: requireAdmin },
+  { preHandler: [requireAdmin, requireAdminWorkspace] },
   async (request, reply) => {
-    const machine = await db.revokeMachine(request.params.machineId);
+    const workspaceId = adminWorkspaceFor(request);
+    const machine = await db.revokeMachine(workspaceId, request.params.machineId);
     if (!machine) return reply.code(404).send({ error: "active_machine_not_found" });
 
     for (const operationId of machine.operationIds) {
@@ -218,7 +365,7 @@ app.delete<{ Params: { machineId: string } }>(
       gateway.events.emit(`session:${sessionId}`);
     }
     const disconnected = gateway.disconnect(machine.id);
-    await audit(db, "admin", "machine.revoked", "machine", machine.id, {
+    await audit(db, workspaceId, "admin", "machine.revoked", "machine", machine.id, {
       name: machine.name,
       revokedAt: isoTimestamp(machine.revokedAt),
       cancelledOperations: machine.operationIds.length,
@@ -237,7 +384,10 @@ app.delete<{ Params: { machineId: string } }>(
   },
 );
 
-app.post("/v1/admin/agent-tokens", { preHandler: requireAdmin }, async (request, reply) => {
+app.post("/v1/admin/agent-tokens", {
+  preHandler: [requireAdmin, requireAdminWorkspace],
+}, async (request, reply) => {
+  const workspaceId = adminWorkspaceFor(request);
   const parsed = agentTokenRequestSchema.safeParse(request.body);
   if (!parsed.success) {
     return reply.code(400).send({ error: "invalid_request", details: parsed.error.issues });
@@ -246,7 +396,7 @@ app.post("/v1/admin/agent-tokens", { preHandler: requireAdmin }, async (request,
   const input = parsed.data;
   const uniqueMachineIds = [...new Set(input.machineIds)];
   const uniqueCapabilities = [...new Set(input.capabilities)];
-  if (!(await db.activeMachinesExist(uniqueMachineIds))) {
+  if (!(await db.activeMachinesExist(workspaceId, uniqueMachineIds))) {
     return reply.code(400).send({ error: "unknown_machine" });
   }
 
@@ -254,6 +404,7 @@ app.post("/v1/admin/agent-tokens", { preHandler: requireAdmin }, async (request,
   const token = createOpaqueToken("agent");
   const expiresAt = new Date(Date.now() + input.expiresInSeconds * 1000);
   await db.createAgentToken({
+    workspaceId,
     id,
     name: input.name,
     tokenHash: hashToken(token),
@@ -261,7 +412,7 @@ app.post("/v1/admin/agent-tokens", { preHandler: requireAdmin }, async (request,
     capabilities: uniqueCapabilities,
     expiresAt: expiresAt.getTime(),
   });
-  await audit(db, "admin", "agent_token.created", "agent_token", id, {
+  await audit(db, workspaceId, "admin", "agent_token.created", "agent_token", id, {
     name: input.name,
     machineIds: uniqueMachineIds,
     capabilities: uniqueCapabilities,
@@ -279,13 +430,18 @@ app.post("/v1/admin/agent-tokens", { preHandler: requireAdmin }, async (request,
 
 app.delete<{ Params: { tokenId: string } }>(
   "/v1/admin/agent-tokens/:tokenId",
-  { preHandler: requireAdmin },
+  { preHandler: [requireAdmin, requireAdminWorkspace] },
   async (request, reply) => {
-    const token = await db.revokeAgentToken(request.params.tokenId);
+    const workspaceId = adminWorkspaceFor(request);
+    const token = await db.revokeAgentToken(workspaceId, request.params.tokenId);
     if (!token) return reply.code(404).send({ error: "agent_token_not_found" });
 
-    const closedSessions = await expireAgentSessions(token.id, "agent_token_revoked");
-    await audit(db, "admin", "agent_token.revoked", "agent_token", token.id, {
+    const closedSessions = await expireAgentSessions(
+      workspaceId,
+      token.id,
+      "agent_token_revoked",
+    );
+    await audit(db, workspaceId, "admin", "agent_token.revoked", "agent_token", token.id, {
       name: token.name,
       revokedAt: isoTimestamp(token.revokedAt),
       closedSessions,
@@ -324,15 +480,21 @@ app.post("/v1/clients/enroll", async (request, reply) => {
   if (!enrolled) {
     return reply.code(401).send({ error: "invalid_or_expired_enrollment_token" });
   }
-  await audit(db, "client-enrollment", "machine.enrolled", "machine", machineId, {
-    name: body.name,
-  });
+  await audit(
+    db,
+    enrolled.workspaceId,
+    "client-enrollment",
+    "machine.enrolled",
+    "machine",
+    machineId,
+    { name: body.name },
+  );
   return reply.code(201).send(enrolled);
 });
 
 app.get("/v1/machines", { preHandler: requireAgent }, async (request) => {
   const principal = principalFor(request);
-  const machines = await db.listMachines({
+  const machines = await db.listMachines(principal.workspaceId, {
     ...(principal.machineIds === null ? {} : { machineIds: [...principal.machineIds] }),
   });
   return {
@@ -353,8 +515,13 @@ app.post<{ Params: { machineId: string } }>(
   { preHandler: requireAgent },
   async (request, reply) => {
     const principal = principalFor(request);
-    if (!canAccessMachine(principal, request.params.machineId)) {
-      await audit(db, principal.id, "machine.ping_denied", "machine", request.params.machineId, {
+    if (
+      !canAccessMachine(principal, request.params.machineId) ||
+      !(await db.activeMachinesExist(principal.workspaceId, [
+        request.params.machineId,
+      ]))
+    ) {
+      await audit(db, principal.workspaceId, principal.id, "machine.ping_denied", "machine", request.params.machineId, {
         reason: "machine_scope",
       });
       return reply.code(403).send({ error: "machine_denied" });
@@ -364,7 +531,7 @@ app.post<{ Params: { machineId: string } }>(
     }
     try {
       const latencyMs = await gateway.ping(request.params.machineId);
-      await audit(db, principal.id, "machine.ping", "machine", request.params.machineId, {
+      await audit(db, principal.workspaceId, principal.id, "machine.ping", "machine", request.params.machineId, {
         latencyMs,
       });
       return { reply: "pong", machineId: request.params.machineId, latencyMs };
@@ -383,7 +550,7 @@ app.post<{ Params: { machineId: string } }>(
 
 app.get("/v1/sessions", { preHandler: requireAgent }, async (request) => {
   const principal = principalFor(request);
-  const sessions = await db.listSessions(principal.id);
+  const sessions = await db.listSessions(principal.workspaceId, principal.id);
   return {
     data: sessions.map((session) => ({
       id: session.id,
@@ -406,8 +573,11 @@ app.post("/v1/sessions", { preHandler: requireAgent }, async (request, reply) =>
     return reply.code(400).send({ error: "invalid_request", details: parsed.error.issues });
   }
   const input = parsed.data;
-  if (!canAccessMachine(principal, input.machineId)) {
-    await audit(db, principal.id, "session.denied", "machine", input.machineId, {
+  if (
+    !canAccessMachine(principal, input.machineId) ||
+    !(await db.activeMachinesExist(principal.workspaceId, [input.machineId]))
+  ) {
+    await audit(db, principal.workspaceId, principal.id, "session.denied", "machine", input.machineId, {
       reason: "machine_scope",
     });
     return reply.code(403).send({ error: "machine_denied" });
@@ -416,7 +586,7 @@ app.post("/v1/sessions", { preHandler: requireAgent }, async (request, reply) =>
     (capability) => !principal.capabilities.has(capability),
   );
   if (deniedCapability) {
-    await audit(db, principal.id, "session.denied", "machine", input.machineId, {
+    await audit(db, principal.workspaceId, principal.id, "session.denied", "machine", input.machineId, {
       reason: "capability_scope",
       capability: deniedCapability,
     });
@@ -433,6 +603,7 @@ app.post("/v1/sessions", { preHandler: requireAgent }, async (request, reply) =>
     return reply.code(401).send({ error: "invalid_or_expired_agent_token" });
   }
   await db.createSession({
+    workspaceId: principal.workspaceId,
     id: sessionId,
     machineId: input.machineId,
     principalId: principal.id,
@@ -447,7 +618,7 @@ app.post("/v1/sessions", { preHandler: requireAgent }, async (request, reply) =>
     capabilities: input.capabilities,
     expiresAt: expiresAt.toISOString(),
   });
-  await audit(db, principal.id, "session.created", "session", sessionId, {
+  await audit(db, principal.workspaceId, principal.id, "session.created", "session", sessionId, {
     machineId: input.machineId,
     profile: input.profile,
     capabilities: input.capabilities,
@@ -466,7 +637,11 @@ app.get<{ Params: { sessionId: string } }>(
   { preHandler: requireAgent },
   async (request, reply) => {
     const principal = principalFor(request);
-    const session = await db.getSession(request.params.sessionId, principal.id);
+    const session = await db.getSession(
+      principal.workspaceId,
+      request.params.sessionId,
+      principal.id,
+    );
     if (!session) return reply.code(404).send({ error: "session_not_found" });
     return {
       id: session.id,
@@ -486,16 +661,21 @@ app.delete<{ Params: { sessionId: string } }>(
   { preHandler: requireAgent },
   async (request, reply) => {
     const principal = principalFor(request);
-    const session = await db.getActiveSession(request.params.sessionId, principal.id);
+    const session = await db.getActiveSession(
+      principal.workspaceId,
+      request.params.sessionId,
+      principal.id,
+    );
     if (!session) return reply.code(404).send({ error: "active_session_not_found" });
     gateway.send(session.machineId, {
       type: "session.close",
       sessionId: request.params.sessionId,
       reason: "agent_request",
     });
-    await db.markSessionClosing(request.params.sessionId);
+    await db.markSessionClosing(principal.workspaceId, request.params.sessionId);
     await audit(
       db,
+      principal.workspaceId,
       principal.id,
       "session.close_requested",
       "session",
@@ -516,11 +696,19 @@ app.post<{ Params: { sessionId: string } }>(
     }
     const idempotencyKey = request.headers["idempotency-key"] as string | undefined;
     if (idempotencyKey) {
-      const existing = await db.findOperationByIdempotency(principal.id, idempotencyKey);
+      const existing = await db.findOperationByIdempotency(
+        principal.workspaceId,
+        principal.id,
+        idempotencyKey,
+      );
       if (existing) return reply.code(200).send({ id: existing.id, status: existing.status });
     }
 
-    const session = await db.sessionForOperation(request.params.sessionId, principal.id);
+    const session = await db.sessionForOperation(
+      principal.workspaceId,
+      request.params.sessionId,
+      principal.id,
+    );
     if (!session) return reply.code(404).send({ error: "session_not_found" });
     if (session.status !== "ready") {
       return reply.code(409).send({ error: "session_not_ready", status: session.status });
@@ -530,7 +718,7 @@ app.post<{ Params: { sessionId: string } }>(
     }
     const neededCapability = capabilityForAction(parsed.data.action);
     if (!session.capabilities.includes(neededCapability)) {
-      await audit(db, principal.id, "operation.denied", "session", request.params.sessionId, {
+      await audit(db, principal.workspaceId, principal.id, "operation.denied", "session", request.params.sessionId, {
         reason: "session_capability",
         capability: neededCapability,
         kind: parsed.data.action.kind,
@@ -543,6 +731,7 @@ app.post<{ Params: { sessionId: string } }>(
 
     const operationId = randomUUID();
     const created = await db.createOperation({
+      workspaceId: principal.workspaceId,
       id: operationId,
       sessionId: request.params.sessionId,
       principalId: principal.id,
@@ -552,7 +741,11 @@ app.post<{ Params: { sessionId: string } }>(
       ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
     });
     if (!created && idempotencyKey) {
-      const existing = await db.findOperationByIdempotency(principal.id, idempotencyKey);
+      const existing = await db.findOperationByIdempotency(
+        principal.workspaceId,
+        principal.id,
+        idempotencyKey,
+      );
       if (existing) return reply.code(200).send({ id: existing.id, status: existing.status });
       throw new Error("Idempotency conflict did not resolve to an operation");
     }
@@ -565,9 +758,9 @@ app.post<{ Params: { sessionId: string } }>(
       maxOutputBytes: parsed.data.maxOutputBytes,
     });
     if (sent) {
-      await db.markOperationDelivered(operationId);
+      await db.markOperationDelivered(principal.workspaceId, operationId);
     }
-    await audit(db, principal.id, "operation.created", "operation", operationId, {
+    await audit(db, principal.workspaceId, principal.id, "operation.created", "operation", operationId, {
       sessionId: request.params.sessionId,
       operation: operationAuditMetadata(parsed.data.action),
     });
@@ -580,7 +773,11 @@ app.get<{ Params: { operationId: string } }>(
   { preHandler: requireAgent },
   async (request, reply) => {
     const principal = principalFor(request);
-    const operation = await db.getOperation(request.params.operationId, principal.id);
+    const operation = await db.getOperation(
+      principal.workspaceId,
+      request.params.operationId,
+      principal.id,
+    );
     if (!operation) return reply.code(404).send({ error: "operation_not_found" });
     return {
       id: operation.id,
@@ -607,7 +804,11 @@ app.post<{ Params: { operationId: string } }>(
   { preHandler: requireAgent },
   async (request, reply) => {
     const principal = principalFor(request);
-    const operation = await db.getOperationTarget(request.params.operationId, principal.id);
+    const operation = await db.getOperationTarget(
+      principal.workspaceId,
+      request.params.operationId,
+      principal.id,
+    );
     if (!operation) return reply.code(404).send({ error: "operation_not_found" });
     if (!["queued", "delivered", "running"].includes(operation.status)) {
       return reply.code(409).send({ error: "operation_not_cancellable", status: operation.status });
@@ -618,6 +819,7 @@ app.post<{ Params: { operationId: string } }>(
     });
     await audit(
       db,
+      principal.workspaceId,
       principal.id,
       "operation.cancel_requested",
       "operation",
@@ -632,7 +834,13 @@ app.get<{ Params: { operationId: string }; Querystring: { after?: string } }>(
   { preHandler: requireAgent },
   async (request, reply) => {
     const principal = principalFor(request);
-    if (!(await db.operationExists(request.params.operationId, principal.id))) {
+    if (
+      !(await db.operationExists(
+        principal.workspaceId,
+        request.params.operationId,
+        principal.id,
+      ))
+    ) {
       return reply.code(404).send({ error: "operation_not_found" });
     }
 
@@ -645,7 +853,11 @@ app.get<{ Params: { operationId: string }; Querystring: { after?: string } }>(
 
     let lastSequence = Number(request.query.after ?? -1);
     const emitRows = async (): Promise<void> => {
-      const events = await db.listOperationEvents(request.params.operationId, lastSequence);
+      const events = await db.listOperationEvents(
+        principal.workspaceId,
+        request.params.operationId,
+        lastSequence,
+      );
       for (const event of events) {
         lastSequence = event.sequence;
         reply.raw.write(
@@ -656,7 +868,10 @@ app.get<{ Params: { operationId: string }; Querystring: { after?: string } }>(
           })}\n\n`,
         );
       }
-      const status = await db.operationStatus(request.params.operationId);
+      const status = await db.operationStatus(
+        principal.workspaceId,
+        request.params.operationId,
+      );
       if (status && !["queued", "delivered", "running"].includes(status)) {
         reply.raw.write(`event: completed\ndata: ${JSON.stringify({ status })}\n\n`);
         cleanup();
@@ -677,13 +892,13 @@ app.get<{ Params: { operationId: string }; Querystring: { after?: string } }>(
 
 app.get<{ Querystring: { limit?: string } }>(
   "/v1/admin/audit",
-  { preHandler: requireAdmin },
+  { preHandler: [requireAdmin, requireAdminWorkspace] },
   async (request) => {
     const requestedLimit = Number(request.query.limit ?? 50);
     const limit = Number.isFinite(requestedLimit)
       ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 200)
       : 50;
-    const events = await db.listAudit(limit);
+    const events = await db.listAudit(adminWorkspaceFor(request), limit);
     return {
       principal: { id: "admin", name: "All agents" },
       data: events.map((event) => ({
@@ -703,7 +918,7 @@ app.get<{ Querystring: { limit?: string } }>(
     const limit = Number.isFinite(requestedLimit)
       ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 200)
       : 50;
-    const events = await db.listAudit(limit, principal.id);
+    const events = await db.listAudit(principal.workspaceId, limit, principal.id);
     return {
       principal: { id: principal.id, name: principal.name },
       data: events.map((event) => ({

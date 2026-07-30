@@ -45,8 +45,8 @@ late asynchronous result retrieval more reliable.
 ### Content-minimal control events
 
 Control events contain identifiers, lifecycle actions, timestamps, result status, and minimal
-policy metadata. They become eligible for deletion after 30 days by default and use the same
-periodic purge.
+policy metadata. They are isolated by Workspace, become eligible for deletion after 30 days by
+default, and use the same periodic purge.
 
 Configure the window with:
 

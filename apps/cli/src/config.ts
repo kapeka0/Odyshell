@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 
 export type StoredConfig = {
   serverUrl: string;
+  workspaceId?: string;
   agentToken?: string;
   /** @deprecated Read only for existing development configurations. */
   agentKey?: string;
@@ -13,6 +14,7 @@ export type StoredConfig = {
 
 export type GlobalOptions = {
   server?: string;
+  workspaceId?: string;
   agentToken?: string;
   agentKey?: string;
   adminKey?: string;
@@ -80,6 +82,10 @@ export async function resolveConfig(options: GlobalOptions): Promise<StoredConfi
     stored?.agentToken ??
     stored?.agentKey;
   const adminKey = options.adminKey ?? process.env.ODYSHELL_ADMIN_KEY ?? stored?.adminKey;
+  const workspaceId =
+    options.workspaceId ??
+    process.env.ODYSHELL_WORKSPACE_ID ??
+    stored?.workspaceId;
   return {
     serverUrl:
       options.server ??
@@ -87,6 +93,7 @@ export async function resolveConfig(options: GlobalOptions): Promise<StoredConfi
       process.env.ODYSHELL_SERVER_URL ??
       stored?.serverUrl ??
       "http://127.0.0.1:4100",
+    ...(workspaceId ? { workspaceId } : {}),
     ...(agentToken ? { agentToken } : {}),
     ...(adminKey ? { adminKey } : {}),
   };

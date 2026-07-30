@@ -119,6 +119,10 @@ One organization may use workspaces for production, development, teams, or indiv
 Human roles belong to the organization or workspace. Agents do not receive human roles; they
 receive temporary grants scoped to machines, capabilities, and duration.
 
+The MVP now persists Organizations and enforces Workspace isolation across enrollment, machines,
+agent grants, sessions, operations, and control events. Human membership and role assignment
+remain future application-layer capabilities.
+
 The initial human roles are:
 
 | Role | Responsibility |

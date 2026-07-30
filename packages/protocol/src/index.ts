@@ -29,6 +29,28 @@ export const allCapabilities: Capability[] = [
   "docker.logs",
 ];
 
+export const resourceSlugSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(63)
+  .regex(
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+    "Slug must contain lowercase letters, numbers, and single hyphens",
+  );
+
+export const organizationRequestSchema = z.object({
+  slug: resourceSlugSchema,
+  name: z.string().trim().min(1).max(128),
+});
+export type OrganizationRequest = z.infer<typeof organizationRequestSchema>;
+
+export const workspaceRequestSchema = z.object({
+  slug: resourceSlugSchema,
+  name: z.string().trim().min(1).max(128),
+});
+export type WorkspaceRequest = z.infer<typeof workspaceRequestSchema>;
+
 export const sessionRequestSchema = z.object({
   machineId: z.string().uuid(),
   profile: z.string().min(1).max(64).default("workspace"),

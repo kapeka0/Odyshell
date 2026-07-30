@@ -20,6 +20,7 @@ const composeEnvironment = {
 };
 const configDirectory = resolve(root, `.odyshell/e2e/${process.pid}`);
 const configPath = resolve(configDirectory, "client.json");
+const adminConfigPath = resolve(configDirectory, "admin.json");
 const workspace = resolve(root, `tmp/e2e-workspace-${process.pid}`);
 let client;
 let e2eMachineId;
@@ -143,6 +144,88 @@ try {
     }
   }
 
+  const organization = await api("/v1/admin/organizations", {
+    method: "POST",
+    headers: { "x-odyshell-admin-key": adminKey },
+    body: JSON.stringify({ slug: "e2e-customer", name: "E2E Customer" }),
+  });
+  const isolatedWorkspace = await api(
+    `/v1/admin/organizations/${organization.id}/workspaces`,
+    {
+      method: "POST",
+      headers: { "x-odyshell-admin-key": adminKey },
+      body: JSON.stringify({ slug: "production", name: "Production" }),
+    },
+  );
+  const secondOrganization = await api("/v1/admin/organizations", {
+    method: "POST",
+    headers: { "x-odyshell-admin-key": adminKey },
+    body: JSON.stringify({ slug: "e2e-customer-two", name: "E2E Customer Two" }),
+  });
+  const repeatedSlugWorkspace = await api(
+    `/v1/admin/organizations/${secondOrganization.id}/workspaces`,
+    {
+      method: "POST",
+      headers: { "x-odyshell-admin-key": adminKey },
+      body: JSON.stringify({ slug: "production", name: "Production" }),
+    },
+  );
+  if (repeatedSlugWorkspace.organizationId !== secondOrganization.id) {
+    throw new Error("Workspace slug was not scoped to its organization");
+  }
+  const isolatedEnrollment = await api("/v1/admin/enrollment-tokens", {
+    method: "POST",
+    headers: {
+      "x-odyshell-admin-key": adminKey,
+      "x-odyshell-workspace-id": isolatedWorkspace.id,
+    },
+    body: JSON.stringify({ expiresInSeconds: 600 }),
+  });
+  const isolatedKeyPair = generateKeyPairSync("ed25519");
+  const isolatedMachine = await api("/v1/clients/enroll", {
+    method: "POST",
+    body: JSON.stringify({
+      token: isolatedEnrollment.token,
+      name: "isolated-machine",
+      publicKey: isolatedKeyPair.publicKey
+        .export({ type: "spki", format: "pem" })
+        .toString(),
+    }),
+  });
+  if (isolatedMachine.workspaceId !== isolatedWorkspace.id) {
+    throw new Error("Enrollment token did not bind the machine to its workspace");
+  }
+  const isolatedAgent = await api("/v1/admin/agent-tokens", {
+    method: "POST",
+    headers: {
+      "x-odyshell-admin-key": adminKey,
+      "x-odyshell-workspace-id": isolatedWorkspace.id,
+    },
+    body: JSON.stringify({
+      name: "isolated-agent",
+      machineIds: [isolatedMachine.machineId],
+      capabilities: ["process.exec"],
+      expiresInSeconds: 600,
+    }),
+  });
+  const isolatedAgentMachines = await api("/v1/machines", {
+    headers: { authorization: `Bearer ${isolatedAgent.token}` },
+  });
+  if (
+    isolatedAgentMachines.data.length !== 1 ||
+    isolatedAgentMachines.data[0]?.id !== isolatedMachine.machineId
+  ) {
+    throw new Error("Agent token did not inherit its workspace boundary");
+  }
+  const defaultMachinesBeforeEnrollment = await api("/v1/machines");
+  if (
+    defaultMachinesBeforeEnrollment.data.some(
+      (item) => item.id === isolatedMachine.machineId,
+    )
+  ) {
+    throw new Error("Default workspace listed a machine from another workspace");
+  }
+
   const enrollment = await api("/v1/admin/enrollment-tokens", {
     method: "POST",
     headers: { "x-odyshell-admin-key": adminKey },
@@ -182,6 +265,42 @@ try {
   const tsxCli = resolve(root, "node_modules/tsx/dist/cli.mjs");
   const clientEntry = resolve(root, "apps/client/src/cli.ts");
   const odsEntry = resolve(root, "apps/cli/src/index.ts");
+  const selectedWorkspace = JSON.parse(
+    await run(process.execPath, [
+      tsxCli,
+      odsEntry,
+      "--server",
+      apiUrl,
+      "--admin-key",
+      adminKey,
+      "--config-file",
+      adminConfigPath,
+      "--json",
+      "workspace",
+      "use",
+      isolatedWorkspace.id,
+    ]),
+  );
+  if (selectedWorkspace.selected.id !== isolatedWorkspace.id) {
+    throw new Error("ods workspace use did not persist the selected workspace");
+  }
+  const selectedWorkspaceMachines = JSON.parse(
+    await run(process.execPath, [
+      tsxCli,
+      odsEntry,
+      "--config-file",
+      adminConfigPath,
+      "--json",
+      "machines",
+      "--admin",
+    ]),
+  );
+  if (
+    selectedWorkspaceMachines.data.length !== 1 ||
+    selectedWorkspaceMachines.data[0]?.id !== isolatedMachine.machineId
+  ) {
+    throw new Error("CLI administrator commands ignored the selected workspace");
+  }
 
   const enrolled = JSON.parse(
     await run(
@@ -241,6 +360,110 @@ try {
     throw new Error("Client runtime metadata was not reported");
   }
   e2eMachineId = machine.id;
+
+  const crossWorkspacePing = await fetch(
+    new URL(`/v1/machines/${machine.id}/ping`, apiUrl),
+    {
+      method: "POST",
+      headers: { authorization: `Bearer ${isolatedAgent.token}` },
+    },
+  );
+  if (crossWorkspacePing.status !== 403) {
+    throw new Error("Agent token could ping a machine from another workspace");
+  }
+  const crossWorkspaceSession = await fetch(new URL("/v1/sessions", apiUrl), {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${isolatedAgent.token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      machineId: machine.id,
+      profile: "workspace",
+      ttlSeconds: 120,
+      capabilities: ["process.exec"],
+    }),
+  });
+  if (crossWorkspaceSession.status !== 403) {
+    throw new Error("Agent token could open a session in another workspace");
+  }
+  const crossWorkspaceGrant = await fetch(
+    new URL("/v1/admin/agent-tokens", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-admin-key": adminKey,
+        "x-odyshell-workspace-id": isolatedWorkspace.id,
+      },
+      body: JSON.stringify({
+        name: "cross-workspace-grant",
+        machineIds: [machine.id],
+        capabilities: ["process.exec"],
+        expiresInSeconds: 600,
+      }),
+    },
+  );
+  if (crossWorkspaceGrant.status !== 400) {
+    throw new Error("Administrator could grant a machine from another workspace");
+  }
+  const defaultAdminMachines = await api("/v1/admin/machines", {
+    headers: { "x-odyshell-admin-key": adminKey },
+  });
+  const isolatedAdminMachines = await api("/v1/admin/machines", {
+    headers: {
+      "x-odyshell-admin-key": adminKey,
+      "x-odyshell-workspace-id": isolatedWorkspace.id,
+    },
+  });
+  if (
+    defaultAdminMachines.data.some((item) => item.id === isolatedMachine.machineId) ||
+    isolatedAdminMachines.data.some((item) => item.id === machine.id) ||
+    !isolatedAdminMachines.data.some(
+      (item) => item.id === isolatedMachine.machineId,
+    )
+  ) {
+    throw new Error("Administrator machine views crossed workspace boundaries");
+  }
+  const missingWorkspace = await fetch(
+    new URL("/v1/admin/machines", apiUrl),
+    {
+      headers: {
+        "x-odyshell-admin-key": adminKey,
+        "x-odyshell-workspace-id": crypto.randomUUID(),
+      },
+    },
+  );
+  if (missingWorkspace.status !== 404) {
+    throw new Error("Unknown administrator workspace did not fail closed");
+  }
+  let databaseBoundaryRejected = false;
+  try {
+    await compose([
+      "exec",
+      "-T",
+      "postgres",
+      "psql",
+      "-U",
+      "odyshell",
+      "-d",
+      "odyshell",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-c",
+      [
+        "insert into odyshell.sessions",
+        "(workspace_id, id, machine_id, principal_id, profile, capabilities, status, expires_at)",
+        `values ('${isolatedWorkspace.id}', '${crypto.randomUUID()}', '${machine.id}',`,
+        "'boundary-test', 'workspace', '[\"process.exec\"]'::jsonb, 'opening', now() + interval '1 minute');",
+      ].join(" "),
+    ]);
+  } catch {
+    databaseBoundaryRejected = true;
+  }
+  if (!databaseBoundaryRejected) {
+    throw new Error("PostgreSQL accepted a session linked across workspaces");
+  }
 
   const adminMachines = JSON.parse(
     await run(process.execPath, [
@@ -653,6 +876,19 @@ try {
   ) {
     throw new Error("Administrator audit did not include scoped agent activity");
   }
+  const isolatedAdminAudit = await api("/v1/admin/audit?limit=200", {
+    headers: {
+      "x-odyshell-admin-key": adminKey,
+      "x-odyshell-workspace-id": isolatedWorkspace.id,
+    },
+  });
+  if (
+    isolatedAdminAudit.data.some(
+      (event) => event.principalId === scopedAgent.id,
+    )
+  ) {
+    throw new Error("Audit events leaked across workspace boundaries");
+  }
   const operationCreatedAudit = adminAudit.data.find(
     (event) =>
       event.principalId === scopedAgent.id &&
@@ -862,9 +1098,16 @@ try {
         sessionId: session.id,
         checks: {
           outboundClient: true,
+          organizationBoundary: true,
+          organizationScopedWorkspaceSlugs: true,
+          workspaceIsolation: true,
+          crossWorkspaceAccessDenied: true,
+          databaseWorkspaceBoundary: true,
+          workspaceAuditIsolation: true,
           ed25519Authentication: true,
           runtimeMetadata: `${machine.runtime.hostPlatform}/${machine.runtime.architecture}`,
           odsCli: true,
+          odsWorkspaceSelection: true,
           odsPing: true,
           scopedAgentToken: true,
           agentAccessListed: true,

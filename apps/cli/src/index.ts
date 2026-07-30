@@ -50,6 +50,7 @@ program
   .version("0.8.0")
   .option("-j, --json", "emit stable JSON output")
   .option("--server <url>", "override the Odyshell server URL")
+  .option("--workspace-id <id>", "select the administrator workspace")
   .option("--agent-token <token>", "override the scoped agent token")
   .option("--agent-key <key>", "use the legacy development agent key")
   .option("--admin-key <key>", "override the administrator API key")
@@ -65,6 +66,7 @@ function globals(command: Command): GlobalOptions {
 function normalizeGlobalOptions(argv: string[]): string[] {
   const flagsWithValues = [
     "--server",
+    "--workspace-id",
     "--agent-token",
     "--agent-key",
     "--admin-key",
@@ -189,6 +191,7 @@ program
     await saveStoredConfig(
       {
         serverUrl: resolved.serverUrl,
+        ...(resolved.workspaceId ? { workspaceId: resolved.workspaceId } : {}),
         agentToken: resolved.agentToken,
         ...(savedAdminKey ? { adminKey: savedAdminKey } : {}),
       },
@@ -210,6 +213,105 @@ program
     await removeStoredConfig(configPath);
     if (options.json) printJson({ loggedOut: true, configPath });
     else console.log(`${pc.green("✓")} Removed ${configPath}`);
+  });
+
+const organization = program
+  .command("organization")
+  .description("manage customer organizations");
+
+organization
+  .command("list")
+  .description("list organizations")
+  .action(async (_options, command: Command) => {
+    const global = globals(command);
+    const organizations = await (await apiFor(command)).organizations();
+    if (global.json) printJson({ data: organizations });
+    else if (organizations.length === 0) console.log(pc.dim("No organizations."));
+    else {
+      for (const item of organizations) {
+        console.log(`${pc.bold(item.name)}  ${pc.dim(item.slug)}  ${item.id}`);
+      }
+    }
+  });
+
+organization
+  .command("create <slug>")
+  .description("create an organization")
+  .requiredOption("--name <name>", "display name")
+  .action(async (slug: string, options: { name: string }, command: Command) => {
+    const global = globals(command);
+    const created = await (await apiFor(command)).createOrganization(slug, options.name);
+    if (global.json) printJson(created);
+    else console.log(`${pc.green("✓")} Created ${created.name} (${created.id})`);
+  });
+
+const workspace = program.command("workspace").description("manage execution workspaces");
+
+workspace
+  .command("list")
+  .description("list workspaces")
+  .option("--organization <id>", "only show one organization")
+  .action(async (options: { organization?: string }, command: Command) => {
+    const global = globals(command);
+    const workspaces = await (await apiFor(command)).workspaces(options.organization);
+    if (global.json) printJson({ data: workspaces });
+    else if (workspaces.length === 0) console.log(pc.dim("No workspaces."));
+    else {
+      for (const item of workspaces) {
+        console.log(
+          `${pc.bold(item.name)}  ${pc.dim(item.slug)}  ${item.id}  ${pc.dim(item.organizationId)}`,
+        );
+      }
+    }
+  });
+
+workspace
+  .command("create <slug>")
+  .description("create an isolated execution workspace")
+  .requiredOption("--organization <id>", "owning organization ID")
+  .requiredOption("--name <name>", "display name")
+  .action(
+    async (
+      slug: string,
+      options: { organization: string; name: string },
+      command: Command,
+    ) => {
+      const global = globals(command);
+      const created = await (await apiFor(command)).createWorkspace(
+        options.organization,
+        slug,
+        options.name,
+      );
+      if (global.json) printJson(created);
+      else console.log(`${pc.green("✓")} Created ${created.name} (${created.id})`);
+    },
+  );
+
+workspace
+  .command("use <workspace>")
+  .description("select a workspace for administrator commands")
+  .action(async (reference: string, _options, command: Command) => {
+    const global = globals(command);
+    const api = await apiFor(command);
+    const matches = (await api.workspaces()).filter(
+      (item) => item.id === reference || item.slug === reference,
+    );
+    if (matches.length !== 1) {
+      throw new ExpectedError(
+        matches.length === 0
+          ? `Workspace "${reference}" was not found`
+          : `Workspace "${reference}" is ambiguous; use its ID`,
+        matches.length === 0 ? "workspace_not_found" : "workspace_ambiguous",
+      );
+    }
+    const selected = matches[0]!;
+    const configPath = global.configFile
+      ? resolve(global.configFile)
+      : defaultConfigPath();
+    const resolved = await resolveConfig(global);
+    await saveStoredConfig({ ...resolved, workspaceId: selected.id }, configPath);
+    if (global.json) printJson({ selected });
+    else console.log(`${pc.green("✓")} Using ${selected.name} (${selected.id})`);
   });
 
 program

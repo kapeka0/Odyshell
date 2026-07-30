@@ -34,4 +34,19 @@ enforced by the Server, the agent token, and the Client on the target machine.
 Use `process.exec` when possible. `process.shell` is available for commands that genuinely need a
 shell and should receive a separate, explicit capability.
 
+Administrative SDK calls can select an execution Workspace:
+
+```ts
+const admin = new Odyshell({
+  serverUrl: process.env.ODYSHELL_SERVER_URL!,
+  adminKey: process.env.ODYSHELL_ADMIN_KEY!,
+  workspaceId: process.env.ODYSHELL_WORKSPACE_ID!,
+});
+
+await admin.createEnrollmentToken(600);
+```
+
+The workspace header is never attached to agent calls. An agent's workspace is derived from its
+token by the Server.
+
 [Back to Odyshell](../../README.md)

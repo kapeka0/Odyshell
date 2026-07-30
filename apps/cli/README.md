@@ -31,6 +31,8 @@ ods --json exec raspberry -- uname -a
 ## Main commands
 
 - `ods up`, `ods status`, and `ods down` manage the outbound Client.
+- `ods organization` creates and lists customer ownership boundaries.
+- `ods workspace` creates, lists, and selects isolated execution boundaries.
 - `ods machines --admin` lists every machine; `ods machine revoke <name>` removes access.
 - `ods ping` checks end-to-end access without running a command.
 - `ods exec`, `ods shell`, `ods fs`, and `ods docker` perform typed operations.
@@ -40,6 +42,18 @@ ods --json exec raspberry -- uname -a
 - `ods client` configures the client running on a private machine.
 - `ods audit` shows actions performed by the current agent; `--all` uses administrator access.
 - `ods mcp` exposes the same scoped operations to MCP-compatible agents over stdio.
+
+Select a workspace before creating enrollment or agent tokens:
+
+```bash
+ods organization create acme --name "Acme"
+ods workspace create production --organization <organization-id> --name "Production"
+ods workspace use production
+ods token create
+```
+
+`ods up --workspace <path>` refers to the local directory exposed by the Client. It is separate
+from the Server-side Workspace selected with `ods workspace use`.
 
 ## MCP
 

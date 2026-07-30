@@ -17,7 +17,8 @@ import {
 import pg from "pg";
 
 const { Pool } = pg;
-const DEFAULT_WORKSPACE_ID = "default";
+export const DEFAULT_ORGANIZATION_ID = "default";
+export const DEFAULT_WORKSPACE_ID = "default";
 const DATABASE_SCHEMA = "odyshell";
 const ACTIVE_SESSION_STATUSES = ["opening", "ready"] as const;
 const CLOSABLE_SESSION_STATUSES = ["opening", "ready", "closing"] as const;
@@ -26,8 +27,16 @@ const RETAINED_SESSION_STATUSES = ["opening", "ready", "closing"] as const;
 
 type Json<T> = ColumnType<T, string, string>;
 
+interface OrganizationTable {
+  id: string;
+  slug: string;
+  name: string;
+  createdAt: Generated<Date>;
+}
+
 interface WorkspaceTable {
   id: string;
+  organizationId: string;
   slug: string;
   name: string;
   createdAt: Generated<Date>;
@@ -117,6 +126,7 @@ interface AuditEventTable {
 }
 
 interface DatabaseSchema {
+  organizations: OrganizationTable;
   workspaces: WorkspaceTable;
   machines: MachineTable;
   enrollmentTokens: EnrollmentTokenTable;
@@ -132,6 +142,21 @@ type Timestamped = {
   updatedAt?: number;
 };
 
+export type OrganizationRecord = {
+  id: string;
+  slug: string;
+  name: string;
+  createdAt: number;
+};
+
+export type WorkspaceRecord = {
+  id: string;
+  organizationId: string;
+  slug: string;
+  name: string;
+  createdAt: number;
+};
+
 export type MachineRecord = {
   id: string;
   name: string;
@@ -144,6 +169,7 @@ export type MachineRecord = {
 };
 
 export type AgentTokenRecord = Timestamped & {
+  workspaceId: string;
   id: string;
   name: string;
   tokenHash: string;
@@ -203,6 +229,27 @@ function timestamp(value: Date | null): number | undefined {
   return value?.getTime();
 }
 
+function organizationRecord(
+  organization: Selectable<OrganizationTable>,
+): OrganizationRecord {
+  return {
+    id: organization.id,
+    slug: organization.slug,
+    name: organization.name,
+    createdAt: timestamp(organization.createdAt),
+  };
+}
+
+function workspaceRecord(workspace: Selectable<WorkspaceTable>): WorkspaceRecord {
+  return {
+    id: workspace.id,
+    organizationId: workspace.organizationId,
+    slug: workspace.slug,
+    name: workspace.name,
+    createdAt: timestamp(workspace.createdAt),
+  };
+}
+
 function machineRecord(machine: Selectable<MachineTable>): MachineRecord {
   return {
     id: machine.id,
@@ -218,6 +265,7 @@ function machineRecord(machine: Selectable<MachineTable>): MachineRecord {
 
 function agentTokenRecord(token: Selectable<AgentTokenTable>): AgentTokenRecord {
   return {
+    workspaceId: token.workspaceId,
     id: token.id,
     name: token.name,
     tokenHash: token.tokenHash,
@@ -517,6 +565,133 @@ async function redactHistoricalAuditMetadata(
   `.execute(db);
 }
 
+async function migrateOrganizationBoundaries(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    create table if not exists ${sql.table(`${DATABASE_SCHEMA}.organizations`)} (
+      id text primary key,
+      slug text not null unique,
+      name text not null,
+      created_at timestamptz not null default now()
+    )
+  `.execute(db);
+  await sql`
+    insert into ${sql.table(`${DATABASE_SCHEMA}.organizations`)} (id, slug, name)
+    values (${DEFAULT_ORGANIZATION_ID}, 'default', 'Default organization')
+    on conflict (id) do nothing
+  `.execute(db);
+  await sql`
+    alter table ${sql.table(`${DATABASE_SCHEMA}.workspaces`)}
+    add column if not exists organization_id text
+  `.execute(db);
+  await sql`
+    update ${sql.table(`${DATABASE_SCHEMA}.workspaces`)}
+    set organization_id = ${DEFAULT_ORGANIZATION_ID}
+    where organization_id is null
+  `.execute(db);
+  await sql`
+    alter table ${sql.table(`${DATABASE_SCHEMA}.workspaces`)}
+    alter column organization_id set not null
+  `.execute(db);
+  await sql`
+    alter table ${sql.table(`${DATABASE_SCHEMA}.workspaces`)}
+    drop constraint if exists workspaces_slug_key
+  `.execute(db);
+  await sql`
+    do $migration$
+    begin
+      if not exists (
+        select 1
+        from pg_constraint
+        where conname = 'workspaces_organization_id_foreign'
+          and conrelid = '${sql.raw(`${DATABASE_SCHEMA}.workspaces`)}'::regclass
+      ) then
+        alter table ${sql.table(`${DATABASE_SCHEMA}.workspaces`)}
+        add constraint workspaces_organization_id_foreign
+        foreign key (organization_id)
+        references ${sql.table(`${DATABASE_SCHEMA}.organizations`)} (id);
+      end if;
+      if not exists (
+        select 1
+        from pg_constraint
+        where conname = 'workspaces_organization_slug_unique'
+          and conrelid = '${sql.raw(`${DATABASE_SCHEMA}.workspaces`)}'::regclass
+      ) then
+        alter table ${sql.table(`${DATABASE_SCHEMA}.workspaces`)}
+        add constraint workspaces_organization_slug_unique
+        unique (organization_id, slug);
+      end if;
+    end
+    $migration$
+  `.execute(db);
+  await sql`
+    create index if not exists workspaces_organization_created_idx
+    on ${sql.table(`${DATABASE_SCHEMA}.workspaces`)} (organization_id, created_at)
+  `.execute(db);
+  await sql`
+    do $migration$
+    begin
+      if not exists (
+        select 1 from pg_constraint
+        where conname = 'machines_workspace_identity_unique'
+          and conrelid = '${sql.raw(`${DATABASE_SCHEMA}.machines`)}'::regclass
+      ) then
+        alter table ${sql.table(`${DATABASE_SCHEMA}.machines`)}
+        add constraint machines_workspace_identity_unique unique (workspace_id, id);
+      end if;
+      if not exists (
+        select 1 from pg_constraint
+        where conname = 'sessions_workspace_identity_unique'
+          and conrelid = '${sql.raw(`${DATABASE_SCHEMA}.sessions`)}'::regclass
+      ) then
+        alter table ${sql.table(`${DATABASE_SCHEMA}.sessions`)}
+        add constraint sessions_workspace_identity_unique unique (workspace_id, id);
+      end if;
+      if not exists (
+        select 1 from pg_constraint
+        where conname = 'operations_workspace_identity_unique'
+          and conrelid = '${sql.raw(`${DATABASE_SCHEMA}.operations`)}'::regclass
+      ) then
+        alter table ${sql.table(`${DATABASE_SCHEMA}.operations`)}
+        add constraint operations_workspace_identity_unique unique (workspace_id, id);
+      end if;
+      if not exists (
+        select 1 from pg_constraint
+        where conname = 'sessions_workspace_machine_foreign'
+          and conrelid = '${sql.raw(`${DATABASE_SCHEMA}.sessions`)}'::regclass
+      ) then
+        alter table ${sql.table(`${DATABASE_SCHEMA}.sessions`)}
+        add constraint sessions_workspace_machine_foreign
+        foreign key (workspace_id, machine_id)
+        references ${sql.table(`${DATABASE_SCHEMA}.machines`)} (workspace_id, id);
+      end if;
+      if not exists (
+        select 1 from pg_constraint
+        where conname = 'operations_workspace_session_foreign'
+          and conrelid = '${sql.raw(`${DATABASE_SCHEMA}.operations`)}'::regclass
+      ) then
+        alter table ${sql.table(`${DATABASE_SCHEMA}.operations`)}
+        add constraint operations_workspace_session_foreign
+        foreign key (workspace_id, session_id)
+        references ${sql.table(`${DATABASE_SCHEMA}.sessions`)} (workspace_id, id);
+      end if;
+      if not exists (
+        select 1 from pg_constraint
+        where conname = 'operation_events_workspace_operation_foreign'
+          and conrelid = '${sql.raw(`${DATABASE_SCHEMA}.operation_events`)}'::regclass
+      ) then
+        alter table ${sql.table(`${DATABASE_SCHEMA}.operation_events`)}
+        add constraint operation_events_workspace_operation_foreign
+        foreign key (workspace_id, operation_id)
+        references ${sql.table(`${DATABASE_SCHEMA}.operations`)} (workspace_id, id)
+        on delete cascade;
+      end if;
+    end
+    $migration$
+  `.execute(db);
+}
+
 const migrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
     return {
@@ -525,6 +700,9 @@ const migrationProvider: MigrationProvider = {
       },
       "002_privacy_defaults": {
         up: redactHistoricalAuditMetadata,
+      },
+      "003_organization_boundaries": {
+        up: migrateOrganizationBoundaries,
       },
     };
   },
@@ -564,9 +742,19 @@ export class PostgresDatabase {
     if (error) throw error;
 
     await this.db
+      .insertInto("organizations")
+      .values({
+        id: DEFAULT_ORGANIZATION_ID,
+        slug: "default",
+        name: "Default organization",
+      })
+      .onConflict((conflict) => conflict.column("id").doNothing())
+      .execute();
+    await this.db
       .insertInto("workspaces")
       .values({
         id: DEFAULT_WORKSPACE_ID,
+        organizationId: DEFAULT_ORGANIZATION_ID,
         slug: "default",
         name: "Default workspace",
       })
@@ -575,7 +763,6 @@ export class PostgresDatabase {
     await this.db
       .updateTable("machines")
       .set({ status: "offline" })
-      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
       .where("status", "!=", "offline")
       .execute();
   }
@@ -588,11 +775,72 @@ export class PostgresDatabase {
     await sql`select 1`.execute(this.db);
   }
 
+  async listOrganizations(): Promise<OrganizationRecord[]> {
+    return (
+      await this.db
+        .selectFrom("organizations")
+        .selectAll()
+        .orderBy("createdAt", "asc")
+        .execute()
+    ).map(organizationRecord);
+  }
+
+  async createOrganization(input: {
+    id: string;
+    slug: string;
+    name: string;
+  }): Promise<OrganizationRecord> {
+    return organizationRecord(
+      await this.db
+        .insertInto("organizations")
+        .values(input)
+        .returningAll()
+        .executeTakeFirstOrThrow(),
+    );
+  }
+
+  async listWorkspaces(organizationId?: string): Promise<WorkspaceRecord[]> {
+    let query = this.db.selectFrom("workspaces").selectAll();
+    if (organizationId !== undefined) {
+      query = query.where("organizationId", "=", organizationId);
+    }
+    return (await query.orderBy("createdAt", "asc").execute()).map(workspaceRecord);
+  }
+
+  async workspace(workspaceId: string): Promise<WorkspaceRecord | null> {
+    const workspace = await this.db
+      .selectFrom("workspaces")
+      .selectAll()
+      .where("id", "=", workspaceId)
+      .executeTakeFirst();
+    return workspace ? workspaceRecord(workspace) : null;
+  }
+
+  async createWorkspace(input: {
+    id: string;
+    organizationId: string;
+    slug: string;
+    name: string;
+  }): Promise<WorkspaceRecord | null> {
+    const organization = await this.db
+      .selectFrom("organizations")
+      .select("id")
+      .where("id", "=", input.organizationId)
+      .executeTakeFirst();
+    if (!organization) return null;
+    return workspaceRecord(
+      await this.db
+        .insertInto("workspaces")
+        .values(input)
+        .returningAll()
+        .executeTakeFirstOrThrow(),
+    );
+  }
+
   async findAgentByTokenHash(tokenHash: string): Promise<AgentTokenRecord | null> {
     const token = await this.db
       .selectFrom("agentTokens")
       .selectAll()
-      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
       .where("tokenHash", "=", tokenHash)
       .where("revokedAt", "is", null)
       .where("expiresAt", ">", new Date())
@@ -600,11 +848,15 @@ export class PostgresDatabase {
     return token ? agentTokenRecord(token) : null;
   }
 
-  async createEnrollmentToken(tokenHash: string, expiresAt: number): Promise<void> {
+  async createEnrollmentToken(
+    workspaceId: string,
+    tokenHash: string,
+    expiresAt: number,
+  ): Promise<void> {
     await this.db
       .insertInto("enrollmentTokens")
       .values({
-        workspaceId: DEFAULT_WORKSPACE_ID,
+        workspaceId,
         tokenHash,
         expiresAt: new Date(expiresAt),
         usedAt: null,
@@ -612,25 +864,25 @@ export class PostgresDatabase {
       .execute();
   }
 
-  async listAgentTokens(): Promise<AgentTokenRecord[]> {
+  async listAgentTokens(workspaceId: string): Promise<AgentTokenRecord[]> {
     const tokens = await this.db
       .selectFrom("agentTokens")
       .selectAll()
-      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("workspaceId", "=", workspaceId)
       .orderBy("createdAt", "desc")
       .limit(200)
       .execute();
     return tokens.map(agentTokenRecord);
   }
 
-  async listMachines(options: {
+  async listMachines(workspaceId: string, options: {
     includeRevoked?: boolean;
     machineIds?: string[];
   } = {}): Promise<MachineRecord[]> {
     let query = this.db
       .selectFrom("machines")
       .selectAll()
-      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID);
+      .where("workspaceId", "=", workspaceId);
     if (!options.includeRevoked) query = query.where("revokedAt", "is", null);
     if (options.machineIds) {
       if (options.machineIds.length === 0) return [];
@@ -639,12 +891,12 @@ export class PostgresDatabase {
     return (await query.orderBy("enrolledAt", "asc").execute()).map(machineRecord);
   }
 
-  async activeMachinesExist(machineIds: string[]): Promise<boolean> {
+  async activeMachinesExist(workspaceId: string, machineIds: string[]): Promise<boolean> {
     if (machineIds.length === 0) return true;
     const result = await this.db
       .selectFrom("machines")
       .select(({ fn }) => fn.countAll<number>().as("count"))
-      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("workspaceId", "=", workspaceId)
       .where("id", "in", machineIds)
       .where("revokedAt", "is", null)
       .executeTakeFirstOrThrow();
@@ -652,6 +904,7 @@ export class PostgresDatabase {
   }
 
   async createAgentToken(input: {
+    workspaceId: string;
     id: string;
     name: string;
     tokenHash: string;
@@ -662,7 +915,6 @@ export class PostgresDatabase {
     await this.db
       .insertInto("agentTokens")
       .values({
-        workspaceId: DEFAULT_WORKSPACE_ID,
         ...input,
         machineIds: JSON.stringify(input.machineIds),
         capabilities: JSON.stringify(input.capabilities),
@@ -672,12 +924,15 @@ export class PostgresDatabase {
       .execute();
   }
 
-  async revokeAgentToken(tokenId: string): Promise<AgentTokenRecord | null> {
+  async revokeAgentToken(
+    workspaceId: string,
+    tokenId: string,
+  ): Promise<AgentTokenRecord | null> {
     const now = new Date();
     const token = await this.db
       .updateTable("agentTokens")
       .set({ revokedAt: sql`coalesce(revoked_at, ${now})` })
-      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("workspaceId", "=", workspaceId)
       .where("id", "=", tokenId)
       .returningAll()
       .executeTakeFirst();
@@ -685,12 +940,13 @@ export class PostgresDatabase {
   }
 
   async expireAgentSessions(
+    workspaceId: string,
     principalId: string,
   ): Promise<Array<{ id: string; machineId: string }>> {
     return await this.db
       .updateTable("sessions")
       .set({ status: "expired", updatedAt: new Date() })
-      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("workspaceId", "=", workspaceId)
       .where("principalId", "=", principalId)
       .where("status", "in", ACTIVE_SESSION_STATUSES)
       .returning(["id", "machineId"])
@@ -702,12 +958,11 @@ export class PostgresDatabase {
     machineId: string;
     name: string;
     publicKey: string;
-  }): Promise<{ machineId: string; name: string } | null> {
+  }): Promise<{ machineId: string; name: string; workspaceId: string } | null> {
     return await this.db.transaction().execute(async (transaction) => {
       const enrollment = await transaction
         .selectFrom("enrollmentTokens")
         .selectAll()
-        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
         .where("tokenHash", "=", input.tokenHash)
         .forUpdate()
         .executeTakeFirst();
@@ -727,7 +982,7 @@ export class PostgresDatabase {
       await transaction
         .insertInto("machines")
         .values({
-          workspaceId: DEFAULT_WORKSPACE_ID,
+          workspaceId: enrollment.workspaceId,
           id: input.machineId,
           name: input.name,
           publicKey: input.publicKey,
@@ -738,26 +993,30 @@ export class PostgresDatabase {
           enrolledAt: now,
         })
         .execute();
-      return { machineId: input.machineId, name: input.name };
+      return {
+        machineId: input.machineId,
+        name: input.name,
+        workspaceId: enrollment.workspaceId,
+      };
     });
   }
 
-  async machinePublicKey(machineId: string): Promise<string | null> {
+  async machinePublicKey(
+    machineId: string,
+  ): Promise<{ publicKey: string; workspaceId: string } | null> {
     const machine = await this.db
       .selectFrom("machines")
-      .select("publicKey")
-      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .select(["publicKey", "workspaceId"])
       .where("id", "=", machineId)
       .where("revokedAt", "is", null)
       .executeTakeFirst();
-    return machine?.publicKey ?? null;
+    return machine ?? null;
   }
 
   async setMachineOffline(machineId: string): Promise<void> {
     await this.db
       .updateTable("machines")
       .set({ status: "offline" })
-      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
       .where("id", "=", machineId)
       .execute();
   }
@@ -771,7 +1030,6 @@ export class PostgresDatabase {
     const result = await this.db
       .updateTable("machines")
       .set(update)
-      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
       .where("id", "=", machineId)
       .where("revokedAt", "is", null)
       .executeTakeFirst();
@@ -782,13 +1040,12 @@ export class PostgresDatabase {
     await this.db
       .updateTable("machines")
       .set({ status: "online", lastSeenAt: new Date() })
-      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
       .where("id", "=", machineId)
       .where("revokedAt", "is", null)
       .execute();
   }
 
-  async revokeMachine(machineId: string): Promise<{
+  async revokeMachine(workspaceId: string, machineId: string): Promise<{
     id: string;
     name: string;
     revokedAt: number;
@@ -800,7 +1057,7 @@ export class PostgresDatabase {
       const machine = await transaction
         .updateTable("machines")
         .set({ status: "offline", revokedAt: now })
-        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+        .where("workspaceId", "=", workspaceId)
         .where("id", "=", machineId)
         .where("revokedAt", "is", null)
         .returning(["id", "name"])
@@ -810,7 +1067,7 @@ export class PostgresDatabase {
       const sessions = await transaction
         .updateTable("sessions")
         .set({ status: "closed", error: "machine_revoked", updatedAt: now })
-        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+        .where("workspaceId", "=", workspaceId)
         .where("machineId", "=", machineId)
         .where("status", "in", CLOSABLE_SESSION_STATUSES)
         .returning("id")
@@ -822,7 +1079,7 @@ export class PostgresDatabase {
           : await transaction
               .updateTable("operations")
               .set({ status: "cancelled", error: "machine_revoked", updatedAt: now })
-              .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+              .where("workspaceId", "=", workspaceId)
               .where("sessionId", "in", sessionIds)
               .where("status", "in", ACTIVE_OPERATION_STATUSES)
               .returning("id")
@@ -836,13 +1093,13 @@ export class PostgresDatabase {
     });
   }
 
-  async listSessions(principalId: string): Promise<SessionRecord[]> {
+  async listSessions(workspaceId: string, principalId: string): Promise<SessionRecord[]> {
     const sessions = await this.db
       .selectFrom("sessions")
       .leftJoin("machines", "machines.id", "sessions.machineId")
       .selectAll("sessions")
       .select("machines.name as machineName")
-      .where("sessions.workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("sessions.workspaceId", "=", workspaceId)
       .where("sessions.principalId", "=", principalId)
       .orderBy("sessions.createdAt", "desc")
       .limit(100)
@@ -853,6 +1110,7 @@ export class PostgresDatabase {
   }
 
   async createSession(input: {
+    workspaceId: string;
     id: string;
     machineId: string;
     principalId: string;
@@ -863,7 +1121,6 @@ export class PostgresDatabase {
     await this.db
       .insertInto("sessions")
       .values({
-        workspaceId: DEFAULT_WORKSPACE_ID,
         ...input,
         capabilities: JSON.stringify(input.capabilities),
         status: "opening",
@@ -873,11 +1130,15 @@ export class PostgresDatabase {
       .execute();
   }
 
-  async getSession(sessionId: string, principalId: string): Promise<SessionRecord | null> {
+  async getSession(
+    workspaceId: string,
+    sessionId: string,
+    principalId: string,
+  ): Promise<SessionRecord | null> {
     const session = await this.db
       .selectFrom("sessions")
       .selectAll()
-      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("workspaceId", "=", workspaceId)
       .where("id", "=", sessionId)
       .where("principalId", "=", principalId)
       .executeTakeFirst();
@@ -885,13 +1146,14 @@ export class PostgresDatabase {
   }
 
   async getActiveSession(
+    workspaceId: string,
     sessionId: string,
     principalId: string,
   ): Promise<SessionRecord | null> {
     const session = await this.db
       .selectFrom("sessions")
       .selectAll()
-      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("workspaceId", "=", workspaceId)
       .where("id", "=", sessionId)
       .where("principalId", "=", principalId)
       .where("status", "in", ACTIVE_SESSION_STATUSES)
@@ -899,53 +1161,58 @@ export class PostgresDatabase {
     return session ? sessionRecord(session) : null;
   }
 
-  async markSessionClosing(sessionId: string): Promise<void> {
+  async markSessionClosing(workspaceId: string, sessionId: string): Promise<void> {
     await this.db
       .updateTable("sessions")
       .set({ status: "closing", updatedAt: new Date() })
-      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("workspaceId", "=", workspaceId)
       .where("id", "=", sessionId)
       .execute();
   }
 
-  async markSessionOpened(sessionId: string): Promise<{ principalId: string } | null> {
+  async markSessionOpened(
+    machineId: string,
+    sessionId: string,
+  ): Promise<{ principalId: string; workspaceId: string } | null> {
     return (
       (await this.db
         .updateTable("sessions")
         .set({ status: "ready", updatedAt: new Date(), error: null })
-        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
         .where("id", "=", sessionId)
+        .where("machineId", "=", machineId)
         .where("status", "=", "opening")
-        .returning("principalId")
+        .returning(["principalId", "workspaceId"])
         .executeTakeFirst()) ?? null
     );
   }
 
   async markSessionOpenFailed(
+    machineId: string,
     sessionId: string,
     error: string,
-  ): Promise<{ principalId: string } | null> {
+  ): Promise<{ principalId: string; workspaceId: string } | null> {
     return (
       (await this.db
         .updateTable("sessions")
         .set({ status: "failed", updatedAt: new Date(), error })
-        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
         .where("id", "=", sessionId)
+        .where("machineId", "=", machineId)
         .where("status", "=", "opening")
-        .returning("principalId")
+        .returning(["principalId", "workspaceId"])
         .executeTakeFirst()) ?? null
     );
   }
 
   async markSessionClosed(
+    machineId: string,
     sessionId: string,
-  ): Promise<{ principalId: string; status: string } | null> {
+  ): Promise<{ principalId: string; workspaceId: string; status: string } | null> {
     return await this.db.transaction().execute(async (transaction) => {
       const session = await transaction
         .selectFrom("sessions")
-        .select(["principalId", "expiresAt"])
-        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+        .select(["principalId", "workspaceId", "expiresAt"])
         .where("id", "=", sessionId)
+        .where("machineId", "=", machineId)
         .where("status", "in", CLOSABLE_SESSION_STATUSES)
         .forUpdate()
         .executeTakeFirst();
@@ -956,11 +1223,16 @@ export class PostgresDatabase {
         .set({ status, updatedAt: new Date() })
         .where("id", "=", sessionId)
         .execute();
-      return { principalId: session.principalId, status };
+      return {
+        principalId: session.principalId,
+        workspaceId: session.workspaceId,
+        status,
+      };
     });
   }
 
   async findOperationByIdempotency(
+    workspaceId: string,
     principalId: string,
     idempotencyKey: string,
   ): Promise<Pick<OperationRecord, "id" | "status"> | null> {
@@ -968,7 +1240,7 @@ export class PostgresDatabase {
       (await this.db
         .selectFrom("operations")
         .select(["id", "status"])
-        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+        .where("workspaceId", "=", workspaceId)
         .where("principalId", "=", principalId)
         .where("idempotencyKey", "=", idempotencyKey)
         .executeTakeFirst()) ?? null
@@ -976,13 +1248,15 @@ export class PostgresDatabase {
   }
 
   async sessionForOperation(
+    workspaceId: string,
     sessionId: string,
     principalId: string,
   ): Promise<SessionRecord | null> {
-    return await this.getSession(sessionId, principalId);
+    return await this.getSession(workspaceId, sessionId, principalId);
   }
 
   async createOperation(input: {
+    workspaceId: string;
     id: string;
     sessionId: string;
     principalId: string;
@@ -994,7 +1268,6 @@ export class PostgresDatabase {
     const result = await this.db
       .insertInto("operations")
       .values({
-        workspaceId: DEFAULT_WORKSPACE_ID,
         ...input,
         action: JSON.stringify(input.action),
         status: "queued",
@@ -1013,54 +1286,74 @@ export class PostgresDatabase {
     return result !== undefined;
   }
 
-  async markOperationDelivered(operationId: string): Promise<void> {
+  async markOperationDelivered(workspaceId: string, operationId: string): Promise<void> {
     await this.db
       .updateTable("operations")
       .set({ status: "delivered", updatedAt: new Date() })
-      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("workspaceId", "=", workspaceId)
       .where("id", "=", operationId)
       .where("status", "=", "queued")
       .execute();
   }
 
-  async markOperationStarted(operationId: string): Promise<void> {
+  async markOperationStarted(machineId: string, operationId: string): Promise<void> {
     await this.db
       .updateTable("operations")
       .set({ status: "running", updatedAt: new Date() })
-      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
       .where("id", "=", operationId)
       .where("status", "in", ["queued", "delivered"])
-      .execute();
-  }
-
-  async addOperationEvent(input: {
-    operationId: string;
-    sequence: number;
-    stream: string;
-    dataBase64: string;
-  }): Promise<void> {
-    await this.db
-      .insertInto("operationEvents")
-      .values({
-        workspaceId: DEFAULT_WORKSPACE_ID,
-        operationId: input.operationId,
-        sequence: input.sequence,
-        stream: input.stream,
-        data: Buffer.from(input.dataBase64, "base64"),
-      })
-      .onConflict((conflict) =>
-        conflict.columns(["operationId", "sequence"]).doNothing(),
+      .where(({ exists, selectFrom }) =>
+        exists(
+          selectFrom("sessions")
+            .select("sessions.id")
+            .whereRef("sessions.id", "=", "operations.sessionId")
+            .where("sessions.machineId", "=", machineId),
+        ),
       )
       .execute();
   }
 
+  async addOperationEvent(input: {
+    machineId: string;
+    operationId: string;
+    sequence: number;
+    stream: string;
+    dataBase64: string;
+  }): Promise<boolean> {
+    return await this.db.transaction().execute(async (transaction) => {
+      const operation = await transaction
+        .selectFrom("operations")
+        .innerJoin("sessions", "sessions.id", "operations.sessionId")
+        .select("operations.workspaceId")
+        .where("operations.id", "=", input.operationId)
+        .where("sessions.machineId", "=", input.machineId)
+        .executeTakeFirst();
+      if (!operation) return false;
+      await transaction
+        .insertInto("operationEvents")
+        .values({
+          workspaceId: operation.workspaceId,
+          operationId: input.operationId,
+          sequence: input.sequence,
+          stream: input.stream,
+          data: Buffer.from(input.dataBase64, "base64"),
+        })
+        .onConflict((conflict) =>
+          conflict.columns(["operationId", "sequence"]).doNothing(),
+        )
+        .execute();
+      return true;
+    });
+  }
+
   async markOperationCompleted(input: {
+    machineId: string;
     operationId: string;
     status: string;
     exitCode: number | null;
     error?: string;
     outputTruncated: boolean;
-  }): Promise<{ principalId: string } | null> {
+  }): Promise<{ principalId: string; workspaceId: string } | null> {
     return (
       (await this.db
         .updateTable("operations")
@@ -1071,31 +1364,40 @@ export class PostgresDatabase {
           outputTruncated: input.outputTruncated,
           updatedAt: new Date(),
         })
-        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
         .where("id", "=", input.operationId)
         .where("status", "in", ACTIVE_OPERATION_STATUSES)
-        .returning("principalId")
+        .where(({ exists, selectFrom }) =>
+          exists(
+            selectFrom("sessions")
+              .select("sessions.id")
+              .whereRef("sessions.id", "=", "operations.sessionId")
+              .where("sessions.machineId", "=", input.machineId),
+          ),
+        )
+        .returning(["principalId", "workspaceId"])
         .executeTakeFirst()) ?? null
     );
   }
 
   async getOperation(
+    workspaceId: string,
     operationId: string,
     principalId: string,
   ): Promise<(OperationRecord & { events: OperationEventRecord[] }) | null> {
     const operation = await this.db
       .selectFrom("operations")
       .selectAll()
-      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+      .where("workspaceId", "=", workspaceId)
       .where("id", "=", operationId)
       .where("principalId", "=", principalId)
       .executeTakeFirst();
     if (!operation) return null;
-    const events = await this.listOperationEvents(operationId, -1);
+    const events = await this.listOperationEvents(workspaceId, operationId, -1);
     return { ...operationRecord(operation), events };
   }
 
   async getOperationTarget(
+    workspaceId: string,
     operationId: string,
     principalId: string,
   ): Promise<{ machineId: string; status: string } | null> {
@@ -1104,19 +1406,23 @@ export class PostgresDatabase {
         .selectFrom("operations")
         .innerJoin("sessions", "sessions.id", "operations.sessionId")
         .select(["sessions.machineId", "operations.status"])
-        .where("operations.workspaceId", "=", DEFAULT_WORKSPACE_ID)
+        .where("operations.workspaceId", "=", workspaceId)
         .where("operations.id", "=", operationId)
         .where("operations.principalId", "=", principalId)
         .executeTakeFirst()) ?? null
     );
   }
 
-  async operationExists(operationId: string, principalId: string): Promise<boolean> {
+  async operationExists(
+    workspaceId: string,
+    operationId: string,
+    principalId: string,
+  ): Promise<boolean> {
     return Boolean(
       await this.db
         .selectFrom("operations")
         .select("id")
-        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+        .where("workspaceId", "=", workspaceId)
         .where("id", "=", operationId)
         .where("principalId", "=", principalId)
         .executeTakeFirst(),
@@ -1124,6 +1430,7 @@ export class PostgresDatabase {
   }
 
   async listOperationEvents(
+    workspaceId: string,
     operationId: string,
     afterSequence: number,
   ): Promise<OperationEventRecord[]> {
@@ -1131,7 +1438,7 @@ export class PostgresDatabase {
       await this.db
         .selectFrom("operationEvents")
         .selectAll()
-        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+        .where("workspaceId", "=", workspaceId)
         .where("operationId", "=", operationId)
         .where("sequence", ">", afterSequence)
         .orderBy("sequence", "asc")
@@ -1139,24 +1446,28 @@ export class PostgresDatabase {
     ).map(operationEventRecord);
   }
 
-  async operationStatus(operationId: string): Promise<string | null> {
+  async operationStatus(workspaceId: string, operationId: string): Promise<string | null> {
     return (
       (
         await this.db
           .selectFrom("operations")
           .select("status")
-          .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
+          .where("workspaceId", "=", workspaceId)
           .where("id", "=", operationId)
           .executeTakeFirst()
       )?.status ?? null
     );
   }
 
-  async listAudit(limit: number, principalId?: string): Promise<AuditRecord[]> {
+  async listAudit(
+    workspaceId: string,
+    limit: number,
+    principalId?: string,
+  ): Promise<AuditRecord[]> {
     let query = this.db
       .selectFrom("auditEvents")
       .selectAll()
-      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID);
+      .where("workspaceId", "=", workspaceId);
     if (principalId !== undefined) query = query.where("principalId", "=", principalId);
     return (await query.orderBy("createdAt", "desc").limit(limit).execute()).map(
       auditRecord,
@@ -1164,6 +1475,7 @@ export class PostgresDatabase {
   }
 
   async audit(
+    workspaceId: string,
     principalId: string,
     action: string,
     targetType: string,
@@ -1173,7 +1485,7 @@ export class PostgresDatabase {
     await this.db
       .insertInto("auditEvents")
       .values({
-        workspaceId: DEFAULT_WORKSPACE_ID,
+        workspaceId,
         id: randomUUID(),
         principalId,
         action,
@@ -1197,14 +1509,12 @@ export class PostgresDatabase {
       const auditBefore = new Date(input.auditBefore);
       const deletedOperations = await transaction
         .deleteFrom("operations")
-        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
         .where("status", "not in", ACTIVE_OPERATION_STATUSES)
         .where("updatedAt", "<", operationDataBefore)
         .returning("id")
         .execute();
       const deletedSessions = await transaction
         .deleteFrom("sessions")
-        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
         .where("status", "not in", RETAINED_SESSION_STATUSES)
         .where("updatedAt", "<", operationDataBefore)
         .where(({ not, exists, selectFrom }) =>
@@ -1220,7 +1530,6 @@ export class PostgresDatabase {
         .execute();
       const deletedAuditEvents = await transaction
         .deleteFrom("auditEvents")
-        .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
         .where("createdAt", "<", auditBefore)
         .returning("id")
         .execute();
@@ -1237,7 +1546,6 @@ export class PostgresDatabase {
     return await this.db
       .updateTable("sessions")
       .set({ status: "expired", updatedAt: now })
-      .where("workspaceId", "=", DEFAULT_WORKSPACE_ID)
       .where("status", "in", ACTIVE_SESSION_STATUSES)
       .where((expression) =>
         expression.or([
@@ -1247,6 +1555,7 @@ export class PostgresDatabase {
               .selectFrom("agentTokens")
               .select("agentTokens.id")
               .whereRef("agentTokens.id", "=", "sessions.principalId")
+              .whereRef("agentTokens.workspaceId", "=", "sessions.workspaceId")
               .where((token) =>
                 token.or([
                   token("agentTokens.expiresAt", "<=", now),
@@ -1271,11 +1580,12 @@ export function createDatabase(environment: NodeJS.ProcessEnv): Database {
 
 export async function audit(
   db: Database,
+  workspaceId: string,
   principalId: string,
   action: string,
   targetType: string,
   targetId: string,
   metadata: Record<string, unknown> = {},
 ): Promise<void> {
-  await db.audit(principalId, action, targetType, targetId, metadata);
+  await db.audit(workspaceId, principalId, action, targetType, targetId, metadata);
 }

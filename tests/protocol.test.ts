@@ -3,7 +3,9 @@ import {
   agentTokenRequestSchema,
   clientConfigSchema,
   operationRequestSchema,
+  organizationRequestSchema,
   sessionRequestSchema,
+  workspaceRequestSchema,
 } from "../packages/protocol/src/index.js";
 
 describe("protocol validation", () => {
@@ -82,6 +84,20 @@ describe("protocol validation", () => {
         expiresInSeconds: 600,
       }).success,
     ).toBe(false);
+  });
+
+  it("accepts canonical tenant slugs and rejects ambiguous identifiers", () => {
+    expect(
+      organizationRequestSchema.safeParse({
+        slug: "acme-platform",
+        name: "Acme Platform",
+      }).success,
+    ).toBe(true);
+    for (const slug of ["ACME", "acme/platform", "../acme", "acme--platform"]) {
+      expect(
+        workspaceRequestSchema.safeParse({ slug, name: "Production" }).success,
+      ).toBe(false);
+    }
   });
 
   it("fails closed when a client profile enables network access", () => {

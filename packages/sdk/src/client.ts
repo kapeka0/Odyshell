@@ -12,6 +12,7 @@ export type OdyshellConfig = {
   serverUrl: string;
   agentToken?: string;
   adminKey?: string;
+  workspaceId?: string;
   fetch?: typeof globalThis.fetch;
 };
 
@@ -92,6 +93,21 @@ export type Machine = {
 
 export type AdminMachine = Machine & {
   revokedAt: string | null;
+};
+
+export type Organization = {
+  id: string;
+  slug: string;
+  name: string;
+  createdAt: string;
+};
+
+export type Workspace = {
+  id: string;
+  organizationId: string;
+  slug: string;
+  name: string;
+  createdAt: string;
 };
 
 export type Session = {
@@ -284,6 +300,46 @@ export class Odyshell {
       admin: true,
     });
     return response.data;
+  }
+
+  async organizations(): Promise<Organization[]> {
+    const response = await this.request<{ data: Organization[] }>(
+      "/v1/admin/organizations",
+      { admin: true },
+    );
+    return response.data;
+  }
+
+  async createOrganization(slug: string, name: string): Promise<Organization> {
+    return this.request("/v1/admin/organizations", {
+      method: "POST",
+      admin: true,
+      body: { slug, name },
+    });
+  }
+
+  async workspaces(organizationId?: string): Promise<Workspace[]> {
+    const path =
+      organizationId === undefined
+        ? "/v1/admin/workspaces"
+        : `/v1/admin/organizations/${encodeURIComponent(organizationId)}/workspaces`;
+    const response = await this.request<{ data: Workspace[] }>(path, { admin: true });
+    return response.data;
+  }
+
+  async createWorkspace(
+    organizationId: string,
+    slug: string,
+    name: string,
+  ): Promise<Workspace> {
+    return this.request(
+      `/v1/admin/organizations/${encodeURIComponent(organizationId)}/workspaces`,
+      {
+        method: "POST",
+        admin: true,
+        body: { slug, name },
+      },
+    );
   }
 
   async ping(machineId: string): Promise<{ reply: "pong"; machineId: string; latencyMs: number }> {
@@ -499,7 +555,12 @@ export class Odyshell {
           ...(options.body === undefined ? {} : { "content-type": "application/json" }),
           ...(authenticated
             ? options.admin
-              ? { "x-odyshell-admin-key": credential! }
+              ? {
+                  "x-odyshell-admin-key": credential!,
+                  ...(this.config.workspaceId
+                    ? { "x-odyshell-workspace-id": this.config.workspaceId }
+                    : {}),
+                }
               : { authorization: `Bearer ${credential!}` }
             : {}),
           ...options.headers,

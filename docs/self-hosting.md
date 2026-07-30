@@ -65,6 +65,17 @@ Create a single-use enrollment token:
 ods --server https://ods.example.com --admin-key <admin-key> token create
 ```
 
+For more than one tenant or environment, create and select a Workspace first:
+
+```bash
+ods --server https://ods.example.com --admin-key <admin-key> \
+  organization create acme --name "Acme"
+ods --server https://ods.example.com --admin-key <admin-key> \
+  workspace create production --organization <organization-id> --name "Production"
+ods --server https://ods.example.com --admin-key <admin-key> \
+  workspace use production
+```
+
 On the private machine:
 
 ```bash
