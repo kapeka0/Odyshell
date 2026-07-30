@@ -40,7 +40,7 @@ Put the Server behind HTTPS/WSS. Never enable `ODYSHELL_ALLOW_DEV_CREDENTIALS` i
 
 ## Current scaling boundary
 
-Run one Server replica for the MVP because live Client connections are held in memory. Back up
+Run one Server replica because live Client connections are held in memory. Back up
 PostgreSQL, require database TLS, and remember that backup and proxy retention are independent
 from Odyshell's application retention.
 

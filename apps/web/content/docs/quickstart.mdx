@@ -7,7 +7,7 @@ This is the shortest Cloud workflow. It uses Linux for the persistent Client ser
 
 ## 1. Install `ods`
 
-The MVP CLI is installed from the repository and requires Node.js 24+ and pnpm:
+The CLI currently installs from the repository and requires Node.js 24+ and pnpm:
 
 ```bash
 git clone https://github.com/kapeka0/odyshell.git
@@ -29,7 +29,7 @@ embedded in the URL.
 
 In Odyshell Cloud, open **Machines**, select **Add**, and choose the capabilities the Client may
 expose. Run the generated `ods up` command from the directory the target Linux machine should
-make available. The MVP command uses that current directory as `--workspace .`.
+make available. The generated command uses that current directory as `--workspace .`.
 
 The enrollment token in that command expires after ten minutes and works once. The Client then
 keeps an outbound connection to Odyshell; the machine does not expose an inbound port.

@@ -35,7 +35,7 @@ describe("public documentation corpus", () => {
     }
   });
 
-  it("does not publish credentials or development defaults", () => {
+  it("does not publish credentials or internal planning language", () => {
     const corpus = documentationPages()
       .map((page) => readFileSync(resolve(docsRoot, page), "utf8"))
       .join("\n");
@@ -45,6 +45,8 @@ describe("public documentation corpus", () => {
     );
     expect(corpus).not.toContain("dev-agent-key");
     expect(corpus).not.toContain("dev-admin-key");
+    expect(corpus).not.toMatch(/\bmvp\b/iu);
+    expect(corpus).not.toMatch(/\b(?:business model|roadmap)\b/iu);
   });
 
   it("builds agent-facing outputs only from the reviewed documentation source", () => {

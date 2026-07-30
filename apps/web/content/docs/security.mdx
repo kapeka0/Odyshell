@@ -3,8 +3,9 @@ title: Security
 description: Understand Odyshell's trust boundaries, least-privilege controls, and privacy model.
 ---
 
-Odyshell removes SSH credentials, inbound machine ports, and private-LAN access from the agent
-workflow. It does not turn arbitrary command execution into a safe action.
+The Server and Client enforce identity, scope, expiry, and local policy for every operation.
+Allowed command execution can still change anything available to the Client's operating-system
+user.
 
 ## Authorization path
 
