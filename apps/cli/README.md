@@ -21,6 +21,9 @@ ods fs read raspberry notes/status.txt
 ods audit
 ```
 
+`ods login` prints an activation link with its short-lived device code already embedded. Open that
+link, choose the workspace, and approve the CLI; there is no code to copy manually.
+
 `ods` uses Odyshell Cloud by default. Self-hosted installations select their Server with
 `--server <url>` or `ODYSHELL_SERVER_URL`.
 

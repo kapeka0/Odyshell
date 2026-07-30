@@ -142,9 +142,10 @@ Connect `ods` without copying a permanent administrator key:
 ods login
 ```
 
-The CLI prints a short-lived code and opens Odyshell in the browser. After you approve it, `ods`
-receives an expiring workspace credential. The browser session and Clerk credentials never leave
-the web app. Self-hosted installations can still select their Server with `--server`.
+The CLI prints and opens a short-lived Odyshell activation link with the device code already
+included. After you approve it, `ods` receives an expiring workspace credential. The browser
+session and Clerk credentials never leave the web app. Self-hosted installations can still select
+their Server with `--server`.
 
 From the dashboard, generate the one-time `ods up` command for a machine. The enrollment token
 expires after ten minutes and can only be used once. You explicitly select the local operations

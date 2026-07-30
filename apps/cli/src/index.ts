@@ -43,6 +43,7 @@ import {
 } from "./output.js";
 import { assertClientUpConfiguration } from "./up.js";
 import { serveOdyshellMcp } from "./mcp.js";
+import { deviceLoginUrl } from "./login.js";
 
 const program = new Command();
 program
@@ -213,20 +214,28 @@ program
     }
 
     const authorization = await api.startDeviceAuthorization();
+    const loginUrl = deviceLoginUrl(
+      authorization.verificationUri,
+      authorization.userCode,
+    );
     if (options.json) {
       printJson({
         status: "authorization_required",
         userCode: authorization.userCode,
         verificationUri: authorization.verificationUri,
+        verificationUriComplete: loginUrl,
         expiresIn: authorization.expiresIn,
       });
     } else {
-      console.log(`Open ${pc.bold(authorization.verificationUri)}`);
-      console.log(`Enter code ${pc.cyan(pc.bold(authorization.userCode))}`);
+      console.log("Open this link to approve login:");
+      console.log(`  ${pc.cyan(pc.bold(loginUrl))}`);
+      console.log(
+        pc.dim(`  The code ${authorization.userCode} is already included in the link.`),
+      );
       console.log(pc.dim("Waiting for approval…"));
     }
     if (loginOptions.browser) {
-      await open(authorization.verificationUriComplete, { wait: false }).catch(() => undefined);
+      await open(loginUrl, { wait: false }).catch(() => undefined);
     }
 
     const deadline = Date.now() + authorization.expiresIn * 1_000;
