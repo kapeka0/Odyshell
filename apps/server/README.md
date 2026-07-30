@@ -56,6 +56,8 @@ after one hour and control events after 30 days by default. Configure these wind
 Database credentials belong only to the Server; agents and Clients never receive them.
 Cloud credential issuance is rate-limited per member and workspace. Expired enrollment records
 and unreferenced inactive Agent Access records are removed by the retention sweep.
+Deleting an Agent revokes its credential and closes active sessions atomically. The hidden record
+remains only while retained sessions or Control Events still reference it.
 
 Organizations own execution Workspaces. Existing self-hosted administrator endpoints use the
 `x-odyshell-workspace-id` header and default to the backwards-compatible `default` workspace when

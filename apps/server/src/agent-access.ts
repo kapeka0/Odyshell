@@ -38,6 +38,13 @@ export type AgentAccessDependencies = {
     workspaceId: string,
     tokenId: string,
   ): Promise<AgentTokenRecord | null>;
+  deleteAgentToken(
+    workspaceId: string,
+    tokenId: string,
+  ): Promise<{
+    token: AgentTokenRecord;
+    closedSessions: number;
+  } | null>;
   expireAgentSessions(
     workspaceId: string,
     principalId: string,
@@ -164,5 +171,38 @@ export async function revokeAgentAccess(
     status: "revoked",
     revokedAt,
     closedSessions,
+  };
+}
+
+export async function deleteAgentAccess(
+  dependencies: AgentAccessDependencies,
+  workspaceId: string,
+  principalId: string,
+  tokenId: string,
+): Promise<{
+  id: string;
+  name: string;
+  status: "deleted";
+  closedSessions: number;
+} | null> {
+  const deletion = await dependencies.deleteAgentToken(workspaceId, tokenId);
+  if (!deletion) return null;
+
+  await dependencies.audit(
+    workspaceId,
+    principalId,
+    "agent_token.deleted",
+    "agent_token",
+    deletion.token.id,
+    {
+      name: deletion.token.name,
+      closedSessions: deletion.closedSessions,
+    },
+  );
+  return {
+    id: deletion.token.id,
+    name: deletion.token.name,
+    status: "deleted",
+    closedSessions: deletion.closedSessions,
   };
 }

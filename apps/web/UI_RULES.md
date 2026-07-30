@@ -163,6 +163,9 @@ particular component, library or interaction pattern.
   copy affordance with a restrained horizontal hover or focus animation.
 - Destructive row actions remain secondary, require confirmation and never
   compete with the view's primary creation action.
+- Users can permanently delete any Agent from its actions. Deletion closes
+  active sessions, requires confirmation and retains Control Events according
+  to the workspace retention policy.
 - Collapsing workspace navigation preserves every icon, animates smoothly and
   does not introduce an unnecessary scrollbar.
 - The dashboard navbar keeps only the sidebar toggle on its left edge. The

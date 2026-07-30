@@ -3,6 +3,7 @@ import {
   CloudLiveTokenReplayGuard,
   createCloudLiveToken,
   createCloudAgentAccessSchema,
+  deleteCloudAgentAccessSchema,
   cloudLiveOriginDecision,
   cloudIdentitySchema,
   cloudConnectionView,
@@ -83,6 +84,13 @@ describe("cloud identity and device authorization boundaries", () => {
     ).toBe(false);
     expect(
       revokeCloudAgentAccessSchema.safeParse({
+        ...identity,
+        tokenId: "2dc24de7-ec0e-45b3-88c1-acbb900e51f8",
+        workspaceId: "attacker-workspace",
+      }).success,
+    ).toBe(false);
+    expect(
+      deleteCloudAgentAccessSchema.safeParse({
         ...identity,
         tokenId: "2dc24de7-ec0e-45b3-88c1-acbb900e51f8",
         workspaceId: "attacker-workspace",

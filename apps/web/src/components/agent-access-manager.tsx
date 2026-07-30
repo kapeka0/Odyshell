@@ -1,7 +1,13 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { EllipsisIcon, EyeIcon, KeyRoundIcon } from "lucide-react";
+import {
+  EllipsisIcon,
+  EyeIcon,
+  KeyRoundIcon,
+  ShieldOffIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import { CopyableValue } from "@/components/copyable-value";
 import {
@@ -31,6 +37,7 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
@@ -179,15 +186,18 @@ function AccessActions({
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [revokeOpen, setRevokeOpen] = useState(false);
-  const [pending, setPending] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [pendingAction, setPendingAction] = useState<
+    "delete" | "revoke" | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
 
   async function revokeAccess() {
-    setPending(true);
+    setPendingAction("revoke");
     setError(null);
     try {
       const response = await fetch(`/api/agent-access/${access.id}`, {
-        method: "DELETE",
+        method: "POST",
       });
       const body = (await response.json().catch(() => ({}))) as {
         error?: string;
@@ -214,8 +224,52 @@ function AccessActions({
           : "Could not revoke agent access",
       );
     } finally {
-      setPending(false);
+      setPendingAction(null);
     }
+  }
+
+  async function deleteAgent() {
+    setPendingAction("delete");
+    setError(null);
+    try {
+      const response = await fetch(`/api/agent-access/${access.id}`, {
+        method: "DELETE",
+      });
+      const body = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(body.error ?? "Could not delete agent");
+      }
+      setDeleteOpen(false);
+      toast.add({
+        title: "Agent deleted",
+        description: `${access.name} was removed from the workspace.`,
+        type: "success",
+      });
+      await refresh();
+    } catch (reason) {
+      toast.add({
+        title: "Agent was not deleted",
+        description: `${access.name} remains in the workspace.`,
+        type: "error",
+      });
+      setError(
+        reason instanceof Error ? reason.message : "Could not delete agent",
+      );
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
+  function openRevokeDialog() {
+    setError(null);
+    setRevokeOpen(true);
+  }
+
+  function openDeleteDialog() {
+    setError(null);
+    setDeleteOpen(true);
   }
 
   return (
@@ -228,28 +282,38 @@ function AccessActions({
               variant="ghost"
               size="icon-sm"
               aria-label={`Actions for ${access.name}`}
-              disabled={pending}
+              disabled={pendingAction !== null}
             />
           }
         >
-          {pending ? <Spinner /> : <EllipsisIcon aria-hidden="true" />}
+          {pendingAction ? <Spinner /> : <EllipsisIcon aria-hidden="true" />}
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem onClick={() => setDetailsOpen(true)}>
-            <EyeIcon aria-hidden="true" />
-            View details
-          </DropdownMenuItem>
-          {access.status === "active" ? (
-            <>
-              <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            <DropdownMenuItem onClick={() => setDetailsOpen(true)}>
+              <EyeIcon aria-hidden="true" />
+              View details
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            {access.status === "active" ? (
               <DropdownMenuItem
                 variant="destructive"
-                onClick={() => setRevokeOpen(true)}
+                onClick={openRevokeDialog}
               >
+                <ShieldOffIcon aria-hidden="true" />
                 Revoke
               </DropdownMenuItem>
-            </>
-          ) : null}
+            ) : null}
+            <DropdownMenuItem
+              variant="destructive"
+              onClick={openDeleteDialog}
+            >
+              <Trash2Icon aria-hidden="true" />
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -287,7 +351,12 @@ function AccessActions({
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={revokeOpen} onOpenChange={setRevokeOpen}>
+      <AlertDialog
+        open={revokeOpen}
+        onOpenChange={(open) => {
+          if (pendingAction !== "revoke") setRevokeOpen(open);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Revoke {access.name}?</AlertDialogTitle>
@@ -302,14 +371,56 @@ function AccessActions({
             </p>
           ) : null}
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={pendingAction === "revoke"}>
+              Cancel
+            </AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
               onClick={() => void revokeAccess()}
-              disabled={pending}
+              disabled={pendingAction === "revoke"}
             >
-              {pending ? <Spinner /> : null}
-              {pending ? "Revoking…" : "Revoke"}
+              {pendingAction === "revoke" ? (
+                <Spinner data-icon="inline-start" />
+              ) : null}
+              {pendingAction === "revoke" ? "Revoking…" : "Revoke"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={deleteOpen}
+        onOpenChange={(open) => {
+          if (pendingAction !== "delete") setDeleteOpen(open);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {access.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the agent from the workspace. Its credential stops
+              working immediately and active sessions close. Retained Control
+              Events are not deleted. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {error ? (
+            <p className="text-sm text-destructive" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pendingAction === "delete"}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => void deleteAgent()}
+              disabled={pendingAction === "delete"}
+            >
+              {pendingAction === "delete" ? (
+                <Spinner data-icon="inline-start" />
+              ) : null}
+              {pendingAction === "delete" ? "Deleting…" : "Delete"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

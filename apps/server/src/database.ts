@@ -79,6 +79,7 @@ interface AgentTokenTable {
   capabilities: Json<Capability[]>;
   expiresAt: Date;
   revokedAt: Date | null;
+  deletedAt: Date | null;
   createdAt: Generated<Date>;
 }
 
@@ -214,6 +215,7 @@ export type AgentTokenRecord = Timestamped & {
   capabilities: Capability[];
   expiresAt: number;
   revokedAt?: number;
+  deletedAt?: number;
 };
 
 export type CliTokenRecord = {
@@ -330,6 +332,7 @@ function agentTokenRecord(token: Selectable<AgentTokenTable>): AgentTokenRecord 
     capabilities: token.capabilities,
     expiresAt: timestamp(token.expiresAt),
     ...(token.revokedAt === null ? {} : { revokedAt: timestamp(token.revokedAt) }),
+    ...(token.deletedAt === null ? {} : { deletedAt: timestamp(token.deletedAt) }),
     createdAt: timestamp(token.createdAt),
   };
 }
@@ -457,6 +460,7 @@ async function migrateInitialSchema(db: Kysely<DatabaseSchema>): Promise<void> {
     .addColumn("capabilities", "jsonb", (column) => column.notNull())
     .addColumn("expires_at", "timestamptz", (column) => column.notNull())
     .addColumn("revoked_at", "timestamptz")
+    .addColumn("deleted_at", "timestamptz")
     .addColumn("created_at", "timestamptz", (column) =>
       column.notNull().defaultTo(sql`now()`),
     )
@@ -802,6 +806,15 @@ async function migrateCloudIdentity(
   `.execute(db);
 }
 
+async function migrateAgentDeletion(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    alter table ${sql.table(`${DATABASE_SCHEMA}.agent_tokens`)}
+    add column if not exists deleted_at timestamptz
+  `.execute(db);
+}
+
 const migrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
     return {
@@ -816,6 +829,9 @@ const migrationProvider: MigrationProvider = {
       },
       "004_cloud_identity": {
         up: migrateCloudIdentity,
+      },
+      "005_agent_deletion": {
+        up: migrateAgentDeletion,
       },
     };
   },
@@ -996,6 +1012,7 @@ export class PostgresDatabase {
       .select(({ fn }) => fn.countAll<number>().as("count"))
       .where("workspaceId", "=", workspaceId)
       .where("revokedAt", "is", null)
+      .where("deletedAt", "is", null)
       .where("expiresAt", ">", new Date())
       .executeTakeFirstOrThrow();
     return {
@@ -1076,6 +1093,7 @@ export class PostgresDatabase {
       .selectAll()
       .where("tokenHash", "=", tokenHash)
       .where("revokedAt", "is", null)
+      .where("deletedAt", "is", null)
       .where("expiresAt", ">", new Date())
       .executeTakeFirst();
     return token ? agentTokenRecord(token) : null;
@@ -1233,6 +1251,7 @@ export class PostgresDatabase {
       .selectFrom("agentTokens")
       .selectAll()
       .where("workspaceId", "=", workspaceId)
+      .where("deletedAt", "is", null)
       .orderBy("createdAt", "desc")
       .limit(200)
       .execute();
@@ -1297,6 +1316,7 @@ export class PostgresDatabase {
           .select(({ fn }) => fn.countAll<number>().as("count"))
           .where("workspaceId", "=", input.workspaceId)
           .where("revokedAt", "is", null)
+          .where("deletedAt", "is", null)
           .where("expiresAt", ">", new Date())
           .executeTakeFirstOrThrow();
         if (Number(activeAgents.count) >= activeAgentLimit) {
@@ -1311,6 +1331,7 @@ export class PostgresDatabase {
           capabilities: JSON.stringify(input.capabilities),
           expiresAt: new Date(input.expiresAt),
           revokedAt: null,
+          deletedAt: null,
         })
         .execute();
       return { created: true };
@@ -1331,6 +1352,43 @@ export class PostgresDatabase {
       .returningAll()
       .executeTakeFirst();
     return token ? agentTokenRecord(token) : null;
+  }
+
+  async deleteAgentToken(
+    workspaceId: string,
+    tokenId: string,
+  ): Promise<{
+    token: AgentTokenRecord;
+    sessions: Array<{ id: string; machineId: string }>;
+  } | null> {
+    return await this.db.transaction().execute(async (transaction) => {
+      const now = new Date();
+      const token = await transaction
+        .updateTable("agentTokens")
+        .set({
+          revokedAt: sql`coalesce(revoked_at, ${now})`,
+          deletedAt: now,
+        })
+        .where("workspaceId", "=", workspaceId)
+        .where("id", "=", tokenId)
+        .where("deletedAt", "is", null)
+        .returningAll()
+        .executeTakeFirst();
+      if (!token) return null;
+
+      const sessions = await transaction
+        .updateTable("sessions")
+        .set({ status: "expired", updatedAt: now })
+        .where("workspaceId", "=", workspaceId)
+        .where("principalId", "=", tokenId)
+        .where("status", "in", ACTIVE_SESSION_STATUSES)
+        .returning(["id", "machineId"])
+        .execute();
+      return {
+        token: agentTokenRecord(token),
+        sessions,
+      };
+    });
   }
 
   async expireAgentSessions(
@@ -1539,17 +1597,38 @@ export class PostgresDatabase {
     profile: string;
     capabilities: Capability[];
     expiresAt: number;
-  }): Promise<void> {
-    await this.db
-      .insertInto("sessions")
-      .values({
-        ...input,
-        capabilities: JSON.stringify(input.capabilities),
-        status: "opening",
-        expiresAt: new Date(input.expiresAt),
-        error: null,
-      })
-      .execute();
+    requireActiveAgentToken: boolean;
+  }): Promise<boolean> {
+    return await this.db.transaction().execute(async (transaction) => {
+      if (input.requireActiveAgentToken) {
+        const token = await transaction
+          .selectFrom("agentTokens")
+          .select("id")
+          .where("workspaceId", "=", input.workspaceId)
+          .where("id", "=", input.principalId)
+          .where("revokedAt", "is", null)
+          .where("deletedAt", "is", null)
+          .where("expiresAt", ">", new Date())
+          .forShare()
+          .executeTakeFirst();
+        if (!token) return false;
+      }
+      await transaction
+        .insertInto("sessions")
+        .values({
+          workspaceId: input.workspaceId,
+          id: input.id,
+          machineId: input.machineId,
+          principalId: input.principalId,
+          profile: input.profile,
+          capabilities: JSON.stringify(input.capabilities),
+          status: "opening",
+          expiresAt: new Date(input.expiresAt),
+          error: null,
+        })
+        .execute();
+      return true;
+    });
   }
 
   async getSession(

@@ -8,7 +8,8 @@ import {
 
 const tokenIdSchema = z.string().uuid();
 
-export async function DELETE(
+async function mutateAgentAccess(
+  operation: "delete" | "revoke",
   _request: Request,
   { params }: { params: Promise<{ tokenId: string }> },
 ) {
@@ -22,15 +23,33 @@ export async function DELETE(
     const result = await cloudRequest<{
       id: string;
       name: string;
-      status: "revoked";
+      status: "deleted" | "revoked";
       closedSessions: number;
-    }>("/v1/internal/cloud/agent-access/revoke", authorization.identity, {
-      extraBody: { tokenId: parsed.data },
-    });
+    }>(
+      `/v1/internal/cloud/agent-access/${operation}`,
+      authorization.identity,
+      {
+        extraBody: { tokenId: parsed.data },
+      },
+    );
     return NextResponse.json(result, {
       headers: { "cache-control": "no-store" },
     });
   } catch (error) {
     return cloudRouteError(error);
   }
+}
+
+export async function POST(
+  request: Request,
+  context: { params: Promise<{ tokenId: string }> },
+) {
+  return mutateAgentAccess("revoke", request, context);
+}
+
+export async function DELETE(
+  request: Request,
+  context: { params: Promise<{ tokenId: string }> },
+) {
+  return mutateAgentAccess("delete", request, context);
 }

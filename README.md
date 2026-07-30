@@ -167,6 +167,10 @@ it through the API, SDK, CLI, or MCP:
 ODYSHELL_AGENT_TOKEN=<agent-access> ods exec my-machine -- uname -a
 ```
 
+From the Agent's actions menu, revoke the active credential without removing the record or delete
+the Agent entirely. Deletion invalidates its credential and closes active sessions immediately;
+privacy-minimal Control Events remain available until the configured retention period expires.
+
 MCP-compatible agents can launch the same interface locally with `ods mcp`:
 
 ```json

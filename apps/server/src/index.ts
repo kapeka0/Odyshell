@@ -20,6 +20,7 @@ import {
 } from "./access.js";
 import {
   createAgentAccess,
+  deleteAgentAccess,
   revokeAgentAccess,
   type AgentAccessDependencies,
 } from "./agent-access.js";
@@ -35,6 +36,7 @@ import {
   cloudWebKey,
   cloudWebUrl,
   createDeviceUserCode,
+  deleteCloudAgentAccessSchema,
   entitlementsFor,
   exchangeDeviceAuthorizationSchema,
   FixedWindowRateLimiter,
@@ -94,6 +96,7 @@ const gateway = new ClientGateway(db);
 gateway.register(app);
 
 type AgentPrincipal = {
+  kind: "agent" | "cli" | "development";
   id: string;
   name: string;
   workspaceId: string;
@@ -213,6 +216,7 @@ async function requireAgent(request: FastifyRequest, reply: FastifyReply): Promi
 
   if (matchesSecret(token, developmentAgentKey)) {
     requestPrincipals.set(request, {
+      kind: "development",
       id: "dev-agent",
       name: "Development agent",
       workspaceId: DEFAULT_WORKSPACE_ID,
@@ -227,6 +231,7 @@ async function requireAgent(request: FastifyRequest, reply: FastifyReply): Promi
     const principal = await db.findAgentByTokenHash(hashToken(token));
     if (principal) {
       requestPrincipals.set(request, {
+        kind: "agent",
         id: principal.id,
         name: principal.name,
         workspaceId: principal.workspaceId,
@@ -239,6 +244,7 @@ async function requireAgent(request: FastifyRequest, reply: FastifyReply): Promi
     const cliPrincipal = await db.findCliByTokenHash(hashToken(token));
     if (cliPrincipal) {
       requestPrincipals.set(request, {
+        kind: "cli",
         id: cliPrincipal.id,
         name: `Clerk user ${cliPrincipal.userId}`,
         workspaceId: cliPrincipal.workspaceId,
@@ -360,6 +366,21 @@ const agentAccessDependencies: AgentAccessDependencies = {
   createAgentToken: (input) => db.createAgentToken(input),
   revokeAgentToken: (workspaceId, tokenId) =>
     db.revokeAgentToken(workspaceId, tokenId),
+  deleteAgentToken: async (workspaceId, tokenId) => {
+    const deletion = await db.deleteAgentToken(workspaceId, tokenId);
+    if (!deletion) return null;
+    for (const session of deletion.sessions) {
+      gateway.send(session.machineId, {
+        type: "session.close",
+        sessionId: session.id,
+        reason: "agent_token_deleted",
+      });
+    }
+    return {
+      token: deletion.token,
+      closedSessions: deletion.sessions.length,
+    };
+  },
   expireAgentSessions,
   audit: async (workspaceId, principalId, action, targetType, targetId, metadata) => {
     await audit(
@@ -850,6 +871,30 @@ app.post(
 );
 
 app.post(
+  "/v1/internal/cloud/agent-access/delete",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = deleteCloudAgentAccessSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request", details: parsed.error.issues });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const result = await deleteAgentAccess(
+      agentAccessDependencies,
+      context.workspace.id,
+      parsed.data.userId,
+      parsed.data.tokenId,
+    );
+    if (!result) return reply.code(404).send({ error: "agent_token_not_found" });
+    return result;
+  },
+);
+
+app.post(
   "/v1/internal/cloud/machines/revoke",
   { preHandler: requireWeb },
   async (request, reply) => {
@@ -1308,7 +1353,7 @@ app.post("/v1/sessions", { preHandler: requireAgent }, async (request, reply) =>
   if (expiresAt.getTime() <= Date.now()) {
     return reply.code(401).send({ error: "invalid_or_expired_agent_token" });
   }
-  await db.createSession({
+  const sessionCreated = await db.createSession({
     workspaceId: principal.workspaceId,
     id: sessionId,
     machineId: input.machineId,
@@ -1316,7 +1361,11 @@ app.post("/v1/sessions", { preHandler: requireAgent }, async (request, reply) =>
     profile: input.profile,
     capabilities: input.capabilities,
     expiresAt: expiresAt.getTime(),
+    requireActiveAgentToken: principal.kind === "agent",
   });
+  if (!sessionCreated) {
+    return reply.code(401).send({ error: "invalid_or_expired_agent_token" });
+  }
   gateway.send(input.machineId, {
     type: "session.open",
     sessionId,

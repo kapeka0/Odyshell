@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createAgentAccess,
+  deleteAgentAccess,
   revokeAgentAccess,
   type AgentAccessDependencies,
 } from "../apps/server/src/agent-access.js";
@@ -13,6 +14,7 @@ function dependencies(
     activeMachinesExist: vi.fn(async () => true),
     createAgentToken: vi.fn(async () => ({ created: true as const })),
     revokeAgentToken: vi.fn(async () => null),
+    deleteAgentToken: vi.fn(async () => null),
     expireAgentSessions: vi.fn(async () => 0),
     audit: vi.fn(async () => undefined),
     createId: () => "access-id",
@@ -125,5 +127,64 @@ describe("Agent Access service boundaries", () => {
       "agent_token_revoked",
     );
     expect(audit).toHaveBeenCalledOnce();
+  });
+
+  it("deletes only a workspace-scoped agent once and records the closed sessions", async () => {
+    const token: AgentTokenRecord = {
+      workspaceId: "workspace-a",
+      id: "access-id",
+      name: "release-agent",
+      tokenHash: "hash",
+      machineIds: ["2dc24de7-ec0e-45b3-88c1-acbb900e51f8"],
+      capabilities: ["process.exec"],
+      expiresAt: Date.parse("2026-07-30T11:00:00.000Z"),
+      revokedAt: Date.parse("2026-07-30T10:15:00.000Z"),
+      deletedAt: Date.parse("2026-07-30T10:15:00.000Z"),
+      createdAt: Date.parse("2026-07-30T10:00:00.000Z"),
+    };
+    let deleted = false;
+    const deleteAgentToken = vi
+      .fn<AgentAccessDependencies["deleteAgentToken"]>()
+      .mockImplementation(async (workspaceId) => {
+        if (workspaceId !== "workspace-a" || deleted) return null;
+        deleted = true;
+        return { token, closedSessions: 2 };
+      });
+    const audit = vi.fn(async () => undefined);
+    const service = dependencies({ deleteAgentToken, audit });
+
+    await expect(
+      deleteAgentAccess(service, "workspace-b", "user-b", "access-id"),
+    ).resolves.toBeNull();
+    const result = await deleteAgentAccess(
+      service,
+      "workspace-a",
+      "user-a",
+      "access-id",
+    );
+    expect(result).toEqual({
+      id: "access-id",
+      name: "release-agent",
+      status: "deleted",
+      closedSessions: 2,
+    });
+    expect(result).not.toHaveProperty("tokenHash");
+    await expect(
+      deleteAgentAccess(service, "workspace-a", "user-a", "access-id"),
+    ).resolves.toBeNull();
+
+    expect(audit).toHaveBeenCalledOnce();
+    expect(audit).toHaveBeenCalledWith(
+      "workspace-a",
+      "user-a",
+      "agent_token.deleted",
+      "agent_token",
+      "access-id",
+      {
+        name: "release-agent",
+        closedSessions: 2,
+      },
+    );
+    expect(audit.mock.calls[0]?.[5]).not.toHaveProperty("tokenHash");
   });
 });

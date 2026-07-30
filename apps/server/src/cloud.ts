@@ -58,6 +58,10 @@ export const revokeCloudAgentAccessSchema = cloudIdentitySchema.extend({
   tokenId: z.string().uuid(),
 });
 
+export const deleteCloudAgentAccessSchema = cloudIdentitySchema.extend({
+  tokenId: z.string().uuid(),
+});
+
 export const revokeCloudMachineSchema = cloudIdentitySchema.extend({
   machineId: z.string().uuid(),
 });

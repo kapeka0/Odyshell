@@ -24,6 +24,9 @@ state, and revocation state. Private machine keys remain on the Client. Plaintex
 Agent Access credentials are returned once and are not stored.
 Expired enrollment records are purged with temporary operation data. Inactive Agent Access
 records are removed only after no retained session or Control Event still references them.
+Deleting an Agent revokes its credential and removes it from the Workspace immediately. Its
+underlying record is physically purged only after no retained Session or Control Event references
+it.
 
 ### Temporary operation data
 
