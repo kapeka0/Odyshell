@@ -127,6 +127,9 @@ export function verifyCloudLiveToken(
   } catch {
     return null;
   }
+  if (provided.toString("base64url") !== signature) {
+    return null;
+  }
   if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
     return null;
   }

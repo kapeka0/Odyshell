@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, posix, resolve } from "node:path";
+import { dirname, posix, resolve, win32 } from "node:path";
 import { promisify } from "node:util";
 import process from "node:process";
 import { defaultClientConfigPath } from "./platform.js";
@@ -73,9 +73,10 @@ export function windowsTaskNameForConfig(
   configPath: string,
   legacyConfigPath = defaultClientConfigPath(),
 ): string {
-  return resolve(configPath) === resolve(legacyConfigPath)
+  const normalizedConfigPath = win32.resolve(configPath);
+  return normalizedConfigPath === win32.resolve(legacyConfigPath)
     ? "Odyshell Client"
-    : `Odyshell Client ${configDigest(configPath)}`;
+    : `Odyshell Client ${digestPath(normalizedConfigPath)}`;
 }
 
 export function renderLinuxUserService(options: {
@@ -143,7 +144,7 @@ export function renderWindowsTaskCommand(
     "client",
     "start",
     "--config",
-    resolve(options.configPath),
+    win32.resolve(options.configPath),
   ]
     .map(quoteWindowsArgument)
     .join(" ");
@@ -449,8 +450,12 @@ async function fileExists(path: string): Promise<boolean> {
 }
 
 function configDigest(configPath: string): string {
+  return digestPath(resolve(configPath));
+}
+
+function digestPath(configPath: string): string {
   return createHash("sha256")
-    .update(resolve(configPath))
+    .update(configPath)
     .digest("hex")
     .slice(0, 12);
 }

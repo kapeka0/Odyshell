@@ -238,8 +238,32 @@ describe("cloud identity and device authorization boundaries", () => {
         2_000,
       ),
     ).toBeNull();
+    const [tokenPayload, tokenSignature] = token
+      .slice("ods_live_".length)
+      .split(".");
+    const changedSignature = `${tokenSignature![0] === "A" ? "B" : "A"}${tokenSignature!.slice(1)}`;
     expect(
-      verifyCloudLiveToken(secret, `${token.slice(0, -1)}x`, 2_000),
+      verifyCloudLiveToken(
+        secret,
+        `ods_live_${tokenPayload}.${changedSignature}`,
+        2_000,
+      ),
+    ).toBeNull();
+
+    const base64urlAlphabet =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const finalIndex = base64urlAlphabet.indexOf(tokenSignature!.at(-1)!);
+    const equivalentNonCanonicalSignature =
+      tokenSignature!.slice(0, -1) + base64urlAlphabet[finalIndex ^ 1];
+    expect(
+      Buffer.from(equivalentNonCanonicalSignature, "base64url"),
+    ).toEqual(Buffer.from(tokenSignature!, "base64url"));
+    expect(
+      verifyCloudLiveToken(
+        secret,
+        `ods_live_${tokenPayload}.${equivalentNonCanonicalSignature}`,
+        2_000,
+      ),
     ).toBeNull();
   });
 
