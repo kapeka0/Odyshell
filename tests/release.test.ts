@@ -62,6 +62,17 @@ describe("0.9 release contract", () => {
     expect(webTypescript).toContain(
       '"@odyshell/protocol": ["../../packages/protocol/src/index.ts"]',
     );
+    const vitest = readFileSync(
+      resolve(process.cwd(), "vitest.config.ts"),
+      "utf8",
+    );
+    for (const workspacePackage of [
+      "@odyshell/client",
+      "@odyshell/protocol",
+      "@odyshell/sdk",
+    ]) {
+      expect(vitest).toContain(`"${workspacePackage}"`);
+    }
   });
 
   it("keeps CLI and MCP version labels aligned", () => {
