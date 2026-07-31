@@ -56,9 +56,12 @@ agent should control. Docker execution remains available as an optional isolated
 Agents can use the Odyshell API directly. The `ods` CLI is the quickest way to try the same
 workflow:
 
-```bash
-npm install --global @odyshell/cli
-```
+| Package manager | Command |
+| --- | --- |
+| pnpm | `pnpm add --global @odyshell/cli` |
+| npm | `npm install --global @odyshell/cli` |
+| Yarn | `yarn global add @odyshell/cli` |
+| Bun | `bun add --global @odyshell/cli` |
 
 ```bash
 ods machines

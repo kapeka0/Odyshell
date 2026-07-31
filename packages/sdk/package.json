@@ -1,11 +1,26 @@
 {
   "name": "@odyshell/sdk",
-  "version": "0.1.0",
+  "version": "0.9.0",
+  "description": "TypeScript SDK for temporary, scoped Odyshell Agent Sessions.",
+  "keywords": [
+    "ai-agents",
+    "remote-execution",
+    "sdk"
+  ],
+  "homepage": "https://odyshell.com/docs/sdk",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/kapeka0/Odyshell/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kapeka0/Odyshell.git",
+    "directory": "packages/sdk"
+  },
   "type": "module",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "development": "./src/index.ts",
       "import": "./dist/index.js"
     }
   },
@@ -17,7 +32,12 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "tsup src/index.ts --format esm --dts"
+    "build": "tsup src/index.ts --format esm --dts",
+    "prepack": "pnpm build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
     "@odyshell/protocol": "workspace:*"

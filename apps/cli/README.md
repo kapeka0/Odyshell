@@ -13,9 +13,12 @@ machines. People, plans, machine inventory, and approvals are managed in the web
 
 Requires Node.js 24 or newer:
 
-```bash
-npm install --global @odyshell/cli
-```
+| Package manager | Command |
+| --- | --- |
+| pnpm | `pnpm add --global @odyshell/cli` |
+| npm | `npm install --global @odyshell/cli` |
+| Yarn | `yarn global add @odyshell/cli` |
+| Bun | `bun add --global @odyshell/cli` |
 
 ## Basic usage
 

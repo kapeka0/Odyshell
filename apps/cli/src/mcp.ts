@@ -34,7 +34,7 @@ export function createApprovedOdyshellMcpServer(
   const claims = new Map<string, ClaimedAgentSession>();
   const requestSessions = new Map<string, string>();
   const server = new McpServer(
-    { name: "odyshell", version: "0.2.0" },
+    { name: "odyshell", version: "0.9.0" },
     {
       instructions:
         "Request an explicit temporary Session for one typed operation. Ask the user to approve the URL, check session_status, then call operation_execute. Session credentials remain inside this MCP process.",
@@ -172,7 +172,7 @@ export function createOdyshellMcpServer(
   reportUnexpectedError: (error: unknown) => void = () => undefined,
 ): McpServer {
   const server = new McpServer(
-    { name: "odyshell", version: "0.1.0" },
+    { name: "odyshell", version: "0.9.0" },
     {
       instructions:
         "Use typed filesystem and process tools on machines already allowed by the current Odyshell agent token. Prefer process_exec over process_shell. All paths are relative to the machine workspace.",

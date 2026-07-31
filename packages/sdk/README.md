@@ -9,6 +9,15 @@
 `@odyshell/sdk` is the programmatic interface to Odyshell. An Agent Credential identifies the
 Agent and requests temporary Sessions; only the claimed Session Credential can execute.
 
+## Install
+
+| Package manager | Command |
+| --- | --- |
+| pnpm | `pnpm add @odyshell/sdk` |
+| npm | `npm install @odyshell/sdk` |
+| Yarn | `yarn add @odyshell/sdk` |
+| Bun | `bun add @odyshell/sdk` |
+
 ```ts
 import { Odyshell } from "@odyshell/sdk";
 
@@ -47,7 +56,7 @@ Sessions, but cannot execute Operations. `rotateAgentCredential()` issues a succ
 bounded ten-minute overlap.
 
 The SDK supports typed process, filesystem, and Docker log operations. Permissions are still
-enforced by the Server, the agent token, and the Client on the target machine.
+enforced by the Server, the Session scope, and the Client on the target machine.
 
 After approval, claim once and execute with the Session client:
 

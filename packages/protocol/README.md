@@ -7,9 +7,9 @@
 <p align="center"><strong>The shared contract between the Server, Client, and CLI.</strong></p>
 
 `@odyshell/protocol` contains the TypeScript types and validation rules used across Odyshell. It
-defines capabilities, session requests, typed process, filesystem and Docker operations, and
+defines capabilities, Session requests, typed process, filesystem and Docker Operations, and
 messages exchanged between the Server and Client. It also defines the strict Human, Agent, and
-task Session identity contracts used by the ongoing Agent Access migration.
+task Session identity contracts used by the current authority model.
 
 The package keeps both sides aligned without containing transport, authentication, or execution
 logic.

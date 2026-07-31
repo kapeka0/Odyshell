@@ -1,10 +1,43 @@
 {
   "name": "@odyshell/protocol",
-  "version": "0.3.0",
+  "version": "0.9.0",
+  "description": "Shared TypeScript contracts for Odyshell Server, Client, and SDK.",
+  "keywords": [
+    "ai-agents",
+    "protocol",
+    "remote-execution"
+  ],
+  "homepage": "https://odyshell.com/docs/concepts",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/kapeka0/Odyshell/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kapeka0/Odyshell.git",
+    "directory": "packages/protocol"
+  },
   "type": "module",
-  "exports": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
-    "build": "tsup src/index.ts --format esm --dts"
+    "build": "tsup src/index.ts --format esm --dts",
+    "prepack": "pnpm build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
     "zod": "^4.0.0"

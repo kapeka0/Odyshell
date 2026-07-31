@@ -1,6 +1,7 @@
 {
   "name": "@odyshell/client",
-  "version": "0.4.0",
+  "version": "0.9.0",
+  "private": true,
   "type": "module",
   "exports": {
     ".": {
