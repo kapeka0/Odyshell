@@ -523,7 +523,7 @@ try {
     (value) => value.status === "ready" || value.status === "failed",
     "approved Session target",
   );
-  const scopedOperation = (action) =>
+  const scopedOperation = (action, idempotencyKey = crypto.randomUUID()) =>
     fetch(
       new URL(
         `/v1/sessions/${claimedSession.sessionId}/operations`,
@@ -534,7 +534,7 @@ try {
         headers: {
           authorization: `Bearer ${claimedSession.sessionToken}`,
           "content-type": "application/json",
-          "idempotency-key": crypto.randomUUID(),
+          "idempotency-key": idempotencyKey,
         },
         body: JSON.stringify({
           action,
@@ -611,16 +611,47 @@ try {
     throw new Error("Session Credential minted another Session");
   }
 
+  const crossSessionId = crypto.randomUUID();
+  const crossSessionOperationId = crypto.randomUUID();
+  const crossSessionIdempotencyKey = crypto.randomUUID();
+  await compose([
+    "exec",
+    "-T",
+    "postgres",
+    "psql",
+    "-U",
+    "odyshell",
+    "-d",
+    "odyshell",
+    "-v",
+    "ON_ERROR_STOP=1",
+    "-c",
+    [
+      "insert into odyshell.sessions",
+      "(workspace_id, id, machine_id, principal_id, profile, capabilities, status, expires_at)",
+      `values ('default', '${crossSessionId}', '${machine.id}', '${approvedAgentId}',`,
+      "'workspace', '[\"fs.read\"]'::jsonb, 'ready', now() + interval '10 minutes');",
+      "insert into odyshell.operations",
+      "(workspace_id, id, session_id, principal_id, action, status, timeout_seconds, max_output_bytes, idempotency_key)",
+      `values ('default', '${crossSessionOperationId}', '${crossSessionId}', '${approvedAgentId}',`,
+      `'{"kind":"fs.read","path":"approved.txt"}'::jsonb, 'queued', 10, 1024, '${crossSessionIdempotencyKey}');`,
+    ].join(" "),
+  ]);
   const approvedReadResponse = await scopedOperation({
     kind: "fs.read",
     path: "approved.txt",
-  });
+  }, crossSessionIdempotencyKey);
   if (approvedReadResponse.status !== 202) {
     throw new Error(
       `Approved read was rejected: ${approvedReadResponse.status} ${await approvedReadResponse.text()}`,
     );
   }
   const approvedOperation = await approvedReadResponse.json();
+  if (approvedOperation.id === crossSessionOperationId) {
+    throw new Error(
+      "A Session resolved another Session's idempotent Operation",
+    );
+  }
   const approvedRead = await waitUntil(
     async () => {
       const response = await fetch(
@@ -647,6 +678,25 @@ try {
   ) {
     throw new Error("Approved fs.read did not complete end to end");
   }
+  await compose([
+    "exec",
+    "-T",
+    "postgres",
+    "psql",
+    "-U",
+    "odyshell",
+    "-d",
+    "odyshell",
+    "-v",
+    "ON_ERROR_STOP=1",
+    "-c",
+    [
+      "update odyshell.operations set status = 'cancelled'",
+      `where workspace_id = 'default' and id = '${crossSessionOperationId}';`,
+      "update odyshell.sessions set status = 'closed'",
+      `where workspace_id = 'default' and id = '${crossSessionId}';`,
+    ].join(" "),
+  ]);
   await fetch(
     new URL(`/v1/sessions/${claimedSession.sessionId}`, apiUrl),
     {
@@ -1707,6 +1757,7 @@ try {
           sessionCapabilityScopeDenied: true,
           sessionMachineScopeDenied: true,
           sessionIdScopeDenied: true,
+          crossSessionIdempotencyIsolated: true,
           sessionCredentialCannotMintSessions: true,
           sessionTimeline: true,
           sessionCredentialHashed: true,
