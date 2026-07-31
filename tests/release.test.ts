@@ -24,6 +24,13 @@ const manifests = [
 ].map(readManifest);
 
 describe("0.9 release contract", () => {
+  it("exposes the built Server as the root production entrypoint", () => {
+    const rootPackage = JSON.parse(
+      readFileSync(resolve(process.cwd(), "package.json"), "utf8"),
+    ) as { scripts?: Record<string, string> };
+    expect(rootPackage.scripts?.start).toBe("node apps/server/dist/index.js");
+  });
+
   it("uses one coordinated pre-1.0 version", () => {
     expect(manifests.map((manifest) => manifest.version)).toEqual(
       Array.from({ length: manifests.length }, () => releaseVersion),
