@@ -1,15 +1,16 @@
 ---
 title: Agents
-description: Grant temporary, least-privilege machine access to an AI agent.
+description: Give a persistent agent temporary, least-privilege machine access.
 ---
 
-Agent access is separate from human sign-in and machine enrollment. A member creates it from the
-**Agents** page by choosing a name, machines, capabilities, and expiry.
+An Agent is a persistent programmatic identity. Signing in with `ods login` lets `ods mcp`
+register that identity without granting it access to a machine.
 
-Available expiry choices range from one hour to one year. The credential is shown once and the
-Server stores only its hash.
+For an interactive task, the Agent requests a temporary Session with an exact machine, capability,
+restriction, purpose and duration. A workspace member reviews it in the browser. The Agent then
+claims a Session Credential once; the Server stores only its hash.
 
-## Give the credential to an agent
+## Connect an agent
 
 Install the CLI in the agent's environment:
 
@@ -17,32 +18,31 @@ Install the CLI in the agent's environment:
 npm install --global @odyshell/cli
 ```
 
-Then use the generated command:
+Sign in and configure the MCP:
 
 ```bash
-ods login --server https://server.example.com --agent-token "$ODYSHELL_AGENT_TOKEN"
+ods login
+ods mcp
 ```
 
-The agent can then use the CLI, MCP, SDK, or HTTP API. Its effective authority is the
-intersection of:
+The current approval workflow reads one exact file. Its effective authority is the intersection
+of:
 
-1. the machines assigned to the credential;
-2. the capabilities assigned to the credential;
+1. the approved Session machine, `fs.read` capability and exact path;
+2. Session status and expiry;
 3. the target machine's local policy;
 4. the operating-system permissions of the Client process.
 
-## Expiry and revocation
+## Expiry
 
-An expired or revoked credential cannot create operations. Odyshell also closes its existing
-sessions so an agent cannot preserve access through an older session.
+Session authority begins when it is claimed and cannot outlive its expiry. A Session Credential
+cannot create another Session or change its approved scope.
 
-Inactive access remains visible for review until it is removed by the Server's retention and
-referential-integrity rules. Create new agent access when another credential
-is required.
+Verified request, approval, target, Operation result and close events form the Session Timeline.
+Privacy-minimal Timeline events do not contain file contents or credentials.
 
-## Delete access
+## Pre-scoped access
 
-Delete is available from the access row's actions menu. It immediately revokes the credential,
-closes its active sessions, and removes it from the workspace list. The Server keeps the
-soft-deleted record only while a retained session or Control Event still references it, then
-removes it during retention cleanup.
+Agent Access tokens remain available for trusted, unattended integrations. A member chooses their
+machines, capabilities and expiry from **Agents**. Revocation immediately blocks new work and
+closes active sessions.

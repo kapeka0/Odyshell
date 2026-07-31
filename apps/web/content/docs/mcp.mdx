@@ -1,10 +1,10 @@
 ---
 title: MCP
-description: Expose scoped Odyshell operations to an MCP-compatible agent over local stdio.
+description: Let an MCP-compatible agent request temporary access to a private machine.
 ---
 
-`ods mcp` runs a local MCP server. It translates MCP tool calls into temporary Odyshell sessions
-and operations without granting administrator authority.
+`ods mcp` runs a local MCP server using the workspace authorized by `ods login`. The agent has a
+persistent identity but no machine authority until a member approves a temporary Session.
 
 ## Install
 
@@ -14,7 +14,13 @@ npm install --global @odyshell/cli
 
 ## Configure an agent
 
-First authorize `ods` with the generated agent credential. Then add:
+First sign in:
+
+```bash
+ods login
+```
+
+Then add:
 
 ```json
 {
@@ -27,19 +33,26 @@ First authorize `ods` with the generated agent credential. Then add:
 }
 ```
 
-The MCP process uses the existing local `ods` configuration. Keep that configuration private.
+The MCP process uses the existing local `ods` configuration. Its identity is saved locally. A
+claimed Session Credential stays in MCP memory and is never returned in a tool result.
 
-## Available tools
+## Read a file
 
-- `machines_list` and `machine_ping`
-- `process_exec` and `process_shell`
-- `filesystem_stat`, `filesystem_list`, and `filesystem_search`
-- `filesystem_read`, `filesystem_write`, `filesystem_mkdir`, and `filesystem_remove`
-- `docker_logs`
-- `audit_list`
+The approval-based workflow exposes four tools:
 
-Prefer `process_exec` with an explicit program and argument array. Use `process_shell` only when
-shell syntax is necessary and the credential has the separate `process.shell` capability.
+1. `machines_list` finds the target machine.
+2. `session_request` requests `fs.read` for one exact path and returns an approval URL.
+3. `session_status` checks the decision and privately claims the credential once.
+4. `filesystem_read` reads only the approved path and closes the Session.
 
-The Server and Client validate every call. MCP tool availability does not grant a capability by
-itself.
+The approval page shows the Agent, machine, capability, path, purpose and duration. Approval codes
+expire, are single-use and are bound to the workspace that created them.
+
+The Server validates Session identity, machine, capability, path and expiry on every Operation.
+The Client applies its local policy independently.
+
+## Pre-scoped credentials
+
+When `ods` is configured with an Agent Access token instead of `ods login`, MCP keeps the
+pre-scoped operation tools for compatibility. Use the approval workflow when a human should
+authorize each task.

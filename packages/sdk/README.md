@@ -31,6 +31,27 @@ console.log(result.stdout);
 The SDK supports typed process, filesystem, and Docker log operations. Permissions are still
 enforced by the Server, the agent token, and the Client on the target machine.
 
+Trusted orchestrators can also use the approval flow:
+
+```ts
+const request = await ods.requestAgentSession({
+  agentId,
+  agentName: "Dependency auditor",
+  purpose: "Inspect the application version",
+  machineId,
+  path: "package.json",
+  durationSeconds: 900,
+});
+
+// Show request.approvalUrl to the workspace member.
+const claim = await ods.claimAgentSession(request.id, agentId);
+const result = await ods.readApprovedSession(claim);
+```
+
+`claim.sessionToken` is returned once. Keep it inside a trusted runtime; do not send it to a model,
+log it, or persist it. `readApprovedSession` uses it only for the approved Session and closes that
+Session after the read.
+
 Use `process.exec` when possible. `process.shell` is available for commands that genuinely need a
 shell and should receive a separate, explicit capability.
 

@@ -63,6 +63,11 @@ and unreferenced inactive Agent Access records are removed by the retention swee
 Deleting an Agent revokes its credential and closes active sessions atomically. The hidden record
 remains only while retained sessions or Control Events still reference it.
 
+Browser-approved Sessions use persistent Agent identities and one-time Session Credentials. The
+Server stores only credential hashes and enforces the Session's exact machine, capability, path,
+and expiry on every Operation. Verified lifecycle transitions form a privacy-minimal Session
+Timeline without recording credentials or operation output.
+
 Organizations own execution Workspaces. Existing self-hosted administrator endpoints use the
 `x-odyshell-workspace-id` header and default to the backwards-compatible `default` workspace when
 it is absent. Enrollment tokens, machines, Agent Access, sessions, operations, and control events

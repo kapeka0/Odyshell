@@ -1,11 +1,11 @@
 # Agent and Session model
 
-> **Status:** Accepted product and architecture design. The additive Human, Agent, Agent
-> Credential, Session, and Session Credential storage model is implemented, but it does not expose
-> public target APIs or authorize Operations yet.
+> **Status:** Accepted product and architecture design. The first complete vertical is shipped:
+> a signed-in MCP Agent can request, receive browser approval for, claim, and complete one exact
+> `fs.read` through a Session Credential.
 >
-> Current public documentation continues to describe the shipped legacy Agent Access model until
-> the fail-closed migration is complete.
+> Multi-machine Sessions, other capabilities, policy automation, delegation, renewal, and
+> headless Agent Credentials remain target design.
 
 ## Goal
 

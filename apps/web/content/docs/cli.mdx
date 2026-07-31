@@ -45,5 +45,10 @@ workflow, use `ods session create`, `ods session inspect`, `ods session exec`, a
 
 ## Agent integrations
 
-`ods mcp` starts the local MCP server over stdio. It exposes only agent operations and cannot
-enroll machines, create credentials, or use administrator commands.
+`ods mcp` starts the local MCP server over stdio. After `ods login`, it creates one persistent
+local Agent identity. That Agent requests temporary Sessions; the user approves the exact machine,
+file and duration in the browser.
+
+The approval-based MCP exposes only machine discovery, Session request/status and exact
+`filesystem_read`. It cannot enroll machines, manage people, expose credentials, or use
+administrator commands.

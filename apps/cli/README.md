@@ -53,7 +53,7 @@ ods --json exec raspberry -- uname -a
 - `ods session` manages longer-lived temporary sessions.
 - `ods client` configures the client running on a private machine.
 - `ods audit` shows actions visible to the current agent.
-- `ods mcp` exposes the same scoped operations to MCP-compatible agents over stdio.
+- `ods mcp` lets a signed-in agent request temporary access over MCP stdio.
 
 `ods up --workspace <path>` refers to the local directory exposed by the Client. It is separate
 from the Cloud Workspace selected during `ods login`.
@@ -63,7 +63,7 @@ organization management does not live in the CLI.
 
 ## MCP
 
-Log in with a scoped agent token, then configure your agent to launch Odyshell:
+Run `ods login`, then configure your agent to launch Odyshell:
 
 ```json
 {
@@ -76,8 +76,13 @@ Log in with a scoped agent token, then configure your agent to launch Odyshell:
 }
 ```
 
-The MCP process receives only agent tools. It cannot enroll or revoke machines, create tokens, or
-use the administrator key. Each operation runs in a disposable session and remains auditable.
+The default signed-in flow exposes machine discovery, Session request/status and exact file reads.
+The agent receives an approval URL; after a member approves it, MCP claims the Session Credential
+once and keeps it out of model-visible tool results.
+
+A Session is bound to one machine, `fs.read`, one exact path and an expiry. The MCP process cannot
+enroll or revoke machines, create broader authority, expose the credential, or use administrator
+controls. Agent Access tokens retain the existing pre-scoped tools for compatibility.
 
 For monorepo development, build and install the local CLI with:
 

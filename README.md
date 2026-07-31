@@ -175,7 +175,7 @@ From the Agent Access actions menu, revoke the credential without removing the r
 the access entirely. Deletion invalidates its credential and closes active sessions immediately;
 privacy-minimal Control Events remain available until the configured retention period expires.
 
-MCP-compatible agents can launch the same interface locally with `ods mcp`:
+MCP-compatible agents can use the browser-approved flow after `ods login`:
 
 ```json
 {
@@ -188,10 +188,13 @@ MCP-compatible agents can launch the same interface locally with `ods mcp`:
 }
 ```
 
-The Server restricts Agent Access to its assigned machines, capabilities, and expiry. The Client applies its
-own local policy as a second boundary. When the token expires, its sessions are closed too, so an
-agent cannot keep access through an older session. The web app shows privacy-minimal Control
-Events and never includes commands, arguments, paths, file contents, stdout, or stderr.
+The Agent keeps a persistent identity but receives no machine authority from login. It requests a
+temporary Session for one exact file, returns an approval URL, privately claims the credential
+once, performs the read, and closes the Session. The Server enforces the immutable machine,
+capability, path, and expiry; the Client applies its own local policy as a second boundary.
+
+Pre-scoped Agent Access tokens remain available for unattended integrations that need the existing
+typed operation tools.
 
 ## MVP status
 

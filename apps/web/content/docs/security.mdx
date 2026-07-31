@@ -11,15 +11,20 @@ user.
 
 An operation is accepted only when:
 
-1. the agent credential is valid, unexpired, and not revoked;
-2. the target machine belongs to the same workspace and is assigned to that credential;
-3. the credential allows the required capability;
-4. the session is active and bounded by the credential;
+1. the Session Credential is valid, unexpired, and stored only as a hash;
+2. the Session belongs to the authenticated Agent and workspace;
+3. the target machine, capability and typed restriction match the immutable Session scope;
+4. the Session is active;
 5. the machine is online;
 6. the Client's local policy allows the capability;
 7. operation-specific validation succeeds.
 
-The model cannot override these checks with a prompt.
+The model cannot override these checks with a prompt. A Session Credential cannot request another
+Session, read another Agent's Operations, or access a different machine or path.
+
+Approval codes expire, can be used once, and are looked up only inside the authenticated
+workspace. The credential produced by a claim is returned once to the trusted runtime. MCP keeps
+it outside model-visible results.
 
 ## Machine identity
 
@@ -37,8 +42,8 @@ removal, or Docker access only when the task requires them.
 
 ## Privacy
 
-Durable Control Events contain lifecycle metadata, not commands, arguments, environment values,
-paths, file contents, stdout, or stderr.
+Privacy-minimal Session Timeline events contain verified lifecycle metadata, not file contents,
+stdout, stderr, or credentials.
 
 Full operation requests and results pass through the Server and are temporarily stored for
 delivery. They become eligible for deletion after one hour by default. Control Events become
