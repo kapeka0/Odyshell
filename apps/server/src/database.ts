@@ -63,6 +63,26 @@ export async function withDatabaseDeadlockRetry<T>(
   }
 }
 
+export type AuthorityCutoverInvariant = {
+  missingWorkspaces: number;
+  activeLegacyTokens: number;
+  activeLegacySessions: number;
+  activeLegacyOperations: number;
+};
+
+export function assertAuthorityCutoverInvariant(
+  invariant: AuthorityCutoverInvariant,
+): void {
+  const failures = Object.entries(invariant).filter(([, count]) => count > 0);
+  if (failures.length > 0) {
+    throw new Error(
+      `Authority cutover is incomplete (${failures
+        .map(([name, count]) => `${name}=${count}`)
+        .join(", ")})`,
+    );
+  }
+}
+
 type Json<T> = ColumnType<T, string, string>;
 
 interface OrganizationTable {
@@ -315,6 +335,15 @@ interface EventSinkDeliveryTable {
   updatedAt: Generated<Date>;
 }
 
+interface AuthorityCutoverTable {
+  workspaceId: string;
+  status: string;
+  legacyAgentTokensRevoked: number;
+  legacySessionsClosed: number;
+  legacyOperationsCancelled: number;
+  completedAt: Generated<Date>;
+}
+
 interface LegacySessionTable {
   workspaceId: string;
   id: string;
@@ -386,6 +415,7 @@ interface DatabaseSchema {
   sessionTimelineEvents: SessionTimelineEventTable;
   eventSinks: EventSinkTable;
   eventSinkDeliveries: EventSinkDeliveryTable;
+  authorityCutovers: AuthorityCutoverTable;
   sessions: LegacySessionTable;
   operations: OperationTable;
   operationEvents: OperationEventTable;
@@ -2219,6 +2249,171 @@ async function rollbackTimelineEventSinks(
   await sql`drop table odyshell.event_sinks`.execute(db);
 }
 
+async function migrateAuthorityCutover(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    create table odyshell.authority_cutovers (
+      workspace_id text primary key
+        references odyshell.workspaces (id) on delete cascade,
+      status text not null check (status = 'complete'),
+      legacy_agent_tokens_revoked integer not null check (
+        legacy_agent_tokens_revoked >= 0
+      ),
+      legacy_sessions_closed integer not null check (
+        legacy_sessions_closed >= 0
+      ),
+      legacy_operations_cancelled integer not null check (
+        legacy_operations_cancelled >= 0
+      ),
+      completed_at timestamptz not null default now()
+    )
+  `.execute(db);
+  await sql`
+    insert into odyshell.authority_cutovers (
+      workspace_id,
+      status,
+      legacy_agent_tokens_revoked,
+      legacy_sessions_closed,
+      legacy_operations_cancelled
+    )
+    select
+      workspace.id,
+      'complete',
+      (
+        select count(*)::integer
+        from odyshell.agent_tokens token
+        where token.workspace_id = workspace.id
+          and token.revoked_at is null
+      ),
+      (
+        select count(*)::integer
+        from odyshell.sessions session
+        where session.workspace_id = workspace.id
+          and session.status in ('opening', 'ready', 'closing')
+          and not exists (
+            select 1
+            from odyshell.agent_session_targets target
+            where target.workspace_id = session.workspace_id
+              and target.runtime_session_id = session.id
+          )
+      ),
+      (
+        select count(*)::integer
+        from odyshell.operations operation
+        join odyshell.sessions session
+          on session.workspace_id = operation.workspace_id
+          and session.id = operation.session_id
+        where operation.workspace_id = workspace.id
+          and operation.status in ('queued', 'delivered', 'running')
+          and not exists (
+            select 1
+            from odyshell.agent_session_targets target
+            where target.workspace_id = session.workspace_id
+              and target.runtime_session_id = session.id
+          )
+      )
+    from odyshell.workspaces workspace
+  `.execute(db);
+  await sql`
+    insert into odyshell.agents (
+      workspace_id,
+      id,
+      name,
+      kind,
+      parent_agent_id,
+      created_by_human_id,
+      status,
+      deleted_at,
+      created_at,
+      updated_at
+    )
+    select
+      token.workspace_id,
+      token.id,
+      token.name,
+      'independent',
+      null,
+      null,
+      'disabled',
+      token.deleted_at,
+      token.created_at,
+      now()
+    from odyshell.agent_tokens token
+    on conflict (workspace_id, id) do nothing
+  `.execute(db);
+  await sql`
+    update odyshell.operations operation
+    set
+      status = 'cancelled',
+      error = 'legacy_authority_migrated',
+      updated_at = now()
+    from odyshell.sessions session
+    where session.workspace_id = operation.workspace_id
+      and session.id = operation.session_id
+      and operation.status in ('queued', 'delivered', 'running')
+      and not exists (
+        select 1
+        from odyshell.agent_session_targets target
+        where target.workspace_id = session.workspace_id
+          and target.runtime_session_id = session.id
+      )
+  `.execute(db);
+  await sql`
+    update odyshell.sessions session
+    set
+      status = 'closed',
+      error = 'legacy_authority_migrated',
+      updated_at = now()
+    where session.status in ('opening', 'ready', 'closing')
+      and not exists (
+        select 1
+        from odyshell.agent_session_targets target
+        where target.workspace_id = session.workspace_id
+          and target.runtime_session_id = session.id
+      )
+  `.execute(db);
+  await sql`
+    update odyshell.agent_tokens
+    set revoked_at = coalesce(revoked_at, now())
+    where revoked_at is null
+  `.execute(db);
+  await sql`
+    insert into odyshell.audit_events (
+      workspace_id,
+      id,
+      principal_id,
+      action,
+      target_type,
+      target_id,
+      metadata
+    )
+    select
+      cutover.workspace_id,
+      gen_random_uuid()::text,
+      'system',
+      'authority.cutover_completed',
+      'workspace',
+      cutover.workspace_id,
+      jsonb_build_object(
+        'legacyAgentTokensRevoked', cutover.legacy_agent_tokens_revoked,
+        'legacySessionsClosed', cutover.legacy_sessions_closed,
+        'legacyOperationsCancelled', cutover.legacy_operations_cancelled
+      )
+    from odyshell.authority_cutovers cutover
+  `.execute(db);
+}
+
+async function rollbackAuthorityCutover(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    delete from odyshell.audit_events
+    where action = 'authority.cutover_completed'
+  `.execute(db);
+  await sql`drop table odyshell.authority_cutovers`.execute(db);
+}
+
 const migrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
     return {
@@ -2277,6 +2472,10 @@ const migrationProvider: MigrationProvider = {
         up: migrateTimelineEventSinks,
         down: rollbackTimelineEventSinks,
       },
+      "016_authority_cutover": {
+        up: migrateAuthorityCutover,
+        down: rollbackAuthorityCutover,
+      },
     };
   },
 };
@@ -2333,6 +2532,18 @@ export class PostgresDatabase {
       })
       .onConflict((conflict) => conflict.column("id").doNothing())
       .execute();
+    await this.db
+      .insertInto("authorityCutovers")
+      .values({
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        status: "complete",
+        legacyAgentTokensRevoked: 0,
+        legacySessionsClosed: 0,
+        legacyOperationsCancelled: 0,
+      })
+      .onConflict((conflict) => conflict.column("workspaceId").doNothing())
+      .execute();
+    await this.assertAuthorityCutover();
     await this.db
       .updateTable("machines")
       .set({ status: "offline" })
@@ -2425,6 +2636,17 @@ export class PostgresDatabase {
           .returningAll()
           .executeTakeFirstOrThrow();
       }
+      await transaction
+        .insertInto("authorityCutovers")
+        .values({
+          workspaceId: workspace.id,
+          status: "complete",
+          legacyAgentTokensRevoked: 0,
+          legacySessionsClosed: 0,
+          legacyOperationsCancelled: 0,
+        })
+        .onConflict((conflict) => conflict.column("workspaceId").doNothing())
+        .execute();
       return {
         organization: organizationRecord(organization),
         workspace: workspaceRecord(workspace),
@@ -2452,12 +2674,11 @@ export class PostgresDatabase {
       .where("revokedAt", "is", null)
       .executeTakeFirstOrThrow();
     const agents = await this.db
-      .selectFrom("agentTokens")
+      .selectFrom("agents")
       .select(({ fn }) => fn.countAll<number>().as("count"))
       .where("workspaceId", "=", workspaceId)
-      .where("revokedAt", "is", null)
       .where("deletedAt", "is", null)
-      .where("expiresAt", ">", new Date())
+      .where("status", "=", "active")
       .executeTakeFirstOrThrow();
     return {
       plan: workspace.plan as CloudPlanId,
@@ -2465,6 +2686,66 @@ export class PostgresDatabase {
       activeAgents: Number(agents.count),
       cloudManaged: workspace.externalId !== null,
     };
+  }
+
+  async authorityCutoverReport(): Promise<AuthorityCutoverInvariant> {
+    const result = await sql<{
+      missingWorkspaces: string;
+      activeLegacyTokens: string;
+      activeLegacySessions: string;
+      activeLegacyOperations: string;
+    }>`
+      select
+        (
+          select count(*)
+          from odyshell.workspaces workspace
+          left join odyshell.authority_cutovers cutover
+            on cutover.workspace_id = workspace.id
+          where cutover.workspace_id is null
+             or cutover.status <> 'complete'
+        )::text as "missingWorkspaces",
+        (
+          select count(*)
+          from odyshell.agent_tokens
+          where revoked_at is null
+        )::text as "activeLegacyTokens",
+        (
+          select count(*)
+          from odyshell.sessions session
+          where session.status in ('opening', 'ready', 'closing')
+            and not exists (
+              select 1
+              from odyshell.agent_session_targets target
+              where target.workspace_id = session.workspace_id
+                and target.runtime_session_id = session.id
+            )
+        )::text as "activeLegacySessions",
+        (
+          select count(*)
+          from odyshell.operations operation
+          join odyshell.sessions session
+            on session.workspace_id = operation.workspace_id
+            and session.id = operation.session_id
+          where operation.status in ('queued', 'delivered', 'running')
+            and not exists (
+              select 1
+              from odyshell.agent_session_targets target
+              where target.workspace_id = session.workspace_id
+                and target.runtime_session_id = session.id
+            )
+        )::text as "activeLegacyOperations"
+    `.execute(this.root);
+    const row = result.rows[0]!;
+    return {
+      missingWorkspaces: Number(row.missingWorkspaces),
+      activeLegacyTokens: Number(row.activeLegacyTokens),
+      activeLegacySessions: Number(row.activeLegacySessions),
+      activeLegacyOperations: Number(row.activeLegacyOperations),
+    };
+  }
+
+  async assertAuthorityCutover(): Promise<void> {
+    assertAuthorityCutoverInvariant(await this.authorityCutoverReport());
   }
 
   async workspaceConnections(workspaceId: string): Promise<{
@@ -2516,19 +2797,30 @@ export class PostgresDatabase {
     slug: string;
     name: string;
   }): Promise<WorkspaceRecord | null> {
-    const organization = await this.db
-      .selectFrom("organizations")
-      .select("id")
-      .where("id", "=", input.organizationId)
-      .executeTakeFirst();
-    if (!organization) return null;
-    return workspaceRecord(
-      await this.db
+    return await this.db.transaction().execute(async (transaction) => {
+      const organization = await transaction
+        .selectFrom("organizations")
+        .select("id")
+        .where("id", "=", input.organizationId)
+        .executeTakeFirst();
+      if (!organization) return null;
+      const workspace = await transaction
         .insertInto("workspaces")
         .values(input)
         .returningAll()
-        .executeTakeFirstOrThrow(),
-    );
+        .executeTakeFirstOrThrow();
+      await transaction
+        .insertInto("authorityCutovers")
+        .values({
+          workspaceId: workspace.id,
+          status: "complete",
+          legacyAgentTokensRevoked: 0,
+          legacySessionsClosed: 0,
+          legacyOperationsCancelled: 0,
+        })
+        .execute();
+      return workspaceRecord(workspace);
+    });
   }
 
   async createHumanIdentity(input: {
@@ -4420,12 +4712,6 @@ export class PostgresDatabase {
         .where("id", "=", input.sessionId)
         .where("status", "=", "active")
         .execute();
-      await transaction
-        .updateTable("agentSessionTargets")
-        .set({ status: "closed", updatedAt: now })
-        .where("workspaceId", "=", input.workspaceId)
-        .where("sessionId", "=", input.sessionId)
-        .execute();
       if (runtimeIds.length > 0) {
         await transaction
           .updateTable("operations")
@@ -4446,6 +4732,12 @@ export class PostgresDatabase {
           .where("status", "in", ACTIVE_SESSION_STATUSES)
           .execute();
       }
+      await transaction
+        .updateTable("agentSessionTargets")
+        .set({ status: "closed", updatedAt: now })
+        .where("workspaceId", "=", input.workspaceId)
+        .where("sessionId", "=", input.sessionId)
+        .execute();
       if (request) {
         await transaction
           .insertInto("sessionTimelineEvents")
@@ -5631,7 +5923,8 @@ export class PostgresDatabase {
     machineId: string,
     sessionId: string,
   ): Promise<{ principalId: string; workspaceId: string } | null> {
-    return await this.db.transaction().execute(async (transaction) => {
+    return await withDatabaseDeadlockRetry(() =>
+      this.db.transaction().execute(async (transaction) => {
       const result =
         (await transaction
         .updateTable("sessions")
@@ -5687,8 +5980,9 @@ export class PostgresDatabase {
           })
           .execute();
       }
-      return result;
-    });
+        return result;
+      }),
+    );
   }
 
   async markSessionOpenFailed(
@@ -5696,7 +5990,8 @@ export class PostgresDatabase {
     sessionId: string,
     error: string,
   ): Promise<{ principalId: string; workspaceId: string } | null> {
-    return await this.db.transaction().execute(async (transaction) => {
+    return await withDatabaseDeadlockRetry(() =>
+      this.db.transaction().execute(async (transaction) => {
       const result =
         (await transaction
         .updateTable("sessions")
@@ -5752,15 +6047,17 @@ export class PostgresDatabase {
           })
           .execute();
       }
-      return result;
-    });
+        return result;
+      }),
+    );
   }
 
   async markSessionClosed(
     machineId: string,
     sessionId: string,
   ): Promise<{ principalId: string; workspaceId: string; status: string } | null> {
-    return await this.db.transaction().execute(async (transaction) => {
+    return await withDatabaseDeadlockRetry(() =>
+      this.db.transaction().execute(async (transaction) => {
       const session = await transaction
         .selectFrom("sessions")
         .select(["principalId", "workspaceId", "expiresAt"])
@@ -5846,12 +6143,13 @@ export class PostgresDatabase {
           })
           .execute();
       }
-      return {
-        principalId: session.principalId,
-        workspaceId: session.workspaceId,
-        status,
-      };
-    });
+        return {
+          principalId: session.principalId,
+          workspaceId: session.workspaceId,
+          status,
+        };
+      }),
+    );
   }
 
   async findOperationByIdempotency(

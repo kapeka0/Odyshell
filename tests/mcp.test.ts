@@ -268,6 +268,8 @@ describe("Odyshell MCP server", () => {
       env: {
         ...stringEnvironment(process.env),
         ODYSHELL_AGENT_TOKEN: "test-agent-token",
+        ODYSHELL_AGENT_ID: "b1144720-58d8-4886-b8ad-d2b32ccaecc9",
+        ODYSHELL_AGENT_NAME: "Test Agent",
         ODYSHELL_SERVER_URL: "http://127.0.0.1:1",
       },
       stderr: "pipe",
@@ -278,7 +280,9 @@ describe("Odyshell MCP server", () => {
 
     const { tools } = await client.listTools();
 
-    expect(tools.some((tool) => tool.name === "process_exec")).toBe(true);
+    expect(tools.some((tool) => tool.name === "session_request")).toBe(true);
+    expect(tools.some((tool) => tool.name === "operation_execute")).toBe(true);
+    expect(tools.some((tool) => tool.name === "process_exec")).toBe(false);
   });
 });
 

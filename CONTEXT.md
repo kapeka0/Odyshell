@@ -1,8 +1,7 @@
 # Odyshell
 
 Odyshell is the controlled execution boundary between AI agents and private machines. This
-glossary defines the accepted target domain model; shipped behavior remains documented separately
-until the legacy Agent Access model is migrated.
+glossary defines the shipped domain model after the fail-closed Agent Access cutover.
 
 ## Human governance
 

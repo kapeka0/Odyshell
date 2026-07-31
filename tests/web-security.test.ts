@@ -265,7 +265,7 @@ describe("dashboard navigation performance boundary", () => {
       "apps/web/src/components",
     );
     for (const file of [
-      "agent-access-manager.tsx",
+      "agent-list.tsx",
       "device-activation.tsx",
       "enroll-machine.tsx",
       "machine-list.tsx",
@@ -426,7 +426,7 @@ describe("dashboard navigation performance boundary", () => {
     expect(copyable).toContain('aria-live="polite"');
     expect(copyable).not.toContain("toast");
     expect(copyable).not.toContain("hover:text-foreground");
-    for (const file of ["enroll-machine.tsx", "create-agent-access.tsx"]) {
+    for (const file of ["enroll-machine.tsx"]) {
       const generatedCommand = readFileSync(
         resolve(componentsRoot, file),
         "utf8",
@@ -436,7 +436,7 @@ describe("dashboard navigation performance boundary", () => {
     }
     for (const file of [
       "machine-list.tsx",
-      "agent-access-manager.tsx",
+      "agent-list.tsx",
       "control-event-list.tsx",
     ]) {
       expect(
@@ -449,11 +449,7 @@ describe("dashboard navigation performance boundary", () => {
     const webRoot = resolve(process.cwd(), "apps/web/src");
     const componentsRoot = resolve(webRoot, "components");
     const agentList = readFileSync(
-      resolve(componentsRoot, "agent-access-manager.tsx"),
-      "utf8",
-    );
-    const agentForm = readFileSync(
-      resolve(componentsRoot, "create-agent-access.tsx"),
+      resolve(componentsRoot, "agent-list.tsx"),
       "utf8",
     );
     const machineForm = readFileSync(
@@ -465,13 +461,9 @@ describe("dashboard navigation performance boundary", () => {
       "utf8",
     );
 
-    expect(agentList).not.toContain("Create agent access");
-    expect(agentsPage).toContain('href="/dashboard/agents/add"');
-    expect(agentForm).toContain("<Select");
-    expect(agentForm).not.toContain("ToggleGroup");
-    expect(agentForm).toContain("agentLoginCommand");
-    expect(agentForm).toContain('copyLabel="Agent login command"');
-    expect(agentForm).toContain('"Create"');
+    expect(agentList).toContain('title="Agent"');
+    expect(agentList).not.toContain("Agent Access");
+    expect(agentsPage).not.toContain('href="/dashboard/agents/add"');
     expect(machineForm).toContain("justify-end");
     expect(machineForm.indexOf("Cancel")).toBeLessThan(
       machineForm.lastIndexOf('"Add"'),

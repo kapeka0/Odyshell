@@ -30,6 +30,28 @@ describe("server storage boundaries", () => {
     ).rejects.toBe(rejected);
   });
 
+  it("serializes Client acknowledgements with Session cancellation", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const cancellation = database.slice(
+      database.indexOf("async cancelAgentSession("),
+      database.indexOf("async failClaimedAgentSession("),
+    );
+    const acknowledgements = database.slice(
+      database.indexOf("async markSessionOpened("),
+      database.indexOf("async findOperationByIdempotency("),
+    );
+
+    expect(cancellation.indexOf('.updateTable("sessions")')).toBeLessThan(
+      cancellation.indexOf('.updateTable("agentSessionTargets")'),
+    );
+    expect(acknowledgements.match(/withDatabaseDeadlockRetry/g)).toHaveLength(
+      3,
+    );
+  });
+
   it("requires PostgreSQL in every environment", () => {
     expect(() => createDatabase({ NODE_ENV: "production" })).toThrow(/DATABASE_URL/);
     expect(() =>

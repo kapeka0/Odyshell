@@ -155,25 +155,13 @@ From the dashboard, generate the one-time `ods up` command for a machine. The en
 expires after ten minutes and can only be used once. You explicitly select the local operations
 that machine will accept.
 
-## Give an agent access
+## Connect an Agent
 
-In the dashboard, create **Agent Access** with:
-
-- a recognizable agent name;
-- one or more existing machines;
-- only the capabilities the task needs;
-- an expiry from one hour up to one year.
-
-The credential is shown once and can be revoked immediately. Give it to the agent, which can use
-it through the API, SDK, CLI, or MCP:
+Register the Agent once:
 
 ```bash
-ODYSHELL_AGENT_TOKEN=<agent-access> ods exec my-machine -- uname -a
+ods agent login "My Agent"
 ```
-
-From the Agent Access actions menu, revoke the credential without removing the record or delete
-the access entirely. Deletion invalidates its credential and closes active sessions immediately;
-privacy-minimal Control Events remain available until the configured retention period expires.
 
 MCP-compatible agents can use the browser-approved flow after `ods login`:
 
@@ -198,8 +186,8 @@ administrator approves the exact ceiling once; requests inside it autoapprove, w
 requests remain pending. The dashboard keeps policy history and every resulting Session records
 the policy version that authorized it.
 
-Pre-scoped Agent Access tokens remain available for unattended integrations that need the existing
-typed operation tools.
+For unattended work, approve a temporary Autoapproval Policy. The policy is only a ceiling; every
+task still receives its own expiring Session.
 
 ## MVP status
 
@@ -210,10 +198,10 @@ The Server keeps machine identities, temporary access, operations, and audit his
 through Kysely. Operation payloads are retained for one hour by default; content-minimal control
 events are retained for 30 days. Odyshell does not provide session recording by default.
 
-Organizations provide the ownership boundary and workspaces isolate machines, Agent Access, sessions,
+Organizations provide the ownership boundary and workspaces isolate machines, Agents, Sessions,
 operations, and control events. Human and organization identity now live in the Clerk-backed web
-app. Device authorization binds the CLI to one workspace, while Agent Access remains separate,
-scoped, revocable and expiring. Organization members can operate workspace resources; organization
+app. Device authorization binds the CLI to one workspace, while Agent Credentials identify
+integrations and Session Credentials authorize temporary work. Organization members can operate workspace resources; organization
 administrators additionally manage people and organization settings. Billing is not enabled yet. It is an early development MVP; the
 default local credentials are only for development.
 

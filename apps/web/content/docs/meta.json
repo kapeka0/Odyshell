@@ -11,6 +11,7 @@
     "operations",
     "cli",
     "security",
+    "migration",
     "event-sinks",
     "self-hosting",
     "troubleshooting"

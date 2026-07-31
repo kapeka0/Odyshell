@@ -27,17 +27,6 @@ export type CloudMachine = {
   online: boolean;
 };
 
-export type AgentAccess = {
-  id: string;
-  name: string;
-  machineIds: string[];
-  capabilities: Capability[];
-  expiresAt: string | null;
-  revokedAt: string | null;
-  createdAt: string | null;
-  status: "active" | "expired" | "revoked";
-};
-
 export type CloudAgent = {
   id: string;
   name: string;
@@ -180,7 +169,6 @@ export type CloudContext = {
   agents: CloudAgent[];
   sessions: CloudSession[];
   policies: CloudAgentPolicy[];
-  agentAccess: AgentAccess[];
   controlEvents: ControlEvent[];
 };
 

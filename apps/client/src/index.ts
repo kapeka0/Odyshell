@@ -185,6 +185,7 @@ export class Client {
   private stopped = false;
   private readonly sessions = new Map<string, ActiveSession>();
   private readonly closedSessions = new Set<string>();
+  private readonly closingSessions = new Map<string, Promise<void>>();
   private readonly operations = new Map<string, RunningOperation>();
   private readonly executors = new Map<"host" | "docker", OperationExecutor>();
   private readonly journal: OperationJournal;
@@ -368,17 +369,32 @@ export class Client {
   }
 
   private async closeSession(sessionId: string, reason: string): Promise<void> {
+    const pending = this.closingSessions.get(sessionId);
+    if (pending) {
+      await pending;
+      return;
+    }
     this.closedSessions.add(sessionId);
     if (this.closedSessions.size > 1_000) {
       const oldest = this.closedSessions.values().next().value;
       if (oldest !== undefined) this.closedSessions.delete(oldest);
     }
     const active = this.sessions.get(sessionId);
-    if (active) {
-      await active.executor.closeSession(active.session);
-      this.sessions.delete(sessionId);
+    this.sessions.delete(sessionId);
+    const closing = (async (): Promise<void> => {
+      if (active) {
+        await active.executor.closeSession(active.session);
+      }
+      this.send({ type: "session.closed", sessionId, reason });
+    })();
+    this.closingSessions.set(sessionId, closing);
+    try {
+      await closing;
+    } finally {
+      if (this.closingSessions.get(sessionId) === closing) {
+        this.closingSessions.delete(sessionId);
+      }
     }
-    this.send({ type: "session.closed", sessionId, reason });
   }
 
   private async startOperation(

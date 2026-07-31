@@ -223,28 +223,6 @@ try {
   if (isolatedMachine.workspaceId !== isolatedWorkspace.id) {
     throw new Error("Enrollment token did not bind the machine to its workspace");
   }
-  const isolatedAgent = await api("/v1/admin/agent-tokens", {
-    method: "POST",
-    headers: {
-      "x-odyshell-admin-key": adminKey,
-      "x-odyshell-workspace-id": isolatedWorkspace.id,
-    },
-    body: JSON.stringify({
-      name: "isolated-agent",
-      machineIds: [isolatedMachine.machineId],
-      capabilities: ["process.exec"],
-      expiresInSeconds: 600,
-    }),
-  });
-  const isolatedAgentMachines = await api("/v1/machines", {
-    headers: { authorization: `Bearer ${isolatedAgent.token}` },
-  });
-  if (
-    isolatedAgentMachines.data.length !== 1 ||
-    isolatedAgentMachines.data[0]?.id !== isolatedMachine.machineId
-  ) {
-    throw new Error("Agent token did not inherit its workspace boundary");
-  }
   const defaultMachinesBeforeEnrollment = await api("/v1/machines");
   if (
     defaultMachinesBeforeEnrollment.data.some(
@@ -603,8 +581,8 @@ try {
       capabilities: ["fs.read"],
     }),
   });
-  if (directAgentOperation.status !== 403) {
-    throw new Error("Agent Credential could access direct operation routes");
+  if (directAgentOperation.status !== 410) {
+    throw new Error("Legacy Session creation remained available to Agent Credentials");
   }
   const rotationResponse = await fetch(
     new URL("/v1/agent-credentials/rotate", apiUrl),
@@ -1328,8 +1306,8 @@ try {
       capabilities: ["fs.read"],
     }),
   });
-  if (newSessionAttempt.status !== 403) {
-    throw new Error("Session Credential minted another Session");
+  if (newSessionAttempt.status !== 410) {
+    throw new Error("Legacy Session creation remained available to Session Credentials");
   }
 
   const crossSessionId = crypto.randomUUID();
@@ -1765,19 +1743,19 @@ try {
   }
 
   const crossWorkspacePing = await fetch(
-    new URL(`/v1/machines/${machine.id}/ping`, apiUrl),
+    new URL(`/v1/machines/${isolatedMachine.machineId}/ping`, apiUrl),
     {
       method: "POST",
-      headers: { authorization: `Bearer ${isolatedAgent.token}` },
+      headers: { authorization: `Bearer ${cliToken}` },
     },
   );
   if (crossWorkspacePing.status !== 403) {
-    throw new Error("Agent token could ping a machine from another workspace");
+    throw new Error("CLI credential could ping a machine from another workspace");
   }
   const crossWorkspaceSession = await fetch(new URL("/v1/sessions", apiUrl), {
     method: "POST",
     headers: {
-      authorization: `Bearer ${isolatedAgent.token}`,
+      authorization: `Bearer ${cliToken}`,
       "content-type": "application/json",
     },
     body: JSON.stringify({
@@ -1787,8 +1765,8 @@ try {
       capabilities: ["process.exec"],
     }),
   });
-  if (crossWorkspaceSession.status !== 403) {
-    throw new Error("Agent token could open a session in another workspace");
+  if (crossWorkspaceSession.status !== 410) {
+    throw new Error("Legacy Session creation did not return migration guidance");
   }
   const crossWorkspaceGrant = await fetch(
     new URL("/v1/admin/agent-tokens", apiUrl),
@@ -1807,8 +1785,8 @@ try {
       }),
     },
   );
-  if (crossWorkspaceGrant.status !== 400) {
-    throw new Error("Administrator could grant a machine from another workspace");
+  if (crossWorkspaceGrant.status !== 410) {
+    throw new Error("Legacy Agent Access route remained authoritative");
   }
   const defaultAdminMachines = await api("/v1/admin/machines", {
     headers: { "x-odyshell-admin-key": adminKey },
@@ -1939,7 +1917,7 @@ try {
       [
         "insert into odyshell.agent_sessions",
         "(workspace_id, id, agent_id, purpose, status, expires_at)",
-        `values ('${isolatedWorkspace.id}', '${crypto.randomUUID()}', '${isolatedAgent.id}',`,
+        `values ('${isolatedWorkspace.id}', '${crypto.randomUUID()}', '${crypto.randomUUID()}',`,
         "'legacy-escalation', 'active', now() + interval '1 minute');",
       ].join(" "),
     ]);
@@ -2116,72 +2094,7 @@ try {
     throw new Error("Administrator machine list did not include the enrolled client");
   }
 
-  const scopedAgent = JSON.parse(
-    await run(process.execPath, [
-      tsxCli,
-      odsEntry,
-      "--server",
-      apiUrl,
-      "--admin-key",
-      adminKey,
-      "--json",
-      "agent",
-      "create",
-      "e2e-exec-agent",
-      "--machines",
-      machine.name,
-      "--allow",
-      "process.exec",
-      "--ttl",
-      "600",
-    ]),
-  );
-
-  const scopedMachines = await api("/v1/machines", {
-    headers: { authorization: `Bearer ${scopedAgent.token}` },
-  });
-  if (
-    scopedMachines.data.length !== 1 ||
-    scopedMachines.data[0]?.id !== machine.id
-  ) {
-    throw new Error("Scoped agent could access machines outside its token scope");
-  }
-
-  const listedAgents = JSON.parse(
-    await run(process.execPath, [
-      tsxCli,
-      odsEntry,
-      "--server",
-      apiUrl,
-      "--admin-key",
-      adminKey,
-      "--json",
-      "agent",
-      "list",
-    ]),
-  );
-  if (!listedAgents.data.some((item) => item.id === scopedAgent.id && item.status === "active")) {
-    throw new Error("ods agent list did not show active scoped access");
-  }
-
-  const deniedSession = await fetch(new URL("/v1/sessions", apiUrl), {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${scopedAgent.token}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      machineId: machine.id,
-      profile: "workspace",
-      ttlSeconds: 120,
-      capabilities: ["process.shell"],
-    }),
-  });
-  if (deniedSession.status !== 403) {
-    throw new Error("Scoped agent was allowed to exceed its capability scope");
-  }
-
-  const locallyDenied = await api("/v1/sessions", {
+  const locallyDenied = await api("/v1/development/sessions", {
     method: "POST",
     body: JSON.stringify({
       machineId: machine.id,
@@ -2206,7 +2119,7 @@ try {
       "--server",
       apiUrl,
       "--agent-token",
-      scopedAgent.token,
+      cliToken,
       "--json",
       "machines",
     ]),
@@ -2222,7 +2135,7 @@ try {
       "--server",
       apiUrl,
       "--agent-token",
-      scopedAgent.token,
+      cliToken,
       "--json",
       "ping",
       "e2e-docker",
@@ -2237,7 +2150,7 @@ try {
     "--server",
     apiUrl,
     "--agent-token",
-    scopedAgent.token,
+    cliToken,
     "ping",
     "e2e-docker",
   ]);
@@ -2289,6 +2202,28 @@ try {
     !cliAgentCredential.accessToken
   ) {
     throw new Error("CLI Agent Credential was not issued");
+  }
+  const listedAgents = JSON.parse(
+    await run(process.execPath, [
+      tsxCli,
+      odsEntry,
+      "--server",
+      apiUrl,
+      "--admin-key",
+      adminKey,
+      "--json",
+      "agent",
+      "list",
+    ]),
+  );
+  if (
+    !listedAgents.data.some(
+      (agent) =>
+        agent.id === cliAgentCredential.agentId &&
+        agent.status === "active",
+    )
+  ) {
+    throw new Error("ods agent list omitted the registered Agent identity");
   }
   const cliPolicyScope = {
     machineId: machine.id,
@@ -2376,7 +2311,7 @@ try {
     throw new Error("ods one-shot execution did not return expected output");
   }
 
-  const readOnlyCreated = await api("/v1/sessions", {
+  const readOnlyCreated = await api("/v1/development/sessions", {
     method: "POST",
     body: JSON.stringify({
       machineId: machine.id,
@@ -2436,7 +2371,7 @@ try {
     "read-only sandbox cleanup",
   );
 
-  const createdSession = await api("/v1/sessions", {
+  const createdSession = await api("/v1/development/sessions", {
     method: "POST",
     body: JSON.stringify({
       machineId: machine.id,
@@ -2660,64 +2595,6 @@ try {
     throw new Error("Durable audit metadata retained operation content");
   }
 
-  const boundedSessionResponse = await fetch(new URL("/v1/sessions", apiUrl), {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${scopedAgent.token}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      machineId: machine.id,
-      profile: "workspace",
-      ttlSeconds: 3600,
-      capabilities: ["process.exec"],
-    }),
-  });
-  const boundedSession = await boundedSessionResponse.json();
-  if (
-    !boundedSessionResponse.ok ||
-    new Date(boundedSession.expiresAt).getTime() > new Date(scopedAgent.expiresAt).getTime()
-  ) {
-    throw new Error("Session expiry was not bounded by its agent token");
-  }
-  await waitUntil(
-    () =>
-      api(`/v1/sessions/${boundedSession.id}`, {
-        headers: { authorization: `Bearer ${scopedAgent.token}` },
-      }),
-    (value) => value.status === "ready",
-    "bounded scoped session",
-  );
-
-  const revokedAgent = JSON.parse(
-    await run(process.execPath, [
-      tsxCli,
-      odsEntry,
-      "--server",
-      apiUrl,
-      "--admin-key",
-      adminKey,
-      "--json",
-      "agent",
-      "revoke",
-      scopedAgent.id,
-    ]),
-  );
-  if (revokedAgent.status !== "revoked" || revokedAgent.closedSessions < 1) {
-    throw new Error("Revoking agent access did not close its active session");
-  }
-  const revokedAccess = await fetch(new URL("/v1/machines", apiUrl), {
-    headers: { authorization: `Bearer ${scopedAgent.token}` },
-  });
-  if (revokedAccess.status !== 401) {
-    throw new Error("Revoked agent token remained usable");
-  }
-  await waitUntil(
-    () => run("docker", ["ps", "-q", "--filter", `label=odyshell.session=${boundedSession.id}`]),
-    (value) => value.trim() === "",
-    "revoked agent session cleanup",
-  );
-
   await api(`/v1/sessions/${session.id}`, { method: "DELETE" });
   await waitUntil(
     () => api(`/v1/sessions/${session.id}`),
@@ -2797,14 +2674,52 @@ try {
       "insert into odyshell.agent_tokens",
       "(workspace_id, id, name, token_hash, machine_ids, capabilities, expires_at, revoked_at)",
       "values",
-      "('default', 'retention-active-access', 'active', 'retention-active-hash', '[]'::jsonb, '[\"fs.read\"]'::jsonb, now() + interval '1 day', null),",
-      "('default', 'retention-inactive-access', 'inactive', 'retention-inactive-hash', '[]'::jsonb, '[\"fs.read\"]'::jsonb, now() - interval '31 days', null),",
-      "('default', 'retention-referenced-access', 'referenced', 'retention-referenced-hash', '[]'::jsonb, '[\"fs.read\"]'::jsonb, now() - interval '31 days', null);",
+      "('default', 'retention-active-access', 'active', 'retention-active-hash', '[]'::jsonb, '[\"fs.read\"]'::jsonb, now() + interval '1 day', now()),",
+      "('default', 'retention-inactive-access', 'inactive', 'retention-inactive-hash', '[]'::jsonb, '[\"fs.read\"]'::jsonb, now() - interval '31 days', now()),",
+      "('default', 'retention-referenced-access', 'referenced', 'retention-referenced-hash', '[]'::jsonb, '[\"fs.read\"]'::jsonb, now() - interval '31 days', now()),",
+      "('default', 'cutover-partial-access', 'partial', 'cutover-partial-hash', '[]'::jsonb, '[\"fs.read\"]'::jsonb, now() + interval '1 day', null);",
       "insert into odyshell.audit_events",
       "(workspace_id, id, principal_id, action, target_type, target_id, metadata)",
       "values",
       "('default', 'retention-reference-event', 'retention-referenced-access', 'agent_token.revoked', 'agent_token', 'retention-referenced-access', '{}'::jsonb);",
     ].join(" "),
+  ]);
+  await compose(["restart", "server"]);
+  const failedServerId = (await compose(["ps", "-q", "server"])).trim();
+  await waitUntil(
+    async () =>
+      JSON.parse(
+        await run("docker", ["inspect", failedServerId, "--format", "{{json .State.Running}}"]),
+      ),
+    (running) => running === false,
+    "fail-closed partial authority cutover",
+  );
+  const failedCutoverLogs = await compose([
+    "logs",
+    "--no-color",
+    "--tail",
+    "50",
+    "server",
+  ]);
+  if (
+    !failedCutoverLogs.includes("Authority cutover is incomplete") ||
+    !failedCutoverLogs.includes("activeLegacyTokens=1")
+  ) {
+    throw new Error("Partial authority cutover did not fail closed safely");
+  }
+  await compose([
+    "exec",
+    "-T",
+    "postgres",
+    "psql",
+    "-U",
+    "odyshell",
+    "-d",
+    "odyshell",
+    "-v",
+    "ON_ERROR_STOP=1",
+    "-c",
+    "update odyshell.agent_tokens set revoked_at = now() where id = 'cutover-partial-access';",
   ]);
   await compose(["restart", "server"]);
   const restartedPublished = (await compose(["port", "server", "4100"]))
@@ -2917,10 +2832,10 @@ try {
           odsCli: true,
           odsWorkspaceSelection: true,
           odsPing: true,
-          scopedAgentToken: true,
-          agentAccessListed: true,
-          agentAccessRevoked: true,
-          sessionBoundedByToken: true,
+          authorityCutover: true,
+          agentIdentityListed: true,
+          legacyAgentAccessRejected: true,
+          sessionBoundedByCredential: true,
           capabilityScopeDenied: true,
           clientPolicyDenied: true,
           auditTrail: true,
@@ -2948,6 +2863,16 @@ try {
       2,
     ),
   );
+} catch (error) {
+  const serverLogs = await compose([
+    "logs",
+    "--no-color",
+    "--tail",
+    "200",
+    "server",
+  ]).catch(() => "Server logs were unavailable.");
+  process.stderr.write(`[server]\n${serverLogs}`);
+  throw error;
 } finally {
   if (e2eMachineId) {
     const orphanIds = (

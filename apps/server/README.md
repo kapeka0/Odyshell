@@ -23,19 +23,18 @@ docker compose up -d --build
 The development Server is available at `http://127.0.0.1:4100`. Compose starts PostgreSQL and
 stores its data in a named volume, so local state survives Server restarts.
 
-The bundled database password and Odyshell keys are development defaults. Agent access should use
-expiring, scoped tokens:
+The bundled database password and Odyshell keys are development defaults. Register an Agent once:
 
 ```bash
 npm install --global @odyshell/cli
 ```
 
 ```bash
-ods agent create coding-agent --machines <machine-id> --allow 'process.exec,fs.read' --for 1h
+ods agent login "Coding agent"
 ```
 
-Sessions cannot outlive the token that created them. Revoking a token also closes its active
-sessions.
+The Agent requests expiring Sessions for its tasks. Its credential identifies the Agent but never
+authorizes a machine Operation directly.
 
 To test from another device, bind the development Server to a specific reachable host interface:
 
@@ -64,6 +63,10 @@ Cloud credential issuance is rate-limited per member and workspace. Expired enro
 and unreferenced inactive Agent Access records are removed by the retention sweep.
 Deleting an Agent revokes its credential and closes active sessions atomically. The hidden record
 remains only while retained sessions or Control Events still reference it.
+
+Startup applies the authority cutover and verifies that every Workspace is complete and that no
+legacy credential, Session or Operation remains active. Partial state stops startup instead of
+serving two authorization models.
 
 Browser-approved Sessions use persistent Agent identities and one-time Session Credentials. The
 Server stores only credential hashes and enforces the Session's exact machine, capability, path,

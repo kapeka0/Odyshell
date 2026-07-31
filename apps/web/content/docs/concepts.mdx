@@ -5,7 +5,7 @@ description: The small set of identities and boundaries used by Odyshell.
 
 ## Workspace
 
-The isolation boundary for machines, agent access, sessions, operations, and Control Events.
+The isolation boundary for machines, Agents, Sessions, Operations, and Control Events.
 Odyshell Cloud currently exposes one workspace for each organization.
 
 ## Machine
@@ -13,16 +13,22 @@ Odyshell Cloud currently exposes one workspace for each organization.
 A private computer running an Odyshell Client. The Client owns a machine identity, applies a
 local capability policy, and initiates the outbound connection to the Server.
 
-## Agent access
+## Agent
 
-An expiring, revocable credential for a programmatic client. It is restricted to explicit
-machines and capabilities. The plaintext credential is returned once; the Server stores its
-hash.
+A persistent identity for a programmatic client. An Independent Agent authenticates with a
+rotatable Agent Credential. A Managed Agent is controlled by its parent and never receives a
+durable credential.
+
+## Agent Credential
+
+An expiring, revocable credential that identifies an Independent Agent. It can request Sessions,
+but it cannot execute Operations or grant itself machine authority. The plaintext credential is
+returned once; the Server stores its hash.
 
 ## Capability
 
-A named class of operation. Both the agent credential and the target machine policy must allow
-the required capability.
+A named class of Operation. Both the approved Session scope and the target machine policy must
+allow the required capability.
 
 ## Session
 

@@ -4,7 +4,6 @@ import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import {
   agentSessionRequestInputSchema,
-  agentTokenRequestSchema,
   allCapabilities,
   capabilityForAction,
   operationRequestSchema,
@@ -21,16 +20,9 @@ import {
   serverAdminKey,
 } from "./access.js";
 import {
-  createAgentAccess,
-  deleteAgentAccess,
-  revokeAgentAccess,
-  type AgentAccessDependencies,
-} from "./agent-access.js";
-import {
   approveDeviceSchema,
   CloudLiveTokenReplayGuard,
   cloudLiveOriginDecision,
-  createCloudAgentAccessSchema,
   createCloudLiveToken,
   cloudIdentitySchema,
   cloudConnectionView,
@@ -38,13 +30,11 @@ import {
   cloudWebKey,
   cloudWebUrl,
   createDeviceUserCode,
-  deleteCloudAgentAccessSchema,
   entitlementsFor,
   exchangeDeviceAuthorizationSchema,
   FixedWindowRateLimiter,
   normalizeDeviceUserCode,
   privacySafeControlMetadata,
-  revokeCloudAgentAccessSchema,
   revokeCloudMachineSchema,
   ScopedConcurrencyLimiter,
   ScopedRateLimiter,
@@ -56,7 +46,6 @@ import {
   audit,
   createDatabase,
   DEFAULT_WORKSPACE_ID,
-  type AgentTokenRecord,
   type AgentCredentialPrincipal,
   type AuditRecord,
   type CliTokenRecord,
@@ -187,7 +176,7 @@ const gateway = new ClientGateway(db);
 gateway.register(app);
 
 type AgentPrincipal = {
-  kind: "agent" | "agent_identity" | "cli" | "development" | "session";
+  kind: "agent_identity" | "cli" | "development" | "session";
   id: string;
   name: string;
   workspaceId: string;
@@ -212,11 +201,6 @@ const agentDevicePollLimiter = new FixedWindowRateLimiter(40, 60_000);
 const enrollmentIssuanceLimiter = new ScopedRateLimiter(
   60,
   20,
-  60 * 60_000,
-);
-const agentAccessIssuanceLimiter = new ScopedRateLimiter(
-  120,
-  40,
   60 * 60_000,
 );
 const sessionRequestLimiter = new ScopedRateLimiter(120, 20, 60 * 60_000);
@@ -361,19 +345,6 @@ async function requireAgent(request: FastifyRequest, reply: FastifyReply): Promi
   }
 
   if (token) {
-    const principal = await db.findAgentByTokenHash(hashToken(token));
-    if (principal) {
-      requestPrincipals.set(request, {
-        kind: "agent",
-        id: principal.id,
-        name: principal.name,
-        workspaceId: principal.workspaceId,
-        machineIds: new Set(principal.machineIds),
-        capabilities: new Set(principal.capabilities),
-        expiresAt: new Date(principal.expiresAt),
-      });
-      return;
-    }
     const agentIdentity = await db.findAgentCredentialByTokenHash(
       hashToken(token),
     );
@@ -525,49 +496,6 @@ function isUniqueConflict(error: unknown): boolean {
   return (error as { code?: unknown })?.code === "23505";
 }
 
-async function expireAgentSessions(
-  workspaceId: string,
-  principalId: string,
-  reason: string,
-): Promise<number> {
-  const expired = await db.expireAgentSessions(workspaceId, principalId);
-  for (const session of expired) {
-    gateway.send(session.machineId, {
-      type: "session.close",
-      sessionId: session.id,
-      reason,
-    });
-  }
-  return expired.length;
-}
-
-function agentAccessView(token: AgentTokenRecord): {
-  id: string;
-  name: string;
-  machineIds: string[];
-  capabilities: Capability[];
-  expiresAt: string | null;
-  revokedAt: string | null;
-  createdAt: string | null;
-  status: "active" | "expired" | "revoked";
-} {
-  return {
-    id: token.id,
-    name: token.name,
-    machineIds: token.machineIds,
-    capabilities: token.capabilities,
-    expiresAt: isoTimestamp(token.expiresAt),
-    revokedAt: isoTimestamp(token.revokedAt),
-    createdAt: isoTimestamp(token.createdAt),
-    status:
-      token.revokedAt !== undefined
-        ? "revoked"
-        : token.expiresAt <= Date.now()
-          ? "expired"
-          : "active",
-  };
-}
-
 function controlEventView(event: AuditRecord): {
   id: string;
   principalId: string;
@@ -656,46 +584,6 @@ function eventSinkView(
     updatedAt: isoTimestamp(sink.updatedAt),
   };
 }
-
-const agentAccessDependencies: AgentAccessDependencies = {
-  activeMachinesExist: (workspaceId, machineIds) =>
-    db.activeMachinesExist(workspaceId, machineIds),
-  createAgentToken: (input) => db.createAgentToken(input),
-  revokeAgentToken: (workspaceId, tokenId) =>
-    db.revokeAgentToken(workspaceId, tokenId),
-  deleteAgentToken: async (workspaceId, tokenId) => {
-    const deletion = await db.deleteAgentToken(workspaceId, tokenId);
-    if (!deletion) return null;
-    for (const session of deletion.sessions) {
-      gateway.send(session.machineId, {
-        type: "session.close",
-        sessionId: session.id,
-        reason: "agent_token_deleted",
-      });
-    }
-    return {
-      token: deletion.token,
-      closedSessions: deletion.sessions.length,
-    };
-  },
-  expireAgentSessions,
-  audit: async (workspaceId, principalId, action, targetType, targetId, metadata) => {
-    await audit(
-      db,
-      workspaceId,
-      principalId,
-      action,
-      targetType,
-      targetId,
-      metadata,
-    );
-    gateway.notifyWorkspace(workspaceId);
-  },
-  createId: randomUUID,
-  createToken: () => createOpaqueToken("agent"),
-  hashToken,
-  now: Date.now,
-};
 
 async function revokeWorkspaceMachine(
   workspaceId: string,
@@ -1292,7 +1180,6 @@ app.post(
       machines,
       usage,
       connections,
-      agentAccess,
       agents,
       sessions,
       policies,
@@ -1301,7 +1188,6 @@ app.post(
       db.listMachines(context.workspace.id),
       db.workspacePlan(context.workspace.id),
       db.workspaceConnections(context.workspace.id),
-      db.listAgentTokens(context.workspace.id),
       db.listWorkspaceAgents(context.workspace.id),
       db.listWorkspaceAgentSessions(context.workspace.id),
       db.listAgentPolicies(context.workspace.id),
@@ -1329,7 +1215,7 @@ app.post(
         connections: connections.connections.map((connection) =>
           cloudConnectionView(
             connection,
-            agentAccess.find((agent) => agent.id === connection.principalId)
+            agents.find((agent) => agent.id === connection.principalId)
               ?.name ?? "CLI",
           ),
         ),
@@ -1369,7 +1255,6 @@ app.post(
         createdAt: isoTimestamp(policy.createdAt),
         updatedAt: isoTimestamp(policy.updatedAt),
       })),
-      agentAccess: agentAccess.map(agentAccessView),
       controlEvents: controlEvents.map(controlEventView),
     };
   },
@@ -2090,94 +1975,31 @@ app.post(
 app.post(
   "/v1/internal/cloud/agent-access",
   { preHandler: requireWeb },
-  async (request, reply) => {
-    const parsed = createCloudAgentAccessSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: "invalid_request", details: parsed.error.issues });
-    }
-    const context = await db.ensureCloudContext({
-      externalId: parsed.data.organization.externalId,
-      slug: parsed.data.organization.slug,
-      name: parsed.data.organization.name,
-    });
-    if (
-      !agentAccessIssuanceLimiter.allow(
-        context.workspace.id,
-        parsed.data.userId,
-      )
-    ) {
-      return reply
-        .code(429)
-        .send({ error: "agent_access_issuance_rate_limited" });
-    }
-    const result = await createAgentAccess(
-      agentAccessDependencies,
-      context.workspace.id,
-      parsed.data.userId,
-      parsed.data,
-    );
-    if (result.status === "unknown_machine") {
-      return reply.code(400).send({ error: "unknown_machine" });
-    }
-    if (result.status === "limit_reached") {
-      return reply.code(409).send({
-        error: "agent_token_limit_reached",
-        details: {
-          plan: result.plan,
-          activeAgentLimit: result.activeAgentLimit,
-        },
-      });
-    }
-    return reply.code(201).send(result.access);
-  },
+  async (_request, reply) =>
+    reply.code(410).send({
+      error: "legacy_agent_access_migrated",
+      replacement: "agent_device_authorization",
+    }),
 );
 
 app.post(
   "/v1/internal/cloud/agent-access/revoke",
   { preHandler: requireWeb },
-  async (request, reply) => {
-    const parsed = revokeCloudAgentAccessSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: "invalid_request", details: parsed.error.issues });
-    }
-    const context = await db.ensureCloudContext({
-      externalId: parsed.data.organization.externalId,
-      slug: parsed.data.organization.slug,
-      name: parsed.data.organization.name,
-    });
-    const result = await revokeAgentAccess(
-      agentAccessDependencies,
-      context.workspace.id,
-      parsed.data.userId,
-      parsed.data.tokenId,
-    );
-    if (!result) return reply.code(404).send({ error: "agent_token_not_found" });
-    return result;
-  },
+  async (_request, reply) =>
+    reply.code(410).send({
+      error: "legacy_agent_access_migrated",
+      replacement: "agent_credentials",
+    }),
 );
 
 app.post(
   "/v1/internal/cloud/agent-access/delete",
   { preHandler: requireWeb },
-  async (request, reply) => {
-    const parsed = deleteCloudAgentAccessSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: "invalid_request", details: parsed.error.issues });
-    }
-    const context = await db.ensureCloudContext({
-      externalId: parsed.data.organization.externalId,
-      slug: parsed.data.organization.slug,
-      name: parsed.data.organization.name,
-    });
-    const result = await deleteAgentAccess(
-      agentAccessDependencies,
-      context.workspace.id,
-      parsed.data.userId,
-      parsed.data.tokenId,
-    );
-    if (!result) return reply.code(404).send({ error: "agent_token_not_found" });
-    return result;
-  },
+  async (_request, reply) =>
+    reply.code(410).send({
+      error: "legacy_agent_access_migrated",
+      replacement: "agents",
+    }),
 );
 
 app.post(
@@ -2391,12 +2213,27 @@ app.post(
 app.get(
   "/v1/admin/agent-tokens",
   { preHandler: requireWorkspaceAccess },
-  async (request) => {
-    const tokens = await db.listAgentTokens(adminWorkspaceFor(request));
-    return {
-      data: tokens.map(agentAccessView),
-    };
-  },
+  async (_request, reply) =>
+    reply.code(410).send({
+      error: "legacy_agent_access_migrated",
+      replacement: "agents",
+    }),
+);
+
+app.get(
+  "/v1/admin/agents",
+  { preHandler: requireWorkspaceAccess },
+  async (request) => ({
+    data: (await db.listWorkspaceAgents(adminWorkspaceFor(request))).map(
+      (agent) => ({
+        id: agent.id,
+        name: agent.name,
+        kind: agent.kind,
+        status: agent.status,
+        parentAgentId: agent.parentAgentId ?? null,
+      }),
+    ),
+  }),
 );
 
 app.get(
@@ -2554,48 +2391,21 @@ app.delete<{ Params: { machineId: string } }>(
 
 app.post("/v1/admin/agent-tokens", {
   preHandler: requireWorkspaceAccess,
-}, async (request, reply) => {
-  const workspaceId = adminWorkspaceFor(request);
-  const parsed = agentTokenRequestSchema.safeParse(request.body);
-  if (!parsed.success) {
-    return reply.code(400).send({ error: "invalid_request", details: parsed.error.issues });
-  }
-
-  const result = await createAgentAccess(
-    agentAccessDependencies,
-    workspaceId,
-    adminPrincipalFor(request),
-    parsed.data,
-  );
-  if (result.status === "unknown_machine") {
-    return reply.code(400).send({ error: "unknown_machine" });
-  }
-  if (result.status === "limit_reached") {
-    return reply.code(409).send({
-      error: "agent_token_limit_reached",
-      details: {
-        plan: result.plan,
-        activeAgentLimit: result.activeAgentLimit,
-      },
-    });
-  }
-  return reply.code(201).send(result.access);
+}, async (_request, reply) => {
+  return reply.code(410).send({
+    error: "legacy_agent_access_migrated",
+    replacement: "agent_device_authorization",
+  });
 });
 
 app.delete<{ Params: { tokenId: string } }>(
   "/v1/admin/agent-tokens/:tokenId",
   { preHandler: requireWorkspaceAccess },
-  async (request, reply) => {
-    const workspaceId = adminWorkspaceFor(request);
-    const result = await revokeAgentAccess(
-      agentAccessDependencies,
-      workspaceId,
-      adminPrincipalFor(request),
-      request.params.tokenId,
-    );
-    if (!result) return reply.code(404).send({ error: "agent_token_not_found" });
-    return result;
-  },
+  async (_request, reply) =>
+    reply.code(410).send({
+      error: "legacy_agent_access_migrated",
+      replacement: "agent_credentials",
+    }),
 );
 
 app.post("/v1/clients/enroll", async (request, reply) => {
@@ -3012,8 +2822,11 @@ app.post<{ Params: { sessionId: string } }>(
   },
 );
 
-app.get("/v1/sessions", { preHandler: requireAgent }, async (request) => {
+app.get("/v1/sessions", { preHandler: requireAgent }, async (request, reply) => {
   const principal = principalFor(request);
+  if (principal.kind !== "session" && principal.kind !== "development") {
+    return reply.code(403).send({ error: "session_credential_required" });
+  }
   const sessions = (
     await db.listSessions(principal.workspaceId, principal.id)
   ).filter(
@@ -3036,10 +2849,17 @@ app.get("/v1/sessions", { preHandler: requireAgent }, async (request) => {
   };
 });
 
-app.post("/v1/sessions", { preHandler: requireAgent }, async (request, reply) => {
+app.post("/v1/sessions", async (_request, reply) =>
+  reply.code(410).send({
+    error: "legacy_session_creation_migrated",
+    replacement: "agent_session_requests",
+  }),
+);
+
+app.post("/v1/development/sessions", { preHandler: requireAgent }, async (request, reply) => {
   const principal = principalFor(request);
-  if (principal.kind === "session") {
-    return reply.code(403).send({ error: "session_scope_denied" });
+  if (principal.kind !== "development") {
+    return reply.code(403).send({ error: "development_credential_required" });
   }
   const parsed = sessionRequestSchema.safeParse(request.body);
   if (!parsed.success) {
@@ -3083,7 +2903,7 @@ app.post("/v1/sessions", { preHandler: requireAgent }, async (request, reply) =>
     profile: input.profile,
     capabilities: input.capabilities,
     expiresAt: expiresAt.getTime(),
-    requireActiveAgentToken: principal.kind === "agent",
+    requireActiveAgentToken: false,
   });
   if (!sessionCreated) {
     return reply.code(401).send({ error: "invalid_or_expired_agent_token" });
@@ -3116,6 +2936,9 @@ app.get<{ Params: { sessionId: string } }>(
   { preHandler: requireAgent },
   async (request, reply) => {
     const principal = principalFor(request);
+    if (principal.kind !== "session" && principal.kind !== "development") {
+      return reply.code(403).send({ error: "session_credential_required" });
+    }
     if (
       principal.sessionScope !== undefined &&
       request.params.sessionId !== principal.sessionScope.sessionId
@@ -3184,6 +3007,9 @@ app.delete<{ Params: { sessionId: string } }>(
   { preHandler: requireAgent },
   async (request, reply) => {
     const principal = principalFor(request);
+    if (principal.kind !== "session" && principal.kind !== "development") {
+      return reply.code(403).send({ error: "session_credential_required" });
+    }
     if (
       principal.sessionScope !== undefined &&
       request.params.sessionId !== principal.sessionScope.sessionId
@@ -3553,6 +3379,9 @@ app.post<{ Params: { sessionId: string } }>(
         .code(202)
         .send({ id: operationId, status: sent ? "delivered" : "queued" });
     }
+    if (principal.kind !== "development") {
+      return reply.code(403).send({ error: "session_credential_required" });
+    }
     const idempotencyKey = request.headers["idempotency-key"] as string | undefined;
     if (idempotencyKey) {
       const existing = await db.findOperationByIdempotency(
@@ -3638,6 +3467,9 @@ app.get<{ Params: { operationId: string } }>(
   { preHandler: requireAgent },
   async (request, reply) => {
     const principal = principalFor(request);
+    if (principal.kind !== "session" && principal.kind !== "development") {
+      return reply.code(403).send({ error: "session_credential_required" });
+    }
     const operation = await db.getOperation(
       principal.workspaceId,
       request.params.operationId,
@@ -3670,6 +3502,9 @@ app.post<{ Params: { operationId: string } }>(
   { preHandler: requireAgent },
   async (request, reply) => {
     const principal = principalFor(request);
+    if (principal.kind !== "session" && principal.kind !== "development") {
+      return reply.code(403).send({ error: "session_credential_required" });
+    }
     const operation = await db.getOperationTarget(
       principal.workspaceId,
       request.params.operationId,
@@ -3702,6 +3537,9 @@ app.get<{ Params: { operationId: string }; Querystring: { after?: string } }>(
   { preHandler: requireAgent },
   async (request, reply) => {
     const principal = principalFor(request);
+    if (principal.kind !== "session" && principal.kind !== "development") {
+      return reply.code(403).send({ error: "session_credential_required" });
+    }
     if (
       !(await db.operationExists(
         principal.workspaceId,

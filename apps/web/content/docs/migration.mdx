@@ -1,0 +1,26 @@
+---
+title: Authority migration
+description: Move from Agent Access credentials to persistent Agents and temporary Sessions.
+---
+
+Current Odyshell Servers migrate authority automatically at startup. Existing Workspaces,
+machines, Client Profiles and retained Activity remain available. Agent Access credentials and
+their active Sessions are revoked; a disabled Agent identity preserves the old display name and
+history.
+
+Reconnect each integration once:
+
+```bash
+ods agent login "My Agent"
+```
+
+The Agent can then request a Session for each task. For repeated unattended work, approve a
+temporary Autoapproval Policy instead of creating a permanent machine grant.
+
+Legacy Agent Access and direct Session-creation routes return `410` with the replacement interface.
+They never silently translate a permanent grant into a new Session.
+
+Self-hosted operators should take a PostgreSQL snapshot before upgrading. Rolling back the
+application or schema does not reactivate revoked credentials. Restore a pre-cutover database
+snapshot only before accepting new Sessions, or continue forward and register new Agent
+Credentials.

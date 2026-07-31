@@ -14,6 +14,7 @@ const requiredPages = [
   "operations.mdx",
   "cli.mdx",
   "security.mdx",
+  "migration.mdx",
   "event-sinks.mdx",
   "self-hosting.mdx",
   "troubleshooting.mdx",

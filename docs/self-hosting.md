@@ -29,6 +29,13 @@ curl --fail http://127.0.0.1:4100/health
 Compose starts the Server and PostgreSQL. Its named volume keeps state across restarts. The
 included passwords and keys are development defaults; do not expose this setup to the internet.
 
+Before upgrading an existing installation, take a PostgreSQL snapshot. The authority cutover
+keeps Workspaces, machines, Client Profiles and retained events, but revokes legacy Agent Access
+credentials and their active Sessions. Register integrations again with `ods agent login`.
+
+Rollback may restore application or schema compatibility, but it never reactivates revoked
+secrets. Restore a pre-cutover snapshot only before accepting new Sessions.
+
 ## Run it on your infrastructure
 
 Provide a PostgreSQL database and build the Server:

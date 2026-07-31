@@ -31,7 +31,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import type {
-  AgentAccess,
+  CloudAgent,
   CloudMachine,
   ControlEvent,
 } from "@/lib/cloud-api";
@@ -48,17 +48,17 @@ type ActivityRow = ControlEvent & {
 export function ControlEventList({
   events,
   machines,
-  accesses,
+  agents,
   retentionDays,
 }: {
   events: ControlEvent[];
   machines: CloudMachine[];
-  accesses: AgentAccess[];
+  agents: CloudAgent[];
   retentionDays: number;
 }) {
   const rows = useMemo(
-    () => activityRows(events, machines, accesses),
-    [accesses, events, machines],
+    () => activityRows(events, machines, agents),
+    [agents, events, machines],
   );
   const columns = useMemo<ColumnDef<ActivityRow>[]>(
     () => [
@@ -281,13 +281,13 @@ function Detail({
 function activityRows(
   events: ControlEvent[],
   machines: CloudMachine[],
-  accesses: AgentAccess[],
+  agents: CloudAgent[],
 ): ActivityRow[] {
   const machineNames = new Map(
     machines.map((machine) => [machine.id, machine.name]),
   );
   const accessNames = new Map(
-    accesses.map((access) => [access.id, access.name]),
+    agents.map((agent) => [agent.id, agent.name]),
   );
   return events.map((event) => {
     const actor = actorLabel(event.principalId, accessNames);

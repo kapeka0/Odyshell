@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 const actions = [
   { label: "Open dashboard", href: "/dashboard", shortcut: "D", icon: LayoutDashboardIcon },
   { label: "View machines", href: "/dashboard/machines", shortcut: "M", icon: TerminalIcon },
-  { label: "Manage agent access", href: "/dashboard/access", shortcut: "A", icon: CommandIcon },
+  { label: "View agents", href: "/dashboard/agents", shortcut: "A", icon: CommandIcon },
   { label: "Review activity", href: "/dashboard/activity", shortcut: "R", icon: SearchIcon },
 ] as const;
 

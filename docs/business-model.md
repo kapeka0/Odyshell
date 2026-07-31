@@ -113,19 +113,19 @@ offering white-label or OEM distribution, but it is not required to validate the
 The business model requires two boundaries:
 
 - **Organization:** the paying company, its people, plan, and billing relationship.
-- **Workspace:** an execution boundary for machines, Agent Access, policies, and control events.
+- **Workspace:** an execution boundary for machines, Agents, Sessions, policies, and control events.
 
 One organization may use workspaces for production, development, teams, or individual customers.
 Human roles belong to the organization or workspace. Agents do not receive human roles; they
-receive temporary Agent Access scoped to machines, capabilities, and duration.
+request temporary Sessions scoped to machines, capabilities, typed restrictions, and duration.
 
 The MVP now persists Organizations and enforces Workspace isolation across enrollment, machines,
-Agent Access, sessions, operations, and control events. Clerk manages membership and the current
+Agents, Sessions, Operations, and Control Events. Clerk manages membership and the current
 human roles:
 
 | Role | MVP responsibility |
 | --- | --- |
-| Organization Member | Operate workspace machines, Agent Access, CLI approvals, and Control Events |
+| Organization Member | Operate workspace machines, approve Sessions, and review Control Events |
 | Organization Admin | Member capabilities plus people and organization governance |
 
 More specialized roles are a later governance feature:
@@ -134,7 +134,7 @@ More specialized roles are a later governance feature:
 | --- | --- |
 | Owner | Ownership, billing, administrators, and organization deletion |
 | Admin | Members, workspaces, machine policy, and integrations |
-| Operator | Machine enrollment and temporary Agent Access |
+| Operator | Machine enrollment and temporary Session approval |
 | Auditor | Read and export content-minimal control events |
 | Billing admin | Plan and invoice management only |
 

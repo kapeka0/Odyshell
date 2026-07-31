@@ -27,7 +27,7 @@ export default function ActivityPage() {
         <ControlEventList
           events={state.context.controlEvents ?? []}
           machines={state.context.machines}
-          accesses={state.context.agentAccess ?? []}
+          agents={state.context.agents}
           retentionDays={state.context.plan.controlEventRetentionDays}
         />
       )}

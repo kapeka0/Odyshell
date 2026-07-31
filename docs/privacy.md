@@ -19,14 +19,12 @@ or stderr in the durable control-event trail.
 
 ### Machine and access state
 
-The Server persists machine identities, public keys, capability policy, hashed tokens, session
-state, and revocation state. Private machine keys remain on the Client. Plaintext enrollment and
-Agent Access credentials are returned once and are not stored.
-Expired enrollment records are purged with temporary operation data. Inactive Agent Access
-records are removed only after no retained session or Control Event still references them.
-Deleting an Agent revokes its credential and removes it from the Workspace immediately. Its
-underlying record is physically purged only after no retained Session or Control Event references
-it.
+The Server persists machine identities, public keys, capability policy, hashed credentials,
+Session state, and revocation state. Private machine keys remain on the Client. Plaintext
+enrollment, Agent, and Session Credentials are returned once and are not stored.
+Expired enrollment records are purged with temporary operation data. Disabling an Agent revokes
+its credentials and closes its active Sessions without deleting retained Timeline or Control
+Event history.
 
 ### Temporary operation data
 
@@ -64,18 +62,16 @@ period that matches their privacy, incident-response, and legal requirements.
 
 ## Event delivery
 
-Agents can consume per-operation output as live server-sent events today. A workspace-level sink
-for content-minimal control events is part of the next MVP milestone.
-
-The intended model is customer-owned delivery:
+Agents can consume per-operation output as live server-sent events. A workspace can also configure
+a signed HTTPS Event Sink for customer-owned delivery:
 
 - signed HTTPS webhooks for application pipelines;
 - object storage for customer-controlled retention;
 - SIEM or log-stream integrations for security teams.
 
 Odyshell Cloud should not require customers to buy long-term centralized storage of task content.
-Managed delivery, retries, integrations, and retention controls may be commercial features, while
-the ability to export one's own control events remains a product requirement.
+Delivery uses bounded retries and a dead-letter state. Endpoint validation blocks loopback,
+private-network, link-local, and metadata-service destinations; redirects are not followed.
 
 ## Important limits
 

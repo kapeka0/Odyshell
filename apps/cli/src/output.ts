@@ -1,6 +1,6 @@
 import pc from "picocolors";
 import type {
-  AgentAccess,
+  ListedAgent,
   AuditEvent,
   Machine,
   Operation,
@@ -55,19 +55,18 @@ export function printSessions(sessions: Session[]): void {
   );
 }
 
-export function printAgents(agents: AgentAccess[]): void {
+export function printAgents(agents: ListedAgent[]): void {
   if (agents.length === 0) {
-    console.log(pc.dim("No agent access tokens."));
+    console.log(pc.dim("No Agents."));
     return;
   }
   printTable(
-    ["NAME", "STATUS", "EXPIRES", "MACHINES", "CAPABILITIES", "ID"],
+    ["NAME", "STATUS", "TYPE", "PARENT", "ID"],
     agents.map((agent) => [
       agent.name,
       colorStatus(agent.status),
-      new Date(agent.expiresAt).toLocaleString(),
-      String(agent.machineIds.length),
-      agent.capabilities.join(","),
+      agent.kind,
+      agent.parentAgentId ?? "—",
       agent.id,
     ]),
   );

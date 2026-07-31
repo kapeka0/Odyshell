@@ -124,13 +124,17 @@ export async function resolveConfig(options: GlobalOptions): Promise<StoredConfi
     options.workspaceId ??
     process.env.ODYSHELL_WORKSPACE_ID ??
     stored?.workspaceId;
+  const mcpAgentId =
+    process.env.ODYSHELL_AGENT_ID ?? stored?.mcpAgentId;
+  const mcpAgentName =
+    process.env.ODYSHELL_AGENT_NAME ?? stored?.mcpAgentName;
   return {
     serverUrl: serverUrlFor(options, process.env, stored),
     ...(workspaceId ? { workspaceId } : {}),
     ...(agentToken ? { agentToken } : {}),
     ...(cliToken ? { cliToken } : {}),
-    ...(stored?.mcpAgentId ? { mcpAgentId: stored.mcpAgentId } : {}),
-    ...(stored?.mcpAgentName ? { mcpAgentName: stored.mcpAgentName } : {}),
+    ...(mcpAgentId ? { mcpAgentId } : {}),
+    ...(mcpAgentName ? { mcpAgentName } : {}),
     ...(adminKey ? { adminKey } : {}),
   };
 }

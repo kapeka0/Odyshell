@@ -152,6 +152,8 @@ Remove or hide legacy commands only after replacements exist and migration messa
 
 ## Vertical 4: fail-closed migration
 
+Status: implemented.
+
 Roll out in this order:
 
 1. deploy additive schema and target APIs;

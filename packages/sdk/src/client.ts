@@ -168,6 +168,14 @@ export type AgentAccess = {
   status: "active" | "expired" | "revoked";
 };
 
+export type ListedAgent = {
+  id: string;
+  name: string;
+  kind: "independent" | "managed";
+  status: "active" | "disabled";
+  parentAgentId: string | null;
+};
+
 export type AuditEvent = {
   id: string;
   principalId: string;
@@ -1115,8 +1123,8 @@ export class Odyshell {
     });
   }
 
-  async agents(): Promise<AgentAccess[]> {
-    const response = await this.request<{ data: AgentAccess[] }>("/v1/admin/agent-tokens", {
+  async agents(): Promise<ListedAgent[]> {
+    const response = await this.request<{ data: ListedAgent[] }>("/v1/admin/agents", {
       admin: true,
     });
     return response.data;

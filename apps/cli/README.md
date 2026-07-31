@@ -59,7 +59,7 @@ ods --json exec raspberry -- uname -a
 - `ods ping` checks end-to-end access without running a command.
 - `ods exec`, `ods fs`, and `ods docker` request a narrowly scoped Session and perform one typed
   operation.
-- `ods session` manages longer-lived temporary sessions.
+- `ods session` inspects and operates an already approved Session.
 - `ods client` configures the client running on a private machine.
 - `ods audit` shows actions visible to the current agent.
 - `ods mcp` lets a signed-in agent request temporary access over MCP stdio.
@@ -67,8 +67,8 @@ ods --json exec raspberry -- uname -a
 `ods up --workspace <path>` refers to the local directory exposed by the Client. It is separate
 from the Cloud Workspace selected during `ods login`.
 
-The legacy administrator commands remain available for self-hosted development, but Cloud
-organization management does not live in the CLI.
+Legacy Agent Access and direct Session creation commands return migration guidance and do not
+authorize work.
 
 ## MCP
 

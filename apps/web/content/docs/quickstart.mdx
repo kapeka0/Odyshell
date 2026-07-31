@@ -1,6 +1,6 @@
 ---
 title: Quickstart
-description: Connect a private Linux machine and give an agent temporary access.
+description: Connect a private Linux machine and run an approved Agent task.
 ---
 
 This is the shortest Cloud workflow. It uses Linux for the persistent Client service.
@@ -31,21 +31,20 @@ make available. The generated command uses that current directory as `--workspac
 The enrollment token in that command expires after ten minutes and works once. The Client then
 keeps an outbound connection to Odyshell; the machine does not expose an inbound port.
 
-## 4. Create agent access
+## 4. Connect an Agent
 
-Open **Agents**, select **Add**, and choose:
+In the Agent environment, register its persistent identity:
 
-- a recognizable name;
-- one or more connected machines;
-- only the capabilities required for the task;
-- an expiry.
+```bash
+ods agent login "My Agent"
+```
 
-The credential is shown once. Transfer the generated login command to the agent through a secure
-channel.
+Open the displayed URL and approve the registration. This returns an expiring Agent Credential
+that can request Sessions, but cannot execute an Operation by itself.
 
-## 5. Verify the route
+## 5. Run an approved Operation
 
-In the agent environment, run the generated login command, then:
+Request a narrowly scoped Session by running:
 
 ```bash
 ods machines
@@ -53,7 +52,8 @@ ods ping my-machine
 ods exec my-machine -- uname -a
 ```
 
-A successful ping returns `Pong! 🏓`.
+Open the Session approval URL printed by `ods exec`, review its machine, capability and typed
+restriction, then approve it. A successful ping returns `Pong! 🏓`.
 
-The administrator can revoke the credential at any time. Expiry or revocation closes the
-sessions created with it.
+The CLI claims the approved Session, executes the Operation, and closes the Session. Cancelling
+the Session or revoking its credential immediately prevents reuse.

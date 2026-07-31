@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
-export default function AgentAccessPage() {
+export default function LegacyAgentAccessPage() {
   redirect("/dashboard/agents");
 }

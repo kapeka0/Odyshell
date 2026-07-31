@@ -42,6 +42,15 @@ async function dockerCapture(args: string[], input?: Buffer): Promise<string> {
   });
 }
 
+export function isContainerAlreadyRemoved(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("No such container") ||
+    (message.includes("removal of container") &&
+      message.includes("is already in progress"))
+  );
+}
+
 export type DockerRuntime = {
   os: "linux";
   architecture: string;
@@ -199,7 +208,7 @@ export class DockerRunner implements OperationExecutor {
     try {
       await dockerCapture(["rm", "-f", session.containerName]);
     } catch (error) {
-      if (!String(error).includes("No such container")) throw error;
+      if (!isContainerAlreadyRemoved(error)) throw error;
     }
   }
 

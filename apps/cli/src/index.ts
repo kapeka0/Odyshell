@@ -52,7 +52,6 @@ import {
 import { resolveClientUpConfiguration } from "./up.js";
 import {
   serveApprovedOdyshellMcp,
-  serveOdyshellMcp,
 } from "./mcp.js";
 import { deviceLoginUrl } from "./login.js";
 
@@ -534,7 +533,7 @@ token
     }
   });
 
-const agent = program.command("agent").description("manage scoped agent access");
+const agent = program.command("agent").description("manage Agent identities");
 agent
   .command("login")
   .description("register this runtime as an Independent Agent")
@@ -630,7 +629,7 @@ agent
 
 agent
   .command("list")
-  .description("list scoped agent access")
+  .description("list Agent identities")
   .action(async (_options, command: Command) => {
     const global = globals(command);
     const agents = await (await apiFor(command)).agents();
@@ -640,7 +639,7 @@ agent
 
 agent
   .command("create <name>")
-  .description("create a scoped agent token")
+  .description("legacy command; Agents now register with agent login")
   .requiredOption("--machines <references>", "comma-separated machine names or IDs")
   .requiredOption("--allow <capabilities>", "comma-separated capabilities")
   .option("--for <duration>", "access lifetime", "1h")
@@ -651,44 +650,26 @@ agent
       options: { machines: string; allow: string; for: string; ttl?: string },
       command: Command,
     ) => {
-      const global = globals(command);
-      const machineReferences = [
-        ...new Set(options.machines.split(",").map((reference) => reference.trim())),
-      ].filter(Boolean);
-      if (machineReferences.length === 0) {
-        throw new ExpectedError(
-          "At least one machine name or ID is required",
-          "machine_references_required",
-        );
-      }
-      const api = await apiFor(command);
-      const machineIds = await api.resolveAdminMachineIds(machineReferences);
-      const result = await api.createAgentToken(
-        name,
-        machineIds,
-        parseCapabilities(options.allow),
-        parseDuration(options.ttl ?? options.for, options.ttl ? "--ttl" : "--for"),
+      void name;
+      void options;
+      void command;
+      throw new ExpectedError(
+        'Agent Access was migrated. Register once with "ods agent login", then request temporary Sessions.',
+        "legacy_agent_access_migrated",
       );
-      if (global.json) printJson(result);
-      else {
-        console.log(result.token);
-        console.error(pc.dim(`Agent ${result.name} (${result.id})`));
-        console.error(pc.dim(`Expires ${new Date(result.expiresAt).toLocaleString()}`));
-      }
     },
   );
 
 agent
   .command("revoke <agent-id>")
-  .description("revoke access and close its active sessions")
+  .description("legacy command; revoke the Agent Credential instead")
   .action(async (agentId: string, _options, command: Command) => {
-    const global = globals(command);
-    const result = await (await apiFor(command)).revokeAgent(agentId);
-    if (global.json) printJson(result);
-    else {
-      console.log(`${pc.green("✓")} Revoked ${result.name} (${result.id})`);
-      console.log(pc.dim(`  closed ${result.closedSessions} active session(s)`));
-    }
+    void agentId;
+    void command;
+    throw new ExpectedError(
+      "Agent Access was migrated. Revoke the Agent Credential from the Agent runtime or disable the Agent.",
+      "legacy_agent_access_migrated",
+    );
   });
 
 program
@@ -751,32 +732,26 @@ program
         "mcp_credentials_required",
       );
     }
-    serveOdyshellMcp(
-      new Odyshell({
-        serverUrl: config.serverUrl,
-        agentToken: config.agentToken,
-      }),
+    throw new ExpectedError(
+      'Agent Access was migrated. Register this Agent with "ods agent login".',
+      "legacy_agent_access_migrated",
     );
   });
 
 const session = program.command("session").description("manage persistent sessions");
 session
   .command("create <machine>")
-  .description("open a temporary session")
+  .description("legacy command; Agents now request Sessions")
   .option("--ttl <seconds>", "session lifetime", "600")
   .requiredOption("--capabilities <items>", "comma-separated capabilities")
   .action(async (machineReference: string, options: { ttl: string; capabilities: string }, command: Command) => {
-    const global = globals(command);
-    const api = await apiFor(command);
-    const machine = await api.resolveMachine(machineReference);
-    const capabilities = parseCapabilities(options.capabilities);
-    const created = await api.createSession(machine.id, capabilities, Number(options.ttl));
-    const ready = await api.waitForSession(created.id);
-    if (global.json) printJson(ready);
-    else {
-      console.log(`${pc.green("✓")} Session ${pc.bold(ready.id)} is ready`);
-      console.log(pc.dim(`  expires ${new Date(ready.expiresAt).toLocaleString()}`));
-    }
+    void machineReference;
+    void options;
+    void command;
+    throw new ExpectedError(
+      'Direct Session creation was migrated. Use "ods exec" or the Agent Session request interface.',
+      "legacy_session_creation_migrated",
+    );
   });
 
 session
