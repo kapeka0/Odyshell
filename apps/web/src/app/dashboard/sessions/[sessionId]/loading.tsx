@@ -7,7 +7,10 @@ export default function SessionLoading() {
       aria-busy="true"
       aria-label="Loading session"
     >
-      <Skeleton className="h-9 w-72 max-w-full" />
+      <div className="flex items-center justify-between gap-4">
+        <Skeleton className="h-9 w-72 max-w-full" />
+        <Skeleton className="h-10 w-24" />
+      </div>
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <Skeleton className="h-96 rounded-xl" />
         <div className="flex flex-col gap-6">

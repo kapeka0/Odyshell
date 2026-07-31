@@ -276,6 +276,23 @@ export type SessionTimelineEvent = {
   createdAt: string;
 };
 
+export type TimelineExport = {
+  version: "2026-07-31";
+  sessionId: string;
+  exportedAt: string;
+  events: Array<Record<string, unknown>>;
+};
+
+export type EventSink = {
+  id: string;
+  endpoint: string;
+  detailLevel: "privacy-minimal" | "operational" | "diagnostic";
+  signingSecret: string;
+  status: "active" | "paused";
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AgentIdentity = {
   id: string;
   name: string;
@@ -351,6 +368,17 @@ export class AgentClient {
 
   timeline(sessionId: string) {
     return this.ods.sessionTimeline(sessionId, this.identity.id);
+  }
+
+  exportTimeline(
+    sessionId: string,
+    detailLevel: EventSink["detailLevel"] = "privacy-minimal",
+  ) {
+    return this.ods.exportSessionTimeline(
+      sessionId,
+      this.identity.id,
+      detailLevel,
+    );
   }
 }
 
@@ -758,6 +786,20 @@ export class Odyshell {
     return response.data;
   }
 
+  async exportSessionTimeline(
+    sessionId: string,
+    agentId: string,
+    detailLevel: EventSink["detailLevel"] = "privacy-minimal",
+  ): Promise<TimelineExport> {
+    return this.request(
+      `/v1/agent-sessions/${encodeURIComponent(sessionId)}/timeline/export`,
+      {
+        method: "POST",
+        body: { agentId, detailLevel },
+      },
+    );
+  }
+
   async cancelAgentSession(
     sessionId: string,
     agentId: string,
@@ -831,6 +873,43 @@ export class Odyshell {
       admin: true,
     });
     return response.data;
+  }
+
+  async eventSink(): Promise<EventSink | null> {
+    const response = await this.request<{ data: EventSink | null }>(
+      "/v1/admin/event-sink",
+      { admin: true },
+    );
+    return response.data;
+  }
+
+  async configureEventSink(input: {
+    endpoint: string;
+    detailLevel: EventSink["detailLevel"];
+    signingSecret: string;
+  }): Promise<EventSink> {
+    const response = await this.request<{ data: EventSink }>(
+      "/v1/admin/event-sink",
+      { method: "PUT", admin: true, body: input },
+    );
+    return response.data;
+  }
+
+  async deleteEventSink(): Promise<{ deleted: true }> {
+    return this.request("/v1/admin/event-sink", {
+      method: "DELETE",
+      admin: true,
+    });
+  }
+
+  async exportWorkspaceSessionTimeline(
+    sessionId: string,
+    detailLevel: EventSink["detailLevel"] = "privacy-minimal",
+  ): Promise<TimelineExport> {
+    return this.request(
+      `/v1/admin/sessions/${encodeURIComponent(sessionId)}/timeline/export?detailLevel=${encodeURIComponent(detailLevel)}`,
+      { admin: true },
+    );
   }
 
   async organizations(): Promise<Organization[]> {

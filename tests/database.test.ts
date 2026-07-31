@@ -1,9 +1,35 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { createDatabase } from "../apps/server/src/database.js";
+import {
+  createDatabase,
+  withDatabaseDeadlockRetry,
+} from "../apps/server/src/database.js";
 
 describe("server storage boundaries", () => {
+  it("retries transient PostgreSQL deadlocks without hiding other failures", async () => {
+    let attempts = 0;
+    await expect(
+      withDatabaseDeadlockRetry(async () => {
+        attempts += 1;
+        if (attempts < 3) {
+          throw Object.assign(new Error("deadlock"), { code: "40P01" });
+        }
+        return "completed";
+      }),
+    ).resolves.toBe("completed");
+    expect(attempts).toBe(3);
+
+    const rejected = Object.assign(new Error("authorization failed"), {
+      code: "42501",
+    });
+    await expect(
+      withDatabaseDeadlockRetry(async () => {
+        throw rejected;
+      }),
+    ).rejects.toBe(rejected);
+  });
+
   it("requires PostgreSQL in every environment", () => {
     expect(() => createDatabase({ NODE_ENV: "production" })).toThrow(/DATABASE_URL/);
     expect(() =>
@@ -367,5 +393,38 @@ describe("server storage boundaries", () => {
     expect(cascade).toContain('.where("parentAgentId", "=", credential.agentId)');
     expect(cascade).toContain('.updateTable("agentCredentials")');
     expect(cascade).toContain('.updateTable("agentPolicies")');
+  });
+
+  it("stores Event Sink secrets encrypted and keeps retry state workspace-scoped", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const migration = database.slice(
+      database.indexOf("async function migrateTimelineEventSinks("),
+      database.indexOf("const migrationProvider"),
+    );
+    const pending = database.slice(
+      database.indexOf("async pendingEventSinkDeliveries("),
+      database.indexOf("async completeEventSinkDelivery("),
+    );
+
+    expect(migration).toContain("secret_ciphertext text not null");
+    expect(migration).not.toContain("signing_secret text");
+    expect(migration).toContain(
+      "unique (workspace_id, sink_id, event_id)",
+    );
+    expect(migration).toContain(
+      "foreign key (workspace_id, event_id)",
+    );
+    expect(migration).toContain(
+      "rollbackTimelineEventSinks",
+    );
+    expect(pending).toContain(
+      '.where("delivery.status", "in", ["pending", "retrying"])',
+    );
+    expect(pending).toContain(
+      '.where("delivery.nextAttemptAt", "<=", new Date(now))',
+    );
   });
 });

@@ -1,5 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { DownloadIcon } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -46,7 +48,18 @@ export default async function SessionPage({
   const { session, timeline } = detail;
   return (
     <DashboardPage>
-      <DashboardPageHeader title={session.purpose} />
+      <DashboardPageHeader
+        title={session.purpose}
+        action={
+          <Button
+            variant="outline"
+            render={<a href={`/api/sessions/${session.id}/export`} />}
+          >
+            <DownloadIcon data-icon="inline-start" />
+            Export
+          </Button>
+        }
+      />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <Card>
           <CardHeader>

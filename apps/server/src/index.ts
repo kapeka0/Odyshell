@@ -67,6 +67,19 @@ import {
 } from "./agent-sessions.js";
 import { ClientGateway } from "./gateway.js";
 import { dataRetentionPolicy } from "./privacy.js";
+import {
+  decryptEventSinkSecret,
+  encryptEventSinkSecret,
+  eventSinkConfigurationSchema,
+  eventSinkDestination,
+  eventSinkDetailLevels,
+  eventSinkRetryAt,
+  postSignedTimeline,
+  redactTimelineMetadata,
+  signedTimelineDelivery,
+  type EventSinkDetailLevel,
+  type TimelineExport,
+} from "./event-sinks.js";
 
 const port = Number(process.env.PORT ?? 4100);
 const host = process.env.HOST ?? "127.0.0.1";
@@ -150,6 +163,8 @@ await app.register(websocket, { options: { maxPayload: 2 * 1024 * 1024 } });
 const db = createDatabase(process.env);
 await db.initialize();
 const retention = dataRetentionPolicy(process.env);
+const eventSinkEncryptionKey =
+  process.env.ODYSHELL_EVENT_SINK_ENCRYPTION_KEY;
 const purgeExpiredData = async (): Promise<void> => {
   const now = Date.now();
   const purged = await db.purgeExpiredData({
@@ -604,6 +619,42 @@ function privacyMinimalTimelineMetadata(
     });
   }
   return safe;
+}
+
+function timelineExport(
+  sessionId: string,
+  events: Awaited<ReturnType<typeof db.workspaceSessionTimeline>>,
+  detailLevel: EventSinkDetailLevel,
+  now = Date.now(),
+): TimelineExport {
+  const retainedAfter = now - retention.auditMilliseconds;
+  return {
+    version: "2026-07-31",
+    sessionId,
+    exportedAt: new Date(now).toISOString(),
+    events: (events ?? [])
+      .filter((event) => event.createdAt >= retainedAfter)
+      .map((event) => ({
+        id: event.id,
+        eventType: event.eventType,
+        source: event.source,
+        ...(event.operationId ? { operationId: event.operationId } : {}),
+        metadata: redactTimelineMetadata(event.metadata, detailLevel),
+        createdAt: new Date(event.createdAt).toISOString(),
+      })),
+  };
+}
+
+function eventSinkView(
+  sink: NonNullable<Awaited<ReturnType<typeof db.workspaceEventSink>>>,
+): Record<string, unknown> {
+  const { secretLastFour, ...visible } = sink;
+  return {
+    ...visible,
+    signingSecret: `••••${secretLastFour}`,
+    createdAt: isoTimestamp(sink.createdAt),
+    updatedAt: isoTimestamp(sink.updatedAt),
+  };
 }
 
 const agentAccessDependencies: AgentAccessDependencies = {
@@ -1382,6 +1433,141 @@ app.post(
         createdAt: isoTimestamp(event.createdAt),
       })),
     };
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/sessions/export",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = cloudIdentitySchema
+      .extend({
+        sessionId: z.string().uuid(),
+        detailLevel: z.enum(eventSinkDetailLevels).default("privacy-minimal"),
+      })
+      .safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request" });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const events = await db.workspaceSessionTimeline(
+      context.workspace.id,
+      parsed.data.sessionId,
+    );
+    if (!events) return reply.code(404).send({ error: "session_not_found" });
+    return timelineExport(
+      parsed.data.sessionId,
+      events,
+      parsed.data.detailLevel,
+    );
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/event-sink",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = cloudIdentitySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request" });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const sink = await db.workspaceEventSink(context.workspace.id);
+    return {
+      data: sink ? eventSinkView(sink) : null,
+      deliveries: await db.eventSinkDeliveryStatus(context.workspace.id, 20),
+    };
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/event-sink/configure",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = cloudIdentitySchema
+      .extend(eventSinkConfigurationSchema.shape)
+      .safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request" });
+    }
+    if (!eventSinkEncryptionKey) {
+      return reply
+        .code(503)
+        .send({ error: "event_sink_encryption_unavailable" });
+    }
+    try {
+      await eventSinkDestination(parsed.data.endpoint);
+      const context = await db.ensureCloudContext({
+        externalId: parsed.data.organization.externalId,
+        slug: parsed.data.organization.slug,
+        name: parsed.data.organization.name,
+      });
+      const sink = await db.upsertWorkspaceEventSink({
+        workspaceId: context.workspace.id,
+        endpoint: parsed.data.endpoint,
+        detailLevel: parsed.data.detailLevel,
+        secretCiphertext: encryptEventSinkSecret(
+          parsed.data.signingSecret,
+          eventSinkEncryptionKey,
+        ),
+        secretLastFour: parsed.data.signingSecret.slice(-4),
+      });
+      await audit(
+        db,
+        context.workspace.id,
+        parsed.data.userId,
+        "event_sink.configured",
+        "event_sink",
+        sink.id,
+        { detailLevel: sink.detailLevel },
+      );
+      return { data: eventSinkView(sink) };
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "event_sink_destination_denied"
+      ) {
+        return reply.code(400).send({ error: error.code });
+      }
+      throw error;
+    }
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/event-sink/delete",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = cloudIdentitySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request" });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const sink = await db.workspaceEventSink(context.workspace.id);
+    if (!sink) return reply.code(404).send({ error: "event_sink_not_found" });
+    await db.deleteWorkspaceEventSink(context.workspace.id);
+    await audit(
+      db,
+      context.workspace.id,
+      parsed.data.userId,
+      "event_sink.deleted",
+      "event_sink",
+      sink.id,
+    );
+    return { deleted: true };
   },
 );
 
@@ -2235,6 +2421,122 @@ app.get(
   },
 );
 
+app.get(
+  "/v1/admin/event-sink",
+  { preHandler: requireWorkspaceAccess },
+  async (request) => {
+    const sink = await db.workspaceEventSink(adminWorkspaceFor(request));
+    return { data: sink ? eventSinkView(sink) : null };
+  },
+);
+
+app.put(
+  "/v1/admin/event-sink",
+  { preHandler: requireWorkspaceAccess },
+  async (request, reply) => {
+    const parsed = eventSinkConfigurationSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request" });
+    }
+    if (!eventSinkEncryptionKey) {
+      return reply
+        .code(503)
+        .send({ error: "event_sink_encryption_unavailable" });
+    }
+    try {
+      await eventSinkDestination(parsed.data.endpoint);
+      const sink = await db.upsertWorkspaceEventSink({
+        workspaceId: adminWorkspaceFor(request),
+        endpoint: parsed.data.endpoint,
+        detailLevel: parsed.data.detailLevel,
+        secretCiphertext: encryptEventSinkSecret(
+          parsed.data.signingSecret,
+          eventSinkEncryptionKey,
+        ),
+        secretLastFour: parsed.data.signingSecret.slice(-4),
+      });
+      await audit(
+        db,
+        adminWorkspaceFor(request),
+        adminPrincipalFor(request),
+        "event_sink.configured",
+        "event_sink",
+        sink.id,
+        { detailLevel: sink.detailLevel },
+      );
+      return { data: eventSinkView(sink) };
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "event_sink_destination_denied"
+      ) {
+        return reply.code(400).send({ error: error.code });
+      }
+      throw error;
+    }
+  },
+);
+
+app.delete(
+  "/v1/admin/event-sink",
+  { preHandler: requireWorkspaceAccess },
+  async (request, reply) => {
+    const workspaceId = adminWorkspaceFor(request);
+    const sink = await db.workspaceEventSink(workspaceId);
+    if (!sink) return reply.code(404).send({ error: "event_sink_not_found" });
+    await db.deleteWorkspaceEventSink(workspaceId);
+    await audit(
+      db,
+      workspaceId,
+      adminPrincipalFor(request),
+      "event_sink.deleted",
+      "event_sink",
+      sink.id,
+    );
+    return { deleted: true };
+  },
+);
+
+app.get(
+  "/v1/admin/event-sink/deliveries",
+  { preHandler: requireWorkspaceAccess },
+  async (request) => ({
+    data: (await db.eventSinkDeliveryStatus(adminWorkspaceFor(request))).map(
+      (delivery) => ({
+        ...delivery,
+        nextAttemptAt: isoTimestamp(delivery.nextAttemptAt),
+        ...(delivery.deliveredAt === undefined
+          ? {}
+          : { deliveredAt: isoTimestamp(delivery.deliveredAt) }),
+      }),
+    ),
+  }),
+);
+
+app.get<{
+  Params: { sessionId: string };
+  Querystring: { detailLevel?: string };
+}>(
+  "/v1/admin/sessions/:sessionId/timeline/export",
+  { preHandler: requireWorkspaceAccess },
+  async (request, reply) => {
+    const detail = z.enum(eventSinkDetailLevels).safeParse(
+      request.query.detailLevel ?? "privacy-minimal",
+    );
+    if (!detail.success) {
+      return reply.code(400).send({ error: "invalid_detail_level" });
+    }
+    const workspaceId = adminWorkspaceFor(request);
+    const events = await db.workspaceSessionTimeline(
+      workspaceId,
+      request.params.sessionId,
+    );
+    if (!events) return reply.code(404).send({ error: "session_not_found" });
+    return timelineExport(request.params.sessionId, events, detail.data);
+  },
+);
+
 app.delete<{ Params: { machineId: string } }>(
   "/v1/admin/machines/:machineId",
   { preHandler: requireWorkspaceAccess },
@@ -2673,6 +2975,40 @@ app.post<{ Params: { sessionId: string } }>(
         createdAt: isoTimestamp(event.createdAt),
       })),
     };
+  },
+);
+
+app.post<{ Params: { sessionId: string } }>(
+  "/v1/agent-sessions/:sessionId/timeline/export",
+  { preHandler: requireSessionRequester },
+  async (request, reply) => {
+    const parsed = agentIdentityReferenceSchema
+      .extend({
+        detailLevel: z.enum(eventSinkDetailLevels).default("privacy-minimal"),
+      })
+      .safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request" });
+    }
+    const principal = sessionRequesterFor(request);
+    if (
+      principal.agent &&
+      !(await requestedAgentFor(principal, parsed.data.agentId))
+    ) {
+      return reply.code(403).send({ error: "agent_identity_mismatch" });
+    }
+    const events = await db.listSessionTimeline(
+      principal.workspaceId,
+      request.params.sessionId,
+      parsed.data.agentId,
+      principal.humanId,
+    );
+    if (!events) return reply.code(404).send({ error: "session_not_found" });
+    return timelineExport(
+      request.params.sessionId,
+      events,
+      parsed.data.detailLevel,
+    );
   },
 );
 
@@ -3487,9 +3823,87 @@ const retentionTimer = setInterval(() => {
   );
 }, 15 * 60_000);
 
+let deliveringEventSinks = false;
+const deliverEventSinks = async (): Promise<void> => {
+  if (deliveringEventSinks || !eventSinkEncryptionKey) return;
+  deliveringEventSinks = true;
+  try {
+    if (!(await db.activeEventSinksExist())) return;
+    const now = Date.now();
+    await db.enqueueEventSinkDeliveries(
+      now - retention.auditMilliseconds,
+      now - 5_000,
+    );
+    const deliveries = await db.pendingEventSinkDeliveries(now);
+    for (const delivery of deliveries) {
+      try {
+        const destination = await eventSinkDestination(delivery.endpoint);
+        const secret = decryptEventSinkSecret(
+          delivery.secretCiphertext,
+          eventSinkEncryptionKey,
+        );
+        const exported = timelineExport(
+          delivery.event.sessionId ?? `request:${delivery.event.requestId}`,
+          [delivery.event],
+          delivery.detailLevel,
+          now,
+        );
+        const signed = signedTimelineDelivery(
+          exported,
+          secret,
+          delivery.id,
+          new Date(delivery.event.createdAt).toISOString(),
+        );
+        await postSignedTimeline(destination, signed.body, signed.headers);
+        await db.completeEventSinkDelivery(
+          delivery.workspaceId,
+          delivery.id,
+          { delivered: true, now: Date.now() },
+        );
+      } catch (error) {
+        const attempts = delivery.attempts + 1;
+        const errorCode =
+          error instanceof Error &&
+          "code" in error &&
+          typeof error.code === "string"
+            ? error.code
+            : "event_sink_delivery_failed";
+        const nextAttemptAt = eventSinkRetryAt(attempts, Date.now());
+        await db.completeEventSinkDelivery(
+          delivery.workspaceId,
+          delivery.id,
+          {
+            delivered: false,
+            now: Date.now(),
+            ...(nextAttemptAt === undefined ? {} : { nextAttemptAt }),
+            errorCode,
+          },
+        );
+        app.log.warn(
+          { deliveryId: delivery.id, errorCode, attempts },
+          "Event Sink delivery failed",
+        );
+      }
+    }
+  } finally {
+    deliveringEventSinks = false;
+  }
+};
+
+const eventSinkTimer = setInterval(() => {
+  void deliverEventSinks().catch((error: unknown) =>
+    app.log.error(
+      { errorCode: "event_sink_worker_failed" },
+      "Event Sink worker failed",
+    ),
+  );
+}, 5_000);
+void deliverEventSinks();
+
 app.addHook("onClose", async () => {
   clearInterval(expiryTimer);
   clearInterval(retentionTimer);
+  clearInterval(eventSinkTimer);
   await db.close();
 });
 

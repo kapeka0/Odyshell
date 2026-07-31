@@ -120,6 +120,11 @@ Cancel a claimed Session when the task finishes:
 await ods.cancelAgentSession(claim.sessionId, agentId);
 ```
 
+Export a redacted, versioned Timeline with `agent.exportTimeline(sessionId)`. Workspace
+administrators can use `configureEventSink()`, `eventSink()` and `deleteEventSink()` for signed
+delivery to a public HTTPS endpoint. Signing secrets are accepted on configuration and never
+returned in full.
+
 Renewal creates a successor with the same scope and requires a new approval:
 
 ```ts

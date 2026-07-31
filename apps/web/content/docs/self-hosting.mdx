@@ -40,9 +40,12 @@ DATABASE_URL=postgresql://USER:PASSWORD@DB_HOST:5432/DB_NAME?sslmode=verify-full
 ODYSHELL_ADMIN_KEY=GENERATE_A_STRONG_RANDOM_VALUE
 ODYSHELL_OPERATION_RETENTION_SECONDS=3600
 ODYSHELL_AUDIT_RETENTION_DAYS=30
+ODYSHELL_EVENT_SINK_ENCRYPTION_KEY=BASE64URL_ENCODED_32_BYTE_KEY
 ```
 
 Put the Server behind HTTPS/WSS. Never enable `ODYSHELL_ALLOW_DEV_CREDENTIALS` in production.
+The Event Sink key is required only when using signed Timeline delivery. Keep it stable and in a
+secret manager; changing it makes existing sink secrets unreadable.
 
 ## Current scaling boundary
 

@@ -41,6 +41,27 @@ const CLOSABLE_SESSION_STATUSES = ["opening", "ready", "closing"] as const;
 const ACTIVE_OPERATION_STATUSES = ["queued", "delivered", "running"] as const;
 const RETAINED_SESSION_STATUSES = ["opening", "ready", "closing"] as const;
 const SESSION_CLAIM_WINDOW_MILLISECONDS = 5 * 60_000;
+const DEADLOCK_RETRY_LIMIT = 3;
+
+export async function withDatabaseDeadlockRetry<T>(
+  operation: () => Promise<T>,
+): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (
+        (error as { code?: string }).code !== "40P01" ||
+        attempt >= DEADLOCK_RETRY_LIMIT
+      ) {
+        throw error;
+      }
+      await new Promise((resolveRetry) =>
+        setTimeout(resolveRetry, attempt * 10),
+      );
+    }
+  }
+}
 
 type Json<T> = ColumnType<T, string, string>;
 
@@ -268,6 +289,32 @@ interface SessionTimelineEventTable {
   createdAt: Generated<Date>;
 }
 
+interface EventSinkTable {
+  workspaceId: string;
+  id: string;
+  endpoint: string;
+  detailLevel: string;
+  secretCiphertext: string;
+  secretLastFour: string;
+  status: string;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+interface EventSinkDeliveryTable {
+  workspaceId: string;
+  id: string;
+  sinkId: string;
+  eventId: string;
+  status: string;
+  attempts: Generated<number>;
+  nextAttemptAt: Generated<Date>;
+  lastError: string | null;
+  deliveredAt: Date | null;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
 interface LegacySessionTable {
   workspaceId: string;
   id: string;
@@ -337,6 +384,8 @@ interface DatabaseSchema {
   agentPolicies: AgentPolicyTable;
   agentSessionTargets: AgentSessionTargetTable;
   sessionTimelineEvents: SessionTimelineEventTable;
+  eventSinks: EventSinkTable;
+  eventSinkDeliveries: EventSinkDeliveryTable;
   sessions: LegacySessionTable;
   operations: OperationTable;
   operationEvents: OperationEventTable;
@@ -554,6 +603,27 @@ export type SessionTimelineEventRecord = {
   source: "verified" | "agent";
   metadata: Record<string, unknown>;
   createdAt: number;
+};
+
+export type EventSinkRecord = {
+  id: string;
+  endpoint: string;
+  detailLevel: "privacy-minimal" | "operational" | "diagnostic";
+  secretLastFour: string;
+  status: "active" | "paused";
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type PendingEventSinkDelivery = {
+  workspaceId: string;
+  id: string;
+  sinkId: string;
+  endpoint: string;
+  detailLevel: EventSinkRecord["detailLevel"];
+  secretCiphertext: string;
+  attempts: number;
+  event: SessionTimelineEventRecord;
 };
 
 export type WorkspaceAgentSessionRecord = AgentSessionRecord & {
@@ -2090,6 +2160,65 @@ async function rollbackManagedAgentDelegation(
   `.execute(db);
 }
 
+async function migrateTimelineEventSinks(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    create table odyshell.event_sinks (
+      workspace_id text primary key
+        references odyshell.workspaces (id) on delete cascade,
+      id text not null,
+      endpoint text not null,
+      detail_level text not null check (
+        detail_level in ('privacy-minimal', 'operational', 'diagnostic')
+      ),
+      secret_ciphertext text not null,
+      secret_last_four text not null,
+      status text not null default 'active' check (status in ('active', 'paused')),
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (workspace_id, id),
+      check (length(endpoint) between 1 and 2048),
+      check (length(secret_last_four) = 4)
+    )
+  `.execute(db);
+  await sql`
+    create table odyshell.event_sink_deliveries (
+      workspace_id text not null,
+      id text not null,
+      sink_id text not null,
+      event_id text not null,
+      status text not null default 'pending' check (
+        status in ('pending', 'retrying', 'delivered', 'failed')
+      ),
+      attempts integer not null default 0 check (attempts between 0 and 8),
+      next_attempt_at timestamptz not null default now(),
+      last_error text,
+      delivered_at timestamptz,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      primary key (workspace_id, id),
+      unique (workspace_id, sink_id, event_id),
+      foreign key (workspace_id, sink_id)
+        references odyshell.event_sinks (workspace_id, id) on delete cascade,
+      foreign key (workspace_id, event_id)
+        references odyshell.session_timeline_events (workspace_id, id) on delete cascade
+    )
+  `.execute(db);
+  await sql`
+    create index event_sink_deliveries_due_idx
+    on odyshell.event_sink_deliveries (status, next_attempt_at)
+    where status in ('pending', 'retrying')
+  `.execute(db);
+}
+
+async function rollbackTimelineEventSinks(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`drop table odyshell.event_sink_deliveries`.execute(db);
+  await sql`drop table odyshell.event_sinks`.execute(db);
+}
+
 const migrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
     return {
@@ -2143,6 +2272,10 @@ const migrationProvider: MigrationProvider = {
       "014_managed_agent_delegation": {
         up: migrateManagedAgentDelegation,
         down: rollbackManagedAgentDelegation,
+      },
+      "015_timeline_event_sinks": {
+        up: migrateTimelineEventSinks,
+        down: rollbackTimelineEventSinks,
       },
     };
   },
@@ -3129,6 +3262,257 @@ export class PostgresDatabase {
     ).map(sessionTimelineEventRecord);
   }
 
+  async workspaceEventSink(
+    workspaceId: string,
+  ): Promise<EventSinkRecord | null> {
+    const sink = await this.db
+      .selectFrom("eventSinks")
+      .select([
+        "id",
+        "endpoint",
+        "detailLevel",
+        "secretLastFour",
+        "status",
+        "createdAt",
+        "updatedAt",
+      ])
+      .where("workspaceId", "=", workspaceId)
+      .executeTakeFirst();
+    return sink
+      ? {
+          id: sink.id,
+          endpoint: sink.endpoint,
+          detailLevel: sink.detailLevel as EventSinkRecord["detailLevel"],
+          secretLastFour: sink.secretLastFour,
+          status: sink.status as EventSinkRecord["status"],
+          createdAt: sink.createdAt.getTime(),
+          updatedAt: sink.updatedAt.getTime(),
+        }
+      : null;
+  }
+
+  async upsertWorkspaceEventSink(input: {
+    workspaceId: string;
+    endpoint: string;
+    detailLevel: EventSinkRecord["detailLevel"];
+    secretCiphertext: string;
+    secretLastFour: string;
+  }): Promise<EventSinkRecord> {
+    const id = randomUUID();
+    await this.db
+      .insertInto("eventSinks")
+      .values({
+        workspaceId: input.workspaceId,
+        id,
+        endpoint: input.endpoint,
+        detailLevel: input.detailLevel,
+        secretCiphertext: input.secretCiphertext,
+        secretLastFour: input.secretLastFour,
+        status: "active",
+      })
+      .onConflict((conflict) =>
+        conflict.column("workspaceId").doUpdateSet({
+          endpoint: input.endpoint,
+          detailLevel: input.detailLevel,
+          secretCiphertext: input.secretCiphertext,
+          secretLastFour: input.secretLastFour,
+          status: "active",
+          updatedAt: new Date(),
+        }),
+      )
+      .execute();
+    return (await this.workspaceEventSink(input.workspaceId))!;
+  }
+
+  async deleteWorkspaceEventSink(workspaceId: string): Promise<boolean> {
+    const deleted = await this.db
+      .deleteFrom("eventSinks")
+      .where("workspaceId", "=", workspaceId)
+      .returning("id")
+      .executeTakeFirst();
+    return deleted !== undefined;
+  }
+
+  async activeEventSinksExist(): Promise<boolean> {
+    return (
+      (await this.db
+        .selectFrom("eventSinks")
+        .select("id")
+        .where("status", "=", "active")
+        .limit(1)
+        .executeTakeFirst()) !== undefined
+    );
+  }
+
+  async enqueueEventSinkDeliveries(
+    retentionBefore: number,
+    createdBefore: number,
+  ): Promise<number> {
+    const result = await sql`
+      insert into odyshell.event_sink_deliveries (
+        workspace_id, id, sink_id, event_id
+      )
+      select
+        sink.workspace_id,
+        gen_random_uuid()::text,
+        sink.id,
+        event.id
+      from odyshell.event_sinks sink
+      join odyshell.session_timeline_events event
+        on event.workspace_id = sink.workspace_id
+      where sink.status = 'active'
+        and event.created_at >= ${new Date(retentionBefore)}
+        and event.created_at < ${new Date(createdBefore)}
+      on conflict (workspace_id, sink_id, event_id) do nothing
+    `.execute(this.root);
+    return Number(result.numAffectedRows ?? 0);
+  }
+
+  async pendingEventSinkDeliveries(
+    now: number,
+    limit = 25,
+  ): Promise<PendingEventSinkDelivery[]> {
+    const rows = await this.db
+      .selectFrom("eventSinkDeliveries as delivery")
+      .innerJoin("eventSinks as sink", (join) =>
+        join
+          .onRef("sink.workspaceId", "=", "delivery.workspaceId")
+          .onRef("sink.id", "=", "delivery.sinkId"),
+      )
+      .innerJoin("sessionTimelineEvents as event", (join) =>
+        join
+          .onRef("event.workspaceId", "=", "delivery.workspaceId")
+          .onRef("event.id", "=", "delivery.eventId"),
+      )
+      .select([
+        "delivery.workspaceId as workspaceId",
+        "delivery.id as id",
+        "delivery.sinkId as sinkId",
+        "delivery.attempts as attempts",
+        "sink.endpoint as endpoint",
+        "sink.detailLevel as detailLevel",
+        "sink.secretCiphertext as secretCiphertext",
+        "event.id as eventId",
+        "event.sessionId as eventSessionId",
+        "event.requestId as eventRequestId",
+        "event.operationId as eventOperationId",
+        "event.eventType as eventType",
+        "event.source as eventSource",
+        "event.metadata as eventMetadata",
+        "event.createdAt as eventCreatedAt",
+      ])
+      .where("sink.status", "=", "active")
+      .where("delivery.status", "in", ["pending", "retrying"])
+      .where("delivery.nextAttemptAt", "<=", new Date(now))
+      .orderBy("delivery.nextAttemptAt", "asc")
+      .limit(limit)
+      .execute();
+    return rows.map((row) => ({
+      workspaceId: row.workspaceId,
+      id: row.id,
+      sinkId: row.sinkId,
+      endpoint: row.endpoint,
+      detailLevel: row.detailLevel as EventSinkRecord["detailLevel"],
+      secretCiphertext: row.secretCiphertext,
+      attempts: row.attempts,
+      event: {
+        id: row.eventId,
+        ...(row.eventSessionId === null
+          ? {}
+          : { sessionId: row.eventSessionId }),
+        requestId: row.eventRequestId,
+        ...(row.eventOperationId === null
+          ? {}
+          : { operationId: row.eventOperationId }),
+        eventType: row.eventType,
+        source: row.eventSource as SessionTimelineEventRecord["source"],
+        metadata: row.eventMetadata,
+        createdAt: row.eventCreatedAt.getTime(),
+      },
+    }));
+  }
+
+  async completeEventSinkDelivery(
+    workspaceId: string,
+    deliveryId: string,
+    result:
+      | { delivered: true; now: number }
+      | {
+          delivered: false;
+          now: number;
+          nextAttemptAt?: number;
+          errorCode: string;
+        },
+  ): Promise<void> {
+    const attempts = sql<number>`attempts + 1`;
+    await this.db
+      .updateTable("eventSinkDeliveries")
+      .set(
+        result.delivered
+          ? {
+              status: "delivered",
+              attempts,
+              deliveredAt: new Date(result.now),
+              lastError: null,
+              updatedAt: new Date(result.now),
+            }
+          : {
+              status:
+                result.nextAttemptAt === undefined ? "failed" : "retrying",
+              attempts,
+              nextAttemptAt: new Date(result.nextAttemptAt ?? result.now),
+              lastError: result.errorCode.slice(0, 128),
+              updatedAt: new Date(result.now),
+            },
+      )
+      .where("workspaceId", "=", workspaceId)
+      .where("id", "=", deliveryId)
+      .execute();
+  }
+
+  async eventSinkDeliveryStatus(
+    workspaceId: string,
+    limit = 50,
+  ): Promise<Array<{
+    id: string;
+    eventId: string;
+    status: string;
+    attempts: number;
+    lastError?: string;
+    nextAttemptAt: number;
+    deliveredAt?: number;
+  }>> {
+    return (
+      await this.db
+        .selectFrom("eventSinkDeliveries")
+        .select([
+          "id",
+          "eventId",
+          "status",
+          "attempts",
+          "lastError",
+          "nextAttemptAt",
+          "deliveredAt",
+        ])
+        .where("workspaceId", "=", workspaceId)
+        .orderBy("createdAt", "desc")
+        .limit(limit)
+        .execute()
+    ).map((delivery) => ({
+      id: delivery.id,
+      eventId: delivery.eventId,
+      status: delivery.status,
+      attempts: delivery.attempts,
+      ...(delivery.lastError === null
+        ? {}
+        : { lastError: delivery.lastError }),
+      nextAttemptAt: delivery.nextAttemptAt.getTime(),
+      ...(delivery.deliveredAt === null
+        ? {}
+        : { deliveredAt: delivery.deliveredAt.getTime() }),
+    }));
+  }
+
   async createAgentSessionRequest(input: {
     workspaceId: string;
     requestId: string;
@@ -3970,7 +4354,8 @@ export class PostgresDatabase {
     reason: "cancelled" | "revoked";
     now?: number;
   }): Promise<AgentSessionTermination | null> {
-    return await this.db.transaction().execute(async (transaction) => {
+    return await withDatabaseDeadlockRetry(() =>
+      this.db.transaction().execute(async (transaction) => {
       const session = await transaction
         .selectFrom("agentSessions")
         .selectAll()
@@ -4084,7 +4469,8 @@ export class PostgresDatabase {
         targets,
         operations,
       };
-    });
+      }),
+    );
   }
 
   async failClaimedAgentSession(

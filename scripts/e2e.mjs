@@ -20,6 +20,7 @@ const composeEnvironment = {
   ODYSHELL_ALLOW_DEV_CREDENTIALS: "true",
   ODYSHELL_WEB_KEY: webKey,
   ODYSHELL_WEB_URL: "http://127.0.0.1:3000",
+  ODYSHELL_EVENT_SINK_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString("base64url"),
 };
 const configDirectory = resolve(root, `.odyshell/e2e/${process.pid}`);
 const configPath = resolve(configDirectory, "client.json");
@@ -145,6 +146,30 @@ try {
       if (attempt === 59) throw new Error("Server did not become healthy");
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
     }
+  }
+
+  const deniedSinkResponse = await fetch(
+    new URL("/v1/admin/event-sink", apiUrl),
+    {
+      method: "PUT",
+      headers: {
+        "x-odyshell-admin-key": adminKey,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        endpoint: "https://169.254.169.254/latest/meta-data",
+        detailLevel: "diagnostic",
+        signingSecret: "e2e-signing-secret-at-least-32-characters",
+      }),
+    },
+  );
+  const deniedSink = await deniedSinkResponse.json();
+  if (
+    deniedSinkResponse.status !== 400 ||
+    deniedSink.error !== "event_sink_destination_denied" ||
+    JSON.stringify(deniedSink).includes("e2e-signing-secret")
+  ) {
+    throw new Error("Event Sink SSRF boundary failed");
   }
 
   const organization = await api("/v1/admin/organizations", {
@@ -1494,6 +1519,27 @@ try {
       value.data?.some((event) => event.eventType === "session.closed"),
     "privacy-minimal Session Timeline",
   );
+  const timelineExportResponse = await fetch(
+    new URL(
+      `/v1/admin/sessions/${claimedSession.sessionId}/timeline/export?detailLevel=privacy-minimal`,
+      apiUrl,
+    ),
+    {
+      headers: { "x-odyshell-admin-key": adminKey },
+    },
+  );
+  const exportedTimeline = await timelineExportResponse.json();
+  if (
+    timelineExportResponse.status !== 200 ||
+    exportedTimeline.version !== "2026-07-31" ||
+    exportedTimeline.sessionId !== claimedSession.sessionId ||
+    !Array.isArray(exportedTimeline.events) ||
+    JSON.stringify(exportedTimeline).match(
+      /ods_session_|approved content|session-secret/iu,
+    )
+  ) {
+    throw new Error("Versioned Timeline export was invalid or leaked data");
+  }
   const renewalResponse = await fetch(
     new URL(
       `/v1/agent-sessions/${claimedSession.sessionId}/renew`,
@@ -1653,7 +1699,9 @@ try {
     replayCancelResponse.status !== 200 ||
     replayCancel.transitioned !== false
   ) {
-    throw new Error("Session cancellation was not idempotent");
+    throw new Error(
+      `Session cancellation was not idempotent: first=${firstCancelResponse.status}/${JSON.stringify(firstCancel)} replay=${replayCancelResponse.status}/${JSON.stringify(replayCancel)}`,
+    );
   }
   await waitUntil(
     async () => ({
@@ -2197,14 +2245,126 @@ try {
     throw new Error("ods ping did not print the expected pong");
   }
 
+  const cliAgentDeviceResponse = await fetch(
+    new URL("/v1/auth/agent/device", apiUrl),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agentName: "E2E CLI Agent" }),
+    },
+  );
+  const cliAgentDevice = await cliAgentDeviceResponse.json();
+  if (cliAgentDeviceResponse.status !== 201) {
+    throw new Error("CLI Agent registration did not start");
+  }
+  const cliAgentApproval = await fetch(
+    new URL("/v1/internal/cloud/agent-device/approve", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        userId: cliUserId,
+        organization: approvalBody.organization,
+        userCode: cliAgentDevice.userCode,
+      }),
+    },
+  );
+  if (cliAgentApproval.status !== 200) {
+    throw new Error("CLI Agent registration was not approved");
+  }
+  const cliAgentExchangeResponse = await fetch(
+    new URL("/v1/auth/agent/device/token", apiUrl),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deviceCode: cliAgentDevice.deviceCode }),
+    },
+  );
+  const cliAgentCredential = await cliAgentExchangeResponse.json();
+  if (
+    cliAgentExchangeResponse.status !== 200 ||
+    !cliAgentCredential.accessToken
+  ) {
+    throw new Error("CLI Agent Credential was not issued");
+  }
+  const cliPolicyScope = {
+    machineId: machine.id,
+    profile: "workspace",
+    capabilities: ["process.exec"],
+    restrictions: {
+      process: {
+        programs: [
+          {
+            program: "printf",
+            args: ["hello from ods CLI"],
+            cwd: { path: ".", includeDescendants: false },
+          },
+        ],
+      },
+    },
+  };
+  const cliPolicyResponse = await fetch(
+    new URL("/v1/agent-policies", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${cliAgentCredential.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        scopes: [cliPolicyScope],
+        maxSessionSeconds: 300,
+        validForSeconds: 24 * 60 * 60,
+      }),
+    },
+  );
+  const cliPolicy = await cliPolicyResponse.json();
+  if (cliPolicyResponse.status !== 201 || !cliPolicy.approvalUrl) {
+    throw new Error(
+      `CLI execution policy was not proposed: ${cliPolicyResponse.status} ${JSON.stringify(cliPolicy)}`,
+    );
+  }
+  const cliPolicyCode = new URL(cliPolicy.approvalUrl).searchParams.get("code");
+  const cliPolicyApproval = await fetch(
+    new URL("/v1/internal/cloud/agent-policies/approve", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        userId: cliUserId,
+        organization: approvalBody.organization,
+        approvalCode: cliPolicyCode,
+      }),
+    },
+  );
+  if (cliPolicyApproval.status !== 200) {
+    throw new Error("CLI execution policy was not approved");
+  }
+  await writeFile(
+    process.env.ODS_CONFIG_FILE,
+    `${JSON.stringify(
+      {
+        serverUrl: apiUrl,
+        workspaceId: "default",
+        agentToken: cliAgentCredential.accessToken,
+        mcpAgentId: cliAgentCredential.agentId,
+        mcpAgentName: cliAgentCredential.agentName,
+      },
+      null,
+      2,
+    )}\n`,
+    { mode: 0o600 },
+  );
   const cliExecution = JSON.parse(
     await run(process.execPath, [
       tsxCli,
       odsEntry,
-      "--server",
-      apiUrl,
-      "--agent-token",
-      scopedAgent.token,
       "--json",
       "exec",
       "e2e-docker",
@@ -2420,14 +2580,16 @@ try {
   const scopedAudit = await waitUntil(
     () =>
       api("/v1/audit?limit=100", {
-        headers: { authorization: `Bearer ${scopedAgent.token}` },
+        headers: { authorization: `Bearer ${cliAgentCredential.accessToken}` },
       }),
     (value) => value.data.some((event) => event.action === "operation.completed"),
-    "scoped agent audit event",
+    "CLI Agent audit event",
   );
   if (
-    scopedAudit.principal.id !== scopedAgent.id ||
-    scopedAudit.data.some((event) => event.principalId !== scopedAgent.id)
+    scopedAudit.principal.id !== cliAgentCredential.agentId ||
+    scopedAudit.data.some(
+      (event) => event.principalId !== cliAgentCredential.agentId,
+    )
   ) {
     throw new Error("Audit feed leaked events from another principal");
   }
@@ -2438,7 +2600,7 @@ try {
       "--server",
       apiUrl,
       "--agent-token",
-      scopedAgent.token,
+      cliAgentCredential.accessToken,
       "--json",
       "audit",
       "--limit",
@@ -2467,7 +2629,7 @@ try {
     adminAudit.principal.id !== "admin" ||
     !adminAudit.data.some(
       (event) =>
-        event.principalId === scopedAgent.id &&
+        event.principalId === cliAgentCredential.agentId &&
         event.action === "operation.completed",
     )
   ) {
@@ -2481,14 +2643,14 @@ try {
   });
   if (
     isolatedAdminAudit.data.some(
-      (event) => event.principalId === scopedAgent.id,
+      (event) => event.principalId === cliAgentCredential.agentId,
     )
   ) {
     throw new Error("Audit events leaked across workspace boundaries");
   }
   const operationCreatedAudit = adminAudit.data.find(
     (event) =>
-      event.principalId === scopedAgent.id &&
+      event.principalId === cliAgentCredential.agentId &&
       event.action === "operation.created",
   );
   if (
@@ -2746,6 +2908,8 @@ try {
           crossSessionIdempotencyIsolated: true,
           sessionCredentialCannotMintSessions: true,
           sessionTimeline: true,
+          timelineExport: true,
+          eventSinkSsrfDenied: true,
           sessionCredentialHashed: true,
           workspaceAuditIsolation: true,
           ed25519Authentication: true,

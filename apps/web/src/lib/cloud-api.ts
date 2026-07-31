@@ -105,6 +105,27 @@ export type SessionTimelineDetail = {
   timeline: SessionTimelineEvent[];
 };
 
+export type CloudEventSink = {
+  id: string;
+  endpoint: string;
+  detailLevel: "privacy-minimal" | "operational" | "diagnostic";
+  signingSecret: string;
+  status: "active" | "paused";
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CloudEventSinkState = {
+  data: CloudEventSink | null;
+  deliveries: Array<{
+    id: string;
+    eventId: string;
+    status: "pending" | "retrying" | "delivered" | "failed";
+    attempts: number;
+    lastError?: string;
+  }>;
+};
+
 export type ControlEvent = {
   id: string;
   principalId: string;

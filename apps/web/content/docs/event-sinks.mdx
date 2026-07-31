@@ -1,0 +1,35 @@
+---
+title: Timeline exports
+description: Export Session Timelines or deliver signed events to your own endpoint.
+---
+
+Every Session has a versioned Timeline that can be downloaded as JSON from its detail page.
+Exports apply the Workspace retention window and redact credentials before returning data.
+
+## Event Sinks
+
+Workspace administrators can configure one public HTTPS endpoint in **Settings**. Odyshell sends
+each retained Timeline event in a signed `ods.timeline.v1` envelope.
+
+Choose a detail level:
+
+- **Privacy-minimal** contains lifecycle, identity and scope metadata.
+- **Operational** can include typed operation context such as paths and programs.
+- **Diagnostic** can also include available operation output.
+
+Credentials, secrets and environment variables are removed at every level.
+
+Each request includes:
+
+```text
+X-Odyshell-Delivery: <unique delivery ID>
+X-Odyshell-Timestamp: <ISO 8601 timestamp>
+X-Odyshell-Signature: v1=<HMAC-SHA256 hex digest>
+```
+
+Calculate HMAC-SHA256 over the exact request body with the configured signing secret. Reject an
+invalid signature, an old timestamp or a delivery ID already processed.
+
+Failed requests use bounded exponential backoff. Recent delivery status and terminal failures are
+available through the Server API. Odyshell does not follow redirects, and endpoints must resolve
+only to public addresses.

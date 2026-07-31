@@ -51,6 +51,8 @@ A production deployment needs:
 - `ODYSHELL_ADMIN_KEY` set to a strong, private value.
 - `HOST=0.0.0.0`.
 - Optional `ODYSHELL_WEB_KEY` and `ODYSHELL_WEB_URL` to enable the cloud web bridge.
+- Optional `ODYSHELL_EVENT_SINK_ENCRYPTION_KEY`, a base64url-encoded 32-byte key, to enable signed
+  Timeline delivery.
 
 Railway supplies `PORT` automatically. PostgreSQL stores machine identities, scoped tokens,
 temporary sessions, operations, and content-minimal control events. Operation payloads expire

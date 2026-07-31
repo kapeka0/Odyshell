@@ -9,6 +9,7 @@ import {
   DashboardStateNotice,
 } from "@/components/dashboard-state";
 import { WorkspaceIdentityAvatar } from "@/components/identity-avatar";
+import { EventSinkSettings } from "@/components/event-sink-settings";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -101,6 +102,7 @@ export default function WorkspaceSettingsPage() {
               </div>
             </CardContent>
           </Card>
+          {orgRole === "org:admin" ? <EventSinkSettings /> : null}
         </>
       )}
     </DashboardPage>

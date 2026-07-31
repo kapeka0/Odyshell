@@ -190,6 +190,9 @@ particular component, library or interaction pattern.
   administrators.
 - Control Events remain privacy-minimal in the MVP. Do not present unavailable
   logging policies as editable choices.
+- Timeline exports and Event Sinks may use Privacy-minimal, Operational or
+  Diagnostic detail. Keep Control Events privacy-minimal, redact secrets at
+  every level and make broader Timeline output an explicit workspace choice.
 - Keep public documentation outside the authenticated workspace and make it usable
   without a Clerk session.
 - Documentation starts with the Cloud workflow, uses progressive disclosure and
