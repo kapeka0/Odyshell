@@ -560,6 +560,40 @@ try {
   if (wrongCapability.status !== 403) {
     throw new Error("Session Credential exceeded its capability scope");
   }
+  const wrongMachine = await fetch(
+    new URL(`/v1/machines/${isolatedMachine.machineId}/ping`, apiUrl),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${claimedSession.sessionToken}`,
+      },
+    },
+  );
+  if (wrongMachine.status !== 403) {
+    throw new Error("Session Credential exceeded its machine scope");
+  }
+  const wrongSession = await fetch(
+    new URL(
+      `/v1/sessions/${crypto.randomUUID()}/operations`,
+      apiUrl,
+    ),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${claimedSession.sessionToken}`,
+        "content-type": "application/json",
+        "idempotency-key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({
+        action: { kind: "fs.read", path: "approved.txt" },
+        timeoutSeconds: 10,
+        maxOutputBytes: 1024,
+      }),
+    },
+  );
+  if (wrongSession.status !== 403) {
+    throw new Error("Session Credential exceeded its Session scope");
+  }
   const newSessionAttempt = await fetch(new URL("/v1/sessions", apiUrl), {
     method: "POST",
     headers: {
@@ -1671,6 +1705,8 @@ try {
           sessionClaimReplayRejected: true,
           exactPathScopeDenied: true,
           sessionCapabilityScopeDenied: true,
+          sessionMachineScopeDenied: true,
+          sessionIdScopeDenied: true,
           sessionCredentialCannotMintSessions: true,
           sessionTimeline: true,
           sessionCredentialHashed: true,
