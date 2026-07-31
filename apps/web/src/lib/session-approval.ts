@@ -10,6 +10,7 @@ export type SessionApproval = {
   id: string;
   agent: { id: string; name: string };
   purpose: string;
+  predecessorSessionId: string | null;
   scopes: Array<
     SessionMachineScope & {
       machine: { id: string; name: string };

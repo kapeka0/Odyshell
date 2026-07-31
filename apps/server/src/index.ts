@@ -81,6 +81,9 @@ const scopedOperationRequestSchema = operationRequestSchema
 const agentIdentityReferenceSchema = z
   .object({ agentId: z.string().uuid() })
   .strict();
+const renewAgentSessionSchema = agentIdentityReferenceSchema.extend({
+  durationSeconds: z.number().int().min(60).max(24 * 60 * 60).optional(),
+});
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
 await app.register(websocket, { options: { maxPayload: 2 * 1024 * 1024 } });
@@ -851,6 +854,7 @@ app.post(
       id: sessionRequest.id,
       agent: { id: sessionRequest.agentId, name: sessionRequest.agentName },
       purpose: sessionRequest.purpose,
+      predecessorSessionId: sessionRequest.predecessorSessionId ?? null,
       scopes: sessionRequest.scopes.map((scope) => {
         const machine = sessionRequest.machines.find(
           (candidate) => candidate.id === scope.machineId,
@@ -1624,6 +1628,7 @@ app.post<{ Params: { requestId: string } }>(
         capabilities: target.scope.capabilities,
         restrictions: target.scope.restrictions,
         expiresAt: new Date(result.session.expiresAt).toISOString(),
+        serverTime: new Date().toISOString(),
       });
       if (!sent) {
         await db.markSessionOpenFailed(
@@ -1763,6 +1768,7 @@ app.post("/v1/sessions", { preHandler: requireAgent }, async (request, reply) =>
     profile: input.profile,
     capabilities: input.capabilities,
     expiresAt: expiresAt.toISOString(),
+    serverTime: new Date().toISOString(),
   });
   await audit(db, principal.workspaceId, principal.id, "session.created", "session", sessionId, {
     machineId: input.machineId,
@@ -1859,27 +1865,27 @@ app.delete<{ Params: { sessionId: string } }>(
       return reply.code(404).send({ error: "active_session_not_found" });
     }
     if (principal.sessionScope !== undefined) {
-      const targets = await db.listAgentSessionTargetRuntimes(
-        principal.workspaceId,
-        request.params.sessionId,
-        principal.id,
-      );
-      const activeTargets = targets.filter((target) =>
-        ["opening", "ready"].includes(target.status),
-      );
-      if (activeTargets.length === 0) {
+      const termination = await db.cancelAgentSession({
+        workspaceId: principal.workspaceId,
+        sessionId: request.params.sessionId,
+        agentId: principal.id,
+        reason: "cancelled",
+      });
+      if (!termination) {
         return reply.code(404).send({ error: "active_session_not_found" });
       }
-      for (const target of activeTargets) {
+      for (const operation of termination.operations) {
+        gateway.send(operation.machineId, {
+          type: "operation.cancel",
+          operationId: operation.id,
+        });
+      }
+      for (const target of termination.targets) {
         gateway.send(target.machineId, {
           type: "session.close",
           sessionId: target.runtimeSessionId,
           reason: "agent_request",
         });
-        await db.markSessionClosing(
-          principal.workspaceId,
-          target.runtimeSessionId,
-        );
       }
       await audit(
         db,
@@ -1888,11 +1894,15 @@ app.delete<{ Params: { sessionId: string } }>(
         "session.close_requested",
         "session",
         request.params.sessionId,
-        { machineIds: activeTargets.map((target) => target.machineId) },
+        { machineIds: termination.targets.map((target) => target.machineId) },
       );
       return reply
         .code(202)
-        .send({ id: request.params.sessionId, status: "closing" });
+        .send({
+          id: request.params.sessionId,
+          status: termination.status,
+          transitioned: termination.transitioned,
+        });
     }
     const session = await db.getActiveSession(
       principal.workspaceId,
@@ -1916,6 +1926,133 @@ app.delete<{ Params: { sessionId: string } }>(
       { machineId: session.machineId },
     );
     return reply.code(202).send({ id: request.params.sessionId, status: "closing" });
+  },
+);
+
+app.post<{ Params: { sessionId: string } }>(
+  "/v1/agent-sessions/:sessionId/cancel",
+  { preHandler: requireCli },
+  async (request, reply) => {
+    const parsed = agentIdentityReferenceSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply
+        .code(400)
+        .send({ error: "invalid_request", details: parsed.error.issues });
+    }
+    const principal = cliPrincipalFor(request);
+    const termination = await db.cancelAgentSession({
+      workspaceId: principal.workspaceId,
+      sessionId: request.params.sessionId,
+      agentId: parsed.data.agentId,
+      requestedByHumanId: principal.userId,
+      reason: "cancelled",
+    });
+    if (!termination) {
+      return reply.code(404).send({ error: "session_not_found" });
+    }
+    for (const operation of termination.operations) {
+      gateway.send(operation.machineId, {
+        type: "operation.cancel",
+        operationId: operation.id,
+      });
+    }
+    for (const target of termination.targets) {
+      gateway.send(target.machineId, {
+        type: "session.close",
+        sessionId: target.runtimeSessionId,
+        reason: "human_request",
+      });
+    }
+    if (termination.transitioned) {
+      await audit(
+        db,
+        principal.workspaceId,
+        parsed.data.agentId,
+        "session.cancelled",
+        "session",
+        request.params.sessionId,
+      );
+      gateway.notifyWorkspace(principal.workspaceId);
+    }
+    return {
+      id: termination.id,
+      status: termination.status,
+      transitioned: termination.transitioned,
+    };
+  },
+);
+
+app.post<{ Params: { sessionId: string } }>(
+  "/v1/agent-sessions/:sessionId/renew",
+  { preHandler: requireCli },
+  async (request, reply) => {
+    if (!webUrl) {
+      return reply.code(503).send({ error: "session_approval_unavailable" });
+    }
+    const parsed = renewAgentSessionSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply
+        .code(400)
+        .send({ error: "invalid_request", details: parsed.error.issues });
+    }
+    const principal = cliPrincipalFor(request);
+    if (!sessionRequestLimiter.allow(principal.workspaceId, principal.userId)) {
+      return reply
+        .code(429)
+        .send({ error: "session_request_rate_limited" });
+    }
+    const predecessor = await db.agentSessionForRenewal(
+      principal.workspaceId,
+      request.params.sessionId,
+      parsed.data.agentId,
+      principal.userId,
+    );
+    if (!predecessor) {
+      return reply.code(404).send({ error: "session_not_found" });
+    }
+    const requestId = randomUUID();
+    const approvalCode = createOpaqueToken("approval");
+    const expiresAt = Date.now() + 10 * 60_000;
+    const created = await db.createAgentSessionRequest({
+      workspaceId: principal.workspaceId,
+      requestId,
+      agentId: parsed.data.agentId,
+      agentName: predecessor.agentName,
+      humanId: principal.userId,
+      scopes: predecessor.scopes,
+      purpose: predecessor.purpose,
+      durationSeconds:
+        parsed.data.durationSeconds ?? predecessor.durationSeconds,
+      approvalCodeHash: hashToken(approvalCode),
+      expiresAt,
+      predecessorSessionId: request.params.sessionId,
+    });
+    if (!created) {
+      return reply.code(403).send({ error: "session_renewal_denied" });
+    }
+    await audit(
+      db,
+      principal.workspaceId,
+      parsed.data.agentId,
+      "session.renewal_requested",
+      "session_request",
+      requestId,
+      { predecessorSessionId: request.params.sessionId },
+    );
+    gateway.notifyWorkspace(principal.workspaceId);
+    return reply.code(201).send({
+      id: requestId,
+      predecessorSessionId: request.params.sessionId,
+      status: "pending",
+      scopes: predecessor.scopes.map((scope) => ({
+        machineId: scope.machineId,
+        readiness: gateway.isOnline(scope.machineId)
+          ? { ready: true }
+          : { ready: false, reason: "machine_offline" },
+      })),
+      approvalUrl: `${webUrl}/sessions/approve?code=${encodeURIComponent(approvalCode)}`,
+      expiresAt: isoTimestamp(expiresAt),
+    });
   },
 );
 

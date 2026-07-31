@@ -51,7 +51,8 @@ automatically. `--config` remains available when an explicit path is useful.
 - Client configuration is validated locally and fails closed.
 - Filesystem operations cannot leave the configured workspace.
 - Every requested capability must be allowed both remotely and locally.
-- Commands have time and output limits and can be cancelled.
+- Commands have time and output limits and are stopped when their operation or Session is closed.
+- Session deadlines are derived from Server time and excessive clock skew fails closed.
 - A durable local journal prevents silent duplicate execution after reconnects.
 
 Host processes have the permissions of the user running the Client. For real deployments, use a

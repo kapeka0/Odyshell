@@ -59,6 +59,20 @@ const result = await ods.readApprovedSession(claim);
 log it, or persist it. `readApprovedSession` uses it only for the approved Session and closes that
 Session after the read.
 
+Cancel a claimed Session when the task finishes:
+
+```ts
+await ods.cancelAgentSession(claim.sessionId, agentId);
+```
+
+Renewal creates a successor with the same scope and requires a new approval:
+
+```ts
+const renewal = await ods.renewAgentSession(claim.sessionId, agentId, {
+  durationSeconds: 900,
+});
+```
+
 Use `process.exec` when possible. `process.shell` is available for commands that genuinely need a
 shell and should receive a separate, explicit capability.
 

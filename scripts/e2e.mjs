@@ -394,13 +394,25 @@ try {
           {
             machineId: machine.id,
             profile: "workspace",
-            capabilities: ["fs.read"],
+            capabilities: ["fs.read", "process.exec"],
             restrictions: {
               filesystem: {
                 paths: [
                   {
                     path: "approved.txt",
                     includeDescendants: false,
+                  },
+                ],
+              },
+              process: {
+                programs: [
+                  {
+                    program: "sleep",
+                    args: ["30"],
+                    cwd: {
+                      path: ".",
+                      includeDescendants: false,
+                    },
                   },
                 ],
               },
@@ -566,11 +578,10 @@ try {
     throw new Error("Session Credential exceeded its exact path scope");
   }
   const wrongCapability = await scopedOperation({
-    kind: "process.exec",
-    program: "id",
-    args: [],
-    cwd: ".",
-    env: {},
+    kind: "fs.write",
+    path: "approved.txt",
+    contentBase64: "",
+    createParents: false,
   });
   if (wrongCapability.status !== 403) {
     throw new Error("Session Credential exceeded its capability scope");
@@ -693,6 +704,82 @@ try {
   ) {
     throw new Error("Approved fs.read did not complete end to end");
   }
+  const longOperationResponse = await scopedOperation({
+    kind: "process.exec",
+    program: "sleep",
+    args: ["30"],
+    cwd: ".",
+    env: {},
+  });
+  const longOperation = await longOperationResponse.json();
+  if (longOperationResponse.status !== 202) {
+    throw new Error("Bounded process did not start before cancellation");
+  }
+  await waitUntil(
+    async () =>
+      JSON.parse(
+        (
+          await compose([
+            "exec",
+            "-T",
+            "postgres",
+            "psql",
+            "-U",
+            "odyshell",
+            "-d",
+            "odyshell",
+            "-At",
+            "-c",
+            `select json_build_object('status', status) from odyshell.operations where id = '${longOperation.id}';`,
+          ])
+        ).trim(),
+      ),
+    (value) => value.status === "running",
+    "running Operation before Session cancellation",
+  );
+  const cancelActiveResponse = await fetch(
+    new URL(
+      `/v1/agent-sessions/${claimedSession.sessionId}/cancel`,
+      apiUrl,
+    ),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${cliToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ agentId: approvedAgentId }),
+    },
+  );
+  const cancelActive = await cancelActiveResponse.json();
+  if (cancelActiveResponse.status !== 200 || cancelActive.transitioned !== true) {
+    throw new Error("Active Session cancellation failed");
+  }
+  const cancelledOperationStatus = (
+    await compose([
+      "exec",
+      "-T",
+      "postgres",
+      "psql",
+      "-U",
+      "odyshell",
+      "-d",
+      "odyshell",
+      "-At",
+      "-c",
+      `select status from odyshell.operations where id = '${longOperation.id}';`,
+    ])
+  ).trim();
+  if (cancelledOperationStatus !== "cancelled") {
+    throw new Error("Session cancellation did not terminate active authority");
+  }
+  const cancelledCredentialReplay = await scopedOperation({
+    kind: "fs.read",
+    path: "approved.txt",
+  });
+  if (cancelledCredentialReplay.status !== 401) {
+    throw new Error("Cancelled Session Credential could be replayed");
+  }
   await compose([
     "exec",
     "-T",
@@ -712,15 +799,6 @@ try {
       `where workspace_id = 'default' and id = '${crossSessionId}';`,
     ].join(" "),
   ]);
-  await fetch(
-    new URL(`/v1/sessions/${claimedSession.sessionId}`, apiUrl),
-    {
-      method: "DELETE",
-      headers: {
-        authorization: `Bearer ${claimedSession.sessionToken}`,
-      },
-    },
-  );
   await waitUntil(
     async () => {
       const response = await fetch(
@@ -746,6 +824,161 @@ try {
       value.data?.some((event) => event.eventType === "session.closed"),
     "privacy-minimal Session Timeline",
   );
+  const renewalResponse = await fetch(
+    new URL(
+      `/v1/agent-sessions/${claimedSession.sessionId}/renew`,
+      apiUrl,
+    ),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${cliToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        agentId: approvedAgentId,
+        durationSeconds: 600,
+      }),
+    },
+  );
+  const renewalRequest = await renewalResponse.json();
+  if (
+    renewalResponse.status !== 201 ||
+    renewalRequest.predecessorSessionId !== claimedSession.sessionId
+  ) {
+    throw new Error(
+      `Session renewal failed: ${renewalResponse.status} ${JSON.stringify(renewalRequest)}`,
+    );
+  }
+  const renewalCode = new URL(renewalRequest.approvalUrl).searchParams.get(
+    "code",
+  );
+  if (!renewalCode) throw new Error("Renewal approval omitted its code");
+  const renewalApproval = await fetch(
+    new URL("/v1/internal/cloud/session-requests/approve", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        ...approvalBody,
+        approvalCode: renewalCode,
+      }),
+    },
+  );
+  if (renewalApproval.status !== 200) {
+    throw new Error("Renewal approval failed");
+  }
+  const renewalClaimResponse = await fetch(
+    new URL(
+      `/v1/agent-session-requests/${renewalRequest.id}/claim`,
+      apiUrl,
+    ),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${cliToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ agentId: approvedAgentId }),
+    },
+  );
+  const renewedSession = await renewalClaimResponse.json();
+  if (
+    renewalClaimResponse.status !== 201 ||
+    renewedSession.sessionId === claimedSession.sessionId
+  ) {
+    throw new Error("Renewal did not create a successor Session");
+  }
+  const predecessorLink = (
+    await compose([
+      "exec",
+      "-T",
+      "postgres",
+      "psql",
+      "-U",
+      "odyshell",
+      "-d",
+      "odyshell",
+      "-At",
+      "-c",
+      `select predecessor_session_id from odyshell.agent_sessions where id = '${renewedSession.sessionId}';`,
+    ])
+  ).trim();
+  if (predecessorLink !== claimedSession.sessionId) {
+    throw new Error("Renewed Session did not retain its predecessor link");
+  }
+  const cancelRenewed = () =>
+    fetch(
+      new URL(
+        `/v1/agent-sessions/${renewedSession.sessionId}/cancel`,
+        apiUrl,
+      ),
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${cliToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ agentId: approvedAgentId }),
+      },
+    );
+  const firstCancelResponse = await cancelRenewed();
+  const firstCancel = await firstCancelResponse.json();
+  const replayCancelResponse = await cancelRenewed();
+  const replayCancel = await replayCancelResponse.json();
+  if (
+    firstCancelResponse.status !== 200 ||
+    firstCancel.transitioned !== true ||
+    replayCancelResponse.status !== 200 ||
+    replayCancel.transitioned !== false
+  ) {
+    throw new Error("Session cancellation was not idempotent");
+  }
+  await waitUntil(
+    async () => ({
+      status: (
+        await compose([
+          "exec",
+          "-T",
+          "postgres",
+          "psql",
+          "-U",
+          "odyshell",
+          "-d",
+          "odyshell",
+          "-At",
+          "-c",
+          `select status from odyshell.sessions where id = '${renewedSession.sessionId}';`,
+        ])
+      ).trim(),
+    }),
+    (value) => value.status === "closed",
+    "renewed Session Client cleanup",
+  );
+  const revokedReplay = await fetch(
+    new URL(
+      `/v1/sessions/${renewedSession.sessionId}/operations`,
+      apiUrl,
+    ),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${renewedSession.sessionToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        action: { kind: "fs.read", path: "approved.txt" },
+        timeoutSeconds: 10,
+        maxOutputBytes: 1024,
+      }),
+    },
+  );
+  if (revokedReplay.status !== 401) {
+    throw new Error("A cancelled Session Credential could be replayed");
+  }
   const storedCredentialLeak = (
     await compose([
       "exec",
@@ -1280,7 +1513,22 @@ try {
     "read-only sandbox creation",
   );
   if (readOnlySession.status !== "ready") {
-    throw new Error(`Read-only sandbox failed: ${readOnlySession.error}`);
+    const activeSessionRows = await compose([
+      "exec",
+      "-T",
+      "postgres",
+      "psql",
+      "-U",
+      "odyshell",
+      "-d",
+      "odyshell",
+      "-At",
+      "-c",
+      `select id || ':' || status from odyshell.sessions where machine_id = '${machine.id}' and status in ('opening','ready','closing');`,
+    ]);
+    throw new Error(
+      `Read-only sandbox failed: ${readOnlySession.error}; active=${activeSessionRows.trim()}; renewed=${renewedSession.sessionId}`,
+    );
   }
   const readOnlyContainerId = (
     await run("docker", ["ps", "-q", "--filter", `label=odyshell.session=${readOnlySession.id}`])

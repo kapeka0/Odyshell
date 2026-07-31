@@ -5,6 +5,7 @@ export const DEFAULT_CLOUD_SERVER_URL =
   "https://server-production-30ab.up.railway.app";
 export const MAX_AGENT_ACCESS_SECONDS = 365 * 24 * 60 * 60;
 export const MAX_AGENT_SESSION_SECONDS = 24 * 60 * 60;
+export const MAX_CLIENT_CLOCK_SKEW_MILLISECONDS = 30_000;
 
 const identityIdSchema = z.string().trim().min(1).max(256);
 const identityStatusSchema = z.enum(["active", "disabled"]);
@@ -587,6 +588,7 @@ export type ServerToClientMessage =
       /** Required for canonical Agent Sessions; omitted only by legacy authority. */
       restrictions?: SessionRestrictions;
       expiresAt: string;
+      serverTime?: string;
     }
   | { type: "session.close"; sessionId: string; reason: string }
   | {

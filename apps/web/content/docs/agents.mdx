@@ -40,7 +40,12 @@ Its effective authority is the intersection of:
 ## Expiry
 
 Session authority begins when it is claimed and cannot outlive its expiry. A Session Credential
-cannot create another Session or change its approved scope.
+cannot create another Session or change its approved scope. The Server revokes the credential and
+the Client cancels active work when the Session expires or is cancelled.
+
+Renewal never extends an active Session. It creates a successor with the same immutable scope, a
+new expiry, and a new approval. Cancelling a Session is safe to retry and immediately prevents
+credential reuse.
 
 Verified request, approval, target, Operation result and close events form the Session Timeline.
 Privacy-minimal Timeline events do not contain file contents or credentials.

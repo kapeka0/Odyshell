@@ -60,7 +60,19 @@ export class ClientGateway {
         if (state.machineId && this.connections.get(state.machineId) === socket) {
           this.connections.delete(state.machineId);
           void this.db
-            .setMachineOffline(state.machineId)
+            .markMachineDisconnected(state.machineId)
+            .then((result) => {
+              if (result && (result.operations > 0 || result.targets > 0)) {
+                app.log.info(
+                  {
+                    machineId: state.machineId,
+                    operations: result.operations,
+                    targets: result.targets,
+                  },
+                  "Machine disconnect terminated active authority",
+                );
+              }
+            })
             .finally(() => {
               if (state.workspaceId) this.notifyWorkspace(state.workspaceId);
             });

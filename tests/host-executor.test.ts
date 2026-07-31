@@ -144,6 +144,27 @@ describe("HostExecutor", () => {
     }
   });
 
+  it("waits for active process cleanup when a Session closes", async () => {
+    const running = await executor.execute(
+      crypto.randomUUID(),
+      session,
+      {
+        kind: "process.exec",
+        program: process.execPath,
+        args: ["-e", "setInterval(() => {}, 1000)"],
+        cwd: ".",
+        env: {},
+      },
+      hooks(),
+    );
+    expect(running.child?.pid).toBeTypeOf("number");
+
+    await executor.closeSession(session);
+
+    await running.done;
+    expect(running.child?.exitCode ?? running.child?.signalCode).not.toBeNull();
+  });
+
   async function execute(action: OperationAction): Promise<string> {
     const result: Buffer[] = [];
     const running = await executor.execute(

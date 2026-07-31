@@ -47,6 +47,16 @@ export function SessionApprovalForm({
     <form className="space-y-5" onSubmit={submit}>
       <dl className="space-y-3 text-sm">
         <ApprovalRow label="Agent" value={approval.agent.name} />
+        {approval.predecessorSessionId ? (
+          <ApprovalRow
+            label="Renews"
+            value={
+              <code className="break-all font-mono text-xs">
+                {approval.predecessorSessionId}
+              </code>
+            }
+          />
+        ) : null}
         <div className="space-y-3">
           {approval.scopes.map((scope) => (
             <div className="rounded-lg border p-3" key={scope.machineId}>

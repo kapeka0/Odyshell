@@ -190,6 +190,7 @@ interface AgentSessionRequestTable {
   approvedByHumanId: string | null;
   claimedAt: Date | null;
   sessionId: string | null;
+  predecessorSessionId: string | null;
   createdAt: Generated<Date>;
   updatedAt: Generated<Date>;
 }
@@ -399,6 +400,7 @@ export type AgentSessionRequestRecord = Timestamped & {
   approvedByHumanId?: string;
   claimedAt?: number;
   sessionId?: string;
+  predecessorSessionId?: string;
 };
 
 export type SessionApprovalView = AgentSessionRequestRecord & {
@@ -473,6 +475,14 @@ export type AgentSessionTargetRuntime = {
   status: string;
   expiresAt: number;
   error?: string;
+};
+
+export type AgentSessionTermination = {
+  id: string;
+  status: AgentSessionRecord["status"];
+  transitioned: boolean;
+  targets: Array<{ machineId: string; runtimeSessionId: string }>;
+  operations: Array<{ id: string; machineId: string }>;
 };
 
 export type OperationRecord = Timestamped & {
@@ -640,6 +650,9 @@ function agentSessionRequestRecord(
       ? {}
       : { claimedAt: timestamp(request.claimedAt) }),
     ...(request.sessionId === null ? {} : { sessionId: request.sessionId }),
+    ...(request.predecessorSessionId === null
+      ? {}
+      : { predecessorSessionId: request.predecessorSessionId }),
     createdAt: timestamp(request.createdAt),
     updatedAt: timestamp(request.updatedAt),
   };
@@ -1590,6 +1603,42 @@ async function rollbackTypedMachineScopes(
   `.execute(db);
 }
 
+async function migrateSessionRenewalLinks(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    alter table odyshell.agent_session_requests
+    add column if not exists predecessor_session_id text
+  `.execute(db);
+  await sql`
+    do $migration$
+    begin
+      if not exists (
+        select 1
+        from pg_constraint
+        where conname = 'agent_session_requests_predecessor_fk'
+          and connamespace = 'odyshell'::regnamespace
+      )
+      then
+        alter table odyshell.agent_session_requests
+        add constraint agent_session_requests_predecessor_fk
+        foreign key (workspace_id, predecessor_session_id)
+        references odyshell.agent_sessions (workspace_id, id);
+      end if;
+    end
+    $migration$
+  `.execute(db);
+}
+
+async function rollbackSessionRenewalLinks(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    alter table odyshell.agent_session_requests
+    drop column predecessor_session_id
+  `.execute(db);
+}
+
 const migrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
     return {
@@ -1627,6 +1676,10 @@ const migrationProvider: MigrationProvider = {
       "010_typed_machine_scopes": {
         up: migrateTypedMachineScopes,
         down: rollbackTypedMachineScopes,
+      },
+      "011_session_renewal_links": {
+        up: migrateSessionRenewalLinks,
+        down: rollbackSessionRenewalLinks,
       },
     };
   },
@@ -2077,6 +2130,7 @@ export class PostgresDatabase {
     durationSeconds: number;
     approvalCodeHash: string;
     expiresAt: number;
+    predecessorSessionId?: string;
   }): Promise<AgentSessionRequestRecord | null> {
     return await this.db.transaction().execute(async (transaction) => {
       await transaction
@@ -2163,6 +2217,7 @@ export class PostgresDatabase {
           approvedByHumanId: null,
           claimedAt: null,
           sessionId: null,
+          predecessorSessionId: input.predecessorSessionId ?? null,
         })
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -2183,6 +2238,9 @@ export class PostgresDatabase {
               capabilities: scope.capabilities,
             })),
             durationSeconds: input.durationSeconds,
+            ...(input.predecessorSessionId
+              ? { predecessorSessionId: input.predecessorSessionId }
+              : {}),
           }),
         })
         .execute();
@@ -2253,6 +2311,49 @@ export class PostgresDatabase {
       return agentSessionRequestRecord(expired ?? request);
     }
     return agentSessionRequestRecord(request);
+  }
+
+  async agentSessionForRenewal(
+    workspaceId: string,
+    sessionId: string,
+    agentId: string,
+    humanId: string,
+  ): Promise<{
+    agentName: string;
+    purpose: string;
+    scopes: SessionMachineScope[];
+    durationSeconds: number;
+  } | null> {
+    return (
+      (await this.db
+        .selectFrom("agentSessionRequests")
+        .innerJoin("agents", (join) =>
+          join
+            .onRef("agents.workspaceId", "=", "agentSessionRequests.workspaceId")
+            .onRef("agents.id", "=", "agentSessionRequests.agentId"),
+        )
+        .innerJoin("agentSessions", (join) =>
+          join
+            .onRef(
+              "agentSessions.workspaceId",
+              "=",
+              "agentSessionRequests.workspaceId",
+            )
+            .onRef("agentSessions.id", "=", "agentSessionRequests.sessionId"),
+        )
+        .select([
+          "agents.name as agentName",
+          "agentSessionRequests.purpose",
+          "agentSessionRequests.scopes",
+          "agentSessionRequests.durationSeconds",
+        ])
+        .where("agentSessionRequests.workspaceId", "=", workspaceId)
+        .where("agentSessionRequests.sessionId", "=", sessionId)
+        .where("agentSessionRequests.agentId", "=", agentId)
+        .where("agentSessionRequests.requestedByHumanId", "=", humanId)
+        .where("agents.status", "=", "active")
+        .executeTakeFirst()) ?? null
+    );
   }
 
   async approveAgentSessionRequest(input: {
@@ -2421,7 +2522,7 @@ export class PostgresDatabase {
           purpose: request.purpose,
           status: "active",
           expiresAt,
-          predecessorSessionId: null,
+          predecessorSessionId: request.predecessorSessionId,
           createdAt: claimedAt,
           updatedAt: claimedAt,
         })
@@ -2511,6 +2612,9 @@ export class PostgresDatabase {
               capabilities: scope.capabilities,
             })),
             expiresAt: expiresAt.toISOString(),
+            ...(request.predecessorSessionId
+              ? { predecessorSessionId: request.predecessorSessionId }
+              : {}),
           }),
           createdAt: claimedAt,
         })
@@ -2684,6 +2788,131 @@ export class PostgresDatabase {
         ...record,
         expiresAt: timestamp(target.expiresAt),
         ...(error === null ? {} : { error }),
+      };
+    });
+  }
+
+  async cancelAgentSession(input: {
+    workspaceId: string;
+    sessionId: string;
+    agentId: string;
+    requestedByHumanId?: string;
+    reason: "cancelled" | "revoked";
+    now?: number;
+  }): Promise<AgentSessionTermination | null> {
+    return await this.db.transaction().execute(async (transaction) => {
+      const session = await transaction
+        .selectFrom("agentSessions")
+        .selectAll()
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", input.sessionId)
+        .where("agentId", "=", input.agentId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!session) return null;
+      const request = await transaction
+        .selectFrom("agentSessionRequests")
+        .select(["id", "requestedByHumanId"])
+        .where("workspaceId", "=", input.workspaceId)
+        .where("sessionId", "=", input.sessionId)
+        .executeTakeFirst();
+      if (
+        input.requestedByHumanId !== undefined &&
+        request?.requestedByHumanId !== input.requestedByHumanId
+      ) {
+        return null;
+      }
+      const targets = await transaction
+        .selectFrom("agentSessionTargets")
+        .select(["machineId", "runtimeSessionId"])
+        .where("workspaceId", "=", input.workspaceId)
+        .where("sessionId", "=", input.sessionId)
+        .execute();
+      const runtimeIds = targets.map((target) => target.runtimeSessionId);
+      const operations =
+        runtimeIds.length === 0
+          ? []
+          : await transaction
+              .selectFrom("operations")
+              .innerJoin("sessions", "sessions.id", "operations.sessionId")
+              .select(["operations.id", "sessions.machineId"])
+              .where("operations.workspaceId", "=", input.workspaceId)
+              .where("operations.sessionId", "in", runtimeIds)
+              .where("operations.status", "in", ACTIVE_OPERATION_STATUSES)
+              .execute();
+      if (session.status !== "active") {
+        return {
+          id: session.id,
+          status: session.status as AgentSessionRecord["status"],
+          transitioned: false,
+          targets,
+          operations: [],
+        };
+      }
+
+      const now = new Date(input.now ?? Date.now());
+      await transaction
+        .updateTable("sessionCredentials")
+        .set({ status: "revoked", revokedAt: now })
+        .where("workspaceId", "=", input.workspaceId)
+        .where("sessionId", "=", input.sessionId)
+        .where("status", "=", "active")
+        .execute();
+      await transaction
+        .updateTable("agentSessions")
+        .set({ status: input.reason, updatedAt: now })
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", input.sessionId)
+        .where("status", "=", "active")
+        .execute();
+      await transaction
+        .updateTable("agentSessionTargets")
+        .set({ status: "closed", updatedAt: now })
+        .where("workspaceId", "=", input.workspaceId)
+        .where("sessionId", "=", input.sessionId)
+        .execute();
+      if (runtimeIds.length > 0) {
+        await transaction
+          .updateTable("operations")
+          .set({
+            status: "cancelled",
+            error: input.reason,
+            updatedAt: now,
+          })
+          .where("workspaceId", "=", input.workspaceId)
+          .where("sessionId", "in", runtimeIds)
+          .where("status", "in", ACTIVE_OPERATION_STATUSES)
+          .execute();
+        await transaction
+          .updateTable("sessions")
+          .set({ status: "closing", updatedAt: now })
+          .where("workspaceId", "=", input.workspaceId)
+          .where("id", "in", runtimeIds)
+          .where("status", "in", ACTIVE_SESSION_STATUSES)
+          .execute();
+      }
+      if (request) {
+        await transaction
+          .insertInto("sessionTimelineEvents")
+          .values({
+            workspaceId: input.workspaceId,
+            id: randomUUID(),
+            sessionId: input.sessionId,
+            requestId: request.id,
+            operationId: null,
+            eventType: `session.${input.reason}`,
+            source: "verified",
+            metadata: JSON.stringify({}),
+            createdAt: now,
+          })
+          .execute();
+      }
+      return {
+        id: session.id,
+        status: input.reason,
+        transitioned: true,
+        targets,
+        operations,
       };
     });
   }
@@ -3192,6 +3421,122 @@ export class PostgresDatabase {
       .set({ status: "offline" })
       .where("id", "=", machineId)
       .execute();
+  }
+
+  async markMachineDisconnected(machineId: string): Promise<{
+    workspaceId: string;
+    operations: number;
+    targets: number;
+  } | null> {
+    return await this.db.transaction().execute(async (transaction) => {
+      const machine = await transaction
+        .updateTable("machines")
+        .set({ status: "offline" })
+        .where("id", "=", machineId)
+        .returning("workspaceId")
+        .executeTakeFirst();
+      if (!machine) return null;
+      const now = new Date();
+      const runtimes = await transaction
+        .selectFrom("sessions")
+        .select("id")
+        .where("workspaceId", "=", machine.workspaceId)
+        .where("machineId", "=", machineId)
+        .where("status", "in", ACTIVE_SESSION_STATUSES)
+        .execute();
+      const runtimeIds = runtimes.map((runtime) => runtime.id);
+      const operations =
+        runtimeIds.length === 0
+          ? []
+          : await transaction
+              .updateTable("operations")
+              .set({
+                status: "execution_unknown",
+                error: "machine_disconnected",
+                updatedAt: now,
+              })
+              .where("workspaceId", "=", machine.workspaceId)
+              .where("sessionId", "in", runtimeIds)
+              .where("status", "in", ACTIVE_OPERATION_STATUSES)
+              .returning("id")
+              .execute();
+      if (runtimeIds.length > 0) {
+        await transaction
+          .updateTable("sessions")
+          .set({
+            status: "failed",
+            error: "machine_disconnected",
+            updatedAt: now,
+          })
+          .where("workspaceId", "=", machine.workspaceId)
+          .where("id", "in", runtimeIds)
+          .where("status", "in", ACTIVE_SESSION_STATUSES)
+          .execute();
+      }
+      const targets =
+        runtimeIds.length === 0
+          ? []
+          : await transaction
+              .updateTable("agentSessionTargets")
+              .set({ status: "rejected", updatedAt: now })
+              .where("workspaceId", "=", machine.workspaceId)
+              .where("runtimeSessionId", "in", runtimeIds)
+              .where("status", "in", ["opening", "ready"])
+              .returning(["sessionId", "runtimeSessionId"])
+              .execute();
+      for (const target of targets) {
+        const request = await transaction
+          .selectFrom("agentSessionRequests")
+          .select("id")
+          .where("workspaceId", "=", machine.workspaceId)
+          .where("sessionId", "=", target.sessionId)
+          .executeTakeFirst();
+        if (request) {
+          await transaction
+            .insertInto("sessionTimelineEvents")
+            .values({
+              workspaceId: machine.workspaceId,
+              id: randomUUID(),
+              sessionId: target.sessionId,
+              requestId: request.id,
+              operationId: null,
+              eventType: "target.disconnected",
+              source: "verified",
+              metadata: JSON.stringify({ machineId }),
+              createdAt: now,
+            })
+            .execute();
+        }
+        const remaining = await transaction
+          .selectFrom("agentSessionTargets")
+          .select("machineId")
+          .where("workspaceId", "=", machine.workspaceId)
+          .where("sessionId", "=", target.sessionId)
+          .where("status", "in", ["opening", "ready"])
+          .executeTakeFirst();
+        if (!remaining) {
+          await transaction
+            .updateTable("agentSessions")
+            .set({ status: "cancelled", updatedAt: now })
+            .where("workspaceId", "=", machine.workspaceId)
+            .where("id", "=", target.sessionId)
+            .where("status", "=", "active")
+            .execute();
+          await transaction
+            .updateTable("sessionCredentials")
+            .set({ status: "revoked", revokedAt: now })
+            .where("workspaceId", "=", machine.workspaceId)
+            .where("sessionId", "=", target.sessionId)
+            .where("status", "=", "active")
+            .execute();
+        }
+      }
+      return {
+        workspaceId: machine.workspaceId,
+        operations: operations.length,
+        targets: targets.length,
+      };
+    });
   }
 
   async setMachineOnline(machineId: string, runtime?: unknown): Promise<boolean> {
@@ -4123,43 +4468,100 @@ export class PostgresDatabase {
 
   async expireSessions(): Promise<Array<{ id: string; machineId: string }>> {
     const now = new Date();
-    return await this.db
-      .updateTable("sessions")
-      .set({ status: "expired", updatedAt: now })
-      .where("status", "in", ACTIVE_SESSION_STATUSES)
-      .where((expression) =>
-        expression.or([
-          expression("sessions.expiresAt", "<=", now),
-          expression.exists(
-            expression
-              .selectFrom("agentTokens")
-              .select("agentTokens.id")
-              .whereRef("agentTokens.id", "=", "sessions.principalId")
-              .whereRef("agentTokens.workspaceId", "=", "sessions.workspaceId")
-              .where((token) =>
-                token.or([
-                  token("agentTokens.expiresAt", "<=", now),
-                  token("agentTokens.revokedAt", "is not", null),
-                ]),
-              ),
-          ),
-          expression.exists(
-            expression
-              .selectFrom("cliTokens")
-              .select("cliTokens.id")
-              .whereRef("cliTokens.id", "=", "sessions.principalId")
-              .whereRef("cliTokens.workspaceId", "=", "sessions.workspaceId")
-              .where((token) =>
-                token.or([
-                  token("cliTokens.expiresAt", "<=", now),
-                  token("cliTokens.revokedAt", "is not", null),
-                ]),
-              ),
-          ),
-        ]),
-      )
-      .returning(["id", "machineId"])
-      .execute();
+    return await this.db.transaction().execute(async (transaction) => {
+      const canonical = await transaction
+        .updateTable("agentSessions")
+        .set({ status: "expired", updatedAt: now })
+        .where("status", "=", "active")
+        .where("expiresAt", "<=", now)
+        .returning(["workspaceId", "id"])
+        .execute();
+      for (const session of canonical) {
+        await transaction
+          .updateTable("sessionCredentials")
+          .set({ status: "expired", revokedAt: now })
+          .where("workspaceId", "=", session.workspaceId)
+          .where("sessionId", "=", session.id)
+          .where("status", "=", "active")
+          .execute();
+        const targets = await transaction
+          .updateTable("agentSessionTargets")
+          .set({ status: "closed", updatedAt: now })
+          .where("workspaceId", "=", session.workspaceId)
+          .where("sessionId", "=", session.id)
+          .returning("runtimeSessionId")
+          .execute();
+        const runtimeIds = targets.map((target) => target.runtimeSessionId);
+        if (runtimeIds.length > 0) {
+          await transaction
+            .updateTable("operations")
+            .set({ status: "timed_out", error: "session_expired", updatedAt: now })
+            .where("workspaceId", "=", session.workspaceId)
+            .where("sessionId", "in", runtimeIds)
+            .where("status", "in", ACTIVE_OPERATION_STATUSES)
+            .execute();
+        }
+        const request = await transaction
+          .selectFrom("agentSessionRequests")
+          .select("id")
+          .where("workspaceId", "=", session.workspaceId)
+          .where("sessionId", "=", session.id)
+          .executeTakeFirst();
+        if (request) {
+          await transaction
+            .insertInto("sessionTimelineEvents")
+            .values({
+              workspaceId: session.workspaceId,
+              id: randomUUID(),
+              sessionId: session.id,
+              requestId: request.id,
+              operationId: null,
+              eventType: "session.expired",
+              source: "verified",
+              metadata: JSON.stringify({}),
+              createdAt: now,
+            })
+            .execute();
+        }
+      }
+      return await transaction
+        .updateTable("sessions")
+        .set({ status: "expired", updatedAt: now })
+        .where("status", "in", ACTIVE_SESSION_STATUSES)
+        .where((expression) =>
+          expression.or([
+            expression("sessions.expiresAt", "<=", now),
+            expression.exists(
+              expression
+                .selectFrom("agentTokens")
+                .select("agentTokens.id")
+                .whereRef("agentTokens.id", "=", "sessions.principalId")
+                .whereRef("agentTokens.workspaceId", "=", "sessions.workspaceId")
+                .where((token) =>
+                  token.or([
+                    token("agentTokens.expiresAt", "<=", now),
+                    token("agentTokens.revokedAt", "is not", null),
+                  ]),
+                ),
+            ),
+            expression.exists(
+              expression
+                .selectFrom("cliTokens")
+                .select("cliTokens.id")
+                .whereRef("cliTokens.id", "=", "sessions.principalId")
+                .whereRef("cliTokens.workspaceId", "=", "sessions.workspaceId")
+                .where((token) =>
+                  token.or([
+                    token("cliTokens.expiresAt", "<=", now),
+                    token("cliTokens.revokedAt", "is not", null),
+                  ]),
+                ),
+            ),
+          ]),
+        )
+        .returning(["id", "machineId"])
+        .execute();
+    });
   }
 }
 

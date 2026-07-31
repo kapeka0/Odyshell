@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import process from "node:process";
 import {
+  MAX_CLIENT_CLOCK_SKEW_MILLISECONDS,
   PROTOCOL_VERSION,
   capabilitySchema,
   clientConfigSchema,
@@ -37,6 +38,25 @@ export {
   defaultClientConfigPath,
   normalizeServerUrl,
 } from "./platform.js";
+
+export function adjustedSessionDeadline(
+  expiresAt: string,
+  serverTime: string | undefined,
+  localNow = Date.now(),
+): Date {
+  const serverNow = serverTime === undefined ? localNow : Date.parse(serverTime);
+  const absoluteExpiry = Date.parse(expiresAt);
+  if (!Number.isFinite(serverNow) || !Number.isFinite(absoluteExpiry)) {
+    throw new Error("Session deadline is invalid");
+  }
+  if (
+    serverTime !== undefined &&
+    Math.abs(localNow - serverNow) > MAX_CLIENT_CLOCK_SKEW_MILLISECONDS
+  ) {
+    throw new Error("Client clock is outside the allowed Session skew");
+  }
+  return new Date(localNow + (absoluteExpiry - serverNow));
+}
 export {
   activateLinuxUserService,
   clientServiceStatus,
@@ -156,6 +176,7 @@ export class Client {
   private reconnectDelay = 1_000;
   private stopped = false;
   private readonly sessions = new Map<string, ActiveSession>();
+  private readonly closedSessions = new Set<string>();
   private readonly operations = new Map<string, RunningOperation>();
   private readonly executors = new Map<"host" | "docker", OperationExecutor>();
   private readonly journal: OperationJournal;
@@ -282,6 +303,18 @@ export class Client {
     message: Extract<ServerToClientMessage, { type: "session.open" }>,
   ): Promise<void> {
     try {
+      if (this.closedSessions.has(message.sessionId)) {
+        this.send({
+          type: "session.closed",
+          sessionId: message.sessionId,
+          reason: "already_closed",
+        });
+        return;
+      }
+      const localDeadline = adjustedSessionDeadline(
+        message.expiresAt,
+        message.serverTime,
+      );
       const profile = this.config.profiles[message.profile];
       if (!profile) throw new Error(`Unknown local profile: ${message.profile}`);
       const activeForProfile = [...this.sessions.values()].filter(
@@ -297,9 +330,18 @@ export class Client {
         profile,
         message.capabilities,
         message.restrictions,
-        new Date(message.expiresAt),
+        localDeadline,
         () => void this.closeSession(message.sessionId, "expired"),
       );
+      if (this.closedSessions.has(message.sessionId)) {
+        await executor.closeSession(session);
+        this.send({
+          type: "session.closed",
+          sessionId: message.sessionId,
+          reason: "closed_while_opening",
+        });
+        return;
+      }
       this.sessions.set(message.sessionId, { session, executor });
       this.send({
         type: "session.opened",
@@ -318,6 +360,11 @@ export class Client {
   }
 
   private async closeSession(sessionId: string, reason: string): Promise<void> {
+    this.closedSessions.add(sessionId);
+    if (this.closedSessions.size > 1_000) {
+      const oldest = this.closedSessions.values().next().value;
+      if (oldest !== undefined) this.closedSessions.delete(oldest);
+    }
     const active = this.sessions.get(sessionId);
     if (active) {
       await active.executor.closeSession(active.session);
@@ -397,27 +444,45 @@ export class Client {
         await originalCancel();
       };
       this.operations.set(message.operationId, running);
-      const timer = setTimeout(() => {
-        timedOut = true;
-        void originalCancel();
-      }, Math.min(message.timeoutSeconds, 1800) * 1000);
-      const { exitCode } = await running.done;
-      clearTimeout(timer);
-      this.operations.delete(message.operationId);
-      const result: JournalResult = {
-        status: timedOut
-          ? "timed_out"
-          : cancelled
-            ? "cancelled"
-            : exitCode === 0
-              ? "succeeded"
-              : "failed",
-        exitCode,
-        ...(outputTruncated ? { error: "Output limit reached" } : {}),
-        outputTruncated,
-      };
-      this.journal.complete(message.operationId, result);
-      this.sendCompletion(message.operationId, result);
+      void (async () => {
+        const timer = setTimeout(() => {
+          timedOut = true;
+          void originalCancel();
+        }, Math.min(message.timeoutSeconds, 1800) * 1000);
+        try {
+          const { exitCode } = await running.done;
+          const result: JournalResult = {
+            status: timedOut
+              ? "timed_out"
+              : cancelled
+                ? "cancelled"
+                : exitCode === 0
+                  ? "succeeded"
+                  : "failed",
+            exitCode,
+            ...(outputTruncated ? { error: "Output limit reached" } : {}),
+            outputTruncated,
+          };
+          this.journal.complete(message.operationId, result);
+          this.sendCompletion(message.operationId, result);
+        } catch (error) {
+          const result: JournalResult = {
+            status: timedOut
+              ? "timed_out"
+              : cancelled
+                ? "cancelled"
+                : "failed",
+            exitCode: null,
+            error: error instanceof Error ? error.message : String(error),
+            outputTruncated,
+          };
+          this.journal.complete(message.operationId, result);
+          this.sendCompletion(message.operationId, result);
+        } finally {
+          clearTimeout(timer);
+          this.operations.delete(message.operationId);
+        }
+      })();
     } catch (error) {
       const result: JournalResult = {
         status: timedOut ? "timed_out" : cancelled ? "cancelled" : "failed",

@@ -26,6 +26,10 @@ Approval codes expire, can be used once, and are looked up only inside the authe
 workspace. The credential produced by a claim is returned once to the trusted runtime. MCP keeps
 it outside model-visible results.
 
+The Client derives its local deadline from Server time and rejects excessive clock skew. Session
+closure is idempotent and waits for active host or Docker operations to stop before releasing
+local execution state.
+
 ## Machine identity
 
 Enrollment is single-use and expiring. Each Client generates an Ed25519 identity and proves

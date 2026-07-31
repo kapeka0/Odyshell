@@ -436,6 +436,42 @@ export class Odyshell {
     return response.data;
   }
 
+  async cancelAgentSession(
+    sessionId: string,
+    agentId: string,
+  ): Promise<{
+    id: string;
+    status: "cancelled" | "revoked" | "completed" | "expired";
+    transitioned: boolean;
+  }> {
+    return this.request(
+      `/v1/agent-sessions/${encodeURIComponent(sessionId)}/cancel`,
+      {
+        method: "POST",
+        body: { agentId },
+      },
+    );
+  }
+
+  async renewAgentSession(
+    sessionId: string,
+    agentId: string,
+    durationSeconds?: number,
+  ): Promise<
+    AgentSessionRequest & { predecessorSessionId: string }
+  > {
+    return this.request(
+      `/v1/agent-sessions/${encodeURIComponent(sessionId)}/renew`,
+      {
+        method: "POST",
+        body: {
+          agentId,
+          ...(durationSeconds === undefined ? {} : { durationSeconds }),
+        },
+      },
+    );
+  }
+
   async readApprovedSession(
     claim: ClaimedAgentSession,
     options: Pick<OperationOptions, "timeoutSeconds" | "maxOutputBytes" | "onEvent"> = {},

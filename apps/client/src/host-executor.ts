@@ -176,19 +176,36 @@ function spawnOperation(
     child.on("error", reject);
     child.on("close", (exitCode) => resolvePromise({ exitCode }));
   });
+  let cancellation: Promise<void> | undefined;
   const cancel = async (): Promise<void> => {
-    if (child.exitCode !== null || !child.pid) return;
-    try {
-      if (detached) process.kill(-child.pid, "SIGTERM");
-      else child.kill("SIGTERM");
-    } catch {}
-    setTimeout(() => {
-      if (child.exitCode !== null || !child.pid) return;
+    const pid = child.pid;
+    if (child.exitCode !== null || !pid) return;
+    cancellation ??= (async () => {
       try {
-        if (detached) process.kill(-child.pid, "SIGKILL");
-        else child.kill("SIGKILL");
+        if (detached) process.kill(-pid, "SIGTERM");
+        else child.kill("SIGTERM");
       } catch {}
-    }, 2_000).unref();
+      const forceTimer = setTimeout(() => {
+        if (child.exitCode !== null || !child.pid) return;
+        try {
+          if (detached) process.kill(-pid, "SIGKILL");
+          else child.kill("SIGKILL");
+        } catch {}
+      }, 2_000);
+      forceTimer.unref();
+      try {
+        await Promise.race([
+          done.catch(() => ({ exitCode: null })),
+          new Promise((resolvePromise) => {
+            const safetyTimer = setTimeout(resolvePromise, 4_000);
+            safetyTimer.unref();
+          }),
+        ]);
+      } finally {
+        clearTimeout(forceTimer);
+      }
+    })();
+    await cancellation;
   };
   return { child, cancel, done };
 }

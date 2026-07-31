@@ -6,6 +6,7 @@ import {
   hostPlatform,
 } from "../apps/client/src/platform.js";
 import { parseDockerRuntime } from "../apps/client/src/docker-runner.js";
+import { adjustedSessionDeadline } from "../apps/client/src/index.js";
 import {
   activateLinuxUserService,
   linuxServiceNameForConfig,
@@ -19,6 +20,24 @@ import {
 } from "../apps/cli/src/config.js";
 
 describe("client platform support", () => {
+  it("uses Server time within the skew window and rejects unsafe clocks", () => {
+    const localNow = Date.parse("2026-07-31T10:00:20.000Z");
+    expect(
+      adjustedSessionDeadline(
+        "2026-07-31T10:05:00.000Z",
+        "2026-07-31T10:00:00.000Z",
+        localNow,
+      ).toISOString(),
+    ).toBe("2026-07-31T10:05:20.000Z");
+    expect(() =>
+      adjustedSessionDeadline(
+        "2026-07-31T10:05:00.000Z",
+        "2026-07-31T09:59:00.000Z",
+        localNow,
+      ),
+    ).toThrow("outside the allowed Session skew");
+  });
+
   it("maps Node platform names to public Odyshell platform names", () => {
     expect(hostPlatform("linux")).toBe("linux");
     expect(hostPlatform("darwin")).toBe("macos");

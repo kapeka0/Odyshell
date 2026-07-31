@@ -91,6 +91,7 @@ function containerWorkspacePath(relativePath: string): string {
 
 export class DockerRunner implements OperationExecutor {
   readonly kind = "docker" as const;
+  private readonly operations = new Map<string, Set<RunningOperation>>();
 
   constructor(private readonly machineId: string) {}
 
@@ -191,6 +192,9 @@ export class DockerRunner implements OperationExecutor {
 
   async closeSession(session: RunningSession): Promise<void> {
     clearTimeout(session.expiryTimer);
+    const operations = [...(this.operations.get(session.id) ?? [])];
+    await Promise.all(operations.map((operation) => operation.cancel()));
+    this.operations.delete(session.id);
     if (!session.containerName) return;
     try {
       await dockerCapture(["rm", "-f", session.containerName]);
@@ -277,21 +281,55 @@ export class DockerRunner implements OperationExecutor {
       child.on("error", reject);
       child.on("close", (exitCode) => resolvePromise({ exitCode }));
     });
+    let cancellation: Promise<void> | undefined;
     const cancel = async (): Promise<void> => {
-      await dockerCapture([
-        "exec",
-        containerName,
-        "/bin/sh",
-        "-c",
-        'test -f "$1" && kill -TERM "$(cat "$1")" 2>/dev/null || true',
-        "odyshell",
-        pidFile,
-      ]);
-      setTimeout(() => {
-        if (child.exitCode === null) child.kill();
-      }, 2_000).unref();
+      if (child.exitCode !== null) return;
+      cancellation ??= (async () => {
+        await dockerCapture([
+          "exec",
+          containerName,
+          "/bin/sh",
+          "-c",
+          'test -f "$1" && kill -TERM "$(cat "$1")" 2>/dev/null || true',
+          "odyshell",
+          pidFile,
+        ]).catch((error: unknown) => {
+          if (
+            !String(error).includes("No such container") &&
+            !String(error).includes("is not running") &&
+            !String(error).includes("unable to upgrade to tcp")
+          ) {
+            throw error;
+          }
+        });
+        const forceTimer = setTimeout(() => {
+          if (child.exitCode === null) child.kill();
+        }, 2_000);
+        forceTimer.unref();
+        try {
+          await Promise.race([
+            done.catch(() => ({ exitCode: null })),
+            new Promise((resolvePromise) => {
+              const safetyTimer = setTimeout(resolvePromise, 4_000);
+              safetyTimer.unref();
+            }),
+          ]);
+        } finally {
+          clearTimeout(forceTimer);
+        }
+      })();
+      await cancellation;
     };
-    return { child, cancel, done };
+    const running = { child, cancel, done };
+    const active = this.operations.get(session.id) ?? new Set<RunningOperation>();
+    active.add(running);
+    this.operations.set(session.id, active);
+    const cleanup = (): void => {
+      active.delete(running);
+      if (active.size === 0) this.operations.delete(session.id);
+    };
+    void done.then(cleanup, cleanup);
+    return running;
   }
 
 }
