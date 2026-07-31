@@ -11,12 +11,13 @@ import {
   type OperationAction,
 } from "@odyshell/protocol";
 import {
-  clientConfigPathForServer,
+  clientConfigPathForProfile,
   defaultClientConfigPath,
   clientServiceStatus,
   enrollClient,
   inspectClientRuntime,
   installLinuxUserService,
+  removeLinuxUserService,
   runClient,
   stopLinuxUserService,
 } from "@odyshell/client";
@@ -73,6 +74,7 @@ function globals(command: Command): GlobalOptions {
 async function clientConfigurationFor(
   global: GlobalOptions,
   explicitConfigPath?: string,
+  profileName = "default",
 ) {
   const apiConfig = await resolveConfig(global);
   const selected = await resolveClientUpConfiguration({
@@ -80,10 +82,23 @@ async function clientConfigurationFor(
     ...(explicitConfigPath
       ? { explicitConfigPath: resolve(explicitConfigPath) }
       : {}),
+    profileName,
     legacyConfigPath: defaultClientConfigPath(),
-    instanceConfigPath: clientConfigPathForServer(apiConfig.serverUrl),
+    profileConfigPath: clientConfigPathForProfile(profileName),
   });
   return { apiConfig, ...selected };
+}
+
+function assertProfileSelection(
+  profileName: string | undefined,
+  configPath: string | undefined,
+): void {
+  if (profileName && configPath) {
+    throw new ExpectedError(
+      'Use either "--profile <name>" or "--config <path>", not both.',
+      "client_profile_config_conflict",
+    );
+  }
 }
 
 function normalizeGlobalOptions(argv: string[]): string[] {
@@ -986,6 +1001,7 @@ program
   .option("--allow <capabilities>", "comma-separated local capabilities")
   .option("--runner <runner>", "host or docker", "host")
   .option("--image <image>", "Docker profile image", "alpine:3.22")
+  .option("--profile <name>", "Client Profile name")
   .option("--config <path>", "client configuration")
   .action(
     async (
@@ -996,16 +1012,20 @@ program
         allow?: string;
         runner: string;
         image: string;
+        profile?: string;
         config?: string;
       },
       command: Command,
     ) => {
       const global = globals(command);
+      assertProfileSelection(options.profile, options.config);
+      const profileName = options.profile ?? "default";
       const {
         apiConfig,
         configPath,
         configExists: configFound,
-      } = await clientConfigurationFor(global, options.config);
+        migratedFrom,
+      } = await clientConfigurationFor(global, options.config, profileName);
       let enrollment:
         | { machineId: string; configPath: string }
         | undefined;
@@ -1019,33 +1039,80 @@ program
           runner: parseRunner(options.runner),
           image: options.image,
           configPath,
+          profileName,
         });
       }
+      if (
+        profileName === "default" &&
+        !options.config &&
+        process.platform === "linux"
+      ) {
+        try {
+          await removeLinuxUserService(defaultClientConfigPath());
+        } catch (error) {
+          throw new ExpectedError(
+            `Could not retire the legacy Odyshell Client service: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            "client_profile_migration_failed",
+          );
+        }
+      }
+      const previousStatus = configFound
+        ? await clientServiceStatus(configPath)
+        : undefined;
       let service;
-      try {
-        service = await installLinuxUserService({
-          nodePath: process.execPath,
-          cliPath: fileURLToPath(import.meta.url),
-          configPath,
-        });
-      } catch (error) {
-        throw new ExpectedError(
-          `Could not start the Odyshell Client service: ${error instanceof Error ? error.message : String(error)}`,
-          "client_service_start_failed",
-        );
+      if (previousStatus?.active) {
+        service = {
+          servicePath: previousStatus.servicePath,
+          lingering: undefined,
+        };
+      } else {
+        try {
+          service = await installLinuxUserService({
+            nodePath: process.execPath,
+            cliPath: fileURLToPath(import.meta.url),
+            configPath,
+          });
+        } catch (error) {
+          throw new ExpectedError(
+            `Could not start the Odyshell Client service: ${error instanceof Error ? error.message : String(error)}`,
+            "client_service_start_failed",
+          );
+        }
       }
       const result = {
         running: true,
+        profile: profileName,
         enrolled: Boolean(enrollment),
+        alreadyRunning: previousStatus?.active ?? false,
+        enrollmentOptionsIgnored:
+          configFound &&
+          [options.token, options.name, options.workspace, options.allow].some(
+            (value) => value !== undefined,
+          ),
         ...(enrollment ?? {}),
+        ...(migratedFrom ? { migratedFrom } : {}),
         servicePath: service.servicePath,
         lingering: service.lingering,
       };
       if (global.json) printJson(result);
       else {
-        console.log(`${pc.green("✓")} Odyshell Client is running`);
+        console.log(
+          previousStatus?.active
+            ? `${pc.green("✓")} Odyshell Client Profile is already running`
+            : `${pc.green("✓")} Odyshell Client is running`,
+        );
+        console.log(`  profile  ${profileName}`);
         if (enrollment) console.log(`  machine  ${enrollment.machineId}`);
         else console.log("  machine  already enrolled with this server");
+        if (result.enrollmentOptionsIgnored) {
+          console.log(
+            pc.yellow(
+              "  note     Existing Profile kept unchanged; enrollment options were not applied",
+            ),
+          );
+        }
         console.log(`  config   ${configPath}`);
         if (service.lingering === false) {
           console.log(
@@ -1061,12 +1128,16 @@ program
 program
   .command("down")
   .description("stop and disable this machine's background Client")
+  .option("--profile <name>", "Client Profile name")
   .option("--config <path>", "client configuration")
-  .action(async (options: { config?: string }, command: Command) => {
+  .action(async (options: { profile?: string; config?: string }, command: Command) => {
     const global = globals(command);
+    assertProfileSelection(options.profile, options.config);
+    const profileName = options.profile ?? "default";
     const { apiConfig, configPath, configExists } = await clientConfigurationFor(
       global,
       options.config,
+      profileName,
     );
     if (!configExists) {
       throw new ExpectedError(
@@ -1082,8 +1153,8 @@ program
         "client_service_stop_failed",
       );
     }
-    if (global.json) printJson({ running: false });
-    else console.log(`${pc.green("✓")} Odyshell Client stopped`);
+    if (global.json) printJson({ running: false, profile: profileName });
+    else console.log(`${pc.green("✓")} Odyshell Client ${profileName} stopped`);
   });
 
 const client = program.command("client").description("manage the private-machine client");
@@ -1162,12 +1233,16 @@ client
 client
   .command("status")
   .description("show the local background Client status")
+  .option("--profile <name>", "Client Profile name")
   .option("--config <path>", "client configuration")
-  .action(async (options: { config?: string }, command: Command) => {
+  .action(async (options: { profile?: string; config?: string }, command: Command) => {
     const global = globals(command);
+    assertProfileSelection(options.profile, options.config);
+    const profileName = options.profile ?? "default";
     const { configPath, configExists } = await clientConfigurationFor(
       global,
       options.config,
+      profileName,
     );
     const status = configExists
       ? await clientServiceStatus(configPath)
@@ -1177,13 +1252,14 @@ client
           active: false,
           enabled: false,
         };
-    if (global.json) printJson(status);
+    if (global.json) printJson({ profile: profileName, ...status });
     else {
       console.log(
         status.active
           ? `${pc.green("●")} Odyshell Client is running`
           : `${pc.dim("●")} Odyshell Client is stopped`,
       );
+      console.log(`  profile  ${profileName}`);
       if (status.servicePath) console.log(`  service  ${status.servicePath}`);
     }
   });

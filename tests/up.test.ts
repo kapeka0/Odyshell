@@ -8,61 +8,70 @@ import {
 } from "../apps/cli/src/up.js";
 
 describe("ods up configuration safety", () => {
-  it("reuses the existing identity when the machine is already enrolled with that server", async () => {
+  it("imports the legacy identity into the explicit default profile", async () => {
     const root = await mkdtemp(join(tmpdir(), "odyshell-up-"));
     const legacyConfigPath = join(root, "client.json");
+    const profileConfigPath = join(
+      root,
+      "clients",
+      "default",
+      "client.json",
+    );
     await writeClientConfig(legacyConfigPath, "https://server.example");
 
     await expect(
       resolveClientUpConfiguration({
         serverUrl: "https://server.example/",
+        profileName: "default",
         legacyConfigPath,
-        instanceConfigPath: join(root, "clients", "server", "client.json"),
+        profileConfigPath,
       }),
     ).resolves.toEqual({
-      configPath: legacyConfigPath,
+      configPath: profileConfigPath,
       configExists: true,
+      migratedFrom: legacyConfigPath,
     });
   });
 
-  it("selects a separate identity for a different Odyshell server", async () => {
+  it("selects an isolated empty profile without falling back to the default identity", async () => {
     const root = await mkdtemp(join(tmpdir(), "odyshell-up-"));
     const legacyConfigPath = join(root, "client.json");
-    const instanceConfigPath = join(
-      root,
-      "clients",
-      "second-server",
-      "client.json",
-    );
+    const profileConfigPath = join(root, "clients", "work", "client.json");
     await writeClientConfig(legacyConfigPath, "https://first.example");
 
     await expect(
       resolveClientUpConfiguration({
         serverUrl: "https://second.example",
+        profileName: "work",
         legacyConfigPath,
-        instanceConfigPath,
+        profileConfigPath,
       }),
     ).resolves.toEqual({
-      configPath: instanceConfigPath,
+      configPath: profileConfigPath,
       configExists: false,
     });
   });
 
-  it("reuses a previously enrolled identity for a second server", async () => {
+  it("reuses only the selected profile identity", async () => {
     const root = await mkdtemp(join(tmpdir(), "odyshell-up-"));
     const legacyConfigPath = join(root, "client.json");
-    const instanceConfigPath = join(root, "clients", "server", "client.json");
+    const profileConfigPath = join(root, "clients", "work", "client.json");
     await writeClientConfig(legacyConfigPath, "https://first.example");
-    await writeClientConfig(instanceConfigPath, "https://second.example");
+    await writeClientConfig(
+      profileConfigPath,
+      "https://second.example",
+      "work",
+    );
 
     await expect(
       resolveClientUpConfiguration({
         serverUrl: "https://second.example",
+        profileName: "work",
         legacyConfigPath,
-        instanceConfigPath,
+        profileConfigPath,
       }),
     ).resolves.toEqual({
-      configPath: instanceConfigPath,
+      configPath: profileConfigPath,
       configExists: true,
     });
   });
@@ -76,8 +85,9 @@ describe("ods up configuration safety", () => {
       resolveClientUpConfiguration({
         serverUrl: "https://second.example",
         explicitConfigPath,
+        profileName: "default",
         legacyConfigPath: join(root, "client.json"),
-        instanceConfigPath: join(root, "clients", "server", "client.json"),
+        profileConfigPath: join(root, "clients", "default", "client.json"),
       }),
     ).rejects.toMatchObject({
       code: "client_config_server_mismatch",
@@ -89,8 +99,20 @@ describe("ods up configuration safety", () => {
     await expect(
       resolveClientUpConfiguration({
         serverUrl: "file:///tmp/socket",
+        profileName: "default",
         legacyConfigPath: "/tmp/client.json",
-        instanceConfigPath: "/tmp/clients/server/client.json",
+        profileConfigPath: "/tmp/clients/default/client.json",
+      }),
+    ).rejects.toMatchObject({
+      code: "invalid_server_url",
+      expected: true,
+    });
+    await expect(
+      resolveClientUpConfiguration({
+        serverUrl: "https://user:secret@server.example",
+        profileName: "default",
+        legacyConfigPath: "/tmp/client.json",
+        profileConfigPath: "/tmp/clients/default/client.json",
       }),
     ).rejects.toMatchObject({
       code: "invalid_server_url",
@@ -107,17 +129,90 @@ describe("ods up configuration safety", () => {
       resolveClientUpConfiguration({
         serverUrl: "https://server.example",
         explicitConfigPath,
+        profileName: "default",
         legacyConfigPath: explicitConfigPath,
-        instanceConfigPath: join(root, "clients", "server", "client.json"),
+        profileConfigPath: join(root, "clients", "default", "client.json"),
       }),
     ).rejects.toMatchObject({
       code: "client_config_invalid",
       expected: true,
     });
   });
+
+  it("fails closed when both legacy and default profile identities exist", async () => {
+    const root = await mkdtemp(join(tmpdir(), "odyshell-up-"));
+    const legacyConfigPath = join(root, "client.json");
+    const profileConfigPath = join(
+      root,
+      "clients",
+      "default",
+      "client.json",
+    );
+    await writeClientConfig(legacyConfigPath, "https://server.example");
+    await writeClientConfig(profileConfigPath, "https://server.example");
+
+    await expect(
+      resolveClientUpConfiguration({
+        serverUrl: "https://server.example",
+        profileName: "default",
+        legacyConfigPath,
+        profileConfigPath,
+      }),
+    ).rejects.toMatchObject({
+      code: "client_profile_migration_conflict",
+      expected: true,
+    });
+  });
+
+  it("rejects profile names that could escape the profile directory", async () => {
+    await expect(
+      resolveClientUpConfiguration({
+        serverUrl: "https://server.example",
+        profileName: "../other",
+        legacyConfigPath: "/tmp/client.json",
+        profileConfigPath: "/tmp/clients/other/client.json",
+      }),
+    ).rejects.toMatchObject({
+      code: "invalid_client_profile",
+      expected: true,
+    });
+  });
+
+  it("rejects a configuration copied from another named Profile", async () => {
+    const root = await mkdtemp(join(tmpdir(), "odyshell-up-"));
+    const profileConfigPath = join(root, "clients", "company", "client.json");
+    await writeClientConfig(
+      profileConfigPath,
+      "https://server.example",
+      "personal",
+    );
+
+    await expect(
+      resolveClientUpConfiguration({
+        serverUrl: "https://server.example",
+        profileName: "company",
+        legacyConfigPath: join(root, "client.json"),
+        profileConfigPath,
+      }),
+    ).rejects.toMatchObject({
+      code: "client_config_profile_mismatch",
+      expected: true,
+    });
+  });
 });
 
-async function writeClientConfig(path: string, serverUrl: string) {
+async function writeClientConfig(
+  path: string,
+  serverUrl: string,
+  profileName?: string,
+) {
   await mkdir(join(path, ".."), { recursive: true });
-  await writeFile(path, JSON.stringify({ serverUrl }), "utf8");
+  await writeFile(
+    path,
+    JSON.stringify({
+      serverUrl,
+      ...(profileName ? { profileName } : {}),
+    }),
+    "utf8",
+  );
 }

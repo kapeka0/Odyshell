@@ -390,6 +390,7 @@ describe("protocol validation", () => {
     expect(
       clientConfigSchema.safeParse({
         ...config,
+        workspaceId: "workspace-a",
         profiles: {
           workspace: { ...config.profiles.workspace, network: "none" },
         },
@@ -401,6 +402,7 @@ describe("protocol validation", () => {
     expect(
       clientConfigSchema.safeParse({
         serverUrl: "https://api.odyshell.test",
+        workspaceId: "workspace-a",
         machineId: "2dc24de7-ec0e-45b3-88c1-acbb900e51f8",
         machineName: "linux-server",
         privateKeyPem: "private-key",

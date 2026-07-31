@@ -34,7 +34,15 @@ link, choose the workspace, and approve the CLI; there is no code to copy manual
 
 `ods login` authorizes the CLI but does not enroll the current machine. Use the **Add machine**
 flow in the web app and run its generated `ods up` command on the target host. A host can maintain
-isolated outbound Clients for multiple Odyshell Servers.
+isolated outbound Clients for multiple Workspaces or Servers with named Profiles:
+
+```bash
+ods --server https://personal.example up --profile personal <enrollment-options>
+ods --server https://company.example up --profile company <enrollment-options>
+```
+
+Use the same `--profile` with `ods down` and `ods client status`. Profiles keep independent
+machine identities, local policies, state, and Linux services. Omitting it selects `default`.
 
 `ods` uses Odyshell Cloud by default. Self-hosted installations select their Server with
 `--server <url>` or `ODYSHELL_SERVER_URL`.

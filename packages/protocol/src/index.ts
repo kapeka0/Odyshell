@@ -566,6 +566,8 @@ export type DockerClientProfile = z.infer<typeof dockerClientProfileSchema>;
 
 export const clientConfigSchema = z.object({
   serverUrl: z.string().url(),
+  workspaceId: z.string().min(1).max(128).optional(),
+  profileName: z.string().min(1).max(40).optional(),
   machineId: z.string().uuid(),
   machineName: z.string().min(1).max(128),
   privateKeyPem: z.string().min(1),

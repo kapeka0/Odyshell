@@ -18,7 +18,7 @@ ods client doctor
 The machine record exists but its Client connection is not active. On Linux:
 
 ```bash
-ods status
+ods client status
 ods up
 ```
 
@@ -34,8 +34,14 @@ options:
 ods up
 ```
 
-To enroll a separate identity, use a different explicit `--config` path. Do not overwrite or copy
-an existing machine identity.
+To enroll a separate identity, choose a new Client Profile:
+
+```bash
+ods up --profile company <enrollment-options>
+```
+
+Do not overwrite or copy an existing machine identity. If migration reports two default
+identities, verify which machine is active and remove the unused configuration before retrying.
 
 ## `machine_ping_timeout`
 

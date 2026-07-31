@@ -53,4 +53,16 @@ describe("CLI npm package", () => {
     const entry = readFileSync(resolve(cliRoot, "src/index.ts"), "utf8");
     expect(entry).toContain(`.version("${packageJson.version}")`);
   });
+
+  it("selects isolated named Client Profiles without combining identity paths", () => {
+    const entry = readFileSync(resolve(cliRoot, "src/index.ts"), "utf8");
+    const up = readFileSync(resolve(cliRoot, "src/up.ts"), "utf8");
+
+    expect(entry).toContain('.option("--profile <name>"');
+    expect(entry).toContain("clientConfigPathForProfile(profileName)");
+    expect(entry).toContain("client_profile_config_conflict");
+    expect(up).toContain("client_profile_migration_conflict");
+    expect(up).toContain("constants.COPYFILE_EXCL");
+    expect(up).not.toContain("instanceConfigPath");
+  });
 });

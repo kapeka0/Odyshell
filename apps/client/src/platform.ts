@@ -1,5 +1,4 @@
 import { homedir } from "node:os";
-import { createHash } from "node:crypto";
 import { posix, win32 } from "node:path";
 import process from "node:process";
 import type { HostPlatform } from "@odyshell/protocol";
@@ -45,32 +44,31 @@ export function defaultClientConfigPath(): string {
   return clientConfigPathFor(process.platform as SupportedNodePlatform, homedir());
 }
 
-export function clientConfigPathForServer(
-  serverUrl: string,
+export function normalizeClientProfileName(profileName: string): string {
+  const normalized = profileName.trim().toLowerCase();
+  if (
+    !/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/u.test(normalized)
+  ) {
+    throw new Error(
+      "Client Profile name must contain 1-40 lowercase letters, numbers, or hyphens",
+    );
+  }
+  return normalized;
+}
+
+export function clientConfigPathForProfile(
+  profileName: string,
   platform = process.platform as SupportedNodePlatform,
   home = homedir(),
   environment: NodeJS.ProcessEnv = process.env,
 ): string {
-  const normalized = normalizeServerUrl(serverUrl);
-  const url = new URL(normalized);
-  const hostname = url.hostname
-    .toLowerCase()
-    .replaceAll(/[^a-z0-9]+/gu, "-")
-    .replaceAll(/^-|-$/gu, "")
-    .slice(0, 40) || "server";
-  const digest = createHash("sha256").update(normalized).digest("hex").slice(0, 12);
+  const normalized = normalizeClientProfileName(profileName);
   const legacyPath = clientConfigPathFor(platform, home, environment);
-  const legacyDirectory =
+  const baseDirectory =
     platform === "win32" ? win32.dirname(legacyPath) : posix.dirname(legacyPath);
-  const clientsDirectory =
-    platform === "win32"
-      ? win32.join(legacyDirectory, "clients")
-      : posix.join(legacyDirectory, "clients");
-  const instanceDirectory = `${hostname}-${digest}`;
-
   return platform === "win32"
-    ? win32.join(clientsDirectory, instanceDirectory, "client.json")
-    : posix.join(clientsDirectory, instanceDirectory, "client.json");
+    ? win32.join(baseDirectory, "clients", normalized, "client.json")
+    : posix.join(baseDirectory, "clients", normalized, "client.json");
 }
 
 export function normalizeServerUrl(serverUrl: string): string {

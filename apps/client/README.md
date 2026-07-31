@@ -31,6 +31,7 @@ Then, on the private Linux machine:
 ```bash
 ods up \
   --server <server-url> \
+  --profile default \
   --token <token> \
   --name raspberry \
   --workspace /srv/my-app \
@@ -41,10 +42,19 @@ ods up \
 operating-system user, and `--allow` list form the local policy. The Server and remote agents
 cannot grant themselves capabilities that the Client has not explicitly allowed.
 
-Running the generated `ods up` command again is safe: if this host is already enrolled with that
-Server, Odyshell restarts the existing identity instead of overwriting it. Connecting the same
-host to another Odyshell Server creates an isolated configuration and systemd service
-automatically. `--config` remains available when an explicit path is useful.
+Running the generated `ods up` command again is safe: if the selected Profile is already running,
+Odyshell keeps its existing identity and local policy. Use a distinct name when one host connects
+to another Workspace or Server:
+
+```bash
+ods --server https://personal.example up --profile personal <enrollment-options>
+ods --server https://company.example up --profile company <enrollment-options>
+```
+
+Every Profile has an isolated configuration, machine identity, state directory, and systemd user
+service. Omitting `--profile` selects `default` and imports the previous single Client
+configuration on first use. Migration conflicts fail closed. `--config` remains available for an
+explicit path and cannot be combined with `--profile`.
 
 ## Security baseline
 

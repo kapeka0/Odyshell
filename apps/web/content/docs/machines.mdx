@@ -23,7 +23,7 @@ uses `--workspace .`. The token expires after ten minutes and cannot be replayed
 `ods up` installs and starts a restartable user service on Linux. After enrollment, use:
 
 ```bash
-ods status
+ods client status
 ods down
 ods up
 ```
@@ -52,10 +52,22 @@ Capabilities are default-deny and comma-separated:
 
 An agent can only use the intersection of its credential policy and the machine's local policy.
 
-## Multiple Odyshell Servers
+## Client Profiles
 
-A host can keep separate Client identities for different Odyshell deployments. `ods up` selects
-the configuration associated with its Server automatically. Use `--config` when you need an
-explicit identity path.
+A host can run several named Client Profiles at the same time. Each Profile keeps an independent
+Server, Workspace, machine identity, local root, capabilities, state directory, and Linux service:
+
+```bash
+ods --server https://personal.example up --profile personal <enrollment-options>
+ods --server https://company.example up --profile company <enrollment-options>
+
+ods --server https://company.example client status --profile company
+ods --server https://company.example down --profile company
+```
+
+Omitting `--profile` selects `default`. The first use imports the previous single Client
+configuration into that Profile. If both identities already exist, Odyshell stops and asks you to
+resolve the conflict instead of choosing or overwriting one. `--config` remains available for an
+explicit path and cannot be combined with `--profile`.
 
 Do not reuse or copy a Client configuration between machines.

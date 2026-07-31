@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  clientConfigPathForServer,
   clientConfigPathFor,
+  clientConfigPathForProfile,
   containerUser,
   hostPlatform,
 } from "../apps/client/src/platform.js";
@@ -62,51 +62,6 @@ describe("client platform support", () => {
     expect(cliConfigPathFor("darwin", "/Users/ada", {})).toBe(
       "/Users/ada/Library/Application Support/Odyshell/config.json",
     );
-  });
-
-  it("isolates Client configuration by normalized server identity", () => {
-    const first = clientConfigPathForServer(
-      "https://server.example/",
-      "linux",
-      "/home/ada",
-      {},
-    );
-    const same = clientConfigPathForServer(
-      "https://server.example",
-      "linux",
-      "/home/ada",
-      {},
-    );
-    const second = clientConfigPathForServer(
-      "https://other.example",
-      "linux",
-      "/home/ada",
-      {},
-    );
-
-    expect(first).toBe(same);
-    expect(first).toMatch(
-      /^\/home\/ada\/\.config\/odyshell\/clients\/server-example-[a-f0-9]{12}\/client\.json$/,
-    );
-    expect(second).not.toBe(first);
-    expect(
-      clientConfigPathForServer(
-        "https://server.example",
-        "win32",
-        "C:\\Users\\ada",
-        { APPDATA: "C:\\Users\\ada\\AppData\\Roaming" },
-      ),
-    ).toMatch(
-      /^C:\\Users\\ada\\AppData\\Roaming\\Odyshell\\clients\\server-example-[a-f0-9]{12}\\client\.json$/,
-    );
-    expect(() =>
-      clientConfigPathForServer(
-        "https://user:secret@server.example",
-        "linux",
-        "/home/ada",
-        {},
-      ),
-    ).toThrow("must not contain credentials");
   });
 
   it("uses Odyshell Cloud by default while preserving explicit self-hosted overrides", () => {
@@ -172,6 +127,32 @@ describe("client platform support", () => {
     expect(first).toMatch(/^odyshell-client-[a-f0-9]{12}\.service$/);
     expect(second).toMatch(/^odyshell-client-[a-f0-9]{12}\.service$/);
     expect(first).not.toBe(second);
+  });
+
+  it("uses a deterministic isolated path for every named Client Profile", () => {
+    expect(
+      clientConfigPathForProfile(
+        "personal",
+        "linux",
+        "/home/ada",
+        {},
+      ),
+    ).toBe(
+      "/home/ada/.config/odyshell/clients/personal/client.json",
+    );
+    expect(
+      clientConfigPathForProfile(
+        "company",
+        "win32",
+        "C:\\Users\\ada",
+        { APPDATA: "C:\\Users\\ada\\AppData\\Roaming" },
+      ),
+    ).toBe(
+      "C:\\Users\\ada\\AppData\\Roaming\\Odyshell\\clients\\company\\client.json",
+    );
+    expect(() =>
+      clientConfigPathForProfile("../company", "linux", "/home/ada", {}),
+    ).toThrow("Client Profile name");
   });
 
   it("restarts an existing Linux service after replacing its configuration", async () => {

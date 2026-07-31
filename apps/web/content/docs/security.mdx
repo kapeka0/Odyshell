@@ -46,7 +46,9 @@ local execution state.
 
 Enrollment is single-use and expiring. Each Client generates an Ed25519 identity and proves
 possession when it connects. Private machine key material remains in the local Client
-configuration.
+configuration. Named Client Profiles keep separate configuration, state, Server, Workspace, and
+machine identities. Configuration files use owner-only permissions where the operating system
+supports them, and a selected Profile never falls back to another Profile's credential.
 
 ## Host authority
 

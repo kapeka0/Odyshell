@@ -27,15 +27,16 @@ import type {
 import { HostExecutor } from "./host-executor.js";
 import { OperationJournal, type JournalResult } from "./journal.js";
 import {
-  clientConfigPathForServer,
+  clientConfigPathForProfile,
   defaultClientConfigPath,
   hostPlatform,
   normalizeServerUrl,
 } from "./platform.js";
 
 export {
-  clientConfigPathForServer,
+  clientConfigPathForProfile,
   defaultClientConfigPath,
+  normalizeClientProfileName,
   normalizeServerUrl,
 } from "./platform.js";
 
@@ -74,6 +75,7 @@ export type EnrollClientOptions = {
   machineName: string;
   workspaceRoot: string;
   configPath: string;
+  profileName?: string;
   allowedCapabilities: Capability[];
   runner?: "host" | "docker";
   image?: string;
@@ -102,7 +104,11 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ token: options.token, name: options.machineName, publicKey }),
   });
-  const body = (await response.json()) as { machineId?: string; error?: string };
+  const body = (await response.json()) as {
+    machineId?: string;
+    workspaceId?: string;
+    error?: string;
+  };
   if (!response.ok || !body.machineId) throw new Error(body.error ?? `Enrollment failed: ${response.status}`);
 
   const runner = options.runner ?? "host";
@@ -128,6 +134,8 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
         };
   const config: ClientConfig = {
     serverUrl,
+    ...(body.workspaceId ? { workspaceId: body.workspaceId } : {}),
+    ...(options.profileName ? { profileName: options.profileName } : {}),
     machineId: body.machineId,
     machineName: options.machineName,
     privateKeyPem: privateKey,
@@ -136,7 +144,7 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
       workspace: profile,
     },
   };
-  await mkdir(dirname(configPath), { recursive: true });
+  await mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600, flag: "wx" });
   return { machineId: body.machineId, configPath };
 }

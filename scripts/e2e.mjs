@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash, generateKeyPairSync } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import process from "node:process";
 
@@ -315,6 +315,13 @@ try {
       ],
     ),
   );
+  const enrolledClientConfig = JSON.parse(await readFile(configPath, "utf8"));
+  if (
+    enrolledClientConfig.workspaceId !== "default" ||
+    enrolledClientConfig.machineId !== enrolled.machineId
+  ) {
+    throw new Error("Client Profile did not retain its Workspace and machine identity");
+  }
 
   client = spawn(
     process.execPath,
@@ -2713,6 +2720,7 @@ try {
         sessionId: session.id,
         checks: {
           outboundClient: true,
+          clientProfileIdentity: true,
           organizationBoundary: true,
           organizationScopedWorkspaceSlugs: true,
           workspaceIsolation: true,

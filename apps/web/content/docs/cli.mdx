@@ -37,6 +37,10 @@ ods audit
 - `ods client enroll` creates a machine identity explicitly.
 - `ods client start` runs the Client in the foreground.
 
+Use `--profile <name>` with `ods up`, `ods down`, or `ods client status` when one host connects to
+several Workspaces or Servers. Profiles are isolated and can run simultaneously. The default name
+is `default`; `--profile` and `--config` cannot be combined.
+
 ## Sessions
 
 High-level operation commands create disposable sessions automatically. For a longer bounded

@@ -1,18 +1,27 @@
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  readFile,
+  unlink,
+} from "node:fs/promises";
+import { constants } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { normalizeServerUrl } from "@odyshell/client";
 import { ExpectedError } from "./errors.js";
 
 export type ClientUpConfiguration = {
   configPath: string;
   configExists: boolean;
+  migratedFrom?: string;
 };
 
 export async function resolveClientUpConfiguration(options: {
   serverUrl: string;
   explicitConfigPath?: string;
+  profileName: string;
   legacyConfigPath: string;
-  instanceConfigPath: string;
+  profileConfigPath: string;
 }): Promise<ClientUpConfiguration> {
   let requestedServerUrl: string;
   try {
@@ -23,39 +32,100 @@ export async function resolveClientUpConfiguration(options: {
       "invalid_server_url",
     );
   }
+  try {
+    assertClientProfileName(options.profileName);
+  } catch (error) {
+    throw new ExpectedError(
+      error instanceof Error ? error.message : "Invalid Client Profile",
+      "invalid_client_profile",
+    );
+  }
 
   if (options.explicitConfigPath) {
     const configPath = resolve(options.explicitConfigPath);
-    const existingServerUrl = await serverUrlFromConfig(configPath);
-    if (!existingServerUrl) {
+    const existing = await identityFromConfig(configPath);
+    if (!existing) {
       return { configPath, configExists: false };
     }
-    assertSameServer(configPath, existingServerUrl, requestedServerUrl);
+    assertSameServer(configPath, existing.serverUrl, requestedServerUrl);
     return { configPath, configExists: true };
   }
 
+  const profileConfigPath = resolve(options.profileConfigPath);
+  const profileIdentity = await identityFromConfig(profileConfigPath);
   const legacyConfigPath = resolve(options.legacyConfigPath);
-  const legacyServerUrl = await serverUrlFromConfig(legacyConfigPath);
-  if (
-    legacyServerUrl &&
-    normalizedExistingServerUrl(legacyConfigPath, legacyServerUrl) ===
-      requestedServerUrl
-  ) {
-    return { configPath: legacyConfigPath, configExists: true };
+  const legacyIdentity =
+    options.profileName === "default"
+      ? await identityFromConfig(legacyConfigPath)
+      : undefined;
+  if (profileIdentity && legacyIdentity) {
+    throw new ExpectedError(
+      `Both the legacy Client identity and the default Client Profile exist. Refusing to choose or overwrite either file. Remove one after verifying which machine identity is active.`,
+      "client_profile_migration_conflict",
+    );
   }
-
-  const instanceConfigPath = resolve(options.instanceConfigPath);
-  const instanceServerUrl = await serverUrlFromConfig(instanceConfigPath);
-  if (!instanceServerUrl) {
-    return { configPath: instanceConfigPath, configExists: false };
+  if (profileIdentity) {
+    if (
+      profileIdentity.profileName &&
+      profileIdentity.profileName !== options.profileName
+    ) {
+      throw new ExpectedError(
+        `Client configuration at ${profileConfigPath} belongs to Profile "${profileIdentity.profileName}", not "${options.profileName}".`,
+        "client_config_profile_mismatch",
+      );
+    }
+    assertSameServer(
+      profileConfigPath,
+      profileIdentity.serverUrl,
+      requestedServerUrl,
+    );
+    return { configPath: profileConfigPath, configExists: true };
   }
-  assertSameServer(instanceConfigPath, instanceServerUrl, requestedServerUrl);
-  return { configPath: instanceConfigPath, configExists: true };
+  if (!legacyIdentity) {
+    return { configPath: profileConfigPath, configExists: false };
+  }
+  assertSameServer(
+    legacyConfigPath,
+    legacyIdentity.serverUrl,
+    requestedServerUrl,
+  );
+  try {
+    await mkdir(dirname(profileConfigPath), { recursive: true, mode: 0o700 });
+    await copyFile(
+      legacyConfigPath,
+      profileConfigPath,
+      constants.COPYFILE_EXCL,
+    );
+    await chmod(profileConfigPath, 0o600);
+    await unlink(legacyConfigPath);
+  } catch (error) {
+    throw new ExpectedError(
+      `Could not import the legacy Client identity into the default Profile: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "client_profile_migration_failed",
+    );
+  }
+  return {
+    configPath: profileConfigPath,
+    configExists: true,
+    migratedFrom: legacyConfigPath,
+  };
 }
 
-async function serverUrlFromConfig(
+function assertClientProfileName(profileName: string): void {
+  if (
+    !/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/u.test(profileName)
+  ) {
+    throw new Error(
+      "Client Profile name must contain 1-40 lowercase letters, numbers, or hyphens",
+    );
+  }
+}
+
+async function identityFromConfig(
   configPath: string,
-): Promise<string | undefined> {
+): Promise<{ serverUrl: string; profileName?: string } | undefined> {
   let source: string;
   try {
     source = await readFile(configPath, "utf8");
@@ -65,11 +135,23 @@ async function serverUrlFromConfig(
   }
 
   try {
-    const parsed = JSON.parse(source) as { serverUrl?: unknown };
+    const parsed = JSON.parse(source) as {
+      serverUrl?: unknown;
+      profileName?: unknown;
+    };
     if (typeof parsed.serverUrl !== "string" || !parsed.serverUrl) {
       throw new Error("serverUrl is missing");
     }
-    return parsed.serverUrl;
+    if (
+      parsed.profileName !== undefined &&
+      typeof parsed.profileName !== "string"
+    ) {
+      throw new Error("profileName is invalid");
+    }
+    return {
+      serverUrl: parsed.serverUrl,
+      ...(parsed.profileName ? { profileName: parsed.profileName } : {}),
+    };
   } catch (error) {
     throw new ExpectedError(
       `Client configuration at ${configPath} is invalid: ${
