@@ -17,10 +17,11 @@ Open **Machines**, select **Add**, and configure:
 - the capabilities the machine will accept.
 
 Odyshell generates an `ods up` command containing a single-use enrollment token. Run it on the
-target Linux machine from the directory the Client should make available. The generated command
-uses `--workspace .`. The token expires after ten minutes and cannot be replayed.
+target machine from the directory the Client should make available. The generated command uses
+`--workspace .`. The token expires after ten minutes and cannot be replayed.
 
-`ods up` installs and starts a restartable user service on Linux. After enrollment, use:
+`ods up` installs and starts a restartable user service on Linux, macOS, and Windows. After
+enrollment, use:
 
 ```bash
 ods client status
@@ -28,18 +29,8 @@ ods down
 ods up
 ```
 
-On macOS and Windows, enroll and run the Client in the foreground:
-
-```bash
-ods client enroll \
-  --token "$ODYSHELL_ENROLLMENT_TOKEN" \
-  --name my-machine \
-  --workspace . \
-  --allow 'process.exec,fs.stat,fs.list,fs.search,fs.read'
-ods client start
-```
-
-The current CLI does not install a native background service on macOS or Windows.
+Linux uses a systemd user service, macOS uses a LaunchAgent, and Windows uses a limited Task
+Scheduler task for the signed-in user. None require administrator privileges.
 
 ## Local policy
 
@@ -55,7 +46,8 @@ An agent can only use the intersection of its credential policy and the machine'
 ## Client Profiles
 
 A host can run several named Client Profiles at the same time. Each Profile keeps an independent
-Server, Workspace, machine identity, local root, capabilities, state directory, and Linux service:
+Server, Workspace, machine identity, local root, capabilities, state directory, and background
+service:
 
 ```bash
 ods --server https://personal.example up --profile personal <enrollment-options>

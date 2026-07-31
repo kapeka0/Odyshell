@@ -138,16 +138,29 @@ ${argumentsList.map((argument) => `    <string>${xmlEscape(argument)}</string>`)
 export function renderWindowsTaskCommand(
   options: InstallClientServiceOptions,
 ): string {
+  return [options.nodePath, ...windowsTaskArguments(options)]
+    .map(quoteWindowsArgument)
+    .join(" ");
+}
+
+export function renderWindowsTaskArguments(
+  options: InstallClientServiceOptions,
+): string {
+  return windowsTaskArguments(options)
+    .map(quoteWindowsArgument)
+    .join(" ");
+}
+
+function windowsTaskArguments(
+  options: InstallClientServiceOptions,
+): string[] {
   return [
-    options.nodePath,
     options.cliPath,
     "client",
     "start",
     "--config",
     win32.resolve(options.configPath),
-  ]
-    .map(quoteWindowsArgument)
-    .join(" ");
+  ];
 }
 
 export async function installClientService(
@@ -214,20 +227,9 @@ export async function installWindowsTask(
 ): Promise<{ servicePath: string; lingering: undefined }> {
   await readFile(resolve(options.configPath), "utf8");
   const taskName = windowsTaskNameForConfig(options.configPath);
-  await schtasks([
-    "/Create",
-    "/SC",
-    "ONLOGON",
-    "/RL",
-    "LIMITED",
-    "/TN",
-    taskName,
-    "/TR",
-    renderWindowsTaskCommand(options),
-    "/F",
-  ]);
-  await schtasks(["/Run", "/TN", taskName]);
-  await schtasks(["/Query", "/TN", taskName]);
+  await registerWindowsTask(taskName, options);
+  await startWindowsTask(taskName);
+  await getWindowsTask(taskName);
   return {
     servicePath: `Task Scheduler: ${taskName}`,
     lingering: undefined,
@@ -271,8 +273,8 @@ export async function stopClientService(
   }
   if (process.platform === "win32") {
     const taskName = windowsTaskNameForConfig(configPath);
-    await schtasks(["/End", "/TN", taskName]).catch(() => {});
-    await schtasks(["/Delete", "/TN", taskName, "/F"]);
+    await stopWindowsTask(taskName).catch(() => {});
+    await unregisterWindowsTask(taskName);
     return;
   }
   throw new Error(`Background service management does not support ${process.platform}`);
@@ -288,7 +290,7 @@ export async function restartClientService(
     return activateMacLaunchAgent(configPath);
   }
   if (process.platform === "win32") {
-    await schtasks(["/Run", "/TN", windowsTaskNameForConfig(configPath)]);
+    await startWindowsTask(windowsTaskNameForConfig(configPath));
     return;
   }
   throw new Error(`Background service management does not support ${process.platform}`);
@@ -331,7 +333,7 @@ export async function clientServiceStatus(
   }
   if (process.platform === "win32") {
     const taskName = windowsTaskNameForConfig(configPath);
-    const installed = await schtasks(["/Query", "/TN", taskName]).then(
+    const installed = await getWindowsTask(taskName).then(
       () => true,
       () => false,
     );
@@ -388,11 +390,69 @@ async function launchctl(args: string[]): Promise<void> {
   });
 }
 
-async function schtasks(args: string[]): Promise<void> {
-  await execFileAsync("schtasks.exe", args, {
+async function windowsTaskPowerShell(
+  script: string,
+  environment: NodeJS.ProcessEnv,
+): Promise<void> {
+  await execFileAsync("powershell.exe", [
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    script,
+  ], {
     windowsHide: true,
     timeout: 30_000,
+    env: { ...process.env, ...environment },
   });
+}
+
+async function registerWindowsTask(
+  taskName: string,
+  options: InstallClientServiceOptions,
+): Promise<void> {
+  await windowsTaskPowerShell(
+    [
+      "$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()",
+      "$action = New-ScheduledTaskAction -Execute $env:ODYSHELL_NODE_PATH -Argument $env:ODYSHELL_TASK_ARGUMENTS",
+      "$principal = New-ScheduledTaskPrincipal -UserId $identity.Name -LogonType Interactive -RunLevel Limited",
+      "$trigger = New-ScheduledTaskTrigger -AtLogOn -User $identity.Name",
+      "$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries",
+      "Register-ScheduledTask -TaskName $env:ODYSHELL_TASK_NAME -Action $action -Principal $principal -Trigger $trigger -Settings $settings -Force | Out-Null",
+    ].join("; "),
+    {
+      ODYSHELL_TASK_NAME: taskName,
+      ODYSHELL_NODE_PATH: options.nodePath,
+      ODYSHELL_TASK_ARGUMENTS: renderWindowsTaskArguments(options),
+    },
+  );
+}
+
+async function startWindowsTask(taskName: string): Promise<void> {
+  await windowsTaskPowerShell(
+    "Start-ScheduledTask -TaskName $env:ODYSHELL_TASK_NAME",
+    { ODYSHELL_TASK_NAME: taskName },
+  );
+}
+
+async function stopWindowsTask(taskName: string): Promise<void> {
+  await windowsTaskPowerShell(
+    "Stop-ScheduledTask -TaskName $env:ODYSHELL_TASK_NAME",
+    { ODYSHELL_TASK_NAME: taskName },
+  );
+}
+
+async function unregisterWindowsTask(taskName: string): Promise<void> {
+  await windowsTaskPowerShell(
+    "Unregister-ScheduledTask -TaskName $env:ODYSHELL_TASK_NAME -Confirm:$false",
+    { ODYSHELL_TASK_NAME: taskName },
+  );
+}
+
+async function getWindowsTask(taskName: string): Promise<void> {
+  await windowsTaskPowerShell(
+    "Get-ScheduledTask -TaskName $env:ODYSHELL_TASK_NAME | Out-Null",
+    { ODYSHELL_TASK_NAME: taskName },
+  );
 }
 
 async function windowsTaskState(taskName: string): Promise<string> {

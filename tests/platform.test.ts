@@ -19,6 +19,7 @@ import {
   macLaunchAgentPath,
   renderMacLaunchAgent,
   renderLinuxUserService,
+  renderWindowsTaskArguments,
   renderWindowsTaskCommand,
   windowsTaskNameForConfig,
 } from "../apps/client/src/service.js";
@@ -204,6 +205,22 @@ describe("client platform support", () => {
     ).toBe(
       '"C:\\Program Files\\nodejs\\node.exe" "C:\\Program Files\\Odyshell\\ods.js" "client" "start" "--config" "C:\\Users\\Ada & team\\client.json"',
     );
+    expect(
+      renderWindowsTaskArguments({
+        nodePath: "C:\\Program Files\\nodejs\\node.exe",
+        cliPath: "C:\\Program Files\\Odyshell\\ods.js",
+        configPath: windowsConfig,
+      }),
+    ).toBe(
+      '"C:\\Program Files\\Odyshell\\ods.js" "client" "start" "--config" "C:\\Users\\Ada & team\\client.json"',
+    );
+    expect(() =>
+      renderWindowsTaskArguments({
+        nodePath: "C:\\Program Files\\nodejs\\node.exe",
+        cliPath: "C:\\Program Files\\Odyshell\\ods.js\r\nWrite-Output injected",
+        configPath: windowsConfig,
+      }),
+    ).toThrow("control characters");
   });
 
   it("uses a deterministic isolated path for every named Client Profile", () => {

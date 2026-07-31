@@ -39,7 +39,8 @@ ods up \
 ```
 
 `ods up` enrolls the machine and starts a restartable user service: systemd on Linux, a LaunchAgent
-on macOS, or a limited Task Scheduler task on Windows. The workspace,
+on macOS, or a limited Task Scheduler task for the signed-in Windows user. No administrator
+privileges are required. The workspace,
 operating-system user, and `--allow` list form the local policy. The Server and remote agents
 cannot grant themselves capabilities that the Client has not explicitly allowed.
 
