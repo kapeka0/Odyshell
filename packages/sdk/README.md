@@ -85,6 +85,30 @@ The policy stays inactive until a workspace administrator approves that URL. Use
 `agentPolicies()`, `pauseAgentPolicy(id)`, and `revokeAgentPolicy(id)` to inspect or reduce future
 authority. Requests outside the ceiling still require human approval.
 
+An approved Delegation Policy lets the Independent Agent derive one level of Managed Agents:
+
+```ts
+await ods.proposeAgentPolicy({
+  kind: "delegation",
+  scopes,
+  maxSessionSeconds: 600,
+  maxManagedAgents: 3,
+  validForSeconds: 30 * 24 * 60 * 60,
+});
+
+const child = await ods.createManagedAgent({
+  name: "Dependency updater",
+  scopes,
+  maxSessionSeconds: 600,
+  validForSeconds: 60 * 60,
+});
+```
+
+The child has no Agent Credential. Its parent requests and claims Sessions in its name, optionally
+including a `runId` for Timeline attribution. Use `managedAgents()`,
+`disableManagedAgent(child.id)`, or `deleteManagedAgent(child.id)` to manage it. Revoking the
+parent credential cascades to every derived Agent and active Session.
+
 `claim.sessionToken` is returned once. Keep it inside a trusted runtime; do not send it to a model,
 log it, or persist it. `readApprovedSession` uses it only for the approved Session and closes that
 Session after the read.

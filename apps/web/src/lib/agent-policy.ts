@@ -9,11 +9,13 @@ export const agentPolicyCodeSchema = z
 export type AgentPolicyApproval = {
   id: string;
   version: number;
+  kind: "autoapproval" | "delegation";
   agent: { id: string; name: string };
   scopes: Array<
     SessionMachineScope & { machine: { id: string; name: string } }
   >;
   maxSessionSeconds: number;
+  maxManagedAgents: number | null;
   expiresAt: string;
 };
 

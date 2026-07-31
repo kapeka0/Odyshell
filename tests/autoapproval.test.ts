@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { SessionMachineScope } from "@odyshell/protocol";
-import { autoapprovalDecision } from "../apps/server/src/autoapproval.js";
+import {
+  autoapprovalDecision,
+  managedDelegationDecision,
+} from "../apps/server/src/autoapproval.js";
 
 const readScope: SessionMachineScope = {
   machineId: "11111111-1111-4111-8111-111111111111",
@@ -135,5 +138,68 @@ describe("autoapprovalDecision", () => {
         now: 1_000,
       }),
     ).toEqual({ approved: false, reason: "unsafe_capability" });
+  });
+});
+
+describe("managedDelegationDecision", () => {
+  it("allows one-level child authority inside every delegation ceiling", () => {
+    expect(
+      managedDelegationDecision({
+        childScopes: [readScope],
+        childMaxSessionSeconds: 300,
+        childExpiresAt: 9_000,
+        activeManagedAgents: 1,
+        delegation: {
+          status: "active",
+          scopes: [readScope],
+          maxSessionSeconds: 600,
+          maxManagedAgents: 2,
+          expiresAt: 10_000,
+        },
+        now: 1_000,
+      }),
+    ).toEqual({ allowed: true });
+  });
+
+  it.each([
+    {
+      name: "managed count",
+      input: { activeManagedAgents: 2 },
+      reason: "managed_agent_limit",
+    },
+    {
+      name: "child validity",
+      input: { childExpiresAt: 10_001 },
+      reason: "validity_widening",
+    },
+    {
+      name: "child scope",
+      input: {
+        childScopes: [{ ...readScope, capabilities: ["fs.read", "fs.write"] }],
+      },
+      reason: "scope_widening",
+    },
+  ])("rejects $name escalation", ({ input, reason }) => {
+    expect(
+      managedDelegationDecision({
+        childScopes: [readScope],
+        childMaxSessionSeconds: 300,
+        childExpiresAt: 9_000,
+        activeManagedAgents: 1,
+        delegation: {
+          status: "active",
+          scopes: [readScope],
+          maxSessionSeconds: 600,
+          maxManagedAgents: 2,
+          expiresAt: 10_000,
+        },
+        now: 1_000,
+        ...(input as Partial<{
+          childScopes: SessionMachineScope[];
+          activeManagedAgents: number;
+          childExpiresAt: number;
+        }>),
+      }),
+    ).toEqual({ allowed: false, reason });
   });
 });

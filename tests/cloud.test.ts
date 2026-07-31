@@ -107,11 +107,15 @@ describe("cloud identity and device authorization boundaries", () => {
 
   it("never exposes operation content through cloud control events", () => {
     const machineId = "2dc24de7-ec0e-45b3-88c1-acbb900e51f8";
+    const parentAgentId = "21a970a0-d42a-44ab-bf3f-f0a5f2ada248";
+    const managedAgentId = "6be716f5-91bd-4329-8bdd-cb004acfc7a0";
     expect(
       privacySafeControlMetadata({
         kind: "process.exec",
         reason: "machine_scope",
         machineId,
+        parentAgentId,
+        managedAgentId,
         command: "cat /etc/shadow",
         path: "/etc/shadow",
         stdout: "secret",
@@ -121,6 +125,8 @@ describe("cloud identity and device authorization boundaries", () => {
       kind: "process.exec",
       reason: "machine_scope",
       machineId,
+      parentAgentId,
+      managedAgentId,
     });
   });
 
@@ -150,6 +156,8 @@ describe("cloud identity and device authorization boundaries", () => {
         kind: "cat /etc/shadow",
         reason: "secret copied from stdout",
         machineId: "../../private-machine",
+        parentAgentId: "not-a-uuid",
+        managedAgentId: "../../../other-agent",
       }),
     ).toEqual({});
     expect(

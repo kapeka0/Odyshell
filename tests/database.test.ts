@@ -332,4 +332,40 @@ describe("server storage boundaries", () => {
       "autoapprovalPolicyVersion: request.autoapprovalPolicyVersion",
     );
   });
+
+  it("binds one-level Managed Agents to a live parent Delegation Policy", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const migration = database.slice(
+      database.indexOf("async function migrateManagedAgentDelegation("),
+      database.indexOf("const migrationProvider"),
+    );
+    const creation = database.slice(
+      database.indexOf("async createManagedAgent("),
+      database.indexOf("async listManagedAgents("),
+    );
+    const request = database.slice(
+      database.indexOf("async createAgentSessionRequest("),
+      database.indexOf("async sessionRequestForApproval("),
+    );
+    const cascade = database.slice(
+      database.indexOf("async revokeAgentHierarchyByTokenHash("),
+      database.indexOf("async createEnrollmentToken("),
+    );
+
+    expect(migration).toContain("agent_policies_delegation_fk");
+    expect(migration).toContain("agent_policies_one_active_kind_idx");
+    expect(migration).toContain(
+      "Cannot roll back Managed Agent delegation while derived records exist",
+    );
+    expect(creation).toContain('.where("kind", "=", "independent")');
+    expect(creation).toContain("managedDelegationDecision({");
+    expect(request).toContain("delegationPolicyVersion");
+    expect(request).toContain("managedDelegationDecision({");
+    expect(cascade).toContain('.where("parentAgentId", "=", credential.agentId)');
+    expect(cascade).toContain('.updateTable("agentCredentials")');
+    expect(cascade).toContain('.updateTable("agentPolicies")');
+  });
 });

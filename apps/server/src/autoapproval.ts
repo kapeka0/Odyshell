@@ -78,3 +78,53 @@ export function autoapprovalDecision(input: {
   }
   return { approved: true };
 }
+
+export type ManagedDelegationDecision =
+  | { allowed: true }
+  | {
+      allowed: false;
+      reason:
+        | "delegation_inactive"
+        | "delegation_expired"
+        | "managed_agent_limit"
+        | "validity_widening"
+        | "duration_widening"
+        | "scope_widening"
+        | "unsafe_capability";
+    };
+
+export function managedDelegationDecision(input: {
+  childScopes: SessionMachineScope[];
+  childMaxSessionSeconds: number;
+  childExpiresAt: number;
+  activeManagedAgents: number;
+  delegation: AutoapprovalPolicyCeiling & { maxManagedAgents: number };
+  now: number;
+}): ManagedDelegationDecision {
+  if (input.delegation.status !== "active") {
+    return { allowed: false, reason: "delegation_inactive" };
+  }
+  if (input.delegation.expiresAt <= input.now) {
+    return { allowed: false, reason: "delegation_expired" };
+  }
+  if (input.activeManagedAgents >= input.delegation.maxManagedAgents) {
+    return { allowed: false, reason: "managed_agent_limit" };
+  }
+  if (input.childExpiresAt > input.delegation.expiresAt) {
+    return { allowed: false, reason: "validity_widening" };
+  }
+  const scope = autoapprovalDecision({
+    requestedScopes: input.childScopes,
+    requestedDurationSeconds: input.childMaxSessionSeconds,
+    policy: input.delegation,
+    now: input.now,
+  });
+  if (scope.approved) return { allowed: true };
+  if (scope.reason === "duration_widening") {
+    return { allowed: false, reason: "duration_widening" };
+  }
+  if (scope.reason === "unsafe_capability") {
+    return { allowed: false, reason: "unsafe_capability" };
+  }
+  return { allowed: false, reason: "scope_widening" };
+}

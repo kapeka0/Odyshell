@@ -56,6 +56,8 @@ export type CloudSession = {
   createdAt: string;
   updatedAt?: string;
   requestedByHumanId?: string;
+  requestedByAgentId?: string | null;
+  runId?: string | null;
   predecessorSessionId?: string;
   scopes?: Array<{
     machineId: string;
@@ -74,6 +76,7 @@ export type CloudAgentPolicy = {
   id: string;
   agentId: string;
   version: number;
+  kind: "autoapproval" | "delegation" | "managed";
   status: "proposed" | "active" | "paused" | "revoked" | "replaced";
   scopes: Array<{
     machineId: string;
@@ -82,6 +85,7 @@ export type CloudAgentPolicy = {
     restrictions: Record<string, unknown>;
   }>;
   maxSessionSeconds: number;
+  maxManagedAgents?: number;
   expiresAt: string;
   approvedAt: string | null;
   createdAt: string;

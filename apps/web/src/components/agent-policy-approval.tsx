@@ -52,8 +52,9 @@ export function AgentPolicyApprovalForm({
       <Alert>
         <AlertTitle>{policy.agent.name}</AlertTitle>
         <AlertDescription>
-          Sessions inside this ceiling can be approved automatically until the
-          policy expires.
+          {policy.kind === "delegation"
+            ? "This ceiling lets the Agent create bounded Managed Agents."
+            : "Sessions inside this ceiling can be approved automatically until the policy expires."}
         </AlertDescription>
       </Alert>
       <div className="flex flex-col gap-3">
@@ -73,6 +74,12 @@ export function AgentPolicyApprovalForm({
       <dl className="grid grid-cols-[7rem_1fr] gap-3 text-sm">
         <dt className="text-muted-foreground">Max duration</dt>
         <dd>{formatDuration(policy.maxSessionSeconds)}</dd>
+        {policy.maxManagedAgents ? (
+          <>
+            <dt className="text-muted-foreground">Max agents</dt>
+            <dd>{policy.maxManagedAgents}</dd>
+          </>
+        ) : null}
         <dt className="text-muted-foreground">Valid until</dt>
         <dd>{new Date(policy.expiresAt).toLocaleString()}</dd>
         <dt className="text-muted-foreground">Version</dt>

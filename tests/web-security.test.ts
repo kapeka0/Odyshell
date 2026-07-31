@@ -584,6 +584,9 @@ describe("dashboard navigation performance boundary", () => {
     expect(sidebar).toContain('href: "/dashboard/sessions"');
     expect(sanitizer).toContain('"machineId"');
     expect(sanitizer).toContain('"status"');
+    expect(sanitizer).toContain('"executorAgentId"');
+    expect(sanitizer).toContain('"requesterAgentId"');
+    expect(sanitizer).toContain('"runId"');
     for (const sensitive of ["command", "path", "stdout", "stderr", "token"]) {
       expect(sanitizer).not.toContain(`"${sensitive}"`);
     }
@@ -648,5 +651,28 @@ describe("dashboard navigation performance boundary", () => {
     expect(loading).toContain("Skeleton");
     expect(server).toContain('"/v1/internal/cloud/agent-policies/approve"');
     expect(server).toContain("agent_credential_required");
+  });
+
+  it("keeps Managed Agent delegation single-level and attributable", () => {
+    const server = readFileSync(
+      resolve(process.cwd(), "apps/server/src/index.ts"),
+      "utf8",
+    );
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const sessionList = readFileSync(
+      resolve(process.cwd(), "apps/web/src/components/session-list.tsx"),
+      "utf8",
+    );
+
+    expect(server).toContain('"/v1/managed-agents"');
+    expect(server).toContain('"/v1/agent-credentials/revoke"');
+    expect(database).toContain('.where("kind", "=", "independent")');
+    expect(database).toContain("managedDelegationDecision({");
+    expect(database).toContain("delegationPolicyVersion");
+    expect(database).toContain("requestedByAgentId");
+    expect(sessionList).toContain('title="Requester"');
   });
 });

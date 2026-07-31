@@ -221,6 +221,68 @@ describe("Odyshell SDK", () => {
     ]);
   });
 
+  it("creates and manages one-level Managed Agent identities", async () => {
+    const requests: CapturedRequest[] = [];
+    const fetch = mockFetch(requests, (request) =>
+      request.path === "/v1/managed-agents" && request.method === "GET"
+        ? { data: [] }
+        : { id: "managed-id", name: "Updater", status: "active" },
+    );
+    const ods = new Odyshell({
+      serverUrl: "https://ods.example",
+      agentToken: "agent-secret",
+      fetch,
+    });
+    const scopes = [
+      {
+        machineId: "11111111-1111-4111-8111-111111111111",
+        profile: "host" as const,
+        capabilities: ["fs.read" as const],
+        restrictions: {
+          filesystem: {
+            paths: [{ path: "app", includeDescendants: true }],
+          },
+        },
+      },
+    ];
+
+    await ods.createManagedAgent({
+      name: "Updater",
+      scopes,
+      maxSessionSeconds: 600,
+      validForSeconds: 86_400,
+    });
+    await ods.managedAgents();
+    await ods.disableManagedAgent("managed-id");
+    await ods.deleteManagedAgent("managed-id");
+    await ods.revokeAgentCredential();
+
+    expect(requests).toMatchObject([
+      {
+        path: "/v1/managed-agents",
+        method: "POST",
+        headers: { authorization: "Bearer agent-secret" },
+      },
+      {
+        path: "/v1/managed-agents",
+        method: "GET",
+        headers: { authorization: "Bearer agent-secret" },
+      },
+      {
+        path: "/v1/managed-agents/managed-id/disable",
+        method: "POST",
+      },
+      {
+        path: "/v1/managed-agents/managed-id",
+        method: "DELETE",
+      },
+      {
+        path: "/v1/agent-credentials/revoke",
+        method: "POST",
+      },
+    ]);
+  });
+
   it("revokes a CLI token through its bearer credential", async () => {
     const requests: CapturedRequest[] = [];
     const fetch = mockFetch(requests, () => ({ revoked: true }));

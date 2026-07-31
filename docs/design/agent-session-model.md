@@ -5,7 +5,7 @@
 > convenience flow currently requests one exact `fs.read`.
 >
 > Headless Agent Credentials, renewal, typed multi-machine scopes, strict Session termination, and
-> versioned autoapproval policies are implemented. Delegation remains target design.
+> versioned policies, and one-level Managed Agent delegation are implemented.
 
 ## Goal
 
@@ -84,8 +84,8 @@ Independent Agent
 └── Managed Agent
 ```
 
-A Managed Agent cannot create descendants. A Workspace Member can transfer it, promote it to an
-Independent Agent, disable it, or delete it.
+A Managed Agent cannot create descendants. Its parent can list, disable, or delete it. Transfer
+and promotion remain future administrative recovery operations.
 
 Disabling or revoking a parent:
 

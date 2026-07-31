@@ -99,8 +99,10 @@ const cloudAgentDeviceSchema = cloudIdentitySchema
   .strict();
 const agentPolicyProposalSchema = z
   .object({
+    kind: z.enum(["autoapproval", "delegation"]).default("autoapproval"),
     scopes: agentSessionRequestInputSchema.shape.scopes,
     maxSessionSeconds: z.number().int().min(60).max(24 * 60 * 60),
+    maxManagedAgents: z.number().int().min(1).max(100).optional(),
     validForSeconds: z
       .number()
       .int()
@@ -110,9 +112,36 @@ const agentPolicyProposalSchema = z
         "Policy validity must be 1, 7, 30, 90, or 365 days",
       ),
   })
+  .superRefine((value, context) => {
+    if (value.kind === "delegation" && value.maxManagedAgents === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["maxManagedAgents"],
+        message: "Delegation policies require a Managed Agent limit",
+      });
+    }
+    if (value.kind === "autoapproval" && value.maxManagedAgents !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["maxManagedAgents"],
+        message: "Autoapproval policies cannot delegate Agents",
+      });
+    }
+  })
   .strict();
 const cloudAgentPolicySchema = cloudIdentitySchema
   .extend({ approvalCode: z.string().min(32).max(256) })
+  .strict();
+const managedAgentInputSchema = z
+  .object({
+    name: z.string().trim().min(1).max(80),
+    scopes: agentSessionRequestInputSchema.shape.scopes,
+    maxSessionSeconds: z.number().int().min(60).max(24 * 60 * 60),
+    validForSeconds: z.number().int().min(60).max(365 * 24 * 60 * 60),
+  })
+  .strict();
+const attributedAgentSessionRequestSchema = agentSessionRequestInputSchema
+  .extend({ runId: z.string().trim().min(1).max(128).optional() })
   .strict();
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
@@ -430,6 +459,33 @@ function sessionRequesterFor(request: FastifyRequest): {
   };
 }
 
+async function requestedAgentFor(
+  principal: ReturnType<typeof sessionRequesterFor>,
+  agentId: string,
+): Promise<{ id: string; name: string; managed: boolean } | null> {
+  if (!principal.agent) {
+    const agent = await db.getAgentIdentity(principal.workspaceId, agentId);
+    return agent && agent.status === "active" && !agent.deletedAt
+      ? { id: agent.id, name: agent.name, managed: agent.kind === "managed" }
+      : null;
+  }
+  if (principal.agent.agentId === agentId) {
+    return {
+      id: principal.agent.agentId,
+      name: principal.agent.agentName,
+      managed: false,
+    };
+  }
+  const managed = await db.managedAgentForParent(
+    principal.workspaceId,
+    agentId,
+    principal.agent.agentId,
+  );
+  return managed
+    ? { id: managed.id, name: managed.name, managed: true }
+    : null;
+}
+
 function adminWorkspaceFor(request: FastifyRequest): string {
   const workspaceId = requestAdminWorkspaces.get(request);
   if (!workspaceId) throw new Error("Authenticated administrator has no workspace context");
@@ -527,6 +583,9 @@ function privacyMinimalTimelineMetadata(
     "status",
     "expiresAt",
     "predecessorSessionId",
+    "executorAgentId",
+    "requesterAgentId",
+    "runId",
   ]) {
     if (metadata[key] !== undefined) safe[key] = metadata[key];
   }
@@ -753,6 +812,67 @@ app.post(
 );
 
 app.post(
+  "/v1/agent-credentials/revoke",
+  { preHandler: requireSessionRequester },
+  async (request, reply) => {
+    const principal = requestAgentCredentialPrincipals.get(request);
+    const currentToken = bearerTokenFor(request);
+    if (!principal || !currentToken) {
+      return reply.code(403).send({ error: "agent_credential_required" });
+    }
+    const hierarchy = await db.revokeAgentHierarchyByTokenHash(
+      hashToken(currentToken),
+    );
+    if (!hierarchy) {
+      return reply.code(401).send({ error: "invalid_agent_credential" });
+    }
+    let terminatedSessions = 0;
+    for (const session of hierarchy.sessionIds) {
+      const termination = await db.cancelAgentSession({
+        workspaceId: hierarchy.workspaceId,
+        sessionId: session.id,
+        agentId: session.agentId,
+        requestedByHumanId: hierarchy.ownerHumanId,
+        reason: "revoked",
+      });
+      if (!termination) continue;
+      terminatedSessions += 1;
+      for (const operation of termination.operations) {
+        gateway.send(operation.machineId, {
+          type: "operation.cancel",
+          operationId: operation.id,
+        });
+      }
+      for (const target of termination.targets) {
+        gateway.send(target.machineId, {
+          type: "session.close",
+          sessionId: target.runtimeSessionId,
+          reason: "agent_revoked",
+        });
+      }
+    }
+    await audit(
+      db,
+      hierarchy.workspaceId,
+      hierarchy.parentAgentId,
+      "agent.revoked",
+      "agent",
+      hierarchy.parentAgentId,
+      {
+        disabledManagedAgents: hierarchy.agentIds.length - 1,
+        terminatedSessions,
+      },
+    );
+    gateway.notifyWorkspace(hierarchy.workspaceId);
+    return {
+      revoked: true,
+      disabledManagedAgents: hierarchy.agentIds.length - 1,
+      terminatedSessions,
+    };
+  },
+);
+
+app.post(
   "/v1/agent-policies",
   { preHandler: requireSessionRequester },
   async (request, reply) => {
@@ -775,8 +895,12 @@ app.post(
       id: randomUUID(),
       agentId: principal.agentId,
       humanId: principal.ownerHumanId,
+      kind: parsed.data.kind,
       scopes: parsed.data.scopes,
       maxSessionSeconds: parsed.data.maxSessionSeconds,
+      ...(parsed.data.maxManagedAgents === undefined
+        ? {}
+        : { maxManagedAgents: parsed.data.maxManagedAgents }),
       expiresAt: Date.now() + parsed.data.validForSeconds * 1_000,
       approvalCodeHash: hashToken(approvalCode),
     });
@@ -792,9 +916,13 @@ app.post(
       policy.id,
       {
         version: policy.version,
+        kind: policy.kind,
         machineIds: policy.scopes.map((scope) => scope.machineId),
         capabilities: policy.scopes.map((scope) => scope.capabilities),
         maxSessionSeconds: policy.maxSessionSeconds,
+        ...(policy.maxManagedAgents === undefined
+          ? {}
+          : { maxManagedAgents: policy.maxManagedAgents }),
         expiresAt: isoTimestamp(policy.expiresAt),
       },
     );
@@ -862,6 +990,145 @@ for (const transition of ["pause", "revoke"] as const) {
       };
     },
   );
+}
+
+app.post(
+  "/v1/managed-agents",
+  { preHandler: requireSessionRequester },
+  async (request, reply) => {
+    const principal = requestAgentCredentialPrincipals.get(request);
+    if (!principal) {
+      return reply.code(403).send({ error: "agent_credential_required" });
+    }
+    const parsed = managedAgentInputSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply
+        .code(400)
+        .send({ error: "invalid_request", details: parsed.error.issues });
+    }
+    const created = await db.createManagedAgent({
+      workspaceId: principal.workspaceId,
+      id: randomUUID(),
+      parentAgentId: principal.agentId,
+      ownerHumanId: principal.ownerHumanId,
+      name: parsed.data.name,
+      scopes: parsed.data.scopes,
+      maxSessionSeconds: parsed.data.maxSessionSeconds,
+      expiresAt: Date.now() + parsed.data.validForSeconds * 1_000,
+      internalApprovalCodeHash: hashToken(createOpaqueToken("policy")),
+    });
+    if (!created) {
+      return reply.code(403).send({ error: "delegation_scope_denied" });
+    }
+    await audit(
+      db,
+      principal.workspaceId,
+      principal.agentId,
+      "managed_agent.created",
+      "agent",
+      created.agent.id,
+      {
+        parentAgentId: principal.agentId,
+        policyId: created.policy.id,
+        policyVersion: created.policy.version,
+        machineIds: created.policy.scopes.map((scope) => scope.machineId),
+      },
+    );
+    gateway.notifyWorkspace(principal.workspaceId);
+    return reply.code(201).send({
+      ...created.agent,
+      policy: {
+        ...created.policy,
+        expiresAt: isoTimestamp(created.policy.expiresAt),
+      },
+    });
+  },
+);
+
+app.get(
+  "/v1/managed-agents",
+  { preHandler: requireSessionRequester },
+  async (request, reply) => {
+    const principal = requestAgentCredentialPrincipals.get(request);
+    if (!principal) {
+      return reply.code(403).send({ error: "agent_credential_required" });
+    }
+    return {
+      data: await db.listManagedAgents(
+        principal.workspaceId,
+        principal.agentId,
+      ),
+    };
+  },
+);
+
+for (const transition of ["disable", "delete"] as const) {
+  app.route<{ Params: { agentId: string } }>({
+    method: transition === "delete" ? "DELETE" : "POST",
+    url: `/v1/managed-agents/:agentId${
+      transition === "disable" ? "/disable" : ""
+    }`,
+    preHandler: requireSessionRequester,
+    handler: async (request, reply) => {
+      const principal = requestAgentCredentialPrincipals.get(request);
+      if (!principal) {
+        return reply.code(403).send({ error: "agent_credential_required" });
+      }
+      const result = await db.disableManagedAgent({
+        workspaceId: principal.workspaceId,
+        managedAgentId: request.params.agentId,
+        parentAgentId: principal.agentId,
+        deleted: transition === "delete",
+      });
+      if (!result) {
+        return reply.code(404).send({ error: "managed_agent_not_found" });
+      }
+      let terminatedSessions = 0;
+      for (const sessionId of result.sessionIds) {
+        const termination = await db.cancelAgentSession({
+          workspaceId: principal.workspaceId,
+          sessionId,
+          agentId: result.agent.id,
+          requestedByHumanId: principal.ownerHumanId,
+          reason: "revoked",
+        });
+        if (!termination) continue;
+        terminatedSessions += 1;
+        for (const operation of termination.operations) {
+          gateway.send(operation.machineId, {
+            type: "operation.cancel",
+            operationId: operation.id,
+          });
+        }
+        for (const target of termination.targets) {
+          gateway.send(target.machineId, {
+            type: "session.close",
+            sessionId: target.runtimeSessionId,
+            reason: "policy_revoked",
+          });
+        }
+      }
+      await audit(
+        db,
+        principal.workspaceId,
+        principal.agentId,
+        `managed_agent.${transition}d`,
+        "agent",
+        result.agent.id,
+        {
+          parentAgentId: principal.agentId,
+          terminatedSessions,
+        },
+      );
+      gateway.notifyWorkspace(principal.workspaceId);
+      return {
+        id: result.agent.id,
+        status: "disabled",
+        deleted: transition === "delete",
+        terminatedSessions,
+      };
+    },
+  });
 }
 
 app.post("/v1/auth/device", async (request, reply) => {
@@ -1040,6 +1307,8 @@ app.post(
         status: session.status,
         expiresAt: isoTimestamp(session.expiresAt),
         createdAt: isoTimestamp(session.createdAt),
+        requestedByAgentId: session.requestedByAgentId ?? null,
+        runId: session.runId ?? null,
         targets: session.targets,
       })),
       policies: policies.map((policy) => ({
@@ -1421,6 +1690,7 @@ app.post(
     return {
       id: policy.id,
       version: policy.version,
+      kind: policy.kind,
       agent: { id: policy.agentId, name: policy.agentName },
       scopes: policy.scopes.map((scope) => ({
         ...scope,
@@ -1432,6 +1702,7 @@ app.post(
         },
       })),
       maxSessionSeconds: policy.maxSessionSeconds,
+      maxManagedAgents: policy.maxManagedAgents ?? null,
       expiresAt: isoTimestamp(policy.expiresAt),
     };
   },
@@ -2137,20 +2408,21 @@ app.post(
         .code(503)
         .send({ error: "session_approval_unavailable" });
     }
-    const parsed = agentSessionRequestInputSchema.safeParse(request.body);
+    const parsed = attributedAgentSessionRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply
         .code(400)
         .send({ error: "invalid_request", details: parsed.error.issues });
     }
     const principal = sessionRequesterFor(request);
-    const agentId = principal.agent?.agentId ?? parsed.data.agentId;
-    const agentName = principal.agent?.agentName ?? parsed.data.agentName;
-    if (
-      principal.agent &&
-      (parsed.data.agentId !== agentId || parsed.data.agentName !== agentName)
-    ) {
-      return reply.code(403).send({ error: "agent_identity_mismatch" });
+    const agentId = parsed.data.agentId;
+    let agentName = parsed.data.agentName;
+    if (principal.agent) {
+      const target = await requestedAgentFor(principal, agentId);
+      if (!target || target.name !== parsed.data.agentName) {
+        return reply.code(403).send({ error: "agent_identity_mismatch" });
+      }
+      agentName = target.name;
     }
     if (
       !sessionRequestLimiter.allow(
@@ -2171,6 +2443,10 @@ app.post(
       agentId,
       agentName,
       humanId: principal.humanId,
+      ...(principal.agent
+        ? { requesterAgentId: principal.agent.agentId }
+        : {}),
+      ...(parsed.data.runId ? { runId: parsed.data.runId } : {}),
       scopes: parsed.data.scopes,
       purpose: parsed.data.purpose,
       durationSeconds: parsed.data.durationSeconds,
@@ -2193,6 +2469,11 @@ app.post(
           capabilities: scope.capabilities,
         })),
         durationSeconds: parsed.data.durationSeconds,
+        executorAgentId: agentId,
+        ...(principal.agent
+          ? { requesterAgentId: principal.agent.agentId }
+          : {}),
+        ...(parsed.data.runId ? { runId: parsed.data.runId } : {}),
       },
     );
     gateway.notifyWorkspace(principal.workspaceId);
@@ -2234,7 +2515,10 @@ app.post<{ Params: { requestId: string } }>(
         .send({ error: "invalid_request", details: parsed.error.issues });
     }
     const principal = sessionRequesterFor(request);
-    if (principal.agent && parsed.data.agentId !== principal.agent.agentId) {
+    if (
+      principal.agent &&
+      !(await requestedAgentFor(principal, parsed.data.agentId))
+    ) {
       return reply.code(403).send({ error: "agent_identity_mismatch" });
     }
     const sessionRequest = await db.getAgentSessionRequest(
@@ -2268,7 +2552,10 @@ app.post<{ Params: { requestId: string } }>(
         .send({ error: "invalid_request", details: parsed.error.issues });
     }
     const principal = sessionRequesterFor(request);
-    if (principal.agent && parsed.data.agentId !== principal.agent.agentId) {
+    if (
+      principal.agent &&
+      !(await requestedAgentFor(principal, parsed.data.agentId))
+    ) {
       return reply.code(403).send({ error: "agent_identity_mismatch" });
     }
     const current = await db.getAgentSessionRequest(
@@ -2365,7 +2652,10 @@ app.post<{ Params: { sessionId: string } }>(
         .send({ error: "invalid_request", details: parsed.error.issues });
     }
     const principal = sessionRequesterFor(request);
-    if (principal.agent && parsed.data.agentId !== principal.agent.agentId) {
+    if (
+      principal.agent &&
+      !(await requestedAgentFor(principal, parsed.data.agentId))
+    ) {
       return reply.code(403).send({ error: "agent_identity_mismatch" });
     }
     const events = await db.listSessionTimeline(
@@ -2640,7 +2930,10 @@ app.post<{ Params: { sessionId: string } }>(
         .send({ error: "invalid_request", details: parsed.error.issues });
     }
     const principal = sessionRequesterFor(request);
-    if (principal.agent && parsed.data.agentId !== principal.agent.agentId) {
+    if (
+      principal.agent &&
+      !(await requestedAgentFor(principal, parsed.data.agentId))
+    ) {
       return reply.code(403).send({ error: "agent_identity_mismatch" });
     }
     const termination = await db.cancelAgentSession({
@@ -2699,7 +2992,10 @@ app.post<{ Params: { sessionId: string } }>(
         .send({ error: "invalid_request", details: parsed.error.issues });
     }
     const principal = sessionRequesterFor(request);
-    if (principal.agent && parsed.data.agentId !== principal.agent.agentId) {
+    if (
+      principal.agent &&
+      !(await requestedAgentFor(principal, parsed.data.agentId))
+    ) {
       return reply.code(403).send({ error: "agent_identity_mismatch" });
     }
     if (
@@ -2730,6 +3026,9 @@ app.post<{ Params: { sessionId: string } }>(
       agentId: parsed.data.agentId,
       agentName: predecessor.agentName,
       humanId: principal.humanId,
+      ...(principal.agent
+        ? { requesterAgentId: principal.agent.agentId }
+        : {}),
       scopes: predecessor.scopes,
       purpose: predecessor.purpose,
       durationSeconds:
@@ -2754,15 +3053,27 @@ app.post<{ Params: { sessionId: string } }>(
     return reply.code(201).send({
       id: requestId,
       predecessorSessionId: request.params.sessionId,
-      status: "pending",
+      status: created.status,
       scopes: predecessor.scopes.map((scope) => ({
         machineId: scope.machineId,
         readiness: gateway.isOnline(scope.machineId)
           ? { ready: true }
           : { ready: false, reason: "machine_offline" },
       })),
-      approvalUrl: `${webUrl}/sessions/approve?code=${encodeURIComponent(approvalCode)}`,
-      expiresAt: isoTimestamp(expiresAt),
+      ...(created.status === "pending"
+        ? {
+            approvalUrl: `${webUrl}/sessions/approve?code=${encodeURIComponent(approvalCode)}`,
+          }
+        : {}),
+      ...(created.autoapprovalPolicyId
+        ? {
+            autoapprovalPolicy: {
+              id: created.autoapprovalPolicyId,
+              version: created.autoapprovalPolicyVersion,
+            },
+          }
+        : {}),
+      expiresAt: isoTimestamp(created.expiresAt),
     });
   },
 );

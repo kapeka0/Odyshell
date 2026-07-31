@@ -94,11 +94,16 @@ export default async function SessionPage({
                     {eventLabel(session.status)}
                   </Badge>
                 </Detail>
-                <Detail label="Agent">{session.agentName ?? session.agentId}</Detail>
+                <Detail label="Executor">
+                  {session.agentName ?? session.agentId}
+                </Detail>
                 <Detail label="Expires">{formatTimestamp(session.expiresAt)}</Detail>
                 <Detail label="Requester">
-                  {session.requestedByHumanId ?? "Workspace member"}
+                  {session.requestedByAgentId ??
+                    session.requestedByHumanId ??
+                    "Workspace member"}
                 </Detail>
+                {session.runId ? <Detail label="Run">{session.runId}</Detail> : null}
               </dl>
             </CardContent>
           </Card>

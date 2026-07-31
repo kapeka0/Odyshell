@@ -39,7 +39,17 @@ import type { CloudSession } from "@/lib/cloud-api";
 import { TimerIcon } from "lucide-react";
 
 export function SessionList({ sessions }: { sessions: CloudSession[] }) {
-  const { refresh } = useDashboard();
+  const { refresh, state } = useDashboard();
+  const agentNames = useMemo(
+    () =>
+      new Map(
+        (state.status === "ready" ? state.context.agents : []).map((agent) => [
+          agent.id,
+          agent.name,
+        ]),
+      ),
+    [state],
+  );
   const columns = useMemo<ColumnDef<CloudSession>[]>(
     () => [
       {
@@ -77,6 +87,22 @@ export function SessionList({ sessions }: { sessions: CloudSession[] }) {
         cell: ({ row }) => row.original.agentName ?? row.original.agentId,
       },
       {
+        id: "requester",
+        accessorFn: (session) =>
+          session.requestedByAgentId
+            ? (agentNames.get(session.requestedByAgentId) ??
+              session.requestedByAgentId)
+            : "Workspace member",
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Requester" />
+        ),
+        cell: ({ row }) =>
+          row.original.requestedByAgentId
+            ? (agentNames.get(row.original.requestedByAgentId) ??
+              row.original.requestedByAgentId)
+            : "Workspace member",
+      },
+      {
         accessorKey: "status",
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="Status" />
@@ -107,7 +133,7 @@ export function SessionList({ sessions }: { sessions: CloudSession[] }) {
         ),
       },
     ],
-    [refresh],
+    [agentNames, refresh],
   );
 
   if (sessions.length === 0) {

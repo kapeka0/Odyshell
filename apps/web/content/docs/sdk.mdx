@@ -31,3 +31,26 @@ source code, logs, or generated documentation.
 
 The SDK also exposes typed filesystem and Docker log methods. Authorization remains enforced by
 the Server and the target Client; TypeScript types are not a security boundary.
+
+An Independent Agent can create Managed Agent identities after an administrator approves its
+Delegation Policy:
+
+```ts
+await ods.proposeAgentPolicy({
+  kind: "delegation",
+  scopes,
+  maxSessionSeconds: 600,
+  maxManagedAgents: 3,
+  validForSeconds: 30 * 24 * 60 * 60,
+})
+
+const child = await ods.createManagedAgent({
+  name: "Dependency updater",
+  scopes,
+  maxSessionSeconds: 600,
+  validForSeconds: 24 * 60 * 60,
+})
+```
+
+Use `managedAgents()`, `disableManagedAgent(id)`, and `deleteManagedAgent(id)` for its lifecycle.
+The Managed Agent receives no Agent Credential; the parent requests and claims Sessions for it.

@@ -202,6 +202,7 @@ export type AgentSessionRequestInput = {
   purpose: string;
   scopes: SessionMachineScope[];
   durationSeconds: number;
+  runId?: string;
 };
 
 export type AgentSessionRequest = {
@@ -220,9 +221,11 @@ export type AgentPolicy = {
   id: string;
   agentId: string;
   version: number;
+  kind: "autoapproval" | "delegation" | "managed";
   status: "proposed" | "active" | "paused" | "revoked" | "replaced";
   scopes: SessionMachineScope[];
   maxSessionSeconds: number;
+  maxManagedAgents?: number;
   expiresAt: string;
   approvalUrl?: string;
   approvedAt?: string;
@@ -230,6 +233,17 @@ export type AgentPolicy = {
   predecessorPolicyId?: string;
   createdAt: string;
   updatedAt: string;
+};
+
+export type ManagedAgent = {
+  id: string;
+  name: string;
+  kind: "managed";
+  parentAgentId: string;
+  status: "active" | "disabled";
+  createdAt: string;
+  updatedAt: string;
+  policy?: AgentPolicy;
 };
 
 export type AgentSessionRequestStatus = {
@@ -427,9 +441,22 @@ export class Odyshell {
     });
   }
 
+  async revokeAgentCredential(): Promise<{
+    revoked: true;
+    disabledManagedAgents: number;
+    terminatedSessions: number;
+  }> {
+    return this.request("/v1/agent-credentials/revoke", {
+      method: "POST",
+      credential: this.agentCredential(),
+    });
+  }
+
   async proposeAgentPolicy(input: {
+    kind?: "autoapproval" | "delegation";
     scopes: SessionMachineScope[];
     maxSessionSeconds: number;
+    maxManagedAgents?: number;
     validForSeconds: number;
   }): Promise<AgentPolicy> {
     return this.request("/v1/agent-policies", {
@@ -458,6 +485,50 @@ export class Odyshell {
     return this.request(
       `/v1/agent-policies/${encodeURIComponent(policyId)}/revoke`,
       { method: "POST", credential: this.agentCredential() },
+    );
+  }
+
+  async createManagedAgent(input: {
+    name: string;
+    scopes: SessionMachineScope[];
+    maxSessionSeconds: number;
+    validForSeconds: number;
+  }): Promise<ManagedAgent> {
+    return this.request("/v1/managed-agents", {
+      method: "POST",
+      credential: this.agentCredential(),
+      body: input,
+    });
+  }
+
+  async managedAgents(): Promise<ManagedAgent[]> {
+    const response = await this.request<{ data: ManagedAgent[] }>(
+      "/v1/managed-agents",
+      { credential: this.agentCredential() },
+    );
+    return response.data;
+  }
+
+  async disableManagedAgent(
+    agentId: string,
+  ): Promise<{ id: string; status: "disabled"; terminatedSessions: number }> {
+    return this.request(
+      `/v1/managed-agents/${encodeURIComponent(agentId)}/disable`,
+      { method: "POST", credential: this.agentCredential() },
+    );
+  }
+
+  async deleteManagedAgent(
+    agentId: string,
+  ): Promise<{
+    id: string;
+    status: "disabled";
+    deleted: true;
+    terminatedSessions: number;
+  }> {
+    return this.request(
+      `/v1/managed-agents/${encodeURIComponent(agentId)}`,
+      { method: "DELETE", credential: this.agentCredential() },
     );
   }
 

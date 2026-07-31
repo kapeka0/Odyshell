@@ -27,7 +27,10 @@ import {
   entitlementsFor,
   type CloudPlanId,
 } from "./cloud.js";
-import { autoapprovalDecision } from "./autoapproval.js";
+import {
+  autoapprovalDecision,
+  managedDelegationDecision,
+} from "./autoapproval.js";
 
 const { Pool } = pg;
 export const DEFAULT_ORGANIZATION_ID = "default";
@@ -148,6 +151,7 @@ interface AgentTable {
   parentAgentId: string | null;
   createdByHumanId: string | null;
   status: string;
+  deletedAt: Date | null;
   createdAt: Generated<Date>;
   updatedAt: Generated<Date>;
 }
@@ -196,6 +200,8 @@ interface AgentSessionRequestTable {
   id: string;
   agentId: string;
   requestedByHumanId: string;
+  requestedByAgentId: string | null;
+  runId: string | null;
   machineId: string;
   purpose: string;
   readPath: string;
@@ -220,14 +226,18 @@ interface AgentPolicyTable {
   id: string;
   agentId: string;
   version: number;
+  kind: string;
   status: string;
   scopes: Json<SessionMachineScope[]>;
   maxSessionSeconds: number;
+  maxManagedAgents: number | null;
   expiresAt: Date;
   approvalCodeHash: string;
   approvedByHumanId: string | null;
   approvedAt: Date | null;
   predecessorPolicyId: string | null;
+  delegationPolicyId: string | null;
+  delegationPolicyVersion: number | null;
   createdAt: Generated<Date>;
   updatedAt: Generated<Date>;
 }
@@ -422,6 +432,7 @@ export type AgentIdentityRecord = Timestamped & {
   parentAgentId?: string;
   createdByHumanId?: string;
   status: "active" | "disabled";
+  deletedAt?: number;
 };
 
 export type AgentCredentialPrincipal = {
@@ -450,6 +461,8 @@ export type AgentSessionRequestRecord = Timestamped & {
   id: string;
   agentId: string;
   requestedByHumanId: string;
+  requestedByAgentId?: string;
+  runId?: string;
   machineId: string;
   purpose: string;
   readPath: string;
@@ -471,13 +484,17 @@ export type AgentPolicyRecord = Timestamped & {
   id: string;
   agentId: string;
   version: number;
+  kind: "autoapproval" | "delegation" | "managed";
   status: "proposed" | "active" | "paused" | "revoked" | "replaced";
   scopes: SessionMachineScope[];
   maxSessionSeconds: number;
+  maxManagedAgents?: number;
   expiresAt: number;
   approvedByHumanId?: string;
   approvedAt?: number;
   predecessorPolicyId?: string;
+  delegationPolicyId?: string;
+  delegationPolicyVersion?: number;
 };
 
 export type AgentPolicyApprovalView = AgentPolicyRecord & {
@@ -542,6 +559,8 @@ export type SessionTimelineEventRecord = {
 export type WorkspaceAgentSessionRecord = AgentSessionRecord & {
   agentName: string;
   requestedByHumanId: string;
+  requestedByAgentId?: string;
+  runId?: string;
   scopes: SessionMachineScope[];
   targets: Array<{
     machineId: string;
@@ -699,6 +718,9 @@ function agentIdentityRecord(
       ? {}
       : { createdByHumanId: agent.createdByHumanId }),
     status: agent.status as AgentIdentityRecord["status"],
+    ...(agent.deletedAt === null
+      ? {}
+      : { deletedAt: timestamp(agent.deletedAt) }),
     createdAt: timestamp(agent.createdAt),
     updatedAt: timestamp(agent.updatedAt),
   };
@@ -736,6 +758,10 @@ function agentSessionRequestRecord(
     id: request.id,
     agentId: request.agentId,
     requestedByHumanId: request.requestedByHumanId,
+    ...(request.requestedByAgentId === null
+      ? {}
+      : { requestedByAgentId: request.requestedByAgentId }),
+    ...(request.runId === null ? {} : { runId: request.runId }),
     machineId: request.machineId,
     purpose: request.purpose,
     readPath: request.readPath,
@@ -775,9 +801,13 @@ function agentPolicyRecord(
     id: policy.id,
     agentId: policy.agentId,
     version: policy.version,
+    kind: policy.kind as AgentPolicyRecord["kind"],
     status: policy.status as AgentPolicyRecord["status"],
     scopes: policy.scopes,
     maxSessionSeconds: policy.maxSessionSeconds,
+    ...(policy.maxManagedAgents === null
+      ? {}
+      : { maxManagedAgents: policy.maxManagedAgents }),
     expiresAt: timestamp(policy.expiresAt),
     ...(policy.approvedByHumanId === null
       ? {}
@@ -788,6 +818,12 @@ function agentPolicyRecord(
     ...(policy.predecessorPolicyId === null
       ? {}
       : { predecessorPolicyId: policy.predecessorPolicyId }),
+    ...(policy.delegationPolicyId === null
+      ? {}
+      : { delegationPolicyId: policy.delegationPolicyId }),
+    ...(policy.delegationPolicyVersion === null
+      ? {}
+      : { delegationPolicyVersion: policy.delegationPolicyVersion }),
     createdAt: timestamp(policy.createdAt),
     updatedAt: timestamp(policy.updatedAt),
   };
@@ -1934,6 +1970,126 @@ async function rollbackAgentAutoapprovalPolicies(
   await sql`drop table odyshell.agent_policies`.execute(db);
 }
 
+async function migrateManagedAgentDelegation(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    alter table odyshell.agents
+    add column deleted_at timestamptz
+  `.execute(db);
+  await sql`
+    alter table odyshell.agent_policies
+    add column kind text not null default 'autoapproval',
+    add column max_managed_agents integer,
+    add column delegation_policy_id text,
+    add column delegation_policy_version integer
+  `.execute(db);
+  await sql`
+    drop index odyshell.agent_policies_one_active_idx
+  `.execute(db);
+  await sql`
+    create unique index agent_policies_one_active_kind_idx
+    on odyshell.agent_policies (workspace_id, agent_id, kind)
+    where status = 'active'
+  `.execute(db);
+  await sql`
+    alter table odyshell.agent_policies
+    add constraint agent_policies_kind_check
+      check (kind in ('autoapproval', 'delegation', 'managed')),
+    add constraint agent_policies_managed_limit_check
+      check (
+        (kind = 'delegation' and max_managed_agents between 1 and 100)
+        or (kind <> 'delegation' and max_managed_agents is null)
+      ),
+    add constraint agent_policies_delegation_pair_check
+      check (
+        (kind = 'managed' and delegation_policy_id is not null
+          and delegation_policy_version is not null)
+        or
+        (kind <> 'managed' and delegation_policy_id is null
+          and delegation_policy_version is null)
+      ),
+    add constraint agent_policies_delegation_fk
+      foreign key (
+        workspace_id,
+        delegation_policy_id,
+        delegation_policy_version
+      )
+      references odyshell.agent_policies (workspace_id, id, version)
+  `.execute(db);
+  await sql`
+    alter table odyshell.agent_session_requests
+    add column requested_by_agent_id text,
+    add column run_id text,
+    add constraint agent_session_requests_requester_agent_fk
+      foreign key (workspace_id, requested_by_agent_id)
+      references odyshell.agents (workspace_id, id),
+    add constraint agent_session_requests_run_id_length
+      check (run_id is null or length(run_id) between 1 and 128)
+  `.execute(db);
+  await sql`
+    create index agent_session_requests_requester_idx
+    on odyshell.agent_session_requests (
+      workspace_id,
+      requested_by_agent_id,
+      created_at
+    )
+  `.execute(db);
+}
+
+async function rollbackManagedAgentDelegation(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    do $$
+    begin
+      if exists (
+        select 1 from odyshell.agents where kind = 'managed'
+      ) or exists (
+        select 1 from odyshell.agent_policies
+        where kind <> 'autoapproval'
+      ) or exists (
+        select 1 from odyshell.agent_session_requests
+        where requested_by_agent_id is not null or run_id is not null
+      ) then
+        raise exception
+          'Cannot roll back Managed Agent delegation while derived records exist';
+      end if;
+    end
+    $$
+  `.execute(db);
+  await sql`
+    drop index odyshell.agent_policies_one_active_kind_idx
+  `.execute(db);
+  await sql`
+    create unique index agent_policies_one_active_idx
+    on odyshell.agent_policies (workspace_id, agent_id)
+    where status = 'active'
+  `.execute(db);
+  await sql`
+    alter table odyshell.agent_session_requests
+    drop constraint agent_session_requests_run_id_length,
+    drop constraint agent_session_requests_requester_agent_fk,
+    drop column run_id,
+    drop column requested_by_agent_id
+  `.execute(db);
+  await sql`
+    alter table odyshell.agent_policies
+    drop constraint agent_policies_delegation_fk,
+    drop constraint agent_policies_delegation_pair_check,
+    drop constraint agent_policies_managed_limit_check,
+    drop constraint agent_policies_kind_check,
+    drop column delegation_policy_version,
+    drop column delegation_policy_id,
+    drop column max_managed_agents,
+    drop column kind
+  `.execute(db);
+  await sql`
+    alter table odyshell.agents
+    drop column deleted_at
+  `.execute(db);
+}
+
 const migrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
     return {
@@ -1983,6 +2139,10 @@ const migrationProvider: MigrationProvider = {
       "013_agent_autoapproval_policies": {
         up: migrateAgentAutoapprovalPolicies,
         down: rollbackAgentAutoapprovalPolicies,
+      },
+      "014_managed_agent_delegation": {
+        up: migrateManagedAgentDelegation,
+        down: rollbackManagedAgentDelegation,
       },
     };
   },
@@ -2301,6 +2461,7 @@ export class PostgresDatabase {
         .values({
           ...input,
           status: "active",
+          deletedAt: null,
         })
         .onConflict((conflict) =>
           conflict.columns(["workspaceId", "id"]).doNothing(),
@@ -2432,6 +2593,7 @@ export class PostgresDatabase {
         .selectFrom("agents")
         .selectAll()
         .where("workspaceId", "=", workspaceId)
+        .where("deletedAt", "is", null)
         .orderBy("createdAt", "desc")
         .execute()
     ).map(agentIdentityRecord);
@@ -2442,8 +2604,10 @@ export class PostgresDatabase {
     id: string;
     agentId: string;
     humanId: string;
+    kind: "autoapproval" | "delegation";
     scopes: SessionMachineScope[];
     maxSessionSeconds: number;
+    maxManagedAgents?: number;
     expiresAt: number;
     approvalCodeHash: string;
   }): Promise<AgentPolicyRecord | null> {
@@ -2488,14 +2652,19 @@ export class PostgresDatabase {
           id: input.id,
           agentId: input.agentId,
           version: (latest?.version ?? 0) + 1,
+          kind: input.kind,
           status: "proposed",
           scopes: JSON.stringify(input.scopes),
           maxSessionSeconds: input.maxSessionSeconds,
+          maxManagedAgents:
+            input.kind === "delegation" ? (input.maxManagedAgents ?? null) : null,
           expiresAt: new Date(input.expiresAt),
           approvalCodeHash: input.approvalCodeHash,
           approvedByHumanId: null,
           approvedAt: null,
           predecessorPolicyId: latest?.id ?? null,
+          delegationPolicyId: null,
+          delegationPolicyVersion: null,
         })
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -2582,6 +2751,7 @@ export class PostgresDatabase {
         .where("workspaceId", "=", input.workspaceId)
         .where("agentId", "=", policy.agentId)
         .where("status", "=", "active")
+        .where("kind", "=", policy.kind)
         .where("version", ">", policy.version)
         .executeTakeFirst();
       if (newerActive) {
@@ -2612,6 +2782,7 @@ export class PostgresDatabase {
         .where("workspaceId", "=", input.workspaceId)
         .where("agentId", "=", policy.agentId)
         .where("status", "=", "active")
+        .where("kind", "=", policy.kind)
         .execute();
       const approved = await transaction
         .updateTable("agentPolicies")
@@ -2650,6 +2821,206 @@ export class PostgresDatabase {
     return policy ? agentPolicyRecord(policy) : null;
   }
 
+  async createManagedAgent(input: {
+    workspaceId: string;
+    id: string;
+    parentAgentId: string;
+    ownerHumanId: string;
+    name: string;
+    scopes: SessionMachineScope[];
+    maxSessionSeconds: number;
+    expiresAt: number;
+    internalApprovalCodeHash: string;
+  }): Promise<{
+    agent: AgentIdentityRecord;
+    policy: AgentPolicyRecord;
+  } | null> {
+    return await this.db.transaction().execute(async (transaction) => {
+      const parent = await transaction
+        .selectFrom("agents")
+        .selectAll()
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", input.parentAgentId)
+        .where("kind", "=", "independent")
+        .where("createdByHumanId", "=", input.ownerHumanId)
+        .where("status", "=", "active")
+        .where("deletedAt", "is", null)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!parent) return null;
+      const delegation = await transaction
+        .selectFrom("agentPolicies")
+        .selectAll()
+        .where("workspaceId", "=", input.workspaceId)
+        .where("agentId", "=", input.parentAgentId)
+        .where("kind", "=", "delegation")
+        .where("status", "=", "active")
+        .forShare()
+        .executeTakeFirst();
+      if (!delegation?.approvedByHumanId || !delegation.maxManagedAgents) {
+        return null;
+      }
+      const managedCount = await transaction
+        .selectFrom("agents")
+        .select(({ fn }) => fn.countAll<number>().as("count"))
+        .where("workspaceId", "=", input.workspaceId)
+        .where("parentAgentId", "=", input.parentAgentId)
+        .where("kind", "=", "managed")
+        .where("status", "=", "active")
+        .where("deletedAt", "is", null)
+        .executeTakeFirstOrThrow();
+      const decision = managedDelegationDecision({
+        childScopes: input.scopes,
+        childMaxSessionSeconds: input.maxSessionSeconds,
+        childExpiresAt: input.expiresAt,
+        activeManagedAgents: Number(managedCount.count),
+        delegation: {
+          status: delegation.status,
+          scopes: delegation.scopes,
+          maxSessionSeconds: delegation.maxSessionSeconds,
+          maxManagedAgents: delegation.maxManagedAgents,
+          expiresAt: timestamp(delegation.expiresAt),
+        },
+        now: Date.now(),
+      });
+      if (!decision.allowed) return null;
+      const machineIds = input.scopes.map((scope) => scope.machineId);
+      const machines = await transaction
+        .selectFrom("machines")
+        .select("id")
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "in", machineIds)
+        .where("revokedAt", "is", null)
+        .forShare()
+        .execute();
+      if (
+        machines.length !== machineIds.length ||
+        new Set(machineIds).size !== machineIds.length
+      ) {
+        return null;
+      }
+      const agent = await transaction
+        .insertInto("agents")
+        .values({
+          workspaceId: input.workspaceId,
+          id: input.id,
+          name: input.name,
+          kind: "managed",
+          parentAgentId: input.parentAgentId,
+          createdByHumanId: input.ownerHumanId,
+          status: "active",
+          deletedAt: null,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      const policy = await transaction
+        .insertInto("agentPolicies")
+        .values({
+          workspaceId: input.workspaceId,
+          id: randomUUID(),
+          agentId: input.id,
+          version: 1,
+          kind: "managed",
+          status: "active",
+          scopes: JSON.stringify(input.scopes),
+          maxSessionSeconds: input.maxSessionSeconds,
+          maxManagedAgents: null,
+          expiresAt: new Date(input.expiresAt),
+          approvalCodeHash: input.internalApprovalCodeHash,
+          approvedByHumanId: delegation.approvedByHumanId,
+          approvedAt: new Date(),
+          predecessorPolicyId: null,
+          delegationPolicyId: delegation.id,
+          delegationPolicyVersion: delegation.version,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      return {
+        agent: agentIdentityRecord(agent),
+        policy: agentPolicyRecord(policy),
+      };
+    });
+  }
+
+  async listManagedAgents(
+    workspaceId: string,
+    parentAgentId: string,
+  ): Promise<AgentIdentityRecord[]> {
+    return (
+      await this.db
+        .selectFrom("agents")
+        .selectAll()
+        .where("workspaceId", "=", workspaceId)
+        .where("parentAgentId", "=", parentAgentId)
+        .where("kind", "=", "managed")
+        .where("deletedAt", "is", null)
+        .orderBy("createdAt", "desc")
+        .execute()
+    ).map(agentIdentityRecord);
+  }
+
+  async managedAgentForParent(
+    workspaceId: string,
+    managedAgentId: string,
+    parentAgentId: string,
+  ): Promise<AgentIdentityRecord | null> {
+    const agent = await this.db
+      .selectFrom("agents")
+      .selectAll()
+      .where("workspaceId", "=", workspaceId)
+      .where("id", "=", managedAgentId)
+      .where("parentAgentId", "=", parentAgentId)
+      .where("kind", "=", "managed")
+      .where("status", "=", "active")
+      .where("deletedAt", "is", null)
+      .executeTakeFirst();
+    return agent ? agentIdentityRecord(agent) : null;
+  }
+
+  async disableManagedAgent(input: {
+    workspaceId: string;
+    managedAgentId: string;
+    parentAgentId: string;
+    deleted: boolean;
+  }): Promise<{ agent: AgentIdentityRecord; sessionIds: string[] } | null> {
+    return await this.db.transaction().execute(async (transaction) => {
+      const now = new Date();
+      const agent = await transaction
+        .updateTable("agents")
+        .set({
+          status: "disabled",
+          ...(input.deleted ? { deletedAt: now } : {}),
+          updatedAt: now,
+        })
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", input.managedAgentId)
+        .where("parentAgentId", "=", input.parentAgentId)
+        .where("kind", "=", "managed")
+        .where("deletedAt", "is", null)
+        .returningAll()
+        .executeTakeFirst();
+      if (!agent) return null;
+      await transaction
+        .updateTable("agentPolicies")
+        .set({ status: "revoked", updatedAt: now })
+        .where("workspaceId", "=", input.workspaceId)
+        .where("agentId", "=", input.managedAgentId)
+        .where("status", "in", ["active", "paused", "proposed"])
+        .execute();
+      const sessions = await transaction
+        .selectFrom("agentSessions")
+        .select("id")
+        .where("workspaceId", "=", input.workspaceId)
+        .where("agentId", "=", input.managedAgentId)
+        .where("status", "=", "active")
+        .execute();
+      return {
+        agent: agentIdentityRecord(agent),
+        sessionIds: sessions.map((session) => session.id),
+      };
+    });
+  }
+
   async listWorkspaceAgentSessions(
     workspaceId: string,
     limit = 200,
@@ -2674,6 +3045,8 @@ export class PostgresDatabase {
       .select([
         "agents.name as agentName",
         "agentSessionRequests.requestedByHumanId",
+        "agentSessionRequests.requestedByAgentId",
+        "agentSessionRequests.runId",
         "agentSessionRequests.scopes",
       ])
       .where("agentSessions.workspaceId", "=", workspaceId)
@@ -2717,6 +3090,10 @@ export class PostgresDatabase {
       ...agentSessionRecord(session),
       agentName: session.agentName,
       requestedByHumanId: session.requestedByHumanId,
+      ...(session.requestedByAgentId === null
+        ? {}
+        : { requestedByAgentId: session.requestedByAgentId }),
+      ...(session.runId === null ? {} : { runId: session.runId }),
       scopes: session.scopes,
       targets: targetsBySession.get(session.id) ?? [],
     }));
@@ -2758,6 +3135,8 @@ export class PostgresDatabase {
     agentId: string;
     agentName: string;
     humanId: string;
+    requesterAgentId?: string;
+    runId?: string;
     scopes: SessionMachineScope[];
     purpose: string;
     durationSeconds: number;
@@ -2789,32 +3168,116 @@ export class PostgresDatabase {
         .executeTakeFirst();
       if (!human) return null;
 
-      await transaction
-        .insertInto("agents")
-        .values({
-          workspaceId: input.workspaceId,
-          id: input.agentId,
-          name: input.agentName,
-          kind: "independent",
-          parentAgentId: null,
-          createdByHumanId: input.humanId,
-          status: "active",
-        })
-        .onConflict((conflict) =>
-          conflict.columns(["workspaceId", "id"]).doNothing(),
-        )
-        .execute();
+      if (!input.requesterAgentId) {
+        await transaction
+          .insertInto("agents")
+          .values({
+            workspaceId: input.workspaceId,
+            id: input.agentId,
+            name: input.agentName,
+            kind: "independent",
+            parentAgentId: null,
+            createdByHumanId: input.humanId,
+            status: "active",
+            deletedAt: null,
+          })
+          .onConflict((conflict) =>
+            conflict.columns(["workspaceId", "id"]).doNothing(),
+          )
+          .execute();
+      }
       const agent = await transaction
         .selectFrom("agents")
-        .select("id")
+        .select(["id", "name", "kind", "parentAgentId"])
         .where("workspaceId", "=", input.workspaceId)
         .where("id", "=", input.agentId)
-        .where("kind", "=", "independent")
         .where("createdByHumanId", "=", input.humanId)
+        .where("status", "=", "active")
+        .where("deletedAt", "is", null)
+        .forShare()
+        .executeTakeFirst();
+      if (
+        !agent ||
+        agent.name !== input.agentName ||
+        (input.requesterAgentId
+          ? !(
+              (agent.kind === "independent" &&
+                agent.id === input.requesterAgentId) ||
+              (agent.kind === "managed" &&
+                agent.parentAgentId === input.requesterAgentId)
+            )
+          : agent.kind !== "independent")
+      ) {
+        return null;
+      }
+      if (input.requesterAgentId) {
+        const requester = await transaction
+          .selectFrom("agents")
+          .select("id")
+          .where("workspaceId", "=", input.workspaceId)
+          .where("id", "=", input.requesterAgentId)
+          .where("kind", "=", "independent")
+          .where("createdByHumanId", "=", input.humanId)
+          .where("status", "=", "active")
+          .where("deletedAt", "is", null)
+          .forShare()
+          .executeTakeFirst();
+        if (!requester) return null;
+      }
+
+      const policy = await transaction
+        .selectFrom("agentPolicies")
+        .selectAll()
+        .where("workspaceId", "=", input.workspaceId)
+        .where("agentId", "=", input.agentId)
+        .where(
+          "kind",
+          "=",
+          agent.kind === "managed" ? "managed" : "autoapproval",
+        )
         .where("status", "=", "active")
         .forShare()
         .executeTakeFirst();
-      if (!agent) return null;
+      if (agent.kind === "managed") {
+        if (
+          !policy?.approvedByHumanId ||
+          !policy.delegationPolicyId ||
+          policy.delegationPolicyVersion === null ||
+          !agent.parentAgentId
+        ) {
+          return null;
+        }
+        const delegation = await transaction
+          .selectFrom("agentPolicies")
+          .selectAll()
+          .where("workspaceId", "=", input.workspaceId)
+          .where("id", "=", policy.delegationPolicyId)
+          .where("version", "=", policy.delegationPolicyVersion)
+          .where("agentId", "=", agent.parentAgentId)
+          .where("kind", "=", "delegation")
+          .forShare()
+          .executeTakeFirst();
+        if (
+          !delegation?.approvedByHumanId ||
+          !delegation.maxManagedAgents ||
+          !managedDelegationDecision({
+            childScopes: policy.scopes,
+            childMaxSessionSeconds: policy.maxSessionSeconds,
+            childExpiresAt: timestamp(policy.expiresAt),
+            activeManagedAgents: 0,
+            delegation: {
+              status: delegation.status,
+              scopes: delegation.scopes,
+              maxSessionSeconds: delegation.maxSessionSeconds,
+              maxManagedAgents: delegation.maxManagedAgents,
+              expiresAt: timestamp(delegation.expiresAt),
+            },
+            now: Date.now(),
+          }).allowed
+        ) {
+          return null;
+        }
+      }
 
       const requestedMachineIds = input.scopes.map((scope) => scope.machineId);
       const machines = await transaction
@@ -2838,6 +3301,8 @@ export class PostgresDatabase {
           id: input.requestId,
           agentId: input.agentId,
           requestedByHumanId: input.humanId,
+          requestedByAgentId: input.requesterAgentId ?? null,
+          runId: input.runId ?? null,
           machineId: primaryScope.machineId,
           purpose: input.purpose,
           readPath: primaryReadPath,
@@ -2873,6 +3338,11 @@ export class PostgresDatabase {
               capabilities: scope.capabilities,
             })),
             durationSeconds: input.durationSeconds,
+            executorAgentId: input.agentId,
+            ...(input.requesterAgentId
+              ? { requesterAgentId: input.requesterAgentId }
+              : {}),
+            ...(input.runId ? { runId: input.runId } : {}),
             ...(input.predecessorSessionId
               ? { predecessorSessionId: input.predecessorSessionId }
               : {}),
@@ -2880,14 +3350,6 @@ export class PostgresDatabase {
         })
         .execute();
       const now = new Date();
-      const policy = await transaction
-        .selectFrom("agentPolicies")
-        .selectAll()
-        .where("workspaceId", "=", input.workspaceId)
-        .where("agentId", "=", input.agentId)
-        .where("status", "=", "active")
-        .forShare()
-        .executeTakeFirst();
       if (
         policy?.approvedByHumanId &&
         autoapprovalDecision({
@@ -3308,6 +3770,11 @@ export class PostgresDatabase {
               capabilities: scope.capabilities,
             })),
             expiresAt: expiresAt.toISOString(),
+            executorAgentId: request.agentId,
+            ...(request.requestedByAgentId
+              ? { requesterAgentId: request.requestedByAgentId }
+              : {}),
+            ...(request.runId ? { runId: request.runId } : {}),
             ...(request.predecessorSessionId
               ? { predecessorSessionId: request.predecessorSessionId }
               : {}),
@@ -3938,6 +4405,7 @@ export class PostgresDatabase {
           parentAgentId: null,
           createdByHumanId: input.userId,
           status: "active",
+          deletedAt: null,
         })
         .execute();
       await transaction
@@ -4130,6 +4598,88 @@ export class PostgresDatabase {
         agentName: current.agentName,
         ownerHumanId: current.ownerHumanId,
         expiresAt: expiresAt.getTime(),
+      };
+    });
+  }
+
+  async revokeAgentHierarchyByTokenHash(
+    tokenHash: string,
+  ): Promise<{
+    workspaceId: string;
+    parentAgentId: string;
+    ownerHumanId: string;
+    agentIds: string[];
+    sessionIds: Array<{ id: string; agentId: string }>;
+  } | null> {
+    return await this.db.transaction().execute(async (transaction) => {
+      const now = new Date();
+      const credential = await transaction
+        .selectFrom("agentCredentials")
+        .innerJoin("agents", (join) =>
+          join
+            .onRef("agents.workspaceId", "=", "agentCredentials.workspaceId")
+            .onRef("agents.id", "=", "agentCredentials.agentId"),
+        )
+        .select([
+          "agentCredentials.workspaceId",
+          "agentCredentials.agentId",
+          "agents.createdByHumanId as ownerHumanId",
+        ])
+        .where("agentCredentials.tokenHash", "=", tokenHash)
+        .where("agentCredentials.revokedAt", "is", null)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!credential?.ownerHumanId) return null;
+      const descendants = await transaction
+        .selectFrom("agents")
+        .select("id")
+        .where("workspaceId", "=", credential.workspaceId)
+        .where("parentAgentId", "=", credential.agentId)
+        .where("kind", "=", "managed")
+        .where("deletedAt", "is", null)
+        .forUpdate()
+        .execute();
+      const agentIds = [
+        credential.agentId,
+        ...descendants.map((agent) => agent.id),
+      ];
+      await transaction
+        .updateTable("agentCredentials")
+        .set({
+          status: "revoked",
+          revokedAt: now,
+          retiringAt: null,
+        })
+        .where("workspaceId", "=", credential.workspaceId)
+        .where("agentId", "=", credential.agentId)
+        .where("revokedAt", "is", null)
+        .execute();
+      await transaction
+        .updateTable("agents")
+        .set({ status: "disabled", updatedAt: now })
+        .where("workspaceId", "=", credential.workspaceId)
+        .where("id", "in", agentIds)
+        .execute();
+      await transaction
+        .updateTable("agentPolicies")
+        .set({ status: "revoked", updatedAt: now })
+        .where("workspaceId", "=", credential.workspaceId)
+        .where("agentId", "in", agentIds)
+        .where("status", "in", ["active", "paused", "proposed"])
+        .execute();
+      const sessions = await transaction
+        .selectFrom("agentSessions")
+        .select(["id", "agentId"])
+        .where("workspaceId", "=", credential.workspaceId)
+        .where("agentId", "in", agentIds)
+        .where("status", "=", "active")
+        .execute();
+      return {
+        workspaceId: credential.workspaceId,
+        parentAgentId: credential.agentId,
+        ownerHumanId: credential.ownerHumanId,
+        agentIds,
+        sessionIds: sessions,
       };
     });
   }

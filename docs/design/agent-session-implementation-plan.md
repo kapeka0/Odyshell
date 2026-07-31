@@ -187,6 +187,8 @@ Deliver:
 
 ## Vertical 6: Managed Agents
 
+Status: implemented, except future member-driven transfer and promotion.
+
 Deliver:
 
 - one-level parent-child identity relationships;
@@ -195,7 +197,7 @@ Deliver:
 - Session requests in a Managed Agent's name;
 - attribution of executor, requester, and run identifier;
 - cascading disable and revocation;
-- transfer and promotion by a Workspace Member.
+- parent-managed create, list, disable, and delete lifecycle.
 
 Tests must prove that a child cannot:
 

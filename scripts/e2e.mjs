@@ -859,6 +859,276 @@ try {
   if (rotatedStatus.status !== 200) {
     throw new Error("Rotated Agent Credential could not inspect its request");
   }
+
+  const proposeDelegation = async () => {
+    const response = await fetch(new URL("/v1/agent-policies", apiUrl), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${rotatedAgentCredential.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        kind: "delegation",
+        scopes: [policyScope],
+        maxSessionSeconds: 600,
+        maxManagedAgents: 2,
+        validForSeconds: 24 * 60 * 60,
+      }),
+    });
+    const policy = await response.json();
+    if (response.status !== 201 || !policy.approvalUrl) {
+      throw new Error("Delegation Policy was not proposed");
+    }
+    const code = new URL(policy.approvalUrl).searchParams.get("code");
+    if (!code) throw new Error("Delegation Policy omitted its approval code");
+    const approvalResponse = await fetch(
+      new URL("/v1/internal/cloud/agent-policies/approve", apiUrl),
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-odyshell-web-key": webKey,
+        },
+        body: JSON.stringify({
+          userId: cliUserId,
+          organization: approvalBody.organization,
+          approvalCode: code,
+        }),
+      },
+    );
+    if (approvalResponse.status !== 200) {
+      throw new Error("Delegation Policy was not approved");
+    }
+    return policy;
+  };
+  const createManagedAgent = async (name, scopes = [policyScope]) => {
+    const response = await fetch(new URL("/v1/managed-agents", apiUrl), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${rotatedAgentCredential.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name,
+        scopes,
+        maxSessionSeconds: 600,
+        validForSeconds: 60 * 60,
+      }),
+    });
+    return { response, body: await response.json() };
+  };
+  const requestManagedSession = async (managedAgent, runId) => {
+    const response = await fetch(
+      new URL("/v1/agent-session-requests", apiUrl),
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${rotatedAgentCredential.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          agentId: managedAgent.id,
+          agentName: managedAgent.name,
+          purpose: "Verify Managed Agent delegation",
+          scopes: [policyScope],
+          durationSeconds: 600,
+          runId,
+        }),
+      },
+    );
+    return { response, body: await response.json() };
+  };
+
+  const delegationPolicy = await proposeDelegation();
+  const managed = await createManagedAgent("E2E Managed Agent");
+  if (
+    managed.response.status !== 201 ||
+    managed.body.kind !== "managed" ||
+    managed.body.parentAgentId !== agentCredential.agentId ||
+    managed.body.accessToken
+  ) {
+    throw new Error("Managed Agent identity was not safely derived");
+  }
+  const widenedManaged = await createManagedAgent("Widened Managed Agent", [
+    { ...policyScope, capabilities: ["fs.read", "fs.write"] },
+  ]);
+  if (widenedManaged.response.status !== 403) {
+    throw new Error("Managed Agent exceeded its Delegation Policy");
+  }
+  const managedRunId = `e2e-run-${crypto.randomUUID()}`;
+  const managedRequest = await requestManagedSession(
+    managed.body,
+    managedRunId,
+  );
+  if (
+    managedRequest.response.status !== 201 ||
+    managedRequest.body.status !== "approved"
+  ) {
+    throw new Error("Managed Agent Session was not derived from its Policy");
+  }
+  const managedClaimResponse = await fetch(
+    new URL(
+      `/v1/agent-session-requests/${managedRequest.body.id}/claim`,
+      apiUrl,
+    ),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${rotatedAgentCredential.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ agentId: managed.body.id }),
+    },
+  );
+  const managedClaim = await managedClaimResponse.json();
+  if (managedClaimResponse.status !== 201 || !managedClaim.sessionToken) {
+    throw new Error("Managed Agent Session could not be claimed");
+  }
+  const managedTimelineResponse = await fetch(
+    new URL("/v1/internal/cloud/sessions/inspect", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        userId: cliUserId,
+        organization: approvalBody.organization,
+        sessionId: managedClaim.sessionId,
+      }),
+    },
+  );
+  const managedTimeline = await managedTimelineResponse.json();
+  const requestedEvent = managedTimeline.timeline?.find(
+    (event) => event.eventType === "session.requested",
+  );
+  if (
+    managedTimelineResponse.status !== 200 ||
+    managedTimeline.session.agentId !== managed.body.id ||
+    managedTimeline.session.requestedByAgentId !== agentCredential.agentId ||
+    managedTimeline.session.runId !== managedRunId ||
+    requestedEvent?.metadata?.executorAgentId !== managed.body.id ||
+    requestedEvent?.metadata?.requesterAgentId !== agentCredential.agentId
+  ) {
+    throw new Error("Managed Agent Session attribution was incomplete");
+  }
+  const pauseDelegation = await fetch(
+    new URL(`/v1/agent-policies/${delegationPolicy.id}/pause`, apiUrl),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${rotatedAgentCredential.accessToken}`,
+      },
+    },
+  );
+  if (pauseDelegation.status !== 200) {
+    throw new Error("Delegation Policy could not be paused");
+  }
+  const afterDelegationPause = await requestManagedSession(
+    managed.body,
+    `e2e-run-${crypto.randomUUID()}`,
+  );
+  if (afterDelegationPause.response.status !== 403) {
+    throw new Error("Paused Delegation Policy still authorized new Sessions");
+  }
+  const disableManaged = () =>
+    fetch(new URL(`/v1/managed-agents/${managed.body.id}/disable`, apiUrl), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${rotatedAgentCredential.accessToken}`,
+      },
+    });
+  const disabledManaged = await disableManaged();
+  if (
+    disabledManaged.status !== 200 ||
+    (await disabledManaged.json()).terminatedSessions !== 1
+  ) {
+    throw new Error("Managed Agent disable did not terminate its Session");
+  }
+  if ((await disableManaged()).status !== 200) {
+    throw new Error("Managed Agent disable was not idempotent");
+  }
+  const revokedManagedCredential = await fetch(
+    new URL(`/v1/sessions/${managedClaim.sessionId}`, apiUrl),
+    {
+      headers: {
+        authorization: `Bearer ${managedClaim.sessionToken}`,
+      },
+    },
+  );
+  if (revokedManagedCredential.status !== 401) {
+    throw new Error("Managed Agent Session Credential survived disable");
+  }
+  const crossManagerDelete = await fetch(
+    new URL(`/v1/managed-agents/${crypto.randomUUID()}`, apiUrl),
+    {
+      method: "DELETE",
+      headers: {
+        authorization: `Bearer ${rotatedAgentCredential.accessToken}`,
+      },
+    },
+  );
+  if (crossManagerDelete.status !== 404) {
+    throw new Error("Managed Agent lookup escaped its parent boundary");
+  }
+
+  await proposeDelegation();
+  const cascadeManaged = await createManagedAgent("E2E Cascade Agent");
+  const cascadeRequest = await requestManagedSession(
+    cascadeManaged.body,
+    `e2e-run-${crypto.randomUUID()}`,
+  );
+  const cascadeClaimResponse = await fetch(
+    new URL(
+      `/v1/agent-session-requests/${cascadeRequest.body.id}/claim`,
+      apiUrl,
+    ),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${rotatedAgentCredential.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ agentId: cascadeManaged.body.id }),
+    },
+  );
+  const cascadeClaim = await cascadeClaimResponse.json();
+  if (
+    cascadeManaged.response.status !== 201 ||
+    cascadeRequest.response.status !== 201 ||
+    cascadeRequest.body.status !== "approved" ||
+    cascadeClaimResponse.status !== 201
+  ) {
+    throw new Error("Managed Agent cascade fixture could not be created");
+  }
+  const revokeHierarchy = await fetch(
+    new URL("/v1/agent-credentials/revoke", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${rotatedAgentCredential.accessToken}`,
+      },
+    },
+  );
+  const revokedHierarchy = await revokeHierarchy.json();
+  if (
+    revokeHierarchy.status !== 200 ||
+    revokedHierarchy.disabledManagedAgents < 2 ||
+    revokedHierarchy.terminatedSessions !== 1
+  ) {
+    throw new Error("Manager revocation did not cascade through delegation");
+  }
+  const cascadeCredential = await fetch(
+    new URL(`/v1/sessions/${cascadeClaim.sessionId}`, apiUrl),
+    {
+      headers: { authorization: `Bearer ${cascadeClaim.sessionToken}` },
+    },
+  );
+  if (cascadeCredential.status !== 401) {
+    throw new Error("Manager revocation left a derived Session active");
+  }
+
   const approval = await fetch(
     new URL("/v1/internal/cloud/session-requests/approve", apiUrl),
     {
@@ -2451,6 +2721,10 @@ try {
           targetDatabaseWorkspaceBoundary: true,
           legacyAuthorityEscalationRejected: true,
           managedAgentCredentialRejected: true,
+          managedAgentDelegation: true,
+          managedAgentAttribution: true,
+          delegationEscalationRejected: true,
+          delegationCascadeRevoked: true,
           overlongAgentCredentialRejected: true,
           sessionCredentialLifetimeBound: true,
           approvedSessionRead: approvedOutput,

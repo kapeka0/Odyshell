@@ -73,6 +73,11 @@ administrator approves their exact machine, capability, restriction, duration, a
 ceiling. Out-of-policy requests remain pending, and every autoapproved Session retains the policy
 ID and version used.
 
+An approved Delegation Policy can derive one level of Managed Agent identities. Managed Agents
+receive no durable credential and cannot delegate. The Server intersects the live parent policy,
+child policy, Session scope, and Client policy for every request. Disabling a child or revoking
+its parent closes derived Sessions and preserves attribution in Activity and Session Timelines.
+
 Organizations own execution Workspaces. Existing self-hosted administrator endpoints use the
 `x-odyshell-workspace-id` header and default to the backwards-compatible `default` workspace when
 it is absent. Enrollment tokens, machines, Agent Access, sessions, operations, and control events

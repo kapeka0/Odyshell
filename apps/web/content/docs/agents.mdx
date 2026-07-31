@@ -79,6 +79,38 @@ Sessions already issued from an earlier version.
 Open **Policies** to review current and historical versions. Every autoapproved Session records the
 exact policy ID and version that justified it.
 
+## Managed agents
+
+An Independent Agent can propose a Delegation Policy with an exact scope, Session duration,
+validity, and Managed Agent limit. After an administrator approves it, the Agent can create
+persistent Managed Agent identities inside that ceiling.
+
+A Managed Agent has no durable credential and cannot create another Agent. Its parent requests
+Sessions in its name and gives a worker only the claimed Session Credential:
+
+```ts
+const child = await ods.createManagedAgent({
+  name: "Dependency updater",
+  scopes,
+  maxSessionSeconds: 600,
+  validForSeconds: 60 * 60,
+})
+
+const request = await ods.requestAgentSession({
+  agentId: child.id,
+  agentName: child.name,
+  purpose: "Check dependency updates",
+  scopes,
+  durationSeconds: 600,
+  runId: "update-run-42",
+})
+```
+
+The Timeline identifies the Managed Agent that executes, its requesting parent, and the optional
+run identifier. Pausing or replacing the parent Delegation Policy blocks new child Sessions.
+Disabling a Managed Agent closes its active Sessions; revoking the parent credential also disables
+its children and their active access.
+
 ## Pre-scoped access
 
 Agent Access tokens remain available for trusted, unattended integrations. A member chooses their

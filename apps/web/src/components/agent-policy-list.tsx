@@ -60,6 +60,14 @@ export function AgentPolicyList({
         cell: ({ row }) => `v${row.original.version}`,
       },
       {
+        accessorKey: "kind",
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Kind" />
+        ),
+        cell: ({ row }) => label(row.original.kind),
+        filterFn: "equals",
+      },
+      {
         accessorKey: "status",
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="Status" />
@@ -120,17 +128,28 @@ export function AgentPolicyList({
       data={policies}
       searchColumn="search"
       searchPlaceholder="Search policies…"
-      filter={{
-        columnId: "status",
-        label: "Status",
-        options: [
-          { label: "Proposed", value: "proposed" },
-          { label: "Active", value: "active" },
-          { label: "Paused", value: "paused" },
-          { label: "Revoked", value: "revoked" },
-          { label: "Replaced", value: "replaced" },
-        ],
-      }}
+      filters={[
+        {
+          columnId: "kind",
+          label: "Kind",
+          options: [
+            { label: "Autoapproval", value: "autoapproval" },
+            { label: "Delegation", value: "delegation" },
+            { label: "Managed", value: "managed" },
+          ],
+        },
+        {
+          columnId: "status",
+          label: "Status",
+          options: [
+            { label: "Proposed", value: "proposed" },
+            { label: "Active", value: "active" },
+            { label: "Paused", value: "paused" },
+            { label: "Revoked", value: "revoked" },
+            { label: "Replaced", value: "replaced" },
+          ],
+        },
+      ]}
       emptyMessage="No policies match these filters."
     />
   );

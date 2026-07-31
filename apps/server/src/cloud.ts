@@ -242,6 +242,15 @@ export function privacySafeControlMetadata(
   if (machineId.success) {
     safe.machineId = machineId.data;
   }
+  for (const key of [
+    "parentAgentId",
+    "managedAgentId",
+    "requesterAgentId",
+    "executorAgentId",
+  ]) {
+    const value = z.string().uuid().safeParse(metadata[key]);
+    if (value.success) safe[key] = value.data;
+  }
   return safe;
 }
 
