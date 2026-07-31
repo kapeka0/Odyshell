@@ -13,6 +13,14 @@ describe("temporary access", () => {
     const agentTokens = [createOpaqueToken("agent"), createOpaqueToken("agent")];
     const cliTokens = [createOpaqueToken("cli"), createOpaqueToken("cli")];
     const deviceCodes = [createOpaqueToken("device"), createOpaqueToken("device")];
+    const approvalCodes = [
+      createOpaqueToken("approval"),
+      createOpaqueToken("approval"),
+    ];
+    const sessionTokens = [
+      createOpaqueToken("session"),
+      createOpaqueToken("session"),
+    ];
 
     for (const token of enrollmentTokens) {
       expect(token).toMatch(/^ods_enroll_[A-Za-z0-9_-]{43}$/);
@@ -28,9 +36,22 @@ describe("temporary access", () => {
     for (const token of deviceCodes) {
       expect(token).toMatch(/^ods_device_[A-Za-z0-9_-]{43}$/);
     }
+    for (const token of approvalCodes) {
+      expect(token).toMatch(/^ods_approval_[A-Za-z0-9_-]{43}$/);
+    }
+    for (const token of sessionTokens) {
+      expect(token).toMatch(/^ods_session_[A-Za-z0-9_-]{43}$/);
+    }
     expect(
-      new Set([...enrollmentTokens, ...agentTokens, ...cliTokens, ...deviceCodes]).size,
-    ).toBe(8);
+      new Set([
+        ...enrollmentTokens,
+        ...agentTokens,
+        ...cliTokens,
+        ...deviceCodes,
+        ...approvalCodes,
+        ...sessionTokens,
+      ]).size,
+    ).toBe(12);
   });
 
   it("never lets a session outlive its agent token", () => {

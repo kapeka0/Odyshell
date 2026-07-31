@@ -50,6 +50,14 @@ export const approveDeviceSchema = cloudIdentitySchema.extend({
   userCode: z.string().min(8).max(16),
 });
 
+export const sessionApprovalSchema = cloudIdentitySchema.extend({
+  approvalCode: z
+    .string()
+    .min(32)
+    .max(128)
+    .regex(/^ods_approval_[A-Za-z0-9_-]+$/u),
+});
+
 export const createCloudAgentAccessSchema = cloudIdentitySchema.extend(
   agentTokenRequestSchema.shape,
 );

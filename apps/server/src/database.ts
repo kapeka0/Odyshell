@@ -170,6 +170,49 @@ interface SessionCredentialTable {
   createdAt: Generated<Date>;
 }
 
+interface AgentSessionRequestTable {
+  workspaceId: string;
+  id: string;
+  agentId: string;
+  requestedByHumanId: string;
+  machineId: string;
+  purpose: string;
+  readPath: string;
+  durationSeconds: number;
+  status: string;
+  approvalCodeHash: string;
+  expiresAt: Date;
+  approvedAt: Date | null;
+  approvedByHumanId: string | null;
+  claimedAt: Date | null;
+  sessionId: string | null;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+interface AgentSessionTargetTable {
+  workspaceId: string;
+  sessionId: string;
+  machineId: string;
+  capabilities: Json<Capability[]>;
+  readPath: string;
+  status: string;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+interface SessionTimelineEventTable {
+  workspaceId: string;
+  id: string;
+  sessionId: string | null;
+  requestId: string;
+  operationId: string | null;
+  eventType: string;
+  source: string;
+  metadata: Json<Record<string, unknown>>;
+  createdAt: Generated<Date>;
+}
+
 interface LegacySessionTable {
   workspaceId: string;
   id: string;
@@ -234,6 +277,9 @@ interface DatabaseSchema {
   agentCredentials: AgentCredentialTable;
   agentSessions: AgentSessionTable;
   sessionCredentials: SessionCredentialTable;
+  agentSessionRequests: AgentSessionRequestTable;
+  agentSessionTargets: AgentSessionTargetTable;
+  sessionTimelineEvents: SessionTimelineEventTable;
   sessions: LegacySessionTable;
   operations: OperationTable;
   operationEvents: OperationEventTable;
@@ -328,6 +374,71 @@ export type AgentSessionRecord = Timestamped & {
   status: "active" | "completed" | "cancelled" | "revoked" | "expired";
   expiresAt: number;
   predecessorSessionId?: string;
+};
+
+export type AgentSessionRequestRecord = Timestamped & {
+  workspaceId: string;
+  id: string;
+  agentId: string;
+  requestedByHumanId: string;
+  machineId: string;
+  purpose: string;
+  readPath: string;
+  durationSeconds: number;
+  status: "pending" | "approved" | "denied" | "expired" | "claimed";
+  expiresAt: number;
+  approvedAt?: number;
+  approvedByHumanId?: string;
+  claimedAt?: number;
+  sessionId?: string;
+};
+
+export type SessionApprovalView = AgentSessionRequestRecord & {
+  agentName: string;
+  machineName: string;
+};
+
+export type SessionApprovalResult =
+  | { status: "approved"; request: AgentSessionRequestRecord }
+  | { status: "invalid" | "expired" | "already_used" };
+
+export type SessionClaimResult =
+  | {
+      status: "claimed";
+      session: AgentSessionRecord;
+      machineId: string;
+      readPath: string;
+    }
+  | {
+      status:
+        | "invalid"
+        | "pending"
+        | "denied"
+        | "expired"
+        | "already_claimed"
+        | "agent_denied"
+        | "machine_unavailable";
+    };
+
+export type AgentSessionCredentialPrincipal = {
+  workspaceId: string;
+  agentId: string;
+  agentName: string;
+  sessionId: string;
+  machineId: string;
+  readPath: string;
+  expiresAt: number;
+};
+
+export type SessionTimelineEventRecord = {
+  id: string;
+  sessionId?: string;
+  requestId: string;
+  operationId?: string;
+  eventType: string;
+  source: "verified" | "agent";
+  metadata: Record<string, unknown>;
+  createdAt: number;
 };
 
 export type SessionRecord = Timestamped & {
@@ -479,6 +590,52 @@ function agentSessionRecord(
       : { predecessorSessionId: session.predecessorSessionId }),
     createdAt: timestamp(session.createdAt),
     updatedAt: timestamp(session.updatedAt),
+  };
+}
+
+function agentSessionRequestRecord(
+  request: Selectable<AgentSessionRequestTable>,
+): AgentSessionRequestRecord {
+  return {
+    workspaceId: request.workspaceId,
+    id: request.id,
+    agentId: request.agentId,
+    requestedByHumanId: request.requestedByHumanId,
+    machineId: request.machineId,
+    purpose: request.purpose,
+    readPath: request.readPath,
+    durationSeconds: request.durationSeconds,
+    status: request.status as AgentSessionRequestRecord["status"],
+    expiresAt: timestamp(request.expiresAt),
+    ...(request.approvedAt === null
+      ? {}
+      : { approvedAt: timestamp(request.approvedAt) }),
+    ...(request.approvedByHumanId === null
+      ? {}
+      : { approvedByHumanId: request.approvedByHumanId }),
+    ...(request.claimedAt === null
+      ? {}
+      : { claimedAt: timestamp(request.claimedAt) }),
+    ...(request.sessionId === null ? {} : { sessionId: request.sessionId }),
+    createdAt: timestamp(request.createdAt),
+    updatedAt: timestamp(request.updatedAt),
+  };
+}
+
+function sessionTimelineEventRecord(
+  event: Selectable<SessionTimelineEventTable>,
+): SessionTimelineEventRecord {
+  return {
+    id: event.id,
+    ...(event.sessionId === null ? {} : { sessionId: event.sessionId }),
+    requestId: event.requestId,
+    ...(event.operationId === null
+      ? {}
+      : { operationId: event.operationId }),
+    eventType: event.eventType,
+    source: event.source as SessionTimelineEventRecord["source"],
+    metadata: event.metadata,
+    createdAt: timestamp(event.createdAt),
   };
 }
 
@@ -1123,6 +1280,140 @@ async function rollbackIdentityAuthorityExpand(
   await sql`drop table odyshell.humans`.execute(db);
 }
 
+async function migrateApprovedReadSessions(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    create table if not exists odyshell.agent_session_requests (
+      workspace_id text not null,
+      id text not null,
+      agent_id text not null,
+      requested_by_human_id text not null,
+      machine_id text not null,
+      purpose text not null,
+      read_path text not null,
+      duration_seconds integer not null,
+      status text not null check (
+        status in ('pending', 'approved', 'denied', 'expired', 'claimed')
+      ),
+      approval_code_hash text not null,
+      expires_at timestamptz not null,
+      approved_at timestamptz,
+      approved_by_human_id text,
+      claimed_at timestamptz,
+      session_id text,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      primary key (workspace_id, id),
+      unique (workspace_id, approval_code_hash),
+      unique (workspace_id, session_id),
+      foreign key (workspace_id, agent_id)
+        references odyshell.agents (workspace_id, id),
+      foreign key (workspace_id, requested_by_human_id)
+        references odyshell.humans (workspace_id, id),
+      foreign key (workspace_id, approved_by_human_id)
+        references odyshell.humans (workspace_id, id),
+      foreign key (workspace_id, machine_id)
+        references odyshell.machines (workspace_id, id),
+      foreign key (workspace_id, session_id)
+        references odyshell.agent_sessions (workspace_id, id),
+      check (length(btrim(purpose)) between 1 and 280),
+      check (length(read_path) between 1 and 4096),
+      check (duration_seconds between 60 and 86400),
+      check (expires_at > created_at)
+    )
+  `.execute(db);
+  await sql`
+    create table if not exists odyshell.agent_session_targets (
+      workspace_id text not null,
+      session_id text not null,
+      machine_id text not null,
+      capabilities jsonb not null,
+      read_path text not null,
+      status text not null check (
+        status in ('opening', 'ready', 'rejected', 'closed')
+      ),
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      primary key (workspace_id, session_id, machine_id),
+      foreign key (workspace_id, session_id)
+        references odyshell.agent_sessions (workspace_id, id),
+      foreign key (workspace_id, machine_id)
+        references odyshell.machines (workspace_id, id),
+      check (capabilities = '["fs.read"]'::jsonb),
+      check (length(read_path) between 1 and 4096)
+    )
+  `.execute(db);
+  await sql`
+    create table if not exists odyshell.session_timeline_events (
+      workspace_id text not null,
+      id text not null,
+      session_id text,
+      request_id text not null,
+      operation_id text,
+      event_type text not null,
+      source text not null check (source in ('verified', 'agent')),
+      metadata jsonb not null default '{}'::jsonb,
+      created_at timestamptz not null default now(),
+      primary key (workspace_id, id),
+      foreign key (workspace_id, request_id)
+        references odyshell.agent_session_requests (workspace_id, id),
+      foreign key (workspace_id, session_id)
+        references odyshell.agent_sessions (workspace_id, id)
+    )
+  `.execute(db);
+  await sql`
+    create index if not exists agent_session_requests_agent_created_idx
+    on odyshell.agent_session_requests (workspace_id, agent_id, created_at)
+  `.execute(db);
+  await sql`
+    create index if not exists agent_session_requests_approval_idx
+    on odyshell.agent_session_requests (workspace_id, approval_code_hash, status)
+  `.execute(db);
+  await sql`
+    create index if not exists session_timeline_session_created_idx
+    on odyshell.session_timeline_events (workspace_id, session_id, created_at)
+  `.execute(db);
+}
+
+async function rollbackApprovedReadSessions(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    do $migration$
+    begin
+      if exists (select 1 from odyshell.agent_session_requests)
+        or exists (select 1 from odyshell.agent_session_targets)
+        or exists (select 1 from odyshell.session_timeline_events)
+      then
+        raise exception
+          'Cannot roll back approved read Sessions after target data exists';
+      end if;
+    end
+    $migration$
+  `.execute(db);
+  await sql`drop table odyshell.session_timeline_events`.execute(db);
+  await sql`drop table odyshell.agent_session_targets`.execute(db);
+  await sql`drop table odyshell.agent_session_requests`.execute(db);
+}
+
+async function migrateGlobalSessionCredentialHash(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    create unique index if not exists session_credentials_token_hash_global_idx
+    on odyshell.session_credentials (token_hash)
+  `.execute(db);
+}
+
+async function rollbackGlobalSessionCredentialHash(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    drop index if exists odyshell.session_credentials_token_hash_global_idx
+  `.execute(db);
+}
+
 const migrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
     return {
@@ -1144,6 +1435,14 @@ const migrationProvider: MigrationProvider = {
       "006_expand_identity_authority": {
         up: migrateIdentityAuthorityExpand,
         down: rollbackIdentityAuthorityExpand,
+      },
+      "007_approved_read_sessions": {
+        up: migrateApprovedReadSessions,
+        down: rollbackApprovedReadSessions,
+      },
+      "008_global_session_credential_hash": {
+        up: migrateGlobalSessionCredentialHash,
+        down: rollbackGlobalSessionCredentialHash,
       },
     };
   },
@@ -1581,6 +1880,581 @@ export class PostgresDatabase {
       .where("agents.status", "=", "active")
       .executeTakeFirst();
     return session ? agentSessionRecord(session) : null;
+  }
+
+  async createAgentSessionRequest(input: {
+    workspaceId: string;
+    requestId: string;
+    agentId: string;
+    agentName: string;
+    humanId: string;
+    machineId: string;
+    purpose: string;
+    readPath: string;
+    durationSeconds: number;
+    approvalCodeHash: string;
+    expiresAt: number;
+  }): Promise<AgentSessionRequestRecord | null> {
+    return await this.db.transaction().execute(async (transaction) => {
+      await transaction
+        .insertInto("humans")
+        .values({
+          workspaceId: input.workspaceId,
+          id: input.humanId,
+          externalId: input.humanId,
+          status: "active",
+        })
+        .onConflict((conflict) =>
+          conflict.columns(["workspaceId", "id"]).doNothing(),
+        )
+        .execute();
+      const human = await transaction
+        .selectFrom("humans")
+        .select("id")
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", input.humanId)
+        .where("externalId", "=", input.humanId)
+        .where("status", "=", "active")
+        .forShare()
+        .executeTakeFirst();
+      if (!human) return null;
+
+      await transaction
+        .insertInto("agents")
+        .values({
+          workspaceId: input.workspaceId,
+          id: input.agentId,
+          name: input.agentName,
+          kind: "independent",
+          parentAgentId: null,
+          createdByHumanId: input.humanId,
+          status: "active",
+        })
+        .onConflict((conflict) =>
+          conflict.columns(["workspaceId", "id"]).doNothing(),
+        )
+        .execute();
+      const agent = await transaction
+        .selectFrom("agents")
+        .select("id")
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", input.agentId)
+        .where("kind", "=", "independent")
+        .where("createdByHumanId", "=", input.humanId)
+        .where("status", "=", "active")
+        .forShare()
+        .executeTakeFirst();
+      if (!agent) return null;
+
+      const machine = await transaction
+        .selectFrom("machines")
+        .select("id")
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", input.machineId)
+        .where("revokedAt", "is", null)
+        .forShare()
+        .executeTakeFirst();
+      if (!machine) return null;
+
+      const request = await transaction
+        .insertInto("agentSessionRequests")
+        .values({
+          workspaceId: input.workspaceId,
+          id: input.requestId,
+          agentId: input.agentId,
+          requestedByHumanId: input.humanId,
+          machineId: input.machineId,
+          purpose: input.purpose,
+          readPath: input.readPath,
+          durationSeconds: input.durationSeconds,
+          status: "pending",
+          approvalCodeHash: input.approvalCodeHash,
+          expiresAt: new Date(input.expiresAt),
+          approvedAt: null,
+          approvedByHumanId: null,
+          claimedAt: null,
+          sessionId: null,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await transaction
+        .insertInto("sessionTimelineEvents")
+        .values({
+          workspaceId: input.workspaceId,
+          id: randomUUID(),
+          sessionId: null,
+          requestId: input.requestId,
+          operationId: null,
+          eventType: "session.requested",
+          source: "verified",
+          metadata: JSON.stringify({
+            machineId: input.machineId,
+            capability: "fs.read",
+            durationSeconds: input.durationSeconds,
+          }),
+        })
+        .execute();
+      return agentSessionRequestRecord(request);
+    });
+  }
+
+  async sessionRequestForApproval(
+    workspaceId: string,
+    approvalCodeHash: string,
+  ): Promise<SessionApprovalView | null> {
+    const request = await this.db
+      .selectFrom("agentSessionRequests")
+      .innerJoin("agents", (join) =>
+        join
+          .onRef("agents.workspaceId", "=", "agentSessionRequests.workspaceId")
+          .onRef("agents.id", "=", "agentSessionRequests.agentId"),
+      )
+      .innerJoin("machines", (join) =>
+        join
+          .onRef(
+            "machines.workspaceId",
+            "=",
+            "agentSessionRequests.workspaceId",
+          )
+          .onRef("machines.id", "=", "agentSessionRequests.machineId"),
+      )
+      .selectAll("agentSessionRequests")
+      .select(["agents.name as agentName", "machines.name as machineName"])
+      .where("agentSessionRequests.workspaceId", "=", workspaceId)
+      .where(
+        "agentSessionRequests.approvalCodeHash",
+        "=",
+        approvalCodeHash,
+      )
+      .executeTakeFirst();
+    return request
+      ? {
+          ...agentSessionRequestRecord(request),
+          agentName: request.agentName,
+          machineName: request.machineName,
+        }
+      : null;
+  }
+
+  async getAgentSessionRequest(
+    workspaceId: string,
+    requestId: string,
+    agentId: string,
+    humanId: string,
+  ): Promise<AgentSessionRequestRecord | null> {
+    const request = await this.db
+      .selectFrom("agentSessionRequests")
+      .selectAll()
+      .where("workspaceId", "=", workspaceId)
+      .where("id", "=", requestId)
+      .where("agentId", "=", agentId)
+      .where("requestedByHumanId", "=", humanId)
+      .executeTakeFirst();
+    if (!request) return null;
+    if (request.status !== "claimed" && request.expiresAt <= new Date()) {
+      const expired = await this.db
+        .updateTable("agentSessionRequests")
+        .set({ status: "expired", updatedAt: new Date() })
+        .where("workspaceId", "=", workspaceId)
+        .where("id", "=", requestId)
+        .where("status", "in", ["pending", "approved"])
+        .returningAll()
+        .executeTakeFirst();
+      return agentSessionRequestRecord(expired ?? request);
+    }
+    return agentSessionRequestRecord(request);
+  }
+
+  async approveAgentSessionRequest(input: {
+    workspaceId: string;
+    approvalCodeHash: string;
+    approverHumanId: string;
+    now: number;
+  }): Promise<SessionApprovalResult> {
+    return await this.db.transaction().execute(async (transaction) => {
+      const request = await transaction
+        .selectFrom("agentSessionRequests")
+        .selectAll()
+        .where("workspaceId", "=", input.workspaceId)
+        .where("approvalCodeHash", "=", input.approvalCodeHash)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!request) return { status: "invalid" };
+      if (request.expiresAt <= new Date(input.now)) {
+        if (request.status === "pending") {
+          await transaction
+            .updateTable("agentSessionRequests")
+            .set({ status: "expired", updatedAt: new Date(input.now) })
+            .where("workspaceId", "=", input.workspaceId)
+            .where("id", "=", request.id)
+            .execute();
+        }
+        return { status: "expired" };
+      }
+      if (request.status !== "pending") return { status: "already_used" };
+
+      await transaction
+        .insertInto("humans")
+        .values({
+          workspaceId: input.workspaceId,
+          id: input.approverHumanId,
+          externalId: input.approverHumanId,
+          status: "active",
+        })
+        .onConflict((conflict) =>
+          conflict.columns(["workspaceId", "id"]).doNothing(),
+        )
+        .execute();
+      const approver = await transaction
+        .selectFrom("humans")
+        .select("id")
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", input.approverHumanId)
+        .where("externalId", "=", input.approverHumanId)
+        .where("status", "=", "active")
+        .forShare()
+        .executeTakeFirst();
+      if (!approver) return { status: "invalid" };
+
+      const approvedAt = new Date(input.now);
+      const approved = await transaction
+        .updateTable("agentSessionRequests")
+        .set({
+          status: "approved",
+          approvedAt,
+          approvedByHumanId: input.approverHumanId,
+          updatedAt: approvedAt,
+        })
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", request.id)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await transaction
+        .insertInto("sessionTimelineEvents")
+        .values({
+          workspaceId: input.workspaceId,
+          id: randomUUID(),
+          sessionId: null,
+          requestId: request.id,
+          operationId: null,
+          eventType: "session.approved",
+          source: "verified",
+          metadata: JSON.stringify({}),
+          createdAt: approvedAt,
+        })
+        .execute();
+      return {
+        status: "approved",
+        request: agentSessionRequestRecord(approved),
+      };
+    });
+  }
+
+  async claimAgentSessionRequest(input: {
+    workspaceId: string;
+    requestId: string;
+    agentId: string;
+    humanId: string;
+    sessionId: string;
+    credentialId: string;
+    credentialHash: string;
+    now: number;
+  }): Promise<SessionClaimResult> {
+    return await this.db.transaction().execute(async (transaction) => {
+      const request = await transaction
+        .selectFrom("agentSessionRequests")
+        .selectAll()
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", input.requestId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!request) return { status: "invalid" };
+      if (
+        request.agentId !== input.agentId ||
+        request.requestedByHumanId !== input.humanId
+      ) {
+        return { status: "agent_denied" };
+      }
+      if (request.expiresAt <= new Date(input.now)) {
+        if (request.status !== "claimed") {
+          await transaction
+            .updateTable("agentSessionRequests")
+            .set({ status: "expired", updatedAt: new Date(input.now) })
+            .where("workspaceId", "=", input.workspaceId)
+            .where("id", "=", request.id)
+            .execute();
+        }
+        return { status: "expired" };
+      }
+      if (request.status === "pending") return { status: "pending" };
+      if (request.status === "denied") return { status: "denied" };
+      if (request.status === "claimed") return { status: "already_claimed" };
+      if (request.status !== "approved") return { status: "expired" };
+
+      const agent = await transaction
+        .selectFrom("agents")
+        .select("id")
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", input.agentId)
+        .where("createdByHumanId", "=", input.humanId)
+        .where("status", "=", "active")
+        .forShare()
+        .executeTakeFirst();
+      const machine = await transaction
+        .selectFrom("machines")
+        .select("id")
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", request.machineId)
+        .where("revokedAt", "is", null)
+        .forShare()
+        .executeTakeFirst();
+      if (!agent) return { status: "agent_denied" };
+      if (!machine) return { status: "machine_unavailable" };
+
+      const claimedAt = new Date(input.now);
+      const expiresAt = new Date(
+        input.now + request.durationSeconds * 1_000,
+      );
+      const session = await transaction
+        .insertInto("agentSessions")
+        .values({
+          workspaceId: input.workspaceId,
+          id: input.sessionId,
+          agentId: input.agentId,
+          purpose: request.purpose,
+          status: "active",
+          expiresAt,
+          predecessorSessionId: null,
+          createdAt: claimedAt,
+          updatedAt: claimedAt,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await transaction
+        .insertInto("agentSessionTargets")
+        .values({
+          workspaceId: input.workspaceId,
+          sessionId: input.sessionId,
+          machineId: request.machineId,
+          capabilities: JSON.stringify(["fs.read"]),
+          readPath: request.readPath,
+          status: "opening",
+          createdAt: claimedAt,
+          updatedAt: claimedAt,
+        })
+        .execute();
+      await transaction
+        .insertInto("sessions")
+        .values({
+          workspaceId: input.workspaceId,
+          id: input.sessionId,
+          machineId: request.machineId,
+          principalId: input.agentId,
+          profile: "workspace",
+          capabilities: JSON.stringify(["fs.read"]),
+          status: "opening",
+          expiresAt,
+          error: null,
+          createdAt: claimedAt,
+          updatedAt: claimedAt,
+        })
+        .execute();
+      await transaction
+        .insertInto("sessionCredentials")
+        .values({
+          workspaceId: input.workspaceId,
+          id: input.credentialId,
+          sessionId: input.sessionId,
+          tokenHash: input.credentialHash,
+          status: "active",
+          expiresAt,
+          claimedAt,
+          revokedAt: null,
+          createdAt: claimedAt,
+        })
+        .execute();
+      await transaction
+        .updateTable("agentSessionRequests")
+        .set({
+          status: "claimed",
+          claimedAt,
+          sessionId: input.sessionId,
+          updatedAt: claimedAt,
+        })
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", request.id)
+        .execute();
+      await transaction
+        .insertInto("sessionTimelineEvents")
+        .values({
+          workspaceId: input.workspaceId,
+          id: randomUUID(),
+          sessionId: input.sessionId,
+          requestId: request.id,
+          operationId: null,
+          eventType: "session.started",
+          source: "verified",
+          metadata: JSON.stringify({
+            machineId: request.machineId,
+            capability: "fs.read",
+            expiresAt: expiresAt.toISOString(),
+          }),
+          createdAt: claimedAt,
+        })
+        .execute();
+      return {
+        status: "claimed",
+        session: agentSessionRecord(session),
+        machineId: request.machineId,
+        readPath: request.readPath,
+      };
+    });
+  }
+
+  async findSessionCredentialPrincipal(
+    tokenHash: string,
+  ): Promise<AgentSessionCredentialPrincipal | null> {
+    const now = new Date();
+    const principal = await this.db
+      .selectFrom("sessionCredentials")
+      .innerJoin("agentSessions", (join) =>
+        join
+          .onRef(
+            "agentSessions.workspaceId",
+            "=",
+            "sessionCredentials.workspaceId",
+          )
+          .onRef("agentSessions.id", "=", "sessionCredentials.sessionId"),
+      )
+      .innerJoin("agents", (join) =>
+        join
+          .onRef("agents.workspaceId", "=", "agentSessions.workspaceId")
+          .onRef("agents.id", "=", "agentSessions.agentId"),
+      )
+      .innerJoin("agentSessionTargets", (join) =>
+        join
+          .onRef(
+            "agentSessionTargets.workspaceId",
+            "=",
+            "agentSessions.workspaceId",
+          )
+          .onRef(
+            "agentSessionTargets.sessionId",
+            "=",
+            "agentSessions.id",
+          ),
+      )
+      .select([
+        "sessionCredentials.workspaceId",
+        "agentSessions.agentId",
+        "agents.name as agentName",
+        "agentSessions.id as sessionId",
+        "agentSessionTargets.machineId",
+        "agentSessionTargets.readPath",
+        "agentSessions.expiresAt",
+      ])
+      .where("sessionCredentials.tokenHash", "=", tokenHash)
+      .where("sessionCredentials.status", "=", "active")
+      .where("sessionCredentials.revokedAt", "is", null)
+      .where("sessionCredentials.expiresAt", ">", now)
+      .where("agentSessions.status", "=", "active")
+      .where("agentSessions.expiresAt", ">", now)
+      .where("agents.status", "=", "active")
+      .where("agentSessionTargets.status", "in", ["opening", "ready"])
+      .executeTakeFirst();
+    return principal
+      ? {
+          ...principal,
+          expiresAt: timestamp(principal.expiresAt),
+        }
+      : null;
+  }
+
+  async failClaimedAgentSession(
+    workspaceId: string,
+    sessionId: string,
+    machineId: string,
+    reason: "machine_disconnected",
+  ): Promise<void> {
+    await this.db.transaction().execute(async (transaction) => {
+      const request = await transaction
+        .selectFrom("agentSessionRequests")
+        .select("id")
+        .where("workspaceId", "=", workspaceId)
+        .where("sessionId", "=", sessionId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!request) return;
+      const now = new Date();
+      await transaction
+        .updateTable("sessions")
+        .set({ status: "failed", error: reason, updatedAt: now })
+        .where("workspaceId", "=", workspaceId)
+        .where("id", "=", sessionId)
+        .where("status", "in", ACTIVE_SESSION_STATUSES)
+        .execute();
+      await transaction
+        .updateTable("agentSessionTargets")
+        .set({ status: "rejected", updatedAt: now })
+        .where("workspaceId", "=", workspaceId)
+        .where("sessionId", "=", sessionId)
+        .where("machineId", "=", machineId)
+        .execute();
+      await transaction
+        .updateTable("agentSessions")
+        .set({ status: "cancelled", updatedAt: now })
+        .where("workspaceId", "=", workspaceId)
+        .where("id", "=", sessionId)
+        .where("status", "=", "active")
+        .execute();
+      await transaction
+        .updateTable("sessionCredentials")
+        .set({ status: "revoked", revokedAt: now })
+        .where("workspaceId", "=", workspaceId)
+        .where("sessionId", "=", sessionId)
+        .where("status", "=", "active")
+        .execute();
+      await transaction
+        .insertInto("sessionTimelineEvents")
+        .values({
+          workspaceId,
+          id: randomUUID(),
+          sessionId,
+          requestId: request.id,
+          operationId: null,
+          eventType: "target.rejected",
+          source: "verified",
+          metadata: JSON.stringify({ machineId, reason }),
+          createdAt: now,
+        })
+        .execute();
+    });
+  }
+
+  async listSessionTimeline(
+    workspaceId: string,
+    sessionId: string,
+    agentId: string,
+    humanId: string,
+  ): Promise<SessionTimelineEventRecord[] | null> {
+    const owned = await this.db
+      .selectFrom("agentSessionRequests")
+      .select("id")
+      .where("workspaceId", "=", workspaceId)
+      .where("sessionId", "=", sessionId)
+      .where("agentId", "=", agentId)
+      .where("requestedByHumanId", "=", humanId)
+      .executeTakeFirst();
+    if (!owned) return null;
+    return (
+      await this.db
+        .selectFrom("sessionTimelineEvents")
+        .selectAll()
+        .where("workspaceId", "=", workspaceId)
+        .where("requestId", "=", owned.id)
+        .orderBy("createdAt", "asc")
+        .execute()
+    ).map(sessionTimelineEventRecord);
   }
 
   async findAgentByTokenHash(tokenHash: string): Promise<AgentTokenRecord | null> {
@@ -2171,16 +3045,49 @@ export class PostgresDatabase {
     machineId: string,
     sessionId: string,
   ): Promise<{ principalId: string; workspaceId: string } | null> {
-    return (
-      (await this.db
+    return await this.db.transaction().execute(async (transaction) => {
+      const result =
+        (await transaction
         .updateTable("sessions")
         .set({ status: "ready", updatedAt: new Date(), error: null })
         .where("id", "=", sessionId)
         .where("machineId", "=", machineId)
         .where("status", "=", "opening")
         .returning(["principalId", "workspaceId"])
-        .executeTakeFirst()) ?? null
-    );
+        .executeTakeFirst()) ?? null;
+      if (!result) return null;
+      const request = await transaction
+        .selectFrom("agentSessionRequests")
+        .select("id")
+        .where("workspaceId", "=", result.workspaceId)
+        .where("sessionId", "=", sessionId)
+        .executeTakeFirst();
+      if (request) {
+        const now = new Date();
+        await transaction
+          .updateTable("agentSessionTargets")
+          .set({ status: "ready", updatedAt: now })
+          .where("workspaceId", "=", result.workspaceId)
+          .where("sessionId", "=", sessionId)
+          .where("machineId", "=", machineId)
+          .execute();
+        await transaction
+          .insertInto("sessionTimelineEvents")
+          .values({
+            workspaceId: result.workspaceId,
+            id: randomUUID(),
+            sessionId,
+            requestId: request.id,
+            operationId: null,
+            eventType: "target.ready",
+            source: "verified",
+            metadata: JSON.stringify({ machineId }),
+            createdAt: now,
+          })
+          .execute();
+      }
+      return result;
+    });
   }
 
   async markSessionOpenFailed(
@@ -2188,16 +3095,63 @@ export class PostgresDatabase {
     sessionId: string,
     error: string,
   ): Promise<{ principalId: string; workspaceId: string } | null> {
-    return (
-      (await this.db
+    return await this.db.transaction().execute(async (transaction) => {
+      const result =
+        (await transaction
         .updateTable("sessions")
         .set({ status: "failed", updatedAt: new Date(), error })
         .where("id", "=", sessionId)
         .where("machineId", "=", machineId)
         .where("status", "=", "opening")
         .returning(["principalId", "workspaceId"])
-        .executeTakeFirst()) ?? null
-    );
+        .executeTakeFirst()) ?? null;
+      if (!result) return null;
+      const request = await transaction
+        .selectFrom("agentSessionRequests")
+        .select("id")
+        .where("workspaceId", "=", result.workspaceId)
+        .where("sessionId", "=", sessionId)
+        .executeTakeFirst();
+      if (request) {
+        const now = new Date();
+        await transaction
+          .updateTable("agentSessionTargets")
+          .set({ status: "rejected", updatedAt: now })
+          .where("workspaceId", "=", result.workspaceId)
+          .where("sessionId", "=", sessionId)
+          .where("machineId", "=", machineId)
+          .execute();
+        await transaction
+          .updateTable("agentSessions")
+          .set({ status: "cancelled", updatedAt: now })
+          .where("workspaceId", "=", result.workspaceId)
+          .where("id", "=", sessionId)
+          .where("status", "=", "active")
+          .execute();
+        await transaction
+          .updateTable("sessionCredentials")
+          .set({ status: "revoked", revokedAt: now })
+          .where("workspaceId", "=", result.workspaceId)
+          .where("sessionId", "=", sessionId)
+          .where("status", "=", "active")
+          .execute();
+        await transaction
+          .insertInto("sessionTimelineEvents")
+          .values({
+            workspaceId: result.workspaceId,
+            id: randomUUID(),
+            sessionId,
+            requestId: request.id,
+            operationId: null,
+            eventType: "target.rejected",
+            source: "verified",
+            metadata: JSON.stringify({ machineId, reason: "client_rejected" }),
+            createdAt: now,
+          })
+          .execute();
+      }
+      return result;
+    });
   }
 
   async markSessionClosed(
@@ -2220,6 +3174,52 @@ export class PostgresDatabase {
         .set({ status, updatedAt: new Date() })
         .where("id", "=", sessionId)
         .execute();
+      const request = await transaction
+        .selectFrom("agentSessionRequests")
+        .select("id")
+        .where("workspaceId", "=", session.workspaceId)
+        .where("sessionId", "=", sessionId)
+        .executeTakeFirst();
+      if (request) {
+        const now = new Date();
+        const canonicalStatus =
+          status === "expired" ? "expired" : "completed";
+        await transaction
+          .updateTable("agentSessionTargets")
+          .set({ status: "closed", updatedAt: now })
+          .where("workspaceId", "=", session.workspaceId)
+          .where("sessionId", "=", sessionId)
+          .where("machineId", "=", machineId)
+          .execute();
+        await transaction
+          .updateTable("agentSessions")
+          .set({ status: canonicalStatus, updatedAt: now })
+          .where("workspaceId", "=", session.workspaceId)
+          .where("id", "=", sessionId)
+          .where("status", "=", "active")
+          .execute();
+        await transaction
+          .updateTable("sessionCredentials")
+          .set({ status: "revoked", revokedAt: now })
+          .where("workspaceId", "=", session.workspaceId)
+          .where("sessionId", "=", sessionId)
+          .where("status", "=", "active")
+          .execute();
+        await transaction
+          .insertInto("sessionTimelineEvents")
+          .values({
+            workspaceId: session.workspaceId,
+            id: randomUUID(),
+            sessionId,
+            requestId: request.id,
+            operationId: null,
+            eventType: "session.closed",
+            source: "verified",
+            metadata: JSON.stringify({ machineId, status }),
+            createdAt: now,
+          })
+          .execute();
+      }
       return {
         principalId: session.principalId,
         workspaceId: session.workspaceId,
@@ -2294,20 +3294,47 @@ export class PostgresDatabase {
   }
 
   async markOperationStarted(machineId: string, operationId: string): Promise<void> {
-    await this.db
-      .updateTable("operations")
-      .set({ status: "running", updatedAt: new Date() })
-      .where("id", "=", operationId)
-      .where("status", "in", ["queued", "delivered"])
-      .where(({ exists, selectFrom }) =>
-        exists(
-          selectFrom("sessions")
-            .select("sessions.id")
-            .whereRef("sessions.id", "=", "operations.sessionId")
-            .where("sessions.machineId", "=", machineId),
-        ),
-      )
-      .execute();
+    await this.db.transaction().execute(async (transaction) => {
+      const operation = await transaction
+        .updateTable("operations")
+        .set({ status: "running", updatedAt: new Date() })
+        .where("id", "=", operationId)
+        .where("status", "in", ["queued", "delivered"])
+        .where(({ exists, selectFrom }) =>
+          exists(
+            selectFrom("sessions")
+              .select("sessions.id")
+              .whereRef("sessions.id", "=", "operations.sessionId")
+              .where("sessions.machineId", "=", machineId),
+          ),
+        )
+        .returning(["workspaceId", "sessionId", "action"])
+        .executeTakeFirst();
+      if (!operation) return;
+      const request = await transaction
+        .selectFrom("agentSessionRequests")
+        .select("id")
+        .where("workspaceId", "=", operation.workspaceId)
+        .where("sessionId", "=", operation.sessionId)
+        .executeTakeFirst();
+      if (!request) return;
+      await transaction
+        .insertInto("sessionTimelineEvents")
+        .values({
+          workspaceId: operation.workspaceId,
+          id: randomUUID(),
+          sessionId: operation.sessionId,
+          requestId: request.id,
+          operationId,
+          eventType: "operation.started",
+          source: "verified",
+          metadata: JSON.stringify({
+            machineId,
+            kind: operation.action.kind,
+          }),
+        })
+        .execute();
+    });
   }
 
   async addOperationEvent(input: {
@@ -2355,7 +3382,8 @@ export class PostgresDatabase {
     workspaceId: string;
     kind: Capability;
   } | null> {
-    const operation = await this.db
+    return await this.db.transaction().execute(async (transaction) => {
+      const operation = await transaction
         .updateTable("operations")
         .set({
           status: input.status,
@@ -2376,27 +3404,62 @@ export class PostgresDatabase {
         )
         .returning(["principalId", "workspaceId", "action"])
         .executeTakeFirst();
-    return operation
-      ? {
-          principalId: operation.principalId,
-          workspaceId: operation.workspaceId,
-          kind: operation.action.kind,
-        }
-      : null;
+      if (!operation) return null;
+      const session = await transaction
+        .selectFrom("operations")
+        .select("sessionId")
+        .where("workspaceId", "=", operation.workspaceId)
+        .where("id", "=", input.operationId)
+        .executeTakeFirstOrThrow();
+      const request = await transaction
+        .selectFrom("agentSessionRequests")
+        .select("id")
+        .where("workspaceId", "=", operation.workspaceId)
+        .where("sessionId", "=", session.sessionId)
+        .executeTakeFirst();
+      if (request) {
+        await transaction
+          .insertInto("sessionTimelineEvents")
+          .values({
+            workspaceId: operation.workspaceId,
+            id: randomUUID(),
+            sessionId: session.sessionId,
+            requestId: request.id,
+            operationId: input.operationId,
+            eventType: "operation.completed",
+            source: "verified",
+            metadata: JSON.stringify({
+              machineId: input.machineId,
+              kind: operation.action.kind,
+              status: input.status,
+              exitCode: input.exitCode,
+              outputTruncated: input.outputTruncated,
+            }),
+          })
+          .execute();
+      }
+      return {
+        principalId: operation.principalId,
+        workspaceId: operation.workspaceId,
+        kind: operation.action.kind,
+      };
+    });
   }
 
   async getOperation(
     workspaceId: string,
     operationId: string,
     principalId: string,
+    sessionId?: string,
   ): Promise<(OperationRecord & { events: OperationEventRecord[] }) | null> {
-    const operation = await this.db
+    let query = this.db
       .selectFrom("operations")
       .selectAll()
       .where("workspaceId", "=", workspaceId)
       .where("id", "=", operationId)
-      .where("principalId", "=", principalId)
-      .executeTakeFirst();
+      .where("principalId", "=", principalId);
+    if (sessionId !== undefined) query = query.where("sessionId", "=", sessionId);
+    const operation = await query.executeTakeFirst();
     if (!operation) return null;
     const events = await this.listOperationEvents(workspaceId, operationId, -1);
     return { ...operationRecord(operation), events };
@@ -2406,33 +3469,35 @@ export class PostgresDatabase {
     workspaceId: string,
     operationId: string,
     principalId: string,
-  ): Promise<{ machineId: string; status: string } | null> {
-    return (
-      (await this.db
+    sessionId?: string,
+  ): Promise<{ machineId: string; sessionId: string; status: string } | null> {
+    let query = this.db
         .selectFrom("operations")
         .innerJoin("sessions", "sessions.id", "operations.sessionId")
-        .select(["sessions.machineId", "operations.status"])
+        .select(["sessions.machineId", "operations.sessionId", "operations.status"])
         .where("operations.workspaceId", "=", workspaceId)
         .where("operations.id", "=", operationId)
-        .where("operations.principalId", "=", principalId)
-        .executeTakeFirst()) ?? null
-    );
+        .where("operations.principalId", "=", principalId);
+    if (sessionId !== undefined) {
+      query = query.where("operations.sessionId", "=", sessionId);
+    }
+    return (await query.executeTakeFirst()) ?? null;
   }
 
   async operationExists(
     workspaceId: string,
     operationId: string,
     principalId: string,
+    sessionId?: string,
   ): Promise<boolean> {
-    return Boolean(
-      await this.db
+    let query = this.db
         .selectFrom("operations")
         .select("id")
         .where("workspaceId", "=", workspaceId)
         .where("id", "=", operationId)
-        .where("principalId", "=", principalId)
-        .executeTakeFirst(),
-    );
+        .where("principalId", "=", principalId);
+    if (sessionId !== undefined) query = query.where("sessionId", "=", sessionId);
+    return Boolean(await query.executeTakeFirst());
   }
 
   async listOperationEvents(

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { generateKeyPairSync } from "node:crypto";
-import { mkdir, rm } from "node:fs/promises";
+import { createHash, generateKeyPairSync } from "node:crypto";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import process from "node:process";
 
@@ -8,6 +8,7 @@ const root = process.cwd();
 let apiUrl;
 const agentKey = process.env.ODYSHELL_AGENT_KEY ?? "dev-agent-key";
 const adminKey = process.env.ODYSHELL_ADMIN_KEY ?? "dev-admin-key";
+const webKey = "e2e-web-key-at-least-thirty-two-characters";
 const composeProject = `odyshell-e2e-${process.pid}`;
 const composeEnvironment = {
   ...process.env,
@@ -17,6 +18,8 @@ const composeEnvironment = {
   ODYSHELL_AGENT_KEY: agentKey,
   ODYSHELL_ADMIN_KEY: adminKey,
   ODYSHELL_ALLOW_DEV_CREDENTIALS: "true",
+  ODYSHELL_WEB_KEY: webKey,
+  ODYSHELL_WEB_URL: "http://127.0.0.1:3000",
 };
 const configDirectory = resolve(root, `.odyshell/e2e/${process.pid}`);
 const configPath = resolve(configDirectory, "client.json");
@@ -344,6 +347,324 @@ try {
     throw new Error("Client runtime metadata was not reported");
   }
   e2eMachineId = machine.id;
+
+  await writeFile(
+    resolve(workspace, "approved.txt"),
+    "approved session read",
+    "utf8",
+  );
+  const cliToken = `ods_cli_e2e_${crypto.randomUUID()}`;
+  const cliTokenHash = createHash("sha256").update(cliToken).digest("hex");
+  const cliUserId = `e2e-user-${crypto.randomUUID()}`;
+  await compose([
+    "exec",
+    "-T",
+    "postgres",
+    "psql",
+    "-U",
+    "odyshell",
+    "-d",
+    "odyshell",
+    "-v",
+    "ON_ERROR_STOP=1",
+    "-c",
+    [
+      "update odyshell.organizations",
+      "set external_id = 'e2e-clerk-organization'",
+      "where id = 'default';",
+      "insert into odyshell.cli_tokens",
+      "(workspace_id, id, user_id, token_hash, expires_at)",
+      `values ('default', '${crypto.randomUUID()}', '${cliUserId}', '${cliTokenHash}', now() + interval '1 hour');`,
+    ].join(" "),
+  ]);
+  const approvedAgentId = crypto.randomUUID();
+  const requestResponse = await fetch(
+    new URL("/v1/agent-session-requests", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${cliToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        agentId: approvedAgentId,
+        agentName: "E2E MCP Agent",
+        purpose: "Read the approved test file",
+        machineId: machine.id,
+        path: "approved.txt",
+        durationSeconds: 600,
+      }),
+    },
+  );
+  const requestedSession = await requestResponse.json();
+  if (requestResponse.status !== 201 || !requestedSession.approvalUrl) {
+    throw new Error(
+      `Session request failed: ${requestResponse.status} ${JSON.stringify(requestedSession)}`,
+    );
+  }
+  const approvalCode = new URL(requestedSession.approvalUrl).searchParams.get(
+    "code",
+  );
+  if (!approvalCode) throw new Error("Session approval URL omitted its code");
+
+  const wrongWorkspaceApproval = await fetch(
+    new URL("/v1/internal/cloud/session-requests/approve", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        userId: "other-user",
+        organization: {
+          externalId: "other-clerk-organization",
+          slug: "other-organization",
+          name: "Other organization",
+        },
+        approvalCode,
+      }),
+    },
+  );
+  if (wrongWorkspaceApproval.status !== 404) {
+    throw new Error("A different workspace could approve the Session request");
+  }
+
+  const approvalBody = {
+    userId: cliUserId,
+    organization: {
+      externalId: "e2e-clerk-organization",
+      slug: "default",
+      name: "Default organization",
+    },
+    approvalCode,
+  };
+  const approval = await fetch(
+    new URL("/v1/internal/cloud/session-requests/approve", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify(approvalBody),
+    },
+  );
+  if (approval.status !== 200) {
+    throw new Error(
+      `Session approval failed: ${approval.status} ${await approval.text()}`,
+    );
+  }
+  const approvalReplay = await fetch(
+    new URL("/v1/internal/cloud/session-requests/approve", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify(approvalBody),
+    },
+  );
+  if (approvalReplay.status !== 409) {
+    throw new Error("Session approval code replay was not rejected");
+  }
+
+  const claimResponse = await fetch(
+    new URL(
+      `/v1/agent-session-requests/${requestedSession.id}/claim`,
+      apiUrl,
+    ),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${cliToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ agentId: approvedAgentId }),
+    },
+  );
+  const claimedSession = await claimResponse.json();
+  if (claimResponse.status !== 201 || !claimedSession.sessionToken) {
+    throw new Error(
+      `Session claim failed: ${claimResponse.status} ${JSON.stringify(claimedSession)}`,
+    );
+  }
+  const claimReplay = await fetch(
+    new URL(
+      `/v1/agent-session-requests/${requestedSession.id}/claim`,
+      apiUrl,
+    ),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${cliToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ agentId: approvedAgentId }),
+    },
+  );
+  if (claimReplay.status !== 409) {
+    throw new Error("Session Credential could be claimed more than once");
+  }
+
+  await waitUntil(
+    async () => {
+      const response = await fetch(
+        new URL(`/v1/sessions/${claimedSession.sessionId}`, apiUrl),
+        {
+          headers: {
+            authorization: `Bearer ${claimedSession.sessionToken}`,
+          },
+        },
+      );
+      return response.json();
+    },
+    (value) => value.status === "ready" || value.status === "failed",
+    "approved Session target",
+  );
+  const scopedOperation = (action) =>
+    fetch(
+      new URL(
+        `/v1/sessions/${claimedSession.sessionId}/operations`,
+        apiUrl,
+      ),
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${claimedSession.sessionToken}`,
+          "content-type": "application/json",
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          action,
+          timeoutSeconds: 10,
+          maxOutputBytes: 1024,
+        }),
+      },
+    );
+  const wrongPath = await scopedOperation({
+    kind: "fs.read",
+    path: "different.txt",
+  });
+  if (wrongPath.status !== 403) {
+    throw new Error("Session Credential exceeded its exact path scope");
+  }
+  const wrongCapability = await scopedOperation({
+    kind: "process.exec",
+    program: "id",
+    args: [],
+    cwd: ".",
+    env: {},
+  });
+  if (wrongCapability.status !== 403) {
+    throw new Error("Session Credential exceeded its capability scope");
+  }
+  const newSessionAttempt = await fetch(new URL("/v1/sessions", apiUrl), {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${claimedSession.sessionToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      machineId: machine.id,
+      profile: "workspace",
+      ttlSeconds: 120,
+      capabilities: ["fs.read"],
+    }),
+  });
+  if (newSessionAttempt.status !== 403) {
+    throw new Error("Session Credential minted another Session");
+  }
+
+  const approvedReadResponse = await scopedOperation({
+    kind: "fs.read",
+    path: "approved.txt",
+  });
+  if (approvedReadResponse.status !== 202) {
+    throw new Error(
+      `Approved read was rejected: ${approvedReadResponse.status} ${await approvedReadResponse.text()}`,
+    );
+  }
+  const approvedOperation = await approvedReadResponse.json();
+  const approvedRead = await waitUntil(
+    async () => {
+      const response = await fetch(
+        new URL(`/v1/operations/${approvedOperation.id}`, apiUrl),
+        {
+          headers: {
+            authorization: `Bearer ${claimedSession.sessionToken}`,
+          },
+        },
+      );
+      return response.json();
+    },
+    (value) => !["queued", "delivered", "running"].includes(value.status),
+    "approved read operation",
+  );
+  const approvedOutput = approvedRead.events
+    .map((event) =>
+      Buffer.from(event.dataBase64, "base64").toString("utf8"),
+    )
+    .join("");
+  if (
+    approvedRead.status !== "succeeded" ||
+    approvedOutput !== "approved session read"
+  ) {
+    throw new Error("Approved fs.read did not complete end to end");
+  }
+  await fetch(
+    new URL(`/v1/sessions/${claimedSession.sessionId}`, apiUrl),
+    {
+      method: "DELETE",
+      headers: {
+        authorization: `Bearer ${claimedSession.sessionToken}`,
+      },
+    },
+  );
+  await waitUntil(
+    async () => {
+      const response = await fetch(
+        new URL(
+          `/v1/agent-sessions/${claimedSession.sessionId}/timeline`,
+          apiUrl,
+        ),
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${cliToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ agentId: approvedAgentId }),
+        },
+      );
+      return response.json();
+    },
+    (value) =>
+      value.data?.some(
+        (event) => event.eventType === "operation.completed",
+      ) &&
+      value.data?.some((event) => event.eventType === "session.closed"),
+    "privacy-minimal Session Timeline",
+  );
+  const storedCredentialLeak = (
+    await compose([
+      "exec",
+      "-T",
+      "postgres",
+      "psql",
+      "-U",
+      "odyshell",
+      "-d",
+      "odyshell",
+      "-At",
+      "-c",
+      `select count(*) from odyshell.session_credentials where token_hash = '${claimedSession.sessionToken}';`,
+    ])
+  ).trim();
+  if (storedCredentialLeak !== "0") {
+    throw new Error("Session Credential was stored in plaintext");
+  }
 
   const crossWorkspacePing = await fetch(
     new URL(`/v1/machines/${machine.id}/ping`, apiUrl),
@@ -1344,6 +1665,15 @@ try {
           managedAgentCredentialRejected: true,
           overlongAgentCredentialRejected: true,
           sessionCredentialLifetimeBound: true,
+          approvedSessionRead: approvedOutput,
+          approvalReplayRejected: true,
+          crossWorkspaceApprovalDenied: true,
+          sessionClaimReplayRejected: true,
+          exactPathScopeDenied: true,
+          sessionCapabilityScopeDenied: true,
+          sessionCredentialCannotMintSessions: true,
+          sessionTimeline: true,
+          sessionCredentialHashed: true,
           workspaceAuditIsolation: true,
           ed25519Authentication: true,
           runtimeMetadata: `${machine.runtime.hostPlatform}/${machine.runtime.architecture}`,

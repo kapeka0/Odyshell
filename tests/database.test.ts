@@ -141,6 +141,49 @@ describe("server storage boundaries", () => {
     expect(legacyCreation).not.toContain('.insertInto("agentSessions")');
   });
 
+  it("stores approval and Session authority with workspace and replay boundaries", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const migration = database.slice(
+      database.indexOf("async function migrateApprovedReadSessions("),
+      database.indexOf("const migrationProvider"),
+    );
+    const requestCreation = database.slice(
+      database.indexOf("async createAgentSessionRequest("),
+      database.indexOf("async sessionRequestForApproval("),
+    );
+    const approval = database.slice(
+      database.indexOf("async approveAgentSessionRequest("),
+      database.indexOf("async claimAgentSessionRequest("),
+    );
+    const claim = database.slice(
+      database.indexOf("async claimAgentSessionRequest("),
+      database.indexOf("async findSessionCredentialPrincipal("),
+    );
+
+    expect(migration).toContain(
+      "unique (workspace_id, approval_code_hash)",
+    );
+    expect(migration).toContain(
+      "session_credentials_token_hash_global_idx",
+    );
+    expect(migration).toContain(
+      "check (capabilities = '[\"fs.read\"]'::jsonb)",
+    );
+    expect(requestCreation).toContain('.where("workspaceId", "=", input.workspaceId)');
+    expect(requestCreation).toContain('.where("createdByHumanId", "=", input.humanId)');
+    expect(approval).toContain(".forUpdate()");
+    expect(approval).toContain('.where("workspaceId", "=", input.workspaceId)');
+    expect(claim).toContain(".forUpdate()");
+    expect(claim).toContain(
+      "request.requestedByHumanId !== input.humanId",
+    );
+    expect(claim).toContain('.insertInto("sessionCredentials")');
+    expect(claim).not.toContain("sessionToken");
+  });
+
   it("creates canonical Sessions only for an active Agent in the same workspace", () => {
     const database = readFileSync(
       resolve(process.cwd(), "apps/server/src/database.ts"),
