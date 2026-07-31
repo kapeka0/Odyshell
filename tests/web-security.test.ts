@@ -36,6 +36,16 @@ import {
 } from "../apps/web/src/lib/session-approval.js";
 
 describe("web authentication boundaries", () => {
+  it("initializes Clerk for every authenticated approval and API route", () => {
+    const proxy = readFileSync(
+      resolve(process.cwd(), "apps/web/src/proxy.ts"),
+      "utf8",
+    );
+    expect(proxy).toContain('"/sessions/:path*"');
+    expect(proxy).toContain('"/policies/:path*"');
+    expect(proxy).toContain('"/api/:path*"');
+  });
+
   it("keeps documentation pages outside the Clerk UI boundary", () => {
     expect(isPublicDocumentationPath("/docs")).toBe(true);
     expect(isPublicDocumentationPath("/docs/quickstart")).toBe(true);
