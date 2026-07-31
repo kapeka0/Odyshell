@@ -165,6 +165,36 @@ export const relativePathSchema = z
     "Parent traversal is not allowed",
   );
 
+export function normalizeRelativePath(value: string): string {
+  const segments = value
+    .replaceAll("\\", "/")
+    .split("/")
+    .filter((segment) => segment !== "" && segment !== ".");
+  return segments.join("/") || ".";
+}
+
+const exactReadPathSchema = relativePathSchema
+  .transform(normalizeRelativePath)
+  .refine((value) => value !== ".", "A file path is required");
+
+export const agentSessionRequestInputSchema = z
+  .object({
+    agentId: z.string().uuid(),
+    agentName: z.string().trim().min(1).max(128),
+    purpose: z.string().trim().min(1).max(280),
+    machineId: z.string().uuid(),
+    path: exactReadPathSchema,
+    durationSeconds: z
+      .number()
+      .int()
+      .min(60)
+      .max(MAX_AGENT_SESSION_SECONDS),
+  })
+  .strict();
+export type AgentSessionRequestInput = z.infer<
+  typeof agentSessionRequestInputSchema
+>;
+
 export const operationEnvironmentSchema = z.record(
   z
     .string()

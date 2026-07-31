@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  agentSessionRequestInputSchema,
   agentIdentitySchema,
   agentSessionSchema,
   agentTokenRequestSchema,
   clientConfigSchema,
   humanIdentitySchema,
   operationRequestSchema,
+  normalizeRelativePath,
   organizationRequestSchema,
   sessionRequestSchema,
   workspaceRequestSchema,
@@ -188,6 +190,41 @@ describe("protocol validation", () => {
       agentSessionSchema.safeParse({
         ...session,
         sessionCredential: "ods_session_secret",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts only bounded exact-read Session requests with canonical paths", () => {
+    const request = {
+      agentId: "df64d093-b6f6-4d91-8132-38b8038ca7c5",
+      agentName: "Claude desktop",
+      purpose: "Read the application configuration",
+      machineId: "2dc24de7-ec0e-45b3-88c1-acbb900e51f8",
+      path: "config\\./app.json",
+      durationSeconds: 3_600,
+    };
+
+    const parsed = agentSessionRequestInputSchema.parse(request);
+    expect(parsed.path).toBe("config/app.json");
+    expect(normalizeRelativePath("config//./app.json")).toBe(
+      "config/app.json",
+    );
+    expect(
+      agentSessionRequestInputSchema.safeParse({
+        ...request,
+        path: "../secrets.txt",
+      }).success,
+    ).toBe(false);
+    expect(
+      agentSessionRequestInputSchema.safeParse({
+        ...request,
+        durationSeconds: 24 * 60 * 60 + 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      agentSessionRequestInputSchema.safeParse({
+        ...request,
+        capability: "fs.write",
       }).success,
     ).toBe(false);
   });
