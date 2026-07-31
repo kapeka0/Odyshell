@@ -54,6 +54,16 @@ describe("0.9 release contract", () => {
     }
   });
 
+  it("resolves the workspace protocol source before package build", () => {
+    const webTypescript = readFileSync(
+      resolve(process.cwd(), "apps/web/tsconfig.json"),
+      "utf8",
+    );
+    expect(webTypescript).toContain(
+      '"@odyshell/protocol": ["../../packages/protocol/src/index.ts"]',
+    );
+  });
+
   it("keeps CLI and MCP version labels aligned", () => {
     const cli = readFileSync(
       resolve(process.cwd(), "apps/cli/src/index.ts"),
