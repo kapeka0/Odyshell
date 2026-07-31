@@ -300,6 +300,15 @@ describe("server storage boundaries", () => {
       '.where("agentSessions.workspaceId", "=", workspaceId)',
     );
     expect(listing).toContain(
+      '"agentSessionRequests.requestedByHumanId"',
+    );
+    expect(listing).toContain(
+      '"agentSessionRequests.requestedByAgentId"',
+    );
+    expect(listing).toContain(
+      'expression("agentSessions.agentId", "=", requester.agentId!)',
+    );
+    expect(listing).toContain(
       '.where("agentSessionTargets.workspaceId", "=", workspaceId)',
     );
     expect(cancellation).toContain(

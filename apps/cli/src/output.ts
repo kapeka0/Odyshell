@@ -1,11 +1,11 @@
 import pc from "picocolors";
 import type {
   ListedAgent,
+  ListedAgentSession,
   AuditEvent,
   Machine,
   Operation,
   OperationEvent,
-  Session,
 } from "@odyshell/sdk";
 
 export function printJson(value: unknown): void {
@@ -39,16 +39,18 @@ export function printMachines(
   );
 }
 
-export function printSessions(sessions: Session[]): void {
+export function printSessions(sessions: ListedAgentSession[]): void {
   if (sessions.length === 0) {
     console.log(pc.dim("No sessions."));
     return;
   }
   printTable(
-    ["STATUS", "MACHINE", "SESSION", "EXPIRES"],
+    ["STATUS", "AGENT", "MACHINES", "PURPOSE", "SESSION", "EXPIRES"],
     sessions.map((session) => [
       colorStatus(session.status),
-      session.machineName ?? session.machineId,
+      session.agentName,
+      session.targets.map((target) => target.machineName).join(", ") || "none",
+      session.purpose,
       session.id,
       new Date(session.expiresAt).toLocaleString(),
     ]),

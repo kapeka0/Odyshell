@@ -148,6 +148,27 @@ describe("Odyshell SDK", () => {
     expect(requests[1]?.headers).not.toHaveProperty("authorization");
   });
 
+  it("lists canonical Agent Sessions without using the legacy runtime endpoint", async () => {
+    const requests: CapturedRequest[] = [];
+    const fetch = mockFetch(requests, () => ({ data: [] }));
+    const ods = new Odyshell({
+      serverUrl: "https://ods.example",
+      cliToken: "cli-secret",
+      fetch,
+    });
+
+    await ods.human().sessions();
+
+    expect(requests).toMatchObject([
+      {
+        path: "/v1/agent-sessions",
+        method: "GET",
+        headers: { authorization: "Bearer cli-secret" },
+      },
+    ]);
+    expect(requests[0]?.path).not.toBe("/v1/sessions");
+  });
+
   it("fails closed when the required credential is absent", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>();
     const ods = new Odyshell({

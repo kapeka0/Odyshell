@@ -2822,6 +2822,30 @@ app.post<{ Params: { sessionId: string } }>(
   },
 );
 
+app.get(
+  "/v1/agent-sessions",
+  { preHandler: requireSessionRequester },
+  async (request) => {
+    const principal = sessionRequesterFor(request);
+    const sessions = await db.listWorkspaceAgentSessions(
+      principal.workspaceId,
+      200,
+      {
+        humanId: principal.humanId,
+        ...(principal.agent ? { agentId: principal.agent.agentId } : {}),
+      },
+    );
+    return {
+      data: sessions.map((session) => ({
+        ...session,
+        expiresAt: isoTimestamp(session.expiresAt),
+        createdAt: isoTimestamp(session.createdAt),
+        updatedAt: isoTimestamp(session.updatedAt),
+      })),
+    };
+  },
+);
+
 app.get("/v1/sessions", { preHandler: requireAgent }, async (request, reply) => {
   const principal = principalFor(request);
   if (principal.kind !== "session" && principal.kind !== "development") {

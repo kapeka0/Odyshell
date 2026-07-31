@@ -1190,6 +1190,37 @@ try {
       `Session claim failed: ${claimResponse.status} ${JSON.stringify(claimedSession)}`,
     );
   }
+  const humanSessionListResponse = await fetch(
+    new URL("/v1/agent-sessions", apiUrl),
+    { headers: { authorization: `Bearer ${cliToken}` } },
+  );
+  const humanSessionList = await humanSessionListResponse.json();
+  if (
+    humanSessionListResponse.status !== 200 ||
+    !humanSessionList.data?.some(
+      (session) => session.id === claimedSession.sessionId,
+    )
+  ) {
+    throw new Error("The requesting human could not list its canonical Session");
+  }
+  const unrelatedAgentSessionListResponse = await fetch(
+    new URL("/v1/agent-sessions", apiUrl),
+    {
+      headers: {
+        authorization: `Bearer ${agentCredential.accessToken}`,
+      },
+    },
+  );
+  const unrelatedAgentSessionList =
+    await unrelatedAgentSessionListResponse.json();
+  if (
+    unrelatedAgentSessionListResponse.status !== 200 ||
+    unrelatedAgentSessionList.data?.some(
+      (session) => session.id === claimedSession.sessionId,
+    )
+  ) {
+    throw new Error("An unrelated Agent could observe another Agent's Session");
+  }
   const claimReplay = await fetch(
     new URL(
       `/v1/agent-session-requests/${requestedSession.id}/claim`,

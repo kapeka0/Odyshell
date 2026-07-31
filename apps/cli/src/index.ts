@@ -511,7 +511,7 @@ program
   .description("list recent sessions")
   .action(async (_options, command: Command) => {
     const options = globals(command);
-    const sessions = await (await apiFor(command)).sessions();
+    const sessions = await (await apiFor(command)).agentSessions();
     if (options.json) printJson({ data: sessions });
     else printSessions(sessions);
   });

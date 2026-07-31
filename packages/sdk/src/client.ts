@@ -273,6 +273,25 @@ export type ClaimedAgentSession = {
   expiresAt: string;
 };
 
+export type ListedAgentSession = {
+  id: string;
+  agentId: string;
+  agentName: string;
+  purpose: string;
+  status: "active" | "completed" | "cancelled" | "revoked" | "expired";
+  expiresAt: string;
+  predecessorSessionId?: string;
+  runId?: string;
+  scopes: SessionMachineScope[];
+  targets: Array<{
+    machineId: string;
+    machineName: string;
+    status: string;
+  }>;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type SessionTimelineEvent = {
   id: string;
   sessionId?: string;
@@ -322,8 +341,8 @@ export class HumanClient {
     return this.ods.machines();
   }
 
-  sessions(): Promise<Session[]> {
-    return this.ods.sessions();
+  sessions(): Promise<ListedAgentSession[]> {
+    return this.ods.agentSessions();
   }
 }
 
@@ -790,6 +809,13 @@ export class Odyshell {
         method: "POST",
         body: { agentId },
       },
+    );
+    return response.data;
+  }
+
+  async agentSessions(): Promise<ListedAgentSession[]> {
+    const response = await this.request<{ data: ListedAgentSession[] }>(
+      "/v1/agent-sessions",
     );
     return response.data;
   }

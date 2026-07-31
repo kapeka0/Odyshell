@@ -3449,8 +3449,9 @@ export class PostgresDatabase {
   async listWorkspaceAgentSessions(
     workspaceId: string,
     limit = 200,
+    requester?: { humanId: string; agentId?: string },
   ): Promise<WorkspaceAgentSessionRecord[]> {
-    const sessions = await this.db
+    let sessionsQuery = this.db
       .selectFrom("agentSessions")
       .innerJoin("agents", (join) =>
         join
@@ -3474,7 +3475,27 @@ export class PostgresDatabase {
         "agentSessionRequests.runId",
         "agentSessionRequests.scopes",
       ])
-      .where("agentSessions.workspaceId", "=", workspaceId)
+      .where("agentSessions.workspaceId", "=", workspaceId);
+    if (requester) {
+      sessionsQuery = sessionsQuery.where(
+        "agentSessionRequests.requestedByHumanId",
+        "=",
+        requester.humanId,
+      );
+    }
+    if (requester?.agentId) {
+      sessionsQuery = sessionsQuery.where((expression) =>
+        expression.or([
+          expression(
+            "agentSessionRequests.requestedByAgentId",
+            "=",
+            requester.agentId!,
+          ),
+          expression("agentSessions.agentId", "=", requester.agentId!),
+        ]),
+      );
+    }
+    const sessions = await sessionsQuery
       .orderBy("agentSessions.createdAt", "desc")
       .limit(Math.min(Math.max(limit, 1), 500))
       .execute();
