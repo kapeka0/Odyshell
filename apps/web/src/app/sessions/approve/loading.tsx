@@ -9,7 +9,7 @@ export default function SessionApproveLoading() {
     >
       <div className="space-y-5">
         <div className="space-y-3">
-          {Array.from({ length: 5 }, (_, index) => (
+          {Array.from({ length: 6 }, (_, index) => (
             <div
               className="grid grid-cols-[6rem_1fr] items-center gap-3"
               key={index}
@@ -21,7 +21,8 @@ export default function SessionApproveLoading() {
         </div>
         <Skeleton className="h-px w-full" />
         <Skeleton className="h-4 w-4/5" />
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2">
+          <Skeleton className="h-10 w-20 rounded-lg" />
           <Skeleton className="h-10 w-24 rounded-lg" />
         </div>
       </div>

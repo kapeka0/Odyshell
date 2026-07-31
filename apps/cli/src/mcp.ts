@@ -64,7 +64,7 @@ export function createApprovedOdyshellMcpServer(
         purpose: z.string().trim().min(1).max(512),
         durationSeconds: z.number().int().min(60).max(86_400).default(900),
       }),
-      annotations: readOnlyAnnotations,
+      annotations: requestAnnotations,
     },
     async (input) =>
       runTool(async () => {
@@ -87,7 +87,7 @@ export function createApprovedOdyshellMcpServer(
       description:
         "Check whether a request was approved. An approved credential is claimed once and kept private inside MCP.",
       inputSchema: z.object({ requestId: z.string().uuid() }),
-      annotations: readOnlyAnnotations,
+      annotations: claimAnnotations,
     },
     async ({ requestId }) =>
       runTool(async () => {
@@ -506,6 +506,20 @@ const readOnlyAnnotations = {
   readOnlyHint: true,
   destructiveHint: false,
   idempotentHint: true,
+  openWorldHint: false,
+} as const;
+
+const requestAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: false,
+} as const;
+
+const claimAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
   openWorldHint: false,
 } as const;
 

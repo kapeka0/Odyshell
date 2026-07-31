@@ -832,6 +832,11 @@ app.post(
     if (sessionRequest.expiresAt <= Date.now()) {
       return reply.code(410).send({ error: "session_request_expired" });
     }
+    if (sessionRequest.status !== "pending") {
+      return reply
+        .code(409)
+        .send({ error: "session_request_already_used" });
+    }
     return {
       id: sessionRequest.id,
       agent: { id: sessionRequest.agentId, name: sessionRequest.agentName },
@@ -1855,6 +1860,7 @@ app.post<{ Params: { sessionId: string } }>(
     if (idempotencyKey) {
       const existing = await db.findOperationByIdempotency(
         principal.workspaceId,
+        request.params.sessionId,
         principal.id,
         idempotencyKey,
       );
@@ -1901,6 +1907,7 @@ app.post<{ Params: { sessionId: string } }>(
     if (!created && idempotencyKey) {
       const existing = await db.findOperationByIdempotency(
         principal.workspaceId,
+        request.params.sessionId,
         principal.id,
         idempotencyKey,
       );

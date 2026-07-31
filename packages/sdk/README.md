@@ -44,6 +44,13 @@ const request = await ods.requestAgentSession({
 });
 
 // Show request.approvalUrl to the workspace member.
+let status = await ods.agentSessionRequestStatus(request.id, agentId);
+while (status.status === "pending") {
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
+  status = await ods.agentSessionRequestStatus(request.id, agentId);
+}
+if (status.status !== "approved") throw new Error(`Request ${status.status}`);
+
 const claim = await ods.claimAgentSession(request.id, agentId);
 const result = await ods.readApprovedSession(claim);
 ```

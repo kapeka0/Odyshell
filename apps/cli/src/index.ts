@@ -26,6 +26,7 @@ import { parseCapabilities } from "./capabilities.js";
 import { ExpectedError, printCliError } from "./errors.js";
 import {
   defaultConfigPath,
+  loggedOutConfig,
   loadStoredConfig,
   removeStoredConfig,
   resolveConfig,
@@ -324,10 +325,18 @@ program
         .then(() => true)
         .catch(() => false);
     }
-    await removeStoredConfig(configPath);
+    const retainedIdentity = loggedOutConfig(stored);
+    if (retainedIdentity) {
+      await saveStoredConfig(retainedIdentity, configPath);
+    } else {
+      await removeStoredConfig(configPath);
+    }
     if (options.json) printJson({ loggedOut: true, revoked, configPath });
     else {
-      console.log(`${pc.green("✓")} Removed ${configPath}`);
+      console.log(`${pc.green("✓")} Removed local credentials`);
+      if (retainedIdentity) {
+        console.log(pc.dim("  MCP Agent identity preserved"));
+      }
       if (stored?.cliToken && !revoked) {
         console.error(
           pc.yellow("  The Server could not revoke this CLI token. It will remain valid until expiry."),

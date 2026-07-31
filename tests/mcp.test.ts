@@ -42,6 +42,12 @@ describe("Odyshell MCP server", () => {
     expect(tools.map((tool) => tool.name).join(" ")).not.toMatch(
       /process|write|remove|shell|token/,
     );
+    expect(
+      tools.find((tool) => tool.name === "session_request")?.annotations,
+    ).toMatchObject({ readOnlyHint: false, idempotentHint: false });
+    expect(
+      tools.find((tool) => tool.name === "session_status")?.annotations,
+    ).toMatchObject({ readOnlyHint: false, idempotentHint: false });
   });
 
   it("claims an approved request without exposing the session credential", async () => {

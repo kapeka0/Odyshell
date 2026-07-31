@@ -61,13 +61,25 @@ export function SessionApprovalForm({
           }
         />
         <ApprovalRow
-          label="Expires"
+          label="Duration"
           value={formatDuration(approval.durationSeconds)}
+        />
+        <ApprovalRow
+          label="Approve by"
+          value={new Date(approval.expiresAt).toLocaleString()}
         />
       </dl>
       <Separator />
       <p className="text-sm text-muted-foreground">{approval.purpose}</p>
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          disabled={pending}
+          onClick={() => router.push("/dashboard")}
+        >
+          Cancel
+        </Button>
         <Button type="submit" disabled={pending || approval.status !== "pending"}>
           {pending ? "Approving…" : "Approve"}
         </Button>

@@ -78,6 +78,19 @@ export async function removeStoredConfig(path = defaultConfigPath()): Promise<vo
   await rm(path, { force: true });
 }
 
+export function loggedOutConfig(
+  stored: StoredConfig | undefined,
+): StoredConfig | undefined {
+  if (!stored?.mcpAgentId) return undefined;
+  return {
+    serverUrl: stored.serverUrl,
+    mcpAgentId: stored.mcpAgentId,
+    ...(stored.mcpAgentName
+      ? { mcpAgentName: stored.mcpAgentName }
+      : {}),
+  };
+}
+
 export function serverUrlFor(
   options: Pick<GlobalOptions, "server">,
   environment: NodeJS.ProcessEnv = process.env,

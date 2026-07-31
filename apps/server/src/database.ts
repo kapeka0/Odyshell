@@ -34,6 +34,7 @@ const ACTIVE_SESSION_STATUSES = ["opening", "ready"] as const;
 const CLOSABLE_SESSION_STATUSES = ["opening", "ready", "closing"] as const;
 const ACTIVE_OPERATION_STATUSES = ["queued", "delivered", "running"] as const;
 const RETAINED_SESSION_STATUSES = ["opening", "ready", "closing"] as const;
+const SESSION_CLAIM_WINDOW_MILLISECONDS = 5 * 60_000;
 
 type Json<T> = ColumnType<T, string, string>;
 
@@ -1414,6 +1415,51 @@ async function rollbackGlobalSessionCredentialHash(
   `.execute(db);
 }
 
+async function migrateSessionScopedIdempotency(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    alter table odyshell.operations
+    drop constraint if exists operations_principal_idempotency_unique
+  `.execute(db);
+  await sql`
+    alter table odyshell.operations
+    add constraint operations_session_principal_idempotency_unique
+    unique (session_id, principal_id, idempotency_key)
+  `.execute(db);
+}
+
+async function rollbackSessionScopedIdempotency(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    do $migration$
+    begin
+      if exists (
+        select 1
+        from odyshell.operations
+        where idempotency_key is not null
+        group by principal_id, idempotency_key
+        having count(*) > 1
+      )
+      then
+        raise exception
+          'Cannot restore global principal idempotency after cross-Session keys exist';
+      end if;
+    end
+    $migration$
+  `.execute(db);
+  await sql`
+    alter table odyshell.operations
+    drop constraint if exists operations_session_principal_idempotency_unique
+  `.execute(db);
+  await sql`
+    alter table odyshell.operations
+    add constraint operations_principal_idempotency_unique
+    unique (principal_id, idempotency_key)
+  `.execute(db);
+}
+
 const migrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
     return {
@@ -1443,6 +1489,10 @@ const migrationProvider: MigrationProvider = {
       "008_global_session_credential_hash": {
         up: migrateGlobalSessionCredentialHash,
         down: rollbackGlobalSessionCredentialHash,
+      },
+      "009_session_scoped_idempotency": {
+        up: migrateSessionScopedIdempotency,
+        down: rollbackSessionScopedIdempotency,
       },
     };
   },
@@ -2117,12 +2167,16 @@ export class PostgresDatabase {
       if (!approver) return { status: "invalid" };
 
       const approvedAt = new Date(input.now);
+      const claimExpiresAt = new Date(
+        input.now + SESSION_CLAIM_WINDOW_MILLISECONDS,
+      );
       const approved = await transaction
         .updateTable("agentSessionRequests")
         .set({
           status: "approved",
           approvedAt,
           approvedByHumanId: input.approverHumanId,
+          expiresAt: claimExpiresAt,
           updatedAt: approvedAt,
         })
         .where("workspaceId", "=", input.workspaceId)
@@ -3230,6 +3284,7 @@ export class PostgresDatabase {
 
   async findOperationByIdempotency(
     workspaceId: string,
+    sessionId: string,
     principalId: string,
     idempotencyKey: string,
   ): Promise<Pick<OperationRecord, "id" | "status"> | null> {
@@ -3238,6 +3293,7 @@ export class PostgresDatabase {
         .selectFrom("operations")
         .select(["id", "status"])
         .where("workspaceId", "=", workspaceId)
+        .where("sessionId", "=", sessionId)
         .where("principalId", "=", principalId)
         .where("idempotencyKey", "=", idempotencyKey)
         .executeTakeFirst()) ?? null
@@ -3275,7 +3331,7 @@ export class PostgresDatabase {
       })
       .onConflict((conflict) =>
         conflict
-          .columns(["principalId", "idempotencyKey"])
+          .columns(["sessionId", "principalId", "idempotencyKey"])
           .doNothing(),
       )
       .returning("id")

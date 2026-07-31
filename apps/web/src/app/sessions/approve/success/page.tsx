@@ -8,7 +8,7 @@ export default function SessionApprovalSuccessPage() {
     >
       <p className="text-sm text-muted-foreground">
         The credential is scoped, temporary and delivered only to the requesting
-        MCP process.
+        runtime.
       </p>
     </ActivationShell>
   );

@@ -170,18 +170,28 @@ describe("server storage boundaries", () => {
       "session_credentials_token_hash_global_idx",
     );
     expect(migration).toContain(
+      "operations_session_principal_idempotency_unique",
+    );
+    expect(migration).toContain(
       "check (capabilities = '[\"fs.read\"]'::jsonb)",
     );
     expect(requestCreation).toContain('.where("workspaceId", "=", input.workspaceId)');
     expect(requestCreation).toContain('.where("createdByHumanId", "=", input.humanId)');
     expect(approval).toContain(".forUpdate()");
     expect(approval).toContain('.where("workspaceId", "=", input.workspaceId)');
+    expect(approval).toContain("SESSION_CLAIM_WINDOW_MILLISECONDS");
     expect(claim).toContain(".forUpdate()");
     expect(claim).toContain(
       "request.requestedByHumanId !== input.humanId",
     );
     expect(claim).toContain('.insertInto("sessionCredentials")');
     expect(claim).not.toContain("sessionToken");
+
+    const idempotencyLookup = database.slice(
+      database.indexOf("async findOperationByIdempotency("),
+      database.indexOf("async sessionForOperation("),
+    );
+    expect(idempotencyLookup).toContain('.where("sessionId", "=", sessionId)');
   });
 
   it("creates canonical Sessions only for an active Agent in the same workspace", () => {

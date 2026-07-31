@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { deviceLoginUrl } from "../apps/cli/src/login.js";
+import { loggedOutConfig } from "../apps/cli/src/config.js";
 
 describe("CLI browser login", () => {
   it("embeds only the human device code in the activation URL", () => {
@@ -26,5 +27,28 @@ describe("CLI browser login", () => {
     expect(() =>
       deviceLoginUrl("javascript:alert(1)", "ABCD-EFGH"),
     ).toThrow(/HTTP or HTTPS/);
+  });
+
+  it("removes credentials without replacing the persistent MCP Agent", () => {
+    expect(
+      loggedOutConfig({
+        serverUrl: "https://server.example.com",
+        workspaceId: "workspace-id",
+        cliToken: "ods_cli_secret",
+        adminKey: "admin-secret",
+        mcpAgentId: "7cb62f97-c50e-4553-959d-19905359fe01",
+        mcpAgentName: "Codex",
+      }),
+    ).toEqual({
+      serverUrl: "https://server.example.com",
+      mcpAgentId: "7cb62f97-c50e-4553-959d-19905359fe01",
+      mcpAgentName: "Codex",
+    });
+    expect(
+      loggedOutConfig({
+        serverUrl: "https://server.example.com",
+        cliToken: "ods_cli_secret",
+      }),
+    ).toBeUndefined();
   });
 });
