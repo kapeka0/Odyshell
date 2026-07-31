@@ -65,4 +65,18 @@ describe("CLI npm package", () => {
     expect(up).toContain("constants.COPYFILE_EXCL");
     expect(up).not.toContain("instanceConfigPath");
   });
+
+  it("requests typed Sessions instead of accepting a repeated capability", () => {
+    const entry = readFileSync(resolve(cliRoot, "src/index.ts"), "utf8");
+    const temporaryFlow = entry.slice(
+      entry.indexOf("async function runInTemporarySession"),
+      entry.indexOf("program\n  .command(\"login\")"),
+    );
+
+    expect(temporaryFlow).toContain("requestOperationSession");
+    expect(temporaryFlow).toContain("claimedSession(claim).execute");
+    expect(temporaryFlow).not.toContain("createSession(");
+    expect(temporaryFlow).not.toContain("capability:");
+    expect(temporaryFlow).toContain("process_shell_unsupported");
+  });
 });

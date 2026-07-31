@@ -23,7 +23,7 @@ afterEach(async () => {
 });
 
 describe("Odyshell MCP server", () => {
-  it("publishes the approval-based read workflow for a signed-in CLI", async () => {
+  it("publishes the approval-based typed operation workflow", async () => {
     const ods = fakeApprovedOdyshell();
     const server = createApprovedOdyshellMcpServer(ods, {
       id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
@@ -37,11 +37,9 @@ describe("Odyshell MCP server", () => {
       "machines_list",
       "session_request",
       "session_status",
-      "filesystem_read",
+      "operation_execute",
     ]);
-    expect(tools.map((tool) => tool.name).join(" ")).not.toMatch(
-      /process|write|remove|shell|token/,
-    );
+    expect(JSON.stringify(tools)).not.toContain("sessionToken");
     expect(
       tools.find((tool) => tool.name === "session_request")?.annotations,
     ).toMatchObject({ readOnlyHint: false, idempotentHint: false });
@@ -71,11 +69,11 @@ describe("Odyshell MCP server", () => {
     expect(textOf(result)).not.toContain("ods_session_secret");
   });
 
-  it("keeps the credential inside MCP while reading the exact approved path", async () => {
-    const readApprovedSession = vi.fn(async () =>
+  it("keeps the credential inside MCP while executing the approved operation", async () => {
+    const execute = vi.fn(async () =>
       successfulOperation("safe content"),
     );
-    const ods = fakeApprovedOdyshell({ readApprovedSession });
+    const ods = fakeApprovedOdyshell({ execute });
     const server = createApprovedOdyshellMcpServer(ods, {
       id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
       name: "Codex",
@@ -87,29 +85,30 @@ describe("Odyshell MCP server", () => {
     });
 
     const result = await client.callTool({
-      name: "filesystem_read",
+      name: "operation_execute",
       arguments: {
         sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
         machine: "machine-id",
-        path: "config/app.json",
+        action: { kind: "fs.read", path: "config/app.json" },
       },
     });
 
     expect(result.isError).not.toBe(true);
-    expect(readApprovedSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionToken: "ods_session_secret",
-        scopes: expect.arrayContaining([
-          expect.objectContaining({ machineId: "machine-id" }),
-        ]),
-      }),
+    expect(execute).toHaveBeenCalledWith(
+      "machine-id",
+      { kind: "fs.read", path: "config/app.json" },
+      { timeoutSeconds: 120 },
     );
     expect(textOf(result)).not.toContain("ods_session_secret");
   });
 
-  it("rejects a different path before using an approved credential", async () => {
-    const readApprovedSession = vi.fn(async () => successfulOperation(""));
-    const ods = fakeApprovedOdyshell({ readApprovedSession });
+  it("rejects an operation outside the claimed scope without leaking it", async () => {
+    const execute = vi.fn(async () => {
+      throw new ApiError(403, "path_scope_denied", {
+        internalRestriction: "config/app.json",
+      });
+    });
+    const ods = fakeApprovedOdyshell({ execute });
     const server = createApprovedOdyshellMcpServer(ods, {
       id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
       name: "Codex",
@@ -121,16 +120,18 @@ describe("Odyshell MCP server", () => {
     });
 
     const result = await client.callTool({
-      name: "filesystem_read",
+      name: "operation_execute",
       arguments: {
         sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
         machine: "machine-id",
-        path: "secrets.env",
+        action: { kind: "fs.read", path: "secrets.env" },
       },
     });
 
     expect(result.isError).toBe(true);
-    expect(readApprovedSession).not.toHaveBeenCalled();
+    expect(textOf(result)).toContain("path_scope_denied");
+    expect(textOf(result)).not.toContain("internalRestriction");
+    expect(textOf(result)).not.toContain("config/app.json");
   });
 
   it("publishes agent operations without administrator controls", async () => {
@@ -359,9 +360,43 @@ function fakeOdyshell(
 
 function fakeApprovedOdyshell(
   overrides: {
-    readApprovedSession?: (claim: unknown) => Promise<OperationResult>;
+    execute?: (
+      machineId: string,
+      action: unknown,
+      options: unknown,
+    ) => Promise<OperationResult>;
   } = {},
 ): Odyshell {
+  const requestAgentSession = vi.fn(async () => ({
+    id: "7d8730ef-075c-40d5-a72d-8101abe17260",
+    status: "pending" as const,
+    approvalUrl: "https://odyshell.com/sessions/approve?code=SAFE",
+    expiresAt: "2026-07-29T18:10:00.000Z",
+    scopes: [],
+  }));
+  const status = vi.fn(async () => ({
+    id: "7d8730ef-075c-40d5-a72d-8101abe17260",
+    status: "approved" as const,
+    expiresAt: "2026-07-29T18:10:00.000Z",
+  }));
+  const claim = vi.fn(async () => ({
+    sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
+    sessionToken: "ods_session_secret",
+    scopes: [
+      {
+        machineId: "machine-id",
+        profile: "workspace",
+        capabilities: ["fs.read"],
+        restrictions: {
+          filesystem: {
+            paths: [{ path: "config/app.json", includeDescendants: false }],
+          },
+        },
+      },
+    ],
+    status: "opening" as const,
+    expiresAt: "2026-07-29T19:00:00.000Z",
+  }));
   return {
     machines: vi.fn(async () => []),
     resolveMachine: vi.fn(async () => ({
@@ -372,44 +407,16 @@ function fakeApprovedOdyshell(
       lastSeenAt: null,
       enrolledAt: "2026-07-29T18:00:00.000Z",
     })),
-    requestAgentSession: vi.fn(async () => ({
-      id: "7d8730ef-075c-40d5-a72d-8101abe17260",
-      status: "pending" as const,
-      approvalUrl: "https://odyshell.com/sessions/approve?code=SAFE",
-      expiresAt: "2026-07-29T18:10:00.000Z",
-      scopes: [],
+    agent: vi.fn(() => ({
+      requestOperationSession: requestAgentSession,
+      status,
+      claim,
     })),
-    agentSessionRequestStatus: vi.fn(async () => ({
-      id: "7d8730ef-075c-40d5-a72d-8101abe17260",
-      status: "approved" as const,
-      expiresAt: "2026-07-29T18:10:00.000Z",
+    claimedSession: vi.fn(() => ({
+      execute:
+        overrides.execute ??
+        vi.fn(async () => successfulOperation("safe content")),
     })),
-    claimAgentSession: vi.fn(async () => ({
-      sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
-      sessionToken: "ods_session_secret",
-      scopes: [
-        {
-          machineId: "machine-id",
-          profile: "workspace",
-          capabilities: ["fs.read"],
-          restrictions: {
-            filesystem: {
-              paths: [
-                {
-                  path: "config/app.json",
-                  includeDescendants: false,
-                },
-              ],
-            },
-          },
-        },
-      ],
-      status: "opening" as const,
-      expiresAt: "2026-07-29T19:00:00.000Z",
-    })),
-    readApprovedSession:
-      overrides.readApprovedSession ??
-      vi.fn(async () => successfulOperation("safe content")),
   } as unknown as Odyshell;
 }
 

@@ -5,7 +5,7 @@ import {
   type StdioServerHandle,
 } from "@modelcontextprotocol/server/stdio";
 import {
-  normalizeRelativePath,
+  operationActionSchema,
   operationEnvironmentSchema,
   relativePathSchema,
 } from "@odyshell/protocol";
@@ -37,7 +37,7 @@ export function createApprovedOdyshellMcpServer(
     { name: "odyshell", version: "0.2.0" },
     {
       instructions:
-        "Request explicit, temporary access before reading a private machine. Ask the user to open the approval URL, check session_status, then use filesystem_read. Credentials remain inside this MCP process.",
+        "Request an explicit temporary Session for one typed operation. Ask the user to approve the URL, check session_status, then call operation_execute. Session credentials remain inside this MCP process.",
     },
   );
 
@@ -55,42 +55,27 @@ export function createApprovedOdyshellMcpServer(
   server.registerTool(
     "session_request",
     {
-      title: "Request file access",
+      title: "Request operation access",
       description:
-        "Request temporary access to read one exact workspace-relative file. The user must approve the returned URL.",
+        "Request a temporary Session scoped to one typed operation. The user approves the returned URL unless a matching policy applies.",
       inputSchema: z.object({
         machine: machineSchema,
-        path: relativePathSchema,
+        action: operationActionSchema,
         purpose: z.string().trim().min(1).max(512),
         durationSeconds: z.number().int().min(60).max(86_400).default(900),
+        runId: z.string().trim().min(1).max(128).optional(),
       }),
       annotations: requestAnnotations,
     },
     async (input) =>
       runTool(async () => {
         const machine = await ods.resolveMachine(input.machine);
-        return ods.requestAgentSession({
-          agentId: identity.id,
-          agentName: identity.name,
+        return ods.agent(identity).requestOperationSession({
+          machineId: machine.id,
           purpose: input.purpose,
-          scopes: [
-            {
-              machineId: machine.id,
-              profile: "workspace",
-              capabilities: ["fs.read"],
-              restrictions: {
-                filesystem: {
-                  paths: [
-                    {
-                      path: normalizeRelativePath(input.path),
-                      includeDescendants: false,
-                    },
-                  ],
-                },
-              },
-            },
-          ],
+          action: input.action,
           durationSeconds: input.durationSeconds,
+          ...(input.runId ? { runId: input.runId } : {}),
         });
       }, reportUnexpectedError),
   );
@@ -112,12 +97,10 @@ export function createApprovedOdyshellMcpServer(
           : undefined;
         if (existingClaim) return safeClaim(existingClaim);
 
-        const status = await ods.agentSessionRequestStatus(
-          requestId,
-          identity.id,
-        );
+        const agent = ods.agent(identity);
+        const status = await agent.status(requestId);
         if (status.status === "approved") {
-          const claim = await ods.claimAgentSession(requestId, identity.id);
+          const claim = await agent.claim(requestId);
           claims.set(claim.sessionId, claim);
           requestSessions.set(requestId, claim.sessionId);
           return safeClaim(claim);
@@ -133,17 +116,24 @@ export function createApprovedOdyshellMcpServer(
   );
 
   server.registerTool(
-    "filesystem_read",
+    "operation_execute",
     {
-      title: "Read approved file",
+      title: "Execute approved operation",
       description:
-        "Read the exact file approved for a claimed temporary session.",
+        "Execute a typed process, filesystem or Docker operation inside a claimed Session.",
       inputSchema: z.object({
         sessionId: z.string().uuid(),
         machine: machineSchema,
-        path: relativePathSchema,
+        action: operationActionSchema,
+        timeoutSeconds: timeoutSchema,
       }),
-      annotations: readOnlyAnnotations,
+      annotations: {
+        title: "Execute approved operation",
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
     },
     async (input) =>
       runOperation(async () => {
@@ -154,33 +144,11 @@ export function createApprovedOdyshellMcpServer(
             "session_claim_unavailable",
           );
         }
-        const scope = claim.scopes.find(
-          (candidate) => candidate.machineId === input.machine,
+        return ods.claimedSession(claim).execute(
+          input.machine,
+          input.action,
+          { timeoutSeconds: input.timeoutSeconds },
         );
-        if (!scope) {
-          throw new ExpectedError(
-            "The machine is outside the approved session scope.",
-            "machine_scope_denied",
-          );
-        }
-        if (
-          !scope.restrictions.filesystem?.paths.some(
-            (restriction) =>
-              !restriction.includeDescendants &&
-              normalizeRelativePath(restriction.path) ===
-                normalizeRelativePath(input.path),
-          )
-        ) {
-          throw new ExpectedError(
-            "The path is outside the approved session scope.",
-            "path_scope_denied",
-          );
-        }
-        try {
-          return await ods.readApprovedSession(claim);
-        } finally {
-          claims.delete(input.sessionId);
-        }
       }, reportUnexpectedError),
   );
 
@@ -188,14 +156,13 @@ export function createApprovedOdyshellMcpServer(
 }
 
 function safeClaim(claim: ClaimedAgentSession): Record<string, unknown> {
-  const firstScope = claim.scopes[0];
-  const firstPath = firstScope?.restrictions.filesystem?.paths[0]?.path;
   return {
     status: "ready",
     sessionId: claim.sessionId,
-    scopes: claim.scopes,
-    ...(firstScope ? { machineId: firstScope.machineId } : {}),
-    ...(firstPath ? { path: firstPath } : {}),
+    machines: claim.scopes.map((scope) => ({
+      machineId: scope.machineId,
+      capabilities: scope.capabilities,
+    })),
     expiresAt: claim.expiresAt,
   };
 }

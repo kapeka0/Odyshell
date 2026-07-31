@@ -12,6 +12,116 @@ type CapturedRequest = {
 };
 
 describe("Odyshell SDK", () => {
+  it("executes through a claimed Session without sending broader credentials", async () => {
+    const requests: CapturedRequest[] = [];
+    const fetch = mockFetch(requests, (request) => {
+      if (request.path.endsWith("/operations")) {
+        return { id: "operation-id", status: "queued" };
+      }
+      if (request.path === "/v1/sessions/session-id") {
+        return {
+          id: "session-id",
+          machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
+          profile: "workspace",
+          capabilities: ["fs.read"],
+          status: "ready",
+          expiresAt: "2026-07-31T01:00:00.000Z",
+          createdAt: "2026-07-31T00:00:00.000Z",
+        };
+      }
+      return {
+        id: "operation-id",
+        sessionId: "session-id",
+        action: { kind: "fs.read", path: "config/app.json" },
+        status: "succeeded",
+        exitCode: 0,
+        outputTruncated: false,
+        events: [],
+        createdAt: "2026-07-31T00:00:00.000Z",
+        updatedAt: "2026-07-31T00:00:00.000Z",
+      };
+    });
+    const ods = new Odyshell({
+      serverUrl: "https://ods.example",
+      cliToken: "human-secret",
+      agentToken: "agent-secret",
+      fetch,
+    });
+    const session = ods.claimedSession({
+      sessionId: "session-id",
+      sessionToken: "session-secret",
+      scopes: [{
+        machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
+        profile: "workspace",
+        capabilities: ["fs.read"],
+        restrictions: {
+          filesystem: {
+            paths: [{ path: "config/app.json", includeDescendants: false }],
+          },
+        },
+      }],
+      status: "opening",
+      expiresAt: "2026-07-31T01:00:00.000Z",
+    });
+
+    await session.execute(
+      "7a354999-6a6c-42db-9467-e1416da255f1",
+      { kind: "fs.read", path: "config/app.json" },
+    );
+
+    expect(requests.find((request) => request.path.endsWith("/operations"))).toMatchObject({
+      path: "/v1/sessions/session-id/operations",
+      method: "POST",
+      headers: expect.objectContaining({ authorization: "Bearer session-secret" }),
+      body: expect.objectContaining({
+        machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
+        action: { kind: "fs.read", path: "config/app.json" },
+      }),
+    });
+    expect(JSON.stringify(requests)).not.toContain("human-secret");
+    expect(JSON.stringify(requests)).not.toContain("agent-secret");
+    expect(JSON.stringify(requests)).not.toContain("capabilities");
+  });
+
+  it("derives an exact scope when an Agent requests an operation Session", async () => {
+    const requests: CapturedRequest[] = [];
+    const fetch = mockFetch(requests, () => ({
+      id: "request-id",
+      status: "pending",
+      expiresAt: "2026-07-31T00:10:00.000Z",
+      scopes: [],
+    }));
+    const ods = new Odyshell({
+      serverUrl: "https://ods.example",
+      agentToken: "agent-secret",
+      fetch,
+    });
+
+    await ods.agent({
+      id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+      name: "Codex",
+    }).requestOperationSession({
+      machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
+      purpose: "Read configuration",
+      durationSeconds: 600,
+      action: { kind: "fs.read", path: "config/app.json" },
+    });
+
+    expect(requests[0]?.body).toMatchObject({
+      agentId: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+      agentName: "Codex",
+      scopes: [{
+        machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
+        capabilities: ["fs.read"],
+        restrictions: {
+          filesystem: {
+            paths: [{ path: "config/app.json", includeDescendants: false }],
+          },
+        },
+      }],
+    });
+  });
+
   it("keeps agent and administrator credentials on separate request surfaces", async () => {
     const requests: CapturedRequest[] = [];
     const fetch = mockFetch(requests, () => ({ data: [] }));

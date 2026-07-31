@@ -6,6 +6,10 @@ import type {
   OperationStatus,
   SessionMachineScope,
 } from "@odyshell/protocol";
+import {
+  operationSessionScope,
+  sessionScopeDecision,
+} from "@odyshell/protocol";
 import { ApiError, ExpectedError, ServerConnectionError } from "./errors.js";
 import { resolveMachineReference } from "./machines.js";
 
@@ -272,6 +276,137 @@ export type SessionTimelineEvent = {
   createdAt: string;
 };
 
+export type AgentIdentity = {
+  id: string;
+  name: string;
+};
+
+export type OperationSessionRequestInput = {
+  machineId: string;
+  purpose: string;
+  action: OperationAction;
+  durationSeconds: number;
+  profile?: string;
+  runId?: string;
+};
+
+export class HumanClient {
+  constructor(private readonly ods: Odyshell) {}
+
+  machines(): Promise<Machine[]> {
+    return this.ods.machines();
+  }
+
+  sessions(): Promise<Session[]> {
+    return this.ods.sessions();
+  }
+}
+
+export class AgentClient {
+  constructor(
+    private readonly ods: Odyshell,
+    readonly identity: AgentIdentity,
+  ) {}
+
+  requestSession(input: Omit<AgentSessionRequestInput, "agentId" | "agentName">) {
+    return this.ods.requestAgentSession({
+      ...input,
+      agentId: this.identity.id,
+      agentName: this.identity.name,
+    });
+  }
+
+  requestOperationSession(input: OperationSessionRequestInput) {
+    if (input.action.kind === "process.shell") {
+      throw new ExpectedError(
+        "process.shell cannot be safely scoped. Use process.exec with an explicit program and arguments.",
+        "process_shell_unsupported",
+      );
+    }
+    return this.requestSession({
+      purpose: input.purpose,
+      scopes: [
+        operationSessionScope(
+          input.machineId,
+          input.action,
+          input.profile ?? "workspace",
+        ),
+      ],
+      durationSeconds: input.durationSeconds,
+      ...(input.runId ? { runId: input.runId } : {}),
+    });
+  }
+
+  status(requestId: string) {
+    return this.ods.agentSessionRequestStatus(requestId, this.identity.id);
+  }
+
+  claim(requestId: string) {
+    return this.ods.claimAgentSession(requestId, this.identity.id);
+  }
+
+  cancel(sessionId: string) {
+    return this.ods.cancelAgentSession(sessionId, this.identity.id);
+  }
+
+  timeline(sessionId: string) {
+    return this.ods.sessionTimeline(sessionId, this.identity.id);
+  }
+}
+
+export class SessionClient {
+  private readonly scoped: Odyshell;
+
+  constructor(
+    serverUrl: string,
+    readonly claim: ClaimedAgentSession,
+    fetcher: typeof globalThis.fetch,
+  ) {
+    this.scoped = new Odyshell({
+      serverUrl,
+      agentToken: claim.sessionToken,
+      fetch: fetcher,
+    });
+  }
+
+  async execute(
+    machineId: string,
+    action: OperationAction,
+    options: Pick<
+      OperationOptions,
+      "timeoutSeconds" | "maxOutputBytes" | "onEvent"
+    > = {},
+  ): Promise<OperationResult> {
+    const scope = this.claim.scopes.find(
+      (candidate) => candidate.machineId === machineId,
+    );
+    if (!scope) {
+      throw new ExpectedError(
+        "The machine is outside this Session.",
+        "machine_scope_denied",
+      );
+    }
+    const decision = sessionScopeDecision(scope, machineId, action);
+    if (!decision.allowed) {
+      throw new ExpectedError(
+        "The operation is outside this Session.",
+        decision.code,
+      );
+    }
+    await this.scoped.waitForSession(this.claim.sessionId);
+    const operation = await this.scoped.createOperation(
+      this.claim.sessionId,
+      action,
+      options.timeoutSeconds ?? 120,
+      options.maxOutputBytes ?? 1024 * 1024,
+      machineId,
+    );
+    return decodeOperation(
+      await this.scoped.waitForOperation(operation.id, options.onEvent),
+    );
+  }
+}
+
 export class Odyshell {
   private readonly fetcher: typeof globalThis.fetch;
 
@@ -384,6 +519,30 @@ export class Odyshell {
 
   get serverUrl(): string {
     return this.config.serverUrl;
+  }
+
+  human(): HumanClient {
+    if (!this.config.cliToken && !this.config.adminKey) {
+      throw new ExpectedError(
+        "Human context requires a signed-in CLI credential.",
+        "human_credentials_missing",
+      );
+    }
+    return new HumanClient(this);
+  }
+
+  agent(identity: AgentIdentity): AgentClient {
+    if (!this.config.agentToken && !this.config.cliToken) {
+      throw new ExpectedError(
+        "Agent context requires an Agent Credential or signed-in CLI credential.",
+        "agent_credentials_missing",
+      );
+    }
+    return new AgentClient(this, identity);
+  }
+
+  claimedSession(claim: ClaimedAgentSession): SessionClient {
+    return new SessionClient(this.config.serverUrl, claim, this.fetcher);
   }
 
   async health(): Promise<{ status: string; protocol: number }> {
@@ -639,11 +798,6 @@ export class Odyshell {
     claim: ClaimedAgentSession,
     options: Pick<OperationOptions, "timeoutSeconds" | "maxOutputBytes" | "onEvent"> = {},
   ): Promise<OperationResult> {
-    const scoped = new Odyshell({
-      serverUrl: this.config.serverUrl,
-      agentToken: claim.sessionToken,
-      fetch: this.fetcher,
-    });
     const approvedScope = claim.scopes.find(
       (scope) =>
         scope.capabilities.includes("fs.read") &&
@@ -656,20 +810,19 @@ export class Odyshell {
         "path_scope_denied",
       );
     }
-    const session = await scoped.waitForSession(claim.sessionId);
     try {
-      const operation = await scoped.createOperation(
-        session.id,
-        { kind: "fs.read", path: approvedPath.path },
-        options.timeoutSeconds ?? 120,
-        options.maxOutputBytes ?? 1024 * 1024,
+      return await this.claimedSession(claim).execute(
         approvedScope.machineId,
-      );
-      return decodeOperation(
-        await scoped.waitForOperation(operation.id, options.onEvent),
+        { kind: "fs.read", path: approvedPath.path },
+        options,
       );
     } finally {
-      await scoped.closeSession(session.id).catch(() => undefined);
+      const scoped = new Odyshell({
+        serverUrl: this.config.serverUrl,
+        agentToken: claim.sessionToken,
+        fetch: this.fetcher,
+      });
+      await scoped.closeSession(claim.sessionId).catch(() => undefined);
     }
   }
 

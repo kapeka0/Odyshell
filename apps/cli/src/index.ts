@@ -7,7 +7,6 @@ import { Command } from "commander";
 import open from "open";
 import pc from "picocolors";
 import {
-  type Capability,
   type OperationAction,
 } from "@odyshell/protocol";
 import {
@@ -21,7 +20,13 @@ import {
   runClient,
   stopLinuxUserService,
 } from "@odyshell/client";
-import { ApiError, Odyshell, OdyshellApi, type Operation } from "@odyshell/sdk";
+import {
+  ApiError,
+  Odyshell,
+  OdyshellApi,
+  type Operation,
+  type OperationResult,
+} from "@odyshell/sdk";
 import { parseDuration } from "./duration.js";
 import { parseCapabilities } from "./capabilities.js";
 import { ExpectedError, printCliError } from "./errors.js";
@@ -174,22 +179,83 @@ async function finishOperation(
 async function runInTemporarySession(
   command: Command,
   machineReference: string,
-  capability: Capability,
   action: OperationAction,
   ttlSeconds: number,
   timeoutSeconds: number,
 ): Promise<void> {
   const options = globals(command);
-  const api = await apiFor(command);
-  const machine = await api.resolveMachine(machineReference);
-  const created = await api.createSession(machine.id, [capability], ttlSeconds);
-  const session = await api.waitForSession(created.id);
-  try {
-    const operation = await api.createOperation(session.id, action, timeoutSeconds);
-    await finishOperation(api, operation.id, options.json ?? false);
-  } finally {
-    await api.closeSession(session.id).catch(() => {});
+  if (action.kind === "process.shell") {
+    throw new ExpectedError(
+      'The "ods shell" flow is deprecated because free-form shell text cannot be safely scoped. Use "ods exec <machine> <program> [args...]" instead.',
+      "process_shell_unsupported",
+    );
   }
+  const configPath = options.configFile
+    ? resolve(options.configFile)
+    : defaultConfigPath();
+  const config = await resolveConfig(options);
+  const api = new OdyshellApi(config);
+  const machine = await api.resolveMachine(machineReference);
+  const identity = {
+    id: config.mcpAgentId ?? randomUUID(),
+    name: config.mcpAgentName ?? "Odyshell CLI",
+  };
+  if ((!config.mcpAgentId || !config.mcpAgentName) && config.cliToken) {
+    await saveStoredConfig(
+      { ...config, mcpAgentId: identity.id, mcpAgentName: identity.name },
+      configPath,
+    );
+  }
+  if ((!config.mcpAgentId || !config.mcpAgentName) && !config.cliToken) {
+    throw new ExpectedError(
+      'Register this Agent with "ods agent login" before requesting a Session.',
+      "agent_identity_required",
+    );
+  }
+  const agent = api.agent(identity);
+  const request = await agent.requestOperationSession({
+    machineId: machine.id,
+    purpose: `Run ${action.kind} on ${machine.name}`,
+    action,
+    durationSeconds: ttlSeconds,
+  });
+  if (request.status === "pending" && request.approvalUrl) {
+    console.error("Approve this Session:");
+    console.error(`  ${request.approvalUrl}`);
+  }
+  let requestStatus = await agent.status(request.id);
+  while (requestStatus.status === "pending") {
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_000));
+    requestStatus = await agent.status(request.id);
+  }
+  if (requestStatus.status !== "approved") {
+    throw new ExpectedError(
+      `Session request ${requestStatus.status}.`,
+      `session_request_${requestStatus.status}`,
+    );
+  }
+  const claim = await agent.claim(request.id);
+  try {
+    const result = await api.claimedSession(claim).execute(
+      machine.id,
+      action,
+      {
+        timeoutSeconds,
+        ...(options.json ? {} : { onEvent: streamEvent }),
+      },
+    );
+    finishOperationResult(result, options.json ?? false);
+  } finally {
+    await agent.cancel(claim.sessionId).catch(() => undefined);
+  }
+}
+
+function finishOperationResult(result: OperationResult, json: boolean): void {
+  if (json) printJson(operationJson(result.operation));
+  else if (result.operation.error) {
+    console.error(pc.red(`\n${result.operation.error}`));
+  }
+  if (result.operation.status !== "succeeded") process.exitCode = 1;
 }
 
 program
@@ -780,7 +846,6 @@ program
       runInTemporarySession(
         command,
         machine,
-        "process.exec",
         { kind: "process.exec", program: executable, args, cwd: ".", env: {} },
         Number(options.ttl),
         Number(options.timeout),
@@ -803,7 +868,6 @@ program
       runInTemporarySession(
         command,
         machine,
-        "process.shell",
         { kind: "process.shell", command: commandParts.join(" "), cwd: ".", env: {} },
         Number(options.ttl),
         Number(options.timeout),
@@ -818,7 +882,6 @@ fsCommand
     runInTemporarySession(
       command,
       machine,
-      "fs.stat",
       { kind: "fs.stat", path },
       300,
       120,
@@ -832,7 +895,6 @@ fsCommand
     runInTemporarySession(
       command,
       machine,
-      "fs.read",
       { kind: "fs.read", path },
       300,
       120,
@@ -846,7 +908,6 @@ fsCommand
     runInTemporarySession(
       command,
       machine,
-      "fs.list",
       { kind: "fs.list", path: path ?? "." },
       300,
       120,
@@ -868,7 +929,6 @@ fsCommand
       runInTemporarySession(
         command,
         machine,
-        "fs.search",
         {
           kind: "fs.search",
           path: path ?? ".",
@@ -909,7 +969,6 @@ fsCommand
       await runInTemporarySession(
         command,
         machine,
-        "fs.write",
         {
           kind: "fs.write",
           path,
@@ -936,7 +995,6 @@ fsCommand
       runInTemporarySession(
         command,
         machine,
-        "fs.mkdir",
         { kind: "fs.mkdir", path, recursive: options.recursive },
         300,
         120,
@@ -957,7 +1015,6 @@ fsCommand
       runInTemporarySession(
         command,
         machine,
-        "fs.remove",
         { kind: "fs.remove", path, recursive: options.recursive ?? false },
         300,
         120,
@@ -980,7 +1037,6 @@ dockerCommand
       runInTemporarySession(
         command,
         machine,
-        "docker.logs",
         {
           kind: "docker.logs",
           container,

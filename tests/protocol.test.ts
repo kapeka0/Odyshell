@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { Capability } from "../packages/protocol/src/index.js";
+import type {
+  Capability,
+  OperationAction,
+} from "../packages/protocol/src/index.js";
 import {
   agentSessionRequestInputSchema,
   agentIdentitySchema,
@@ -9,6 +12,7 @@ import {
   humanIdentitySchema,
   operationRequestSchema,
   normalizeRelativePath,
+  operationSessionScope,
   sessionScopeSubsetDecision,
   organizationRequestSchema,
   sessionRequestSchema,
@@ -16,6 +20,42 @@ import {
 } from "../packages/protocol/src/index.js";
 
 describe("protocol validation", () => {
+  it.each([
+    [
+      { kind: "process.exec", program: "git", args: ["status"], cwd: ".", env: {} },
+      "process.exec",
+      "process",
+    ],
+    [{ kind: "fs.read", path: "config/app.json" }, "fs.read", "filesystem"],
+    [
+      { kind: "docker.logs", container: "api", tail: 20, timestamps: false },
+      "docker.logs",
+      "docker",
+    ],
+  ] satisfies Array<[OperationAction, string, string]>)(
+    "derives the minimum Session scope for an operation",
+    (action, capability, restriction) => {
+      const scope = operationSessionScope(
+        "7a354999-6a6c-42db-9467-e1416da255f1",
+        action,
+      );
+
+      expect(scope.capabilities).toEqual([capability]);
+      expect(scope.restrictions).toHaveProperty(restriction);
+    },
+  );
+
+  it("refuses to translate unrestricted shell text into a restricted Session", () => {
+    expect(() =>
+      operationSessionScope("7a354999-6a6c-42db-9467-e1416da255f1", {
+        kind: "process.shell",
+        command: "git status",
+        cwd: ".",
+        env: {},
+      }),
+    ).toThrowError(/process\.exec/);
+  });
+
   it("rejects absolute and parent-traversing filesystem paths at the workspace boundary", () => {
     expect(
       operationRequestSchema.safeParse({ action: { kind: "fs.read", path: "/etc/passwd" } }).success,

@@ -14,23 +14,31 @@ const ods = new Odyshell({
   agentToken: process.env.ODYSHELL_AGENT_TOKEN!,
 });
 
-const result = await ods.process.exec({
-  machine: "rpi5",
-  program: "git",
-  args: ["status", "--short"],
+const agent = ods.agent({ id: agentId, name: "Dependency auditor" })
+const request = await agent.requestOperationSession({
+  machineId,
+  purpose: "Inspect repository state",
+  durationSeconds: 900,
+  action: {
+    kind: "process.exec",
+    program: "git",
+    args: ["status", "--short"],
+    cwd: ".",
+    env: {},
+  },
 });
-
-console.log(result.stdout);
 ```
 
-The SDK resolves a machine, opens a temporary session, submits the operation, follows its result
-events, and closes the session.
+After approval, call `agent.claim(request.id)` once. Pass the result to
+`ods.claimedSession(claim).execute(machineId, action)`. Human, Agent and Session clients expose
+different authority; an Agent Credential cannot execute an Operation.
 
 Use environment variables or a secret manager for credentials. Never put an agent credential in
 source code, logs, or generated documentation.
 
-The SDK also exposes typed filesystem and Docker log methods. Authorization remains enforced by
-the Server and the target Client; TypeScript types are not a security boundary.
+The shared operation contract covers typed process, filesystem and Docker log work. The operation
+determines its capability and minimum restriction automatically. Authorization remains enforced by
+the Server and target Client; TypeScript types are not a security boundary.
 
 An Independent Agent can create Managed Agent identities after an administrator approves its
 Delegation Policy:

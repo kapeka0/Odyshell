@@ -36,23 +36,21 @@ Then add:
 The MCP process uses the existing local `ods` configuration. Its identity is saved locally. A
 claimed Session Credential stays in MCP memory and is never returned in a tool result.
 
-## Read a file
+## Request an operation
 
 The approval-based workflow exposes four tools:
 
 1. `machines_list` finds the target machine.
-2. `session_request` requests `fs.read` for one exact path and returns an approval URL.
+2. `session_request` accepts one typed operation and returns an approval URL.
 3. `session_status` checks the decision and privately claims the credential once.
-4. `filesystem_read` reads only the approved path and closes the Session.
+4. `operation_execute` executes only that operation with the claimed Session.
 
-The approval page shows the Agent, machine, capability, path, purpose and duration. Approval codes
-expire, are single-use and are bound to the workspace that created them.
+The operation determines the capability and restriction automatically. Filesystem operations use
+an exact path, `process.exec` uses an exact executable and arguments, and `docker.logs` uses an
+exact container. Approval codes expire, are single-use and are bound to their Workspace.
 
 The Server validates Session identity, machine, capability, path and expiry on every Operation.
 The Client applies its local policy independently.
 
-## Pre-scoped credentials
-
-When `ods` is configured with an Agent Access token instead of `ods login`, MCP keeps the
-pre-scoped operation tools for compatibility. Use the approval workflow when a human should
-authorize each task.
+`process.shell` is not available through restricted Sessions. Agents should request
+`process.exec` with an explicit executable and argument array.

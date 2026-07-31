@@ -645,6 +645,72 @@ export function capabilityForAction(action: OperationAction): Capability {
   return action.kind;
 }
 
+/**
+ * Builds the narrowest Agent Session scope capable of executing one typed
+ * operation. Free-form shell text is intentionally not translatable because
+ * it cannot be bounded with structured program restrictions.
+ */
+export function operationSessionScope(
+  machineId: string,
+  action: OperationAction,
+  profile = "workspace",
+): SessionMachineScope {
+  const capability = capabilityForAction(action);
+  switch (action.kind) {
+    case "process.exec":
+      return {
+        machineId,
+        profile,
+        capabilities: [capability],
+        restrictions: {
+          process: {
+            programs: [{
+              program: action.program,
+              args: action.args,
+              cwd: {
+                path: normalizeRelativePath(action.cwd),
+                includeDescendants: false,
+              },
+            }],
+          },
+        },
+      };
+    case "process.shell":
+      throw new Error(
+        "process.shell cannot be scoped safely; use process.exec with an explicit program and arguments",
+      );
+    case "fs.stat":
+    case "fs.list":
+    case "fs.search":
+    case "fs.read":
+    case "fs.write":
+    case "fs.mkdir":
+    case "fs.remove":
+      return {
+        machineId,
+        profile,
+        capabilities: [capability],
+        restrictions: {
+          filesystem: {
+            paths: [{
+              path: normalizeRelativePath(action.path),
+              includeDescendants: false,
+            }],
+          },
+        },
+      };
+    case "docker.logs":
+      return {
+        machineId,
+        profile,
+        capabilities: [capability],
+        restrictions: {
+          docker: { containers: [action.container] },
+        },
+      };
+  }
+}
+
 export function parseClientMessage(raw: string): ClientToServerMessage {
   return JSON.parse(raw) as ClientToServerMessage;
 }

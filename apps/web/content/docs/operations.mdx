@@ -39,14 +39,10 @@ Prefer structured execution:
 ods exec my-machine -- git status --short
 ```
 
-Shell execution is a separate, more powerful capability:
-
-```bash
-ods shell my-machine "git status --short && id"
-```
-
-Both run with the permissions of the operating-system user running the Client. Odyshell controls
-who may request an operation; it cannot make an allowed command harmless.
+Free-form shell execution cannot be represented by a restricted Agent Session. `ods shell` is
+deprecated; split work into explicit `ods exec` calls. Operations run with the permissions of the
+operating-system user running the Client. Odyshell controls who may request an operation; it cannot
+make an allowed program harmless.
 
 ## Docker
 

@@ -7,7 +7,7 @@
 <p align="center"><strong>The agent-facing command line for Odyshell.</strong></p>
 
 The `ods` CLI gives agents a programmatic interface to Odyshell and lets workspace members connect
-machines. People, plans, machine inventory, and Agent Access are managed in the web app.
+machines. People, plans, machine inventory, and approvals are managed in the web app.
 
 ## Install
 
@@ -57,7 +57,8 @@ ods --json exec raspberry -- uname -a
 
 - `ods up`, `ods status`, and `ods down` manage the outbound Client.
 - `ods ping` checks end-to-end access without running a command.
-- `ods exec`, `ods shell`, `ods fs`, and `ods docker` perform typed operations.
+- `ods exec`, `ods fs`, and `ods docker` request a narrowly scoped Session and perform one typed
+  operation.
 - `ods session` manages longer-lived temporary sessions.
 - `ods client` configures the client running on a private machine.
 - `ods audit` shows actions visible to the current agent.
@@ -84,13 +85,16 @@ Run `ods login`, then configure your agent to launch Odyshell:
 }
 ```
 
-The default signed-in flow exposes machine discovery, Session request/status and exact file reads.
+The signed-in flow exposes machine discovery, Session request/status and typed operation execution.
 The agent receives an approval URL; after a member approves it, MCP claims the Session Credential
 once and keeps it out of model-visible tool results.
 
-A Session is bound to one machine, `fs.read`, one exact path and an expiry. The MCP process cannot
-enroll or revoke machines, create broader authority, expose the credential, or use administrator
-controls. Agent Access tokens retain the existing pre-scoped tools for compatibility.
+A request is derived from the operation: an exact path for filesystem work, an exact executable and
+arguments for `process.exec`, or an exact container for `docker.logs`. The MCP process cannot enroll
+or revoke machines, create broader authority, expose credentials, or use administrator controls.
+
+`ods shell` is deprecated for restricted Sessions. Use `ods exec` with an explicit program and
+argument list.
 
 For monorepo development, build and install the local CLI with:
 

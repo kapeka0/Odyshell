@@ -6,10 +6,8 @@
 
 <p align="center"><strong>Give TypeScript agents temporary, scoped access to private machines.</strong></p>
 
-`@odyshell/sdk` is the programmatic interface to Odyshell. An agent uses its short-lived token to
-find an allowed machine and request a typed operation. Odyshell opens a temporary session, sends
-the operation through the machine's outbound connection, records it for audit, and closes the
-session.
+`@odyshell/sdk` is the programmatic interface to Odyshell. An Agent Credential identifies the
+Agent and requests temporary Sessions; only the claimed Session Credential can execute.
 
 ```ts
 import { Odyshell } from "@odyshell/sdk";
@@ -19,13 +17,19 @@ const ods = new Odyshell({
   agentToken: process.env.ODYSHELL_AGENT_TOKEN!,
 });
 
-const result = await ods.process.exec({
-  machine: "rpi5",
-  program: "git",
-  args: ["status", "--short"],
+const agent = ods.agent({ id: agentId, name: "Dependency auditor" });
+const request = await agent.requestOperationSession({
+  machineId,
+  purpose: "Inspect repository state",
+  durationSeconds: 900,
+  action: {
+    kind: "process.exec",
+    program: "git",
+    args: ["status", "--short"],
+    cwd: ".",
+    env: {},
+  },
 });
-
-console.log(result.stdout);
 ```
 
 Headless orchestrators can register once through device authorization:
@@ -45,28 +49,25 @@ bounded ten-minute overlap.
 The SDK supports typed process, filesystem, and Docker log operations. Permissions are still
 enforced by the Server, the agent token, and the Client on the target machine.
 
-Trusted orchestrators can also use the approval flow:
+After approval, claim once and execute with the Session client:
 
 ```ts
-const request = await ods.requestAgentSession({
-  agentId,
-  agentName: "Dependency auditor",
-  purpose: "Inspect the application version",
-  machineId,
-  path: "package.json",
-  durationSeconds: 900,
-});
-
 // Show request.approvalUrl to the workspace member.
-let status = await ods.agentSessionRequestStatus(request.id, agentId);
+let status = await agent.status(request.id);
 while (status.status === "pending") {
   await new Promise((resolve) => setTimeout(resolve, 1_000));
-  status = await ods.agentSessionRequestStatus(request.id, agentId);
+  status = await agent.status(request.id);
 }
 if (status.status !== "approved") throw new Error(`Request ${status.status}`);
 
-const claim = await ods.claimAgentSession(request.id, agentId);
-const result = await ods.readApprovedSession(claim);
+const claim = await agent.claim(request.id);
+const result = await ods.claimedSession(claim).execute(machineId, {
+  kind: "process.exec",
+  program: "git",
+  args: ["status", "--short"],
+  cwd: ".",
+  env: {},
+});
 ```
 
 An unattended Agent can propose a bounded autoapproval policy:
@@ -127,8 +128,8 @@ const renewal = await ods.renewAgentSession(claim.sessionId, agentId, {
 });
 ```
 
-Use `process.exec` when possible. `process.shell` is available for commands that genuinely need a
-shell and should receive a separate, explicit capability.
+Restricted Sessions do not accept `process.shell`. Use `process.exec` with an explicit executable
+and arguments.
 
 Administrative SDK calls can select an execution Workspace:
 

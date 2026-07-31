@@ -22,7 +22,6 @@ ods status
 ods machines
 ods ping my-machine
 ods exec my-machine -- uname -a
-ods shell my-machine "pwd && id"
 ods fs list my-machine .
 ods fs read my-machine README.md
 ods docker logs my-machine api --tail 100
@@ -43,16 +42,18 @@ is `default`; `--profile` and `--config` cannot be combined.
 
 ## Sessions
 
-High-level operation commands create disposable sessions automatically. For a longer bounded
-workflow, use `ods session create`, `ods session inspect`, `ods session exec`, and
-`ods session close`.
+High-level operation commands request a Session derived from the exact operation. If no matching
+policy exists, the CLI prints an approval URL and waits. The Session Credential is claimed once,
+used for the operation and revoked when the command finishes.
+
+`ods shell` is deprecated because unrestricted shell text cannot be translated into a narrow
+Session. Use `ods exec <machine> <program> [args...]`.
 
 ## Agent integrations
 
 `ods mcp` starts the local MCP server over stdio. After `ods login`, it creates one persistent
-local Agent identity. That Agent requests temporary Sessions; the user approves the exact machine,
-file and duration in the browser.
+local Agent identity. That Agent requests temporary Sessions; the user approves the machine,
+typed operation and duration in the browser.
 
-The approval-based MCP exposes only machine discovery, Session request/status and exact
-`filesystem_read`. It cannot enroll machines, manage people, expose credentials, or use
-administrator commands.
+The MCP exposes machine discovery, Session request/status and `operation_execute`. It cannot enroll
+machines, manage people, expose credentials, or use administrator commands.
