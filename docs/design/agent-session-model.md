@@ -4,8 +4,8 @@
 > implemented for filesystem, structured process execution, and Docker logs. The signed-in MCP
 > convenience flow currently requests one exact `fs.read`.
 >
-> Headless Agent Credentials, renewal, typed multi-machine scopes, and strict Session termination
-> are implemented. Policy automation and delegation remain target design.
+> Headless Agent Credentials, renewal, typed multi-machine scopes, strict Session termination, and
+> versioned autoapproval policies are implemented. Delegation remains target design.
 
 ## Goal
 

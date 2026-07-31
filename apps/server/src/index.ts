@@ -97,6 +97,23 @@ const exchangeAgentDeviceAuthorizationSchema = z
 const cloudAgentDeviceSchema = cloudIdentitySchema
   .extend({ userCode: z.string().min(8).max(32) })
   .strict();
+const agentPolicyProposalSchema = z
+  .object({
+    scopes: agentSessionRequestInputSchema.shape.scopes,
+    maxSessionSeconds: z.number().int().min(60).max(24 * 60 * 60),
+    validForSeconds: z
+      .number()
+      .int()
+      .refine(
+        (value) =>
+          [1, 7, 30, 90, 365].map((days) => days * 24 * 60 * 60).includes(value),
+        "Policy validity must be 1, 7, 30, 90, or 365 days",
+      ),
+  })
+  .strict();
+const cloudAgentPolicySchema = cloudIdentitySchema
+  .extend({ approvalCode: z.string().min(32).max(256) })
+  .strict();
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
 await app.register(websocket, { options: { maxPayload: 2 * 1024 * 1024 } });
@@ -735,6 +752,118 @@ app.post(
   },
 );
 
+app.post(
+  "/v1/agent-policies",
+  { preHandler: requireSessionRequester },
+  async (request, reply) => {
+    const principal = requestAgentCredentialPrincipals.get(request);
+    if (!principal) {
+      return reply.code(403).send({ error: "agent_credential_required" });
+    }
+    if (!webUrl) {
+      return reply.code(503).send({ error: "policy_approval_unavailable" });
+    }
+    const parsed = agentPolicyProposalSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply
+        .code(400)
+        .send({ error: "invalid_request", details: parsed.error.issues });
+    }
+    const approvalCode = createOpaqueToken("policy");
+    const policy = await db.proposeAgentPolicy({
+      workspaceId: principal.workspaceId,
+      id: randomUUID(),
+      agentId: principal.agentId,
+      humanId: principal.ownerHumanId,
+      scopes: parsed.data.scopes,
+      maxSessionSeconds: parsed.data.maxSessionSeconds,
+      expiresAt: Date.now() + parsed.data.validForSeconds * 1_000,
+      approvalCodeHash: hashToken(approvalCode),
+    });
+    if (!policy) {
+      return reply.code(403).send({ error: "policy_scope_denied" });
+    }
+    await audit(
+      db,
+      principal.workspaceId,
+      principal.agentId,
+      "agent_policy.proposed",
+      "agent_policy",
+      policy.id,
+      {
+        version: policy.version,
+        machineIds: policy.scopes.map((scope) => scope.machineId),
+        capabilities: policy.scopes.map((scope) => scope.capabilities),
+        maxSessionSeconds: policy.maxSessionSeconds,
+        expiresAt: isoTimestamp(policy.expiresAt),
+      },
+    );
+    gateway.notifyWorkspace(principal.workspaceId);
+    return reply.code(201).send({
+      ...policy,
+      expiresAt: isoTimestamp(policy.expiresAt),
+      approvalUrl: `${webUrl}/policies/approve?code=${encodeURIComponent(approvalCode)}`,
+    });
+  },
+);
+
+app.get(
+  "/v1/agent-policies",
+  { preHandler: requireSessionRequester },
+  async (request, reply) => {
+    const principal = requestAgentCredentialPrincipals.get(request);
+    if (!principal) {
+      return reply.code(403).send({ error: "agent_credential_required" });
+    }
+    const policies = await db.listAgentPolicies(
+      principal.workspaceId,
+      principal.agentId,
+    );
+    return {
+      data: policies.map((policy) => ({
+        ...policy,
+        expiresAt: isoTimestamp(policy.expiresAt),
+      })),
+    };
+  },
+);
+
+for (const transition of ["pause", "revoke"] as const) {
+  app.post<{ Params: { policyId: string } }>(
+    `/v1/agent-policies/:policyId/${transition}`,
+    { preHandler: requireSessionRequester },
+    async (request, reply) => {
+      const principal = requestAgentCredentialPrincipals.get(request);
+      if (!principal) {
+        return reply.code(403).send({ error: "agent_credential_required" });
+      }
+      const policy = await db.transitionAgentPolicy({
+        workspaceId: principal.workspaceId,
+        policyId: request.params.policyId,
+        agentId: principal.agentId,
+        status: transition === "pause" ? "paused" : "revoked",
+      });
+      if (!policy) {
+        return reply.code(404).send({ error: "agent_policy_not_found" });
+      }
+      await audit(
+        db,
+        principal.workspaceId,
+        principal.agentId,
+        `agent_policy.${transition}d`,
+        "agent_policy",
+        policy.id,
+        { version: policy.version },
+      );
+      gateway.notifyWorkspace(principal.workspaceId);
+      return {
+        ...policy,
+        expiresAt: isoTimestamp(policy.expiresAt),
+      };
+    },
+  );
+}
+
 app.post("/v1/auth/device", async (request, reply) => {
   if (!webKey || !webUrl) {
     return reply.code(503).send({ error: "cloud_authentication_disabled" });
@@ -848,6 +977,7 @@ app.post(
       agentAccess,
       agents,
       sessions,
+      policies,
       controlEvents,
     ] = await Promise.all([
       db.listMachines(context.workspace.id),
@@ -856,6 +986,7 @@ app.post(
       db.listAgentTokens(context.workspace.id),
       db.listWorkspaceAgents(context.workspace.id),
       db.listWorkspaceAgentSessions(context.workspace.id),
+      db.listAgentPolicies(context.workspace.id),
       db.listAudit(context.workspace.id, 50),
     ]);
     const plan = entitlementsFor(context.organization.plan);
@@ -910,6 +1041,13 @@ app.post(
         expiresAt: isoTimestamp(session.expiresAt),
         createdAt: isoTimestamp(session.createdAt),
         targets: session.targets,
+      })),
+      policies: policies.map((policy) => ({
+        ...policy,
+        expiresAt: isoTimestamp(policy.expiresAt),
+        approvedAt: isoTimestamp(policy.approvedAt),
+        createdAt: isoTimestamp(policy.createdAt),
+        updatedAt: isoTimestamp(policy.updatedAt),
       })),
       agentAccess: agentAccess.map(agentAccessView),
       controlEvents: controlEvents.map(controlEventView),
@@ -1249,6 +1387,104 @@ app.post(
     );
     gateway.notifyWorkspace(context.workspace.id);
     return { approved: true, agentId };
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/agent-policies/inspect",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = cloudAgentPolicySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply
+        .code(400)
+        .send({ error: "invalid_request", details: parsed.error.issues });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const policy = await db.agentPolicyForApproval(
+      context.workspace.id,
+      hashToken(parsed.data.approvalCode),
+    );
+    if (!policy) {
+      return reply.code(404).send({ error: "agent_policy_not_found" });
+    }
+    if (policy.expiresAt <= Date.now()) {
+      return reply.code(410).send({ error: "agent_policy_expired" });
+    }
+    if (policy.status !== "proposed") {
+      return reply.code(409).send({ error: "agent_policy_already_used" });
+    }
+    return {
+      id: policy.id,
+      version: policy.version,
+      agent: { id: policy.agentId, name: policy.agentName },
+      scopes: policy.scopes.map((scope) => ({
+        ...scope,
+        machine: {
+          id: scope.machineId,
+          name:
+            policy.machines.find((machine) => machine.id === scope.machineId)
+              ?.name ?? scope.machineId,
+        },
+      })),
+      maxSessionSeconds: policy.maxSessionSeconds,
+      expiresAt: isoTimestamp(policy.expiresAt),
+    };
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/agent-policies/approve",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = cloudAgentPolicySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply
+        .code(400)
+        .send({ error: "invalid_request", details: parsed.error.issues });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const result = await db.approveAgentPolicy({
+      workspaceId: context.workspace.id,
+      approvalCodeHash: hashToken(parsed.data.approvalCode),
+      approverHumanId: parsed.data.userId,
+      now: Date.now(),
+    });
+    if (result.status === "invalid") {
+      return reply.code(404).send({ error: "agent_policy_not_found" });
+    }
+    if (result.status === "expired") {
+      return reply.code(410).send({ error: "agent_policy_expired" });
+    }
+    if (result.status === "already_used") {
+      return reply.code(409).send({ error: "agent_policy_already_used" });
+    }
+    if (result.status !== "approved") {
+      throw new Error(`Unhandled Agent policy state: ${result.status}`);
+    }
+    await audit(
+      db,
+      context.workspace.id,
+      parsed.data.userId,
+      "agent_policy.approved",
+      "agent_policy",
+      result.policy.id,
+      { version: result.policy.version },
+    );
+    gateway.notifyWorkspace(context.workspace.id);
+    return {
+      approved: true,
+      policyId: result.policy.id,
+      version: result.policy.version,
+    };
   },
 );
 
@@ -1962,15 +2198,27 @@ app.post(
     gateway.notifyWorkspace(principal.workspaceId);
     return reply.code(201).send({
       id: requestId,
-      status: "pending",
+      status: created.status,
       scopes: parsed.data.scopes.map((scope) => ({
         machineId: scope.machineId,
         readiness: gateway.isOnline(scope.machineId)
           ? { ready: true }
           : { ready: false, reason: "machine_offline" },
       })),
-      approvalUrl: `${webUrl}/sessions/approve?code=${encodeURIComponent(approvalCode)}`,
-      expiresAt: isoTimestamp(expiresAt),
+      ...(created.status === "pending"
+        ? {
+            approvalUrl: `${webUrl}/sessions/approve?code=${encodeURIComponent(approvalCode)}`,
+          }
+        : {}),
+      ...(created.autoapprovalPolicyId
+        ? {
+            autoapprovalPolicy: {
+              id: created.autoapprovalPolicyId,
+              version: created.autoapprovalPolicyVersion,
+            },
+          }
+        : {}),
+      expiresAt: isoTimestamp(created.expiresAt),
     });
   },
 );

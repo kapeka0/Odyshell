@@ -26,6 +26,12 @@ Approval codes expire, can be used once, and are looked up only inside the authe
 workspace. The credential produced by a claim is returned once to the trusted runtime. MCP keeps
 it outside model-visible results.
 
+Autoapproval policies are inactive until an administrator approves their exact ceiling. They are
+versioned, expire within one year, and fail closed for unknown restrictions. Requests outside the
+ceiling remain pending rather than being reduced silently. Each automatically approved Session
+retains the policy ID and version that authorized it.
+`process.shell` always requires a human approval because it cannot be constrained structurally.
+
 The Client derives its local deadline from Server time and rejects excessive clock skew. Session
 closure is idempotent and waits for active host or Docker operations to stop before releasing
 local execution state.

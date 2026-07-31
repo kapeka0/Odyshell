@@ -65,6 +65,20 @@ Open **Sessions** to search current and historical Sessions, inspect their machi
 review the verified Timeline. Active Sessions also appear between their Agent and machines on the
 Overview canvas. An Agent remains visible when it has no active Session.
 
+## Autoapproval policies
+
+An Independent Agent can propose a temporary approval ceiling with exact machines, capabilities,
+typed restrictions, a maximum Session duration, and a policy expiry. The policy remains inactive
+until a workspace administrator reviews its standalone approval page.
+
+Requests wholly inside an active policy are approved automatically. A request that adds a machine,
+capability, restriction, or longer duration remains pending for a human; Odyshell never partially
+approves it. Pausing or revoking a policy stops future automatic approvals without changing
+Sessions already issued from an earlier version.
+
+Open **Policies** to review current and historical versions. Every autoapproved Session records the
+exact policy ID and version that justified it.
+
 ## Pre-scoped access
 
 Agent Access tokens remain available for trusted, unattended integrations. A member chooses their

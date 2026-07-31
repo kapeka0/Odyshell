@@ -26,8 +26,14 @@ the required capability.
 
 ## Session
 
-A temporary boundary for one or more operations. A session cannot outlive the agent credential
-that created it.
+A temporary, immutable authorization for one task. It has independent per-machine scopes and
+cannot outlive 24 hours.
+
+## Autoapproval policy
+
+An administrator-approved ceiling for an Independent Agent. It can automatically approve only
+Session requests that are strict subsets of its machines, capabilities, typed restrictions,
+maximum duration, and validity.
 
 ## Operation
 

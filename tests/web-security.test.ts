@@ -618,4 +618,35 @@ describe("dashboard navigation performance boundary", () => {
     expect(server).toContain('"/v1/agent-credentials/rotate"');
     expect(server).toContain("agent_identity_mismatch");
   });
+
+  it("keeps autoapproval policies inactive until an administrator reviews the ceiling", () => {
+    const webRoot = resolve(process.cwd(), "apps/web/src");
+    const route = readFileSync(
+      resolve(webRoot, "app/api/agent-policies/approve/route.ts"),
+      "utf8",
+    );
+    const page = readFileSync(
+      resolve(webRoot, "app/policies/approve/page.tsx"),
+      "utf8",
+    );
+    const loading = readFileSync(
+      resolve(webRoot, "app/policies/approve/loading.tsx"),
+      "utf8",
+    );
+    const form = readFileSync(
+      resolve(webRoot, "components/agent-policy-approval.tsx"),
+      "utf8",
+    );
+    const server = readFileSync(
+      resolve(process.cwd(), "apps/server/src/index.ts"),
+      "utf8",
+    );
+
+    expect(route).toContain("requireCloudAdminRouteIdentity");
+    expect(page).toContain('orgRole !== "org:admin"');
+    expect(form).toContain("maxSessionSeconds");
+    expect(loading).toContain("Skeleton");
+    expect(server).toContain('"/v1/internal/cloud/agent-policies/approve"');
+    expect(server).toContain("agent_credential_required");
+  });
 });

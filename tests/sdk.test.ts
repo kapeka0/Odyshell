@@ -157,6 +157,70 @@ describe("Odyshell SDK", () => {
     });
   });
 
+  it("manages scoped autoapproval policies only with the Agent Credential", async () => {
+    const requests: CapturedRequest[] = [];
+    const fetch = mockFetch(requests, (request) =>
+      request.path === "/v1/agent-policies"
+        ? request.method === "GET"
+          ? { data: [] }
+          : {
+              id: "policy-id",
+              version: 1,
+              status: "proposed",
+              approvalUrl: "https://ods.example/policies/approve?code=secret",
+            }
+        : { id: "policy-id", version: 1, status: "paused" },
+    );
+    const ods = new Odyshell({
+      serverUrl: "https://ods.example",
+      agentToken: "agent-secret",
+      fetch,
+    });
+    const scopes = [
+      {
+        machineId: "11111111-1111-4111-8111-111111111111",
+        profile: "host" as const,
+        capabilities: ["fs.read" as const],
+        restrictions: {
+          filesystem: {
+            paths: [{ path: "docs", includeDescendants: true }],
+          },
+        },
+      },
+    ];
+
+    await ods.proposeAgentPolicy({
+      scopes,
+      maxSessionSeconds: 600,
+      validForSeconds: 2_592_000,
+    });
+    await ods.agentPolicies();
+    await ods.pauseAgentPolicy("policy-id");
+
+    expect(requests).toMatchObject([
+      {
+        path: "/v1/agent-policies",
+        method: "POST",
+        headers: { authorization: "Bearer agent-secret" },
+        body: {
+          scopes,
+          maxSessionSeconds: 600,
+          validForSeconds: 2_592_000,
+        },
+      },
+      {
+        path: "/v1/agent-policies",
+        method: "GET",
+        headers: { authorization: "Bearer agent-secret" },
+      },
+      {
+        path: "/v1/agent-policies/policy-id/pause",
+        method: "POST",
+        headers: { authorization: "Bearer agent-secret" },
+      },
+    ]);
+  });
+
   it("revokes a CLI token through its bearer credential", async () => {
     const requests: CapturedRequest[] = [];
     const fetch = mockFetch(requests, () => ({ revoked: true }));

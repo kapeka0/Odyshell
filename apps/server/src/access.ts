@@ -16,6 +16,7 @@ export function createOpaqueToken(
     | "device"
     | "agent_device"
     | "approval"
+    | "policy"
     | "session",
 ): string {
   return `ods_${kind}_${randomBytes(32).toString("base64url")}`;

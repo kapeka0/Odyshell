@@ -206,13 +206,30 @@ export type AgentSessionRequestInput = {
 
 export type AgentSessionRequest = {
   id: string;
-  status: "pending";
-  approvalUrl: string;
+  status: "pending" | "approved";
+  approvalUrl?: string;
+  autoapprovalPolicy?: { id: string; version: number };
   expiresAt: string;
   scopes: Array<{
     machineId: string;
     readiness: { ready: true } | { ready: false; reason: string };
   }>;
+};
+
+export type AgentPolicy = {
+  id: string;
+  agentId: string;
+  version: number;
+  status: "proposed" | "active" | "paused" | "revoked" | "replaced";
+  scopes: SessionMachineScope[];
+  maxSessionSeconds: number;
+  expiresAt: string;
+  approvalUrl?: string;
+  approvedAt?: string;
+  approvedByHumanId?: string;
+  predecessorPolicyId?: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type AgentSessionRequestStatus = {
@@ -408,6 +425,40 @@ export class Odyshell {
       method: "POST",
       credential: this.config.agentToken,
     });
+  }
+
+  async proposeAgentPolicy(input: {
+    scopes: SessionMachineScope[];
+    maxSessionSeconds: number;
+    validForSeconds: number;
+  }): Promise<AgentPolicy> {
+    return this.request("/v1/agent-policies", {
+      method: "POST",
+      credential: this.agentCredential(),
+      body: input,
+    });
+  }
+
+  async agentPolicies(): Promise<AgentPolicy[]> {
+    const response = await this.request<{ data: AgentPolicy[] }>(
+      "/v1/agent-policies",
+      { credential: this.agentCredential() },
+    );
+    return response.data;
+  }
+
+  async pauseAgentPolicy(policyId: string): Promise<AgentPolicy> {
+    return this.request(
+      `/v1/agent-policies/${encodeURIComponent(policyId)}/pause`,
+      { method: "POST", credential: this.agentCredential() },
+    );
+  }
+
+  async revokeAgentPolicy(policyId: string): Promise<AgentPolicy> {
+    return this.request(
+      `/v1/agent-policies/${encodeURIComponent(policyId)}/revoke`,
+      { method: "POST", credential: this.agentCredential() },
+    );
   }
 
   async logoutCli(): Promise<{ revoked: true }> {
@@ -789,6 +840,16 @@ export class Odyshell {
       `${allAgents ? "/v1/admin/audit" : "/v1/audit"}?limit=${encodeURIComponent(String(limit))}`,
       allAgents ? { admin: true } : {},
     );
+  }
+
+  private agentCredential(): string {
+    if (!this.config.agentToken) {
+      throw new ExpectedError(
+        "No Agent Credential configured.",
+        "credentials_missing",
+      );
+    }
+    return this.config.agentToken;
   }
 
   private async request<T>(

@@ -27,6 +27,7 @@ import {
   entitlementsFor,
   type CloudPlanId,
 } from "./cloud.js";
+import { autoapprovalDecision } from "./autoapproval.js";
 
 const { Pool } = pg;
 export const DEFAULT_ORGANIZATION_ID = "default";
@@ -172,6 +173,8 @@ interface AgentSessionTable {
   status: string;
   expiresAt: Date;
   predecessorSessionId: string | null;
+  autoapprovalPolicyId: string | null;
+  autoapprovalPolicyVersion: number | null;
   createdAt: Generated<Date>;
   updatedAt: Generated<Date>;
 }
@@ -206,6 +209,25 @@ interface AgentSessionRequestTable {
   claimedAt: Date | null;
   sessionId: string | null;
   predecessorSessionId: string | null;
+  autoapprovalPolicyId: string | null;
+  autoapprovalPolicyVersion: number | null;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+interface AgentPolicyTable {
+  workspaceId: string;
+  id: string;
+  agentId: string;
+  version: number;
+  status: string;
+  scopes: Json<SessionMachineScope[]>;
+  maxSessionSeconds: number;
+  expiresAt: Date;
+  approvalCodeHash: string;
+  approvedByHumanId: string | null;
+  approvedAt: Date | null;
+  predecessorPolicyId: string | null;
   createdAt: Generated<Date>;
   updatedAt: Generated<Date>;
 }
@@ -302,6 +324,7 @@ interface DatabaseSchema {
   agentSessions: AgentSessionTable;
   sessionCredentials: SessionCredentialTable;
   agentSessionRequests: AgentSessionRequestTable;
+  agentPolicies: AgentPolicyTable;
   agentSessionTargets: AgentSessionTargetTable;
   sessionTimelineEvents: SessionTimelineEventTable;
   sessions: LegacySessionTable;
@@ -418,6 +441,8 @@ export type AgentSessionRecord = Timestamped & {
   status: "active" | "completed" | "cancelled" | "revoked" | "expired";
   expiresAt: number;
   predecessorSessionId?: string;
+  autoapprovalPolicyId?: string;
+  autoapprovalPolicyVersion?: number;
 };
 
 export type AgentSessionRequestRecord = Timestamped & {
@@ -437,7 +462,32 @@ export type AgentSessionRequestRecord = Timestamped & {
   claimedAt?: number;
   sessionId?: string;
   predecessorSessionId?: string;
+  autoapprovalPolicyId?: string;
+  autoapprovalPolicyVersion?: number;
 };
+
+export type AgentPolicyRecord = Timestamped & {
+  workspaceId: string;
+  id: string;
+  agentId: string;
+  version: number;
+  status: "proposed" | "active" | "paused" | "revoked" | "replaced";
+  scopes: SessionMachineScope[];
+  maxSessionSeconds: number;
+  expiresAt: number;
+  approvedByHumanId?: string;
+  approvedAt?: number;
+  predecessorPolicyId?: string;
+};
+
+export type AgentPolicyApprovalView = AgentPolicyRecord & {
+  agentName: string;
+  machines: Array<{ id: string; name: string }>;
+};
+
+export type AgentPolicyApprovalResult =
+  | { status: "approved"; policy: AgentPolicyRecord }
+  | { status: "invalid" | "expired" | "already_used" };
 
 export type SessionApprovalView = AgentSessionRequestRecord & {
   agentName: string;
@@ -667,6 +717,12 @@ function agentSessionRecord(
     ...(session.predecessorSessionId === null
       ? {}
       : { predecessorSessionId: session.predecessorSessionId }),
+    ...(session.autoapprovalPolicyId === null
+      ? {}
+      : { autoapprovalPolicyId: session.autoapprovalPolicyId }),
+    ...(session.autoapprovalPolicyVersion === null
+      ? {}
+      : { autoapprovalPolicyVersion: session.autoapprovalPolicyVersion }),
     createdAt: timestamp(session.createdAt),
     updatedAt: timestamp(session.updatedAt),
   };
@@ -700,8 +756,40 @@ function agentSessionRequestRecord(
     ...(request.predecessorSessionId === null
       ? {}
       : { predecessorSessionId: request.predecessorSessionId }),
+    ...(request.autoapprovalPolicyId === null
+      ? {}
+      : { autoapprovalPolicyId: request.autoapprovalPolicyId }),
+    ...(request.autoapprovalPolicyVersion === null
+      ? {}
+      : { autoapprovalPolicyVersion: request.autoapprovalPolicyVersion }),
     createdAt: timestamp(request.createdAt),
     updatedAt: timestamp(request.updatedAt),
+  };
+}
+
+function agentPolicyRecord(
+  policy: Selectable<AgentPolicyTable>,
+): AgentPolicyRecord {
+  return {
+    workspaceId: policy.workspaceId,
+    id: policy.id,
+    agentId: policy.agentId,
+    version: policy.version,
+    status: policy.status as AgentPolicyRecord["status"],
+    scopes: policy.scopes,
+    maxSessionSeconds: policy.maxSessionSeconds,
+    expiresAt: timestamp(policy.expiresAt),
+    ...(policy.approvedByHumanId === null
+      ? {}
+      : { approvedByHumanId: policy.approvedByHumanId }),
+    ...(policy.approvedAt === null
+      ? {}
+      : { approvedAt: timestamp(policy.approvedAt) }),
+    ...(policy.predecessorPolicyId === null
+      ? {}
+      : { predecessorPolicyId: policy.predecessorPolicyId }),
+    createdAt: timestamp(policy.createdAt),
+    updatedAt: timestamp(policy.updatedAt),
   };
 }
 
@@ -1728,6 +1816,124 @@ async function rollbackAgentDeviceAuthorization(
   await sql`drop table odyshell.agent_device_authorizations`.execute(db);
 }
 
+async function migrateAgentAutoapprovalPolicies(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    create table if not exists odyshell.agent_policies (
+      workspace_id text not null,
+      id text not null,
+      agent_id text not null,
+      version integer not null,
+      status text not null check (
+        status in ('proposed', 'active', 'paused', 'revoked', 'replaced')
+      ),
+      scopes jsonb not null,
+      max_session_seconds integer not null,
+      expires_at timestamptz not null,
+      approval_code_hash text not null,
+      approved_by_human_id text,
+      approved_at timestamptz,
+      predecessor_policy_id text,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      primary key (workspace_id, id),
+      unique (workspace_id, id, version),
+      unique (workspace_id, agent_id, version),
+      unique (workspace_id, approval_code_hash),
+      foreign key (workspace_id, agent_id)
+        references odyshell.agents (workspace_id, id),
+      foreign key (workspace_id, approved_by_human_id)
+        references odyshell.humans (workspace_id, id),
+      foreign key (workspace_id, predecessor_policy_id)
+        references odyshell.agent_policies (workspace_id, id),
+      check (version > 0),
+      check (jsonb_typeof(scopes) = 'array' and jsonb_array_length(scopes) > 0),
+      check (max_session_seconds between 60 and 86400),
+      check (expires_at > created_at),
+      check (expires_at <= created_at + interval '1 year'),
+      check (predecessor_policy_id is null or predecessor_policy_id <> id)
+    )
+  `.execute(db);
+  await sql`
+    create unique index if not exists agent_policies_one_active_idx
+    on odyshell.agent_policies (workspace_id, agent_id)
+    where status = 'active'
+  `.execute(db);
+  await sql`
+    create index if not exists agent_policies_history_idx
+    on odyshell.agent_policies (workspace_id, agent_id, version desc)
+  `.execute(db);
+  await sql`
+    alter table odyshell.agent_session_requests
+    add column if not exists autoapproval_policy_id text,
+    add column if not exists autoapproval_policy_version integer
+  `.execute(db);
+  await sql`
+    alter table odyshell.agent_sessions
+    add column if not exists autoapproval_policy_id text,
+    add column if not exists autoapproval_policy_version integer
+  `.execute(db);
+  await sql`
+    alter table odyshell.agent_session_requests
+    add constraint agent_session_requests_autoapproval_policy_fk
+    foreign key (
+      workspace_id,
+      autoapproval_policy_id,
+      autoapproval_policy_version
+    )
+    references odyshell.agent_policies (workspace_id, id, version)
+  `.execute(db);
+  await sql`
+    alter table odyshell.agent_sessions
+    add constraint agent_sessions_autoapproval_policy_fk
+    foreign key (
+      workspace_id,
+      autoapproval_policy_id,
+      autoapproval_policy_version
+    )
+    references odyshell.agent_policies (workspace_id, id, version)
+  `.execute(db);
+  await sql`
+    alter table odyshell.agent_session_requests
+    add constraint agent_session_requests_autoapproval_pair
+    check (
+      (autoapproval_policy_id is null and autoapproval_policy_version is null)
+      or
+      (autoapproval_policy_id is not null and autoapproval_policy_version is not null)
+    )
+  `.execute(db);
+  await sql`
+    alter table odyshell.agent_sessions
+    add constraint agent_sessions_autoapproval_pair
+    check (
+      (autoapproval_policy_id is null and autoapproval_policy_version is null)
+      or
+      (autoapproval_policy_id is not null and autoapproval_policy_version is not null)
+    )
+  `.execute(db);
+}
+
+async function rollbackAgentAutoapprovalPolicies(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    alter table odyshell.agent_sessions
+    drop constraint agent_sessions_autoapproval_pair,
+    drop constraint agent_sessions_autoapproval_policy_fk,
+    drop column autoapproval_policy_version,
+    drop column autoapproval_policy_id
+  `.execute(db);
+  await sql`
+    alter table odyshell.agent_session_requests
+    drop constraint agent_session_requests_autoapproval_pair,
+    drop constraint agent_session_requests_autoapproval_policy_fk,
+    drop column autoapproval_policy_version,
+    drop column autoapproval_policy_id
+  `.execute(db);
+  await sql`drop table odyshell.agent_policies`.execute(db);
+}
+
 const migrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
     return {
@@ -1773,6 +1979,10 @@ const migrationProvider: MigrationProvider = {
       "012_agent_device_authorization": {
         up: migrateAgentDeviceAuthorization,
         down: rollbackAgentDeviceAuthorization,
+      },
+      "013_agent_autoapproval_policies": {
+        up: migrateAgentAutoapprovalPolicies,
+        down: rollbackAgentAutoapprovalPolicies,
       },
     };
   },
@@ -2171,6 +2381,8 @@ export class PostgresDatabase {
           status: "active",
           expiresAt: new Date(input.expiresAt),
           predecessorSessionId: input.predecessorSessionId,
+          autoapprovalPolicyId: null,
+          autoapprovalPolicyVersion: null,
           createdAt,
           updatedAt: createdAt,
         })
@@ -2223,6 +2435,219 @@ export class PostgresDatabase {
         .orderBy("createdAt", "desc")
         .execute()
     ).map(agentIdentityRecord);
+  }
+
+  async proposeAgentPolicy(input: {
+    workspaceId: string;
+    id: string;
+    agentId: string;
+    humanId: string;
+    scopes: SessionMachineScope[];
+    maxSessionSeconds: number;
+    expiresAt: number;
+    approvalCodeHash: string;
+  }): Promise<AgentPolicyRecord | null> {
+    return await this.db.transaction().execute(async (transaction) => {
+      const agent = await transaction
+        .selectFrom("agents")
+        .select(["id", "createdByHumanId"])
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", input.agentId)
+        .where("kind", "=", "independent")
+        .where("createdByHumanId", "=", input.humanId)
+        .where("status", "=", "active")
+        .forUpdate()
+        .executeTakeFirst();
+      if (!agent) return null;
+      const machineIds = input.scopes.map((scope) => scope.machineId);
+      const machines = await transaction
+        .selectFrom("machines")
+        .select("id")
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "in", machineIds)
+        .where("revokedAt", "is", null)
+        .forShare()
+        .execute();
+      if (
+        machines.length !== machineIds.length ||
+        new Set(machineIds).size !== machineIds.length
+      ) {
+        return null;
+      }
+      const latest = await transaction
+        .selectFrom("agentPolicies")
+        .select(["id", "version"])
+        .where("workspaceId", "=", input.workspaceId)
+        .where("agentId", "=", input.agentId)
+        .orderBy("version", "desc")
+        .executeTakeFirst();
+      const policy = await transaction
+        .insertInto("agentPolicies")
+        .values({
+          workspaceId: input.workspaceId,
+          id: input.id,
+          agentId: input.agentId,
+          version: (latest?.version ?? 0) + 1,
+          status: "proposed",
+          scopes: JSON.stringify(input.scopes),
+          maxSessionSeconds: input.maxSessionSeconds,
+          expiresAt: new Date(input.expiresAt),
+          approvalCodeHash: input.approvalCodeHash,
+          approvedByHumanId: null,
+          approvedAt: null,
+          predecessorPolicyId: latest?.id ?? null,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      return agentPolicyRecord(policy);
+    });
+  }
+
+  async listAgentPolicies(
+    workspaceId: string,
+    agentId?: string,
+  ): Promise<AgentPolicyRecord[]> {
+    let query = this.db
+      .selectFrom("agentPolicies")
+      .selectAll()
+      .where("workspaceId", "=", workspaceId);
+    if (agentId !== undefined) {
+      query = query.where("agentId", "=", agentId);
+    }
+    return (await query.orderBy("createdAt", "desc").execute()).map(
+      agentPolicyRecord,
+    );
+  }
+
+  async agentPolicyForApproval(
+    workspaceId: string,
+    approvalCodeHash: string,
+  ): Promise<AgentPolicyApprovalView | null> {
+    const policy = await this.db
+      .selectFrom("agentPolicies")
+      .innerJoin("agents", (join) =>
+        join
+          .onRef("agents.workspaceId", "=", "agentPolicies.workspaceId")
+          .onRef("agents.id", "=", "agentPolicies.agentId"),
+      )
+      .selectAll("agentPolicies")
+      .select("agents.name as agentName")
+      .where("agentPolicies.workspaceId", "=", workspaceId)
+      .where("agentPolicies.approvalCodeHash", "=", approvalCodeHash)
+      .executeTakeFirst();
+    if (!policy) return null;
+    const machines = await this.db
+      .selectFrom("machines")
+      .select(["id", "name"])
+      .where("workspaceId", "=", workspaceId)
+      .where("id", "in", policy.scopes.map((scope) => scope.machineId))
+      .execute();
+    if (machines.length !== policy.scopes.length) return null;
+    return {
+      ...agentPolicyRecord(policy),
+      agentName: policy.agentName,
+      machines,
+    };
+  }
+
+  async approveAgentPolicy(input: {
+    workspaceId: string;
+    approvalCodeHash: string;
+    approverHumanId: string;
+    now: number;
+  }): Promise<AgentPolicyApprovalResult> {
+    return await this.db.transaction().execute(async (transaction) => {
+      const policy = await transaction
+        .selectFrom("agentPolicies")
+        .selectAll()
+        .where("workspaceId", "=", input.workspaceId)
+        .where("approvalCodeHash", "=", input.approvalCodeHash)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!policy) return { status: "invalid" };
+      if (policy.expiresAt <= new Date(input.now)) {
+        return { status: "expired" };
+      }
+      if (policy.status !== "proposed") return { status: "already_used" };
+      await transaction
+        .selectFrom("agents")
+        .select("id")
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", policy.agentId)
+        .forUpdate()
+        .executeTakeFirstOrThrow();
+      const newerActive = await transaction
+        .selectFrom("agentPolicies")
+        .select("version")
+        .where("workspaceId", "=", input.workspaceId)
+        .where("agentId", "=", policy.agentId)
+        .where("status", "=", "active")
+        .where("version", ">", policy.version)
+        .executeTakeFirst();
+      if (newerActive) {
+        await transaction
+          .updateTable("agentPolicies")
+          .set({ status: "replaced", updatedAt: new Date(input.now) })
+          .where("workspaceId", "=", input.workspaceId)
+          .where("id", "=", policy.id)
+          .execute();
+        return { status: "already_used" };
+      }
+      await transaction
+        .insertInto("humans")
+        .values({
+          workspaceId: input.workspaceId,
+          id: input.approverHumanId,
+          externalId: input.approverHumanId,
+          status: "active",
+        })
+        .onConflict((conflict) =>
+          conflict.columns(["workspaceId", "id"]).doNothing(),
+        )
+        .execute();
+      const now = new Date(input.now);
+      await transaction
+        .updateTable("agentPolicies")
+        .set({ status: "replaced", updatedAt: now })
+        .where("workspaceId", "=", input.workspaceId)
+        .where("agentId", "=", policy.agentId)
+        .where("status", "=", "active")
+        .execute();
+      const approved = await transaction
+        .updateTable("agentPolicies")
+        .set({
+          status: "active",
+          approvedByHumanId: input.approverHumanId,
+          approvedAt: now,
+          updatedAt: now,
+        })
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", policy.id)
+        .where("status", "=", "proposed")
+        .returningAll()
+        .executeTakeFirst();
+      return approved
+        ? { status: "approved", policy: agentPolicyRecord(approved) }
+        : { status: "already_used" };
+    });
+  }
+
+  async transitionAgentPolicy(input: {
+    workspaceId: string;
+    policyId: string;
+    agentId: string;
+    status: "paused" | "revoked";
+  }): Promise<AgentPolicyRecord | null> {
+    const policy = await this.db
+      .updateTable("agentPolicies")
+      .set({ status: input.status, updatedAt: new Date() })
+      .where("workspaceId", "=", input.workspaceId)
+      .where("id", "=", input.policyId)
+      .where("agentId", "=", input.agentId)
+      .where("status", "in", ["active", "paused"])
+      .returningAll()
+      .executeTakeFirst();
+    return policy ? agentPolicyRecord(policy) : null;
   }
 
   async listWorkspaceAgentSessions(
@@ -2406,7 +2831,7 @@ export class PostgresDatabase {
       const primaryReadPath =
         primaryScope.restrictions.filesystem?.paths[0]?.path ?? ".";
 
-      const request = await transaction
+      let request = await transaction
         .insertInto("agentSessionRequests")
         .values({
           workspaceId: input.workspaceId,
@@ -2426,6 +2851,8 @@ export class PostgresDatabase {
           claimedAt: null,
           sessionId: null,
           predecessorSessionId: input.predecessorSessionId ?? null,
+          autoapprovalPolicyId: null,
+          autoapprovalPolicyVersion: null,
         })
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -2452,6 +2879,65 @@ export class PostgresDatabase {
           }),
         })
         .execute();
+      const now = new Date();
+      const policy = await transaction
+        .selectFrom("agentPolicies")
+        .selectAll()
+        .where("workspaceId", "=", input.workspaceId)
+        .where("agentId", "=", input.agentId)
+        .where("status", "=", "active")
+        .forShare()
+        .executeTakeFirst();
+      if (
+        policy?.approvedByHumanId &&
+        autoapprovalDecision({
+          requestedScopes: input.scopes,
+          requestedDurationSeconds: input.durationSeconds,
+          policy: {
+            status: policy.status,
+            scopes: policy.scopes,
+            maxSessionSeconds: policy.maxSessionSeconds,
+            expiresAt: timestamp(policy.expiresAt),
+          },
+          now: now.getTime(),
+        }).approved
+      ) {
+        request = await transaction
+          .updateTable("agentSessionRequests")
+          .set({
+            status: "approved",
+            approvedAt: now,
+            approvedByHumanId: policy.approvedByHumanId,
+            expiresAt: new Date(
+              now.getTime() + SESSION_CLAIM_WINDOW_MILLISECONDS,
+            ),
+            autoapprovalPolicyId: policy.id,
+            autoapprovalPolicyVersion: policy.version,
+            updatedAt: now,
+          })
+          .where("workspaceId", "=", input.workspaceId)
+          .where("id", "=", input.requestId)
+          .where("status", "=", "pending")
+          .returningAll()
+          .executeTakeFirstOrThrow();
+        await transaction
+          .insertInto("sessionTimelineEvents")
+          .values({
+            workspaceId: input.workspaceId,
+            id: randomUUID(),
+            sessionId: null,
+            requestId: input.requestId,
+            operationId: null,
+            eventType: "session.autoapproved",
+            source: "verified",
+            metadata: JSON.stringify({
+              policyId: policy.id,
+              policyVersion: policy.version,
+            }),
+            createdAt: now,
+          })
+          .execute();
+      }
       return agentSessionRequestRecord(request);
     });
   }
@@ -2731,6 +3217,8 @@ export class PostgresDatabase {
           status: "active",
           expiresAt,
           predecessorSessionId: request.predecessorSessionId,
+          autoapprovalPolicyId: request.autoapprovalPolicyId,
+          autoapprovalPolicyVersion: request.autoapprovalPolicyVersion,
           createdAt: claimedAt,
           updatedAt: claimedAt,
         })
@@ -2822,6 +3310,13 @@ export class PostgresDatabase {
             expiresAt: expiresAt.toISOString(),
             ...(request.predecessorSessionId
               ? { predecessorSessionId: request.predecessorSessionId }
+              : {}),
+            ...(request.autoapprovalPolicyId
+              ? {
+                  autoapprovalPolicyId: request.autoapprovalPolicyId,
+                  autoapprovalPolicyVersion:
+                    request.autoapprovalPolicyVersion,
+                }
               : {}),
           }),
           createdAt: claimedAt,

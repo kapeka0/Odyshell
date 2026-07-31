@@ -193,6 +193,11 @@ temporary Session for one exact file, returns an approval URL, privately claims 
 once, performs the read, and closes the Session. The Server enforces the immutable machine,
 capability, path, and expiry; the Client applies its own local policy as a second boundary.
 
+Independent Agents can propose versioned autoapproval policies for repeated bounded work. An
+administrator approves the exact ceiling once; requests inside it autoapprove, while wider
+requests remain pending. The dashboard keeps policy history and every resulting Session records
+the policy version that authorized it.
+
 Pre-scoped Agent Access tokens remain available for unattended integrations that need the existing
 typed operation tools.
 

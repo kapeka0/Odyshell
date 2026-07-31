@@ -591,6 +591,194 @@ try {
   ) {
     throw new Error("Agent Credential rotation failed");
   }
+  const policyScope = {
+    machineId: machine.id,
+    profile: "workspace",
+    capabilities: ["fs.read"],
+    restrictions: {
+      filesystem: {
+        paths: [{ path: "approved.txt", includeDescendants: false }],
+      },
+    },
+  };
+  const policyProposalResponse = await fetch(
+    new URL("/v1/agent-policies", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${rotatedAgentCredential.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        scopes: [policyScope],
+        maxSessionSeconds: 600,
+        validForSeconds: 24 * 60 * 60,
+      }),
+    },
+  );
+  const policyProposal = await policyProposalResponse.json();
+  if (
+    policyProposalResponse.status !== 201 ||
+    policyProposal.status !== "proposed" ||
+    !policyProposal.approvalUrl
+  ) {
+    throw new Error("Agent autoapproval policy was not proposed");
+  }
+  const policyApprovalCode = new URL(
+    policyProposal.approvalUrl,
+  ).searchParams.get("code");
+  if (!policyApprovalCode) {
+    throw new Error("Policy approval URL omitted its code");
+  }
+  const policyApprovalBody = {
+    userId: cliUserId,
+    organization: approvalBody.organization,
+    approvalCode: policyApprovalCode,
+  };
+  const policyInspection = await fetch(
+    new URL("/v1/internal/cloud/agent-policies/inspect", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify(policyApprovalBody),
+    },
+  );
+  if (
+    policyInspection.status !== 200 ||
+    (await policyInspection.json()).version !== 1
+  ) {
+    throw new Error("Policy approval did not show its immutable version");
+  }
+  const approvePolicy = () =>
+    fetch(new URL("/v1/internal/cloud/agent-policies/approve", apiUrl), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify(policyApprovalBody),
+    });
+  if ((await approvePolicy()).status !== 200) {
+    throw new Error("Agent autoapproval policy was not approved");
+  }
+  if ((await approvePolicy()).status !== 409) {
+    throw new Error("Policy approval replay was not rejected");
+  }
+  const requestWithPolicy = async (scopes, purpose) => {
+    const response = await fetch(
+      new URL("/v1/agent-session-requests", apiUrl),
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${rotatedAgentCredential.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          agentId: agentCredential.agentId,
+          agentName: agentCredential.agentName,
+          purpose,
+          scopes,
+          durationSeconds: 600,
+        }),
+      },
+    );
+    return { response, body: await response.json() };
+  };
+  const autoapproved = await requestWithPolicy(
+    [policyScope],
+    "Verify policy autoapproval",
+  );
+  if (
+    autoapproved.response.status !== 201 ||
+    autoapproved.body.status !== "approved" ||
+    autoapproved.body.approvalUrl ||
+    autoapproved.body.autoapprovalPolicy?.id !== policyProposal.id
+  ) {
+    throw new Error("In-policy Session request was not autoapproved");
+  }
+  const widened = await requestWithPolicy(
+    [{ ...policyScope, capabilities: ["fs.read", "fs.write"] }],
+    "Verify policy widening denial",
+  );
+  if (
+    widened.response.status !== 201 ||
+    widened.body.status !== "pending" ||
+    !widened.body.approvalUrl
+  ) {
+    throw new Error("Out-of-policy Session request did not remain pending");
+  }
+  const autoClaimResponse = await fetch(
+    new URL(
+      `/v1/agent-session-requests/${autoapproved.body.id}/claim`,
+      apiUrl,
+    ),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${rotatedAgentCredential.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ agentId: agentCredential.agentId }),
+    },
+  );
+  const autoClaim = await autoClaimResponse.json();
+  if (autoClaimResponse.status !== 201 || !autoClaim.sessionId) {
+    throw new Error("Autoapproved Session could not be claimed");
+  }
+  const policyBinding = (
+    await compose([
+      "exec",
+      "-T",
+      "postgres",
+      "psql",
+      "-U",
+      "odyshell",
+      "-d",
+      "odyshell",
+      "-At",
+      "-c",
+      `select autoapproval_policy_id || ':' || autoapproval_policy_version from odyshell.agent_sessions where id = '${autoClaim.sessionId}';`,
+    ])
+  ).trim();
+  if (policyBinding !== `${policyProposal.id}:1`) {
+    throw new Error("Claimed Session lost its approving policy version");
+  }
+  await fetch(
+    new URL(`/v1/agent-sessions/${autoClaim.sessionId}/cancel`, apiUrl),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${rotatedAgentCredential.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ agentId: agentCredential.agentId }),
+    },
+  );
+  const revokePolicy = await fetch(
+    new URL(`/v1/agent-policies/${policyProposal.id}/revoke`, apiUrl),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${rotatedAgentCredential.accessToken}`,
+      },
+    },
+  );
+  if (revokePolicy.status !== 200) {
+    throw new Error("Agent could not revoke its own autoapproval policy");
+  }
+  const afterRevoke = await requestWithPolicy(
+    [policyScope],
+    "Verify revoked policy denial",
+  );
+  if (
+    afterRevoke.response.status !== 201 ||
+    afterRevoke.body.status !== "pending"
+  ) {
+    throw new Error("Revoked policy continued autoapproving Sessions");
+  }
   const independentRequestResponse = await fetch(
     new URL("/v1/agent-session-requests", apiUrl),
     {

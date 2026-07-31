@@ -68,6 +68,11 @@ Server stores only credential hashes and enforces the Session's exact machine, c
 and expiry on every Operation. Verified lifecycle transitions form a privacy-minimal Session
 Timeline without recording credentials or operation output.
 
+Independent Agents may propose versioned autoapproval policies. Policies stay inactive until an
+administrator approves their exact machine, capability, restriction, duration, and validity
+ceiling. Out-of-policy requests remain pending, and every autoapproved Session retains the policy
+ID and version used.
+
 Organizations own execution Workspaces. Existing self-hosted administrator endpoints use the
 `x-odyshell-workspace-id` header and default to the backwards-compatible `default` workspace when
 it is absent. Enrollment tokens, machines, Agent Access, sessions, operations, and control events

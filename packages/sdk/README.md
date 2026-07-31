@@ -69,6 +69,22 @@ const claim = await ods.claimAgentSession(request.id, agentId);
 const result = await ods.readApprovedSession(claim);
 ```
 
+An unattended Agent can propose a bounded autoapproval policy:
+
+```ts
+const policy = await ods.proposeAgentPolicy({
+  scopes,
+  maxSessionSeconds: 600,
+  validForSeconds: 30 * 24 * 60 * 60,
+});
+
+console.log(policy.approvalUrl);
+```
+
+The policy stays inactive until a workspace administrator approves that URL. Use
+`agentPolicies()`, `pauseAgentPolicy(id)`, and `revokeAgentPolicy(id)` to inspect or reduce future
+authority. Requests outside the ceiling still require human approval.
+
 `claim.sessionToken` is returned once. Keep it inside a trusted runtime; do not send it to a model,
 log it, or persist it. `readApprovedSession` uses it only for the approved Session and closes that
 Session after the read.

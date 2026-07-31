@@ -290,4 +290,46 @@ describe("server storage boundaries", () => {
     expect(rotation).toContain('status: "retiring"');
     expect(rotation).toContain("10 * 60 * 1_000");
   });
+
+  it("versions autoapproval ceilings and permanently binds approved Sessions to them", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const migration = database.slice(
+      database.indexOf("async function migrateAgentAutoapprovalPolicies("),
+      database.indexOf("const migrationProvider"),
+    );
+    const proposal = database.slice(
+      database.indexOf("async proposeAgentPolicy("),
+      database.indexOf("async listAgentPolicies("),
+    );
+    const approval = database.slice(
+      database.indexOf("async approveAgentPolicy("),
+      database.indexOf("async transitionAgentPolicy("),
+    );
+    const request = database.slice(
+      database.indexOf("async createAgentSessionRequest("),
+      database.indexOf("async sessionRequestForApproval("),
+    );
+    const claim = database.slice(
+      database.indexOf("async claimAgentSessionRequest("),
+      database.indexOf("async findAgentSessionCredentialByTokenHash("),
+    );
+
+    expect(migration).toContain("agent_policies_one_active_idx");
+    expect(migration).toContain("where status = 'active'");
+    expect(migration).toContain("autoapproval_policy_version");
+    expect(proposal).toContain(".forUpdate()");
+    expect(approval).toContain(".forUpdate()");
+    expect(approval).toContain('.where("version", ">", policy.version)');
+    expect(request).toContain("autoapprovalDecision");
+    expect(request).toContain('eventType: "session.autoapproved"');
+    expect(claim).toContain(
+      "autoapprovalPolicyId: request.autoapprovalPolicyId",
+    );
+    expect(claim).toContain(
+      "autoapprovalPolicyVersion: request.autoapprovalPolicyVersion",
+    );
+  });
 });

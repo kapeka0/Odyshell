@@ -70,6 +70,24 @@ export type CloudSession = {
   }>;
 };
 
+export type CloudAgentPolicy = {
+  id: string;
+  agentId: string;
+  version: number;
+  status: "proposed" | "active" | "paused" | "revoked" | "replaced";
+  scopes: Array<{
+    machineId: string;
+    profile: string;
+    capabilities: Capability[];
+    restrictions: Record<string, unknown>;
+  }>;
+  maxSessionSeconds: number;
+  expiresAt: string;
+  approvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type SessionTimelineEvent = {
   id: string;
   eventType: string;
@@ -136,6 +154,7 @@ export type CloudContext = {
   machines: CloudMachine[];
   agents: CloudAgent[];
   sessions: CloudSession[];
+  policies: CloudAgentPolicy[];
   agentAccess: AgentAccess[];
   controlEvents: ControlEvent[];
 };

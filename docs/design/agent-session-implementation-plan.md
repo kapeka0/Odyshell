@@ -170,6 +170,8 @@ that the migration revoked.
 
 ## Vertical 5: Independent Agents and autoapproval
 
+Status: implemented.
+
 Deliver:
 
 - `ods agent login` device authorization for headless runtimes;

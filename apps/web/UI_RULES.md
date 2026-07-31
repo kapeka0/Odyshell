@@ -24,6 +24,9 @@ particular component, library or interaction pattern.
 - Keep public and promotional destinations outside the authenticated workspace.
 - Keep CLI activation outside the authenticated workspace and end it in an
   unambiguous success or failure state.
+- Keep Agent registration, Session approval and policy approval as focused
+  standalone routes. Policy approval shows the exact ceiling and requires a
+  workspace administrator.
 - Keep quick local preferences, including theme selection, in the account menu.
 - Reserve user settings for changes persisted to the user's backend profile.
 - Keep product branding subordinate to workspace identity and operational work
