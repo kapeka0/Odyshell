@@ -189,6 +189,49 @@ export type DeviceToken = {
   expiresAt: string;
 };
 
+export type AgentSessionRequestInput = {
+  agentId: string;
+  agentName: string;
+  purpose: string;
+  machineId: string;
+  path: string;
+  durationSeconds: number;
+};
+
+export type AgentSessionRequest = {
+  id: string;
+  status: "pending";
+  approvalUrl: string;
+  expiresAt: string;
+};
+
+export type AgentSessionRequestStatus = {
+  id: string;
+  status: "pending" | "approved" | "denied" | "expired" | "claimed";
+  expiresAt: string;
+  sessionId?: string;
+};
+
+export type ClaimedAgentSession = {
+  sessionId: string;
+  sessionToken: string;
+  machineId: string;
+  path: string;
+  status: "opening";
+  expiresAt: string;
+};
+
+export type SessionTimelineEvent = {
+  id: string;
+  sessionId?: string;
+  requestId: string;
+  operationId?: string;
+  eventType: string;
+  source: "verified" | "agent";
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
 export class Odyshell {
   private readonly fetcher: typeof globalThis.fetch;
 
@@ -339,6 +382,80 @@ export class Odyshell {
   async machines(): Promise<Machine[]> {
     const response = await this.request<{ data: Machine[] }>("/v1/machines");
     return response.data;
+  }
+
+  async requestAgentSession(
+    input: AgentSessionRequestInput,
+  ): Promise<AgentSessionRequest> {
+    return this.request("/v1/agent-session-requests", {
+      method: "POST",
+      body: input,
+    });
+  }
+
+  async agentSessionRequestStatus(
+    requestId: string,
+    agentId: string,
+  ): Promise<AgentSessionRequestStatus> {
+    return this.request(
+      `/v1/agent-session-requests/${encodeURIComponent(requestId)}/status`,
+      {
+        method: "POST",
+        body: { agentId },
+      },
+    );
+  }
+
+  async claimAgentSession(
+    requestId: string,
+    agentId: string,
+  ): Promise<ClaimedAgentSession> {
+    return this.request(
+      `/v1/agent-session-requests/${encodeURIComponent(requestId)}/claim`,
+      {
+        method: "POST",
+        body: { agentId },
+      },
+    );
+  }
+
+  async sessionTimeline(
+    sessionId: string,
+    agentId: string,
+  ): Promise<SessionTimelineEvent[]> {
+    const response = await this.request<{ data: SessionTimelineEvent[] }>(
+      `/v1/agent-sessions/${encodeURIComponent(sessionId)}/timeline`,
+      {
+        method: "POST",
+        body: { agentId },
+      },
+    );
+    return response.data;
+  }
+
+  async readApprovedSession(
+    claim: ClaimedAgentSession,
+    options: Pick<OperationOptions, "timeoutSeconds" | "maxOutputBytes" | "onEvent"> = {},
+  ): Promise<OperationResult> {
+    const scoped = new Odyshell({
+      serverUrl: this.config.serverUrl,
+      agentToken: claim.sessionToken,
+      fetch: this.fetcher,
+    });
+    const session = await scoped.waitForSession(claim.sessionId);
+    try {
+      const operation = await scoped.createOperation(
+        session.id,
+        { kind: "fs.read", path: claim.path },
+        options.timeoutSeconds ?? 120,
+        options.maxOutputBytes ?? 1024 * 1024,
+      );
+      return decodeOperation(
+        await scoped.waitForOperation(operation.id, options.onEvent),
+      );
+    } finally {
+      await scoped.closeSession(session.id).catch(() => undefined);
+    }
   }
 
   async adminMachines(): Promise<AdminMachine[]> {

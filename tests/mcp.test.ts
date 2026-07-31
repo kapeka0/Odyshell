@@ -11,7 +11,10 @@ import {
   type OperationResult,
 } from "../packages/sdk/src/index.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createOdyshellMcpServer } from "../apps/cli/src/mcp.js";
+import {
+  createApprovedOdyshellMcpServer,
+  createOdyshellMcpServer,
+} from "../apps/cli/src/mcp.js";
 
 const closeCallbacks: Array<() => Promise<void>> = [];
 
@@ -20,6 +23,108 @@ afterEach(async () => {
 });
 
 describe("Odyshell MCP server", () => {
+  it("publishes the approval-based read workflow for a signed-in CLI", async () => {
+    const ods = fakeApprovedOdyshell();
+    const server = createApprovedOdyshellMcpServer(ods, {
+      id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+      name: "Codex",
+    });
+    const { client } = await connectServer(server);
+
+    const { tools } = await client.listTools();
+
+    expect(tools.map((tool) => tool.name)).toEqual([
+      "machines_list",
+      "session_request",
+      "session_status",
+      "filesystem_read",
+    ]);
+    expect(tools.map((tool) => tool.name).join(" ")).not.toMatch(
+      /process|write|remove|shell|token/,
+    );
+  });
+
+  it("claims an approved request without exposing the session credential", async () => {
+    const ods = fakeApprovedOdyshell();
+    const server = createApprovedOdyshellMcpServer(ods, {
+      id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+      name: "Codex",
+    });
+    const { client } = await connectServer(server);
+
+    const result = await client.callTool({
+      name: "session_status",
+      arguments: { requestId: "7d8730ef-075c-40d5-a72d-8101abe17260" },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toContain('"status": "ready"');
+    expect(textOf(result)).toContain(
+      '"sessionId": "c837dd55-fdf0-47bb-887f-e4f857245dc7"',
+    );
+    expect(textOf(result)).not.toContain("ods_session_secret");
+  });
+
+  it("keeps the credential inside MCP while reading the exact approved path", async () => {
+    const readApprovedSession = vi.fn(async () =>
+      successfulOperation("safe content"),
+    );
+    const ods = fakeApprovedOdyshell({ readApprovedSession });
+    const server = createApprovedOdyshellMcpServer(ods, {
+      id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+      name: "Codex",
+    });
+    const { client } = await connectServer(server);
+    await client.callTool({
+      name: "session_status",
+      arguments: { requestId: "7d8730ef-075c-40d5-a72d-8101abe17260" },
+    });
+
+    const result = await client.callTool({
+      name: "filesystem_read",
+      arguments: {
+        sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
+        machine: "machine-id",
+        path: "config/app.json",
+      },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(readApprovedSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionToken: "ods_session_secret",
+        path: "config/app.json",
+      }),
+    );
+    expect(textOf(result)).not.toContain("ods_session_secret");
+  });
+
+  it("rejects a different path before using an approved credential", async () => {
+    const readApprovedSession = vi.fn(async () => successfulOperation(""));
+    const ods = fakeApprovedOdyshell({ readApprovedSession });
+    const server = createApprovedOdyshellMcpServer(ods, {
+      id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+      name: "Codex",
+    });
+    const { client } = await connectServer(server);
+    await client.callTool({
+      name: "session_status",
+      arguments: { requestId: "7d8730ef-075c-40d5-a72d-8101abe17260" },
+    });
+
+    const result = await client.callTool({
+      name: "filesystem_read",
+      arguments: {
+        sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
+        machine: "machine-id",
+        path: "secrets.env",
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(readApprovedSession).not.toHaveBeenCalled();
+  });
+
   it("publishes agent operations without administrator controls", async () => {
     const { client } = await connectMcp(fakeOdyshell());
 
@@ -187,6 +292,20 @@ async function connectMcp(
   return { client };
 }
 
+async function connectServer(
+  server: ReturnType<typeof createOdyshellMcpServer>,
+): Promise<{ client: Client }> {
+  const client = new Client({ name: "odyshell-test", version: "1.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  closeCallbacks.push(async () => {
+    await client.close();
+    await server.close();
+  });
+  return { client };
+}
+
 function fakeOdyshell(
   overrides: {
     processExec?: (input: unknown) => Promise<OperationResult>;
@@ -227,6 +346,46 @@ function fakeOdyshell(
       remove: operation,
     },
     docker: { logs: operation },
+  } as unknown as Odyshell;
+}
+
+function fakeApprovedOdyshell(
+  overrides: {
+    readApprovedSession?: (claim: unknown) => Promise<OperationResult>;
+  } = {},
+): Odyshell {
+  return {
+    machines: vi.fn(async () => []),
+    resolveMachine: vi.fn(async () => ({
+      id: "machine-id",
+      name: "rpi5",
+      status: "online",
+      online: true,
+      lastSeenAt: null,
+      enrolledAt: "2026-07-29T18:00:00.000Z",
+    })),
+    requestAgentSession: vi.fn(async () => ({
+      id: "7d8730ef-075c-40d5-a72d-8101abe17260",
+      status: "pending" as const,
+      approvalUrl: "https://odyshell.com/sessions/approve?code=SAFE",
+      expiresAt: "2026-07-29T18:10:00.000Z",
+    })),
+    agentSessionRequestStatus: vi.fn(async () => ({
+      id: "7d8730ef-075c-40d5-a72d-8101abe17260",
+      status: "approved" as const,
+      expiresAt: "2026-07-29T18:10:00.000Z",
+    })),
+    claimAgentSession: vi.fn(async () => ({
+      sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
+      sessionToken: "ods_session_secret",
+      machineId: "machine-id",
+      path: "config/app.json",
+      status: "opening" as const,
+      expiresAt: "2026-07-29T19:00:00.000Z",
+    })),
+    readApprovedSession:
+      overrides.readApprovedSession ??
+      vi.fn(async () => successfulOperation("safe content")),
   } as unknown as Odyshell;
 }
 

@@ -1,4 +1,5 @@
 import { access, readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -42,7 +43,10 @@ import {
   streamEvent,
 } from "./output.js";
 import { resolveClientUpConfiguration } from "./up.js";
-import { serveOdyshellMcp } from "./mcp.js";
+import {
+  serveApprovedOdyshellMcp,
+  serveOdyshellMcp,
+} from "./mcp.js";
 import { deviceLoginUrl } from "./login.js";
 
 const program = new Command();
@@ -201,6 +205,12 @@ program
           agentToken: explicitAgentToken,
           ...(resolved.adminKey ? { adminKey: resolved.adminKey } : {}),
           ...(resolved.workspaceId ? { workspaceId: resolved.workspaceId } : {}),
+          ...(previous?.mcpAgentId
+            ? { mcpAgentId: previous.mcpAgentId }
+            : {}),
+          ...(previous?.mcpAgentName
+            ? { mcpAgentName: previous.mcpAgentName }
+            : {}),
         },
         configPath,
       );
@@ -252,6 +262,12 @@ program
             workspaceId: token.workspaceId,
             cliToken: token.accessToken,
             ...(savedAdminKey ? { adminKey: savedAdminKey } : {}),
+            ...(previous?.mcpAgentId
+              ? { mcpAgentId: previous.mcpAgentId }
+              : {}),
+            ...(previous?.mcpAgentName
+              ? { mcpAgentName: previous.mcpAgentName }
+              : {}),
           },
           configPath,
         );
@@ -507,12 +523,39 @@ program
 program
   .command("mcp")
   .description("serve Odyshell tools to AI agents over MCP stdio")
-  .action(async (_options, command: Command) => {
-    const config = await resolveConfig(globals(command));
+  .option("--name <name>", "persistent agent name", "Odyshell MCP")
+  .action(async (mcpOptions: { name: string }, command: Command) => {
+    const global = globals(command);
+    const configPath = global.configFile
+      ? resolve(global.configFile)
+      : defaultConfigPath();
+    const config = await resolveConfig(global);
+    if (config.cliToken) {
+      const agentId = config.mcpAgentId ?? randomUUID();
+      const agentName = config.mcpAgentName ?? mcpOptions.name;
+      if (!config.mcpAgentId || !config.mcpAgentName) {
+        await saveStoredConfig(
+          {
+            ...config,
+            mcpAgentId: agentId,
+            mcpAgentName: agentName,
+          },
+          configPath,
+        );
+      }
+      serveApprovedOdyshellMcp(
+        new Odyshell({
+          serverUrl: config.serverUrl,
+          cliToken: config.cliToken,
+        }),
+        { id: agentId, name: agentName },
+      );
+      return;
+    }
     if (!config.agentToken) {
       throw new ExpectedError(
-        "An agent token is required for MCP. Run \"ods login\" or set ODYSHELL_AGENT_TOKEN.",
-        "agent_token_required",
+        "Sign in with \"ods login\" or configure an agent token.",
+        "mcp_credentials_required",
       );
     }
     serveOdyshellMcp(

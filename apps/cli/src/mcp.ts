@@ -5,11 +5,14 @@ import {
   type StdioServerHandle,
 } from "@modelcontextprotocol/server/stdio";
 import {
+  normalizeRelativePath,
   operationEnvironmentSchema,
   relativePathSchema,
 } from "@odyshell/protocol";
 import {
+  ExpectedError,
   Odyshell,
+  type ClaimedAgentSession,
   type OperationResult,
 } from "@odyshell/sdk";
 import { z } from "zod";
@@ -17,6 +20,160 @@ import { z } from "zod";
 const machineSchema = z.string().trim().min(1).max(256);
 const timeoutSchema = z.number().int().min(1).max(1800).default(120);
 const environmentSchema = operationEnvironmentSchema.default({});
+
+export type McpAgentIdentity = {
+  id: string;
+  name: string;
+};
+
+export function createApprovedOdyshellMcpServer(
+  ods: Odyshell,
+  identity: McpAgentIdentity,
+  reportUnexpectedError: (error: unknown) => void = () => undefined,
+): McpServer {
+  const claims = new Map<string, ClaimedAgentSession>();
+  const requestSessions = new Map<string, string>();
+  const server = new McpServer(
+    { name: "odyshell", version: "0.2.0" },
+    {
+      instructions:
+        "Request explicit, temporary access before reading a private machine. Ask the user to open the approval URL, check session_status, then use filesystem_read. Credentials remain inside this MCP process.",
+    },
+  );
+
+  server.registerTool(
+    "machines_list",
+    {
+      title: "List Odyshell machines",
+      description: "List the signed-in workspace machines available for a request.",
+      inputSchema: z.object({}),
+      annotations: readOnlyAnnotations,
+    },
+    async () => runTool(() => ods.machines(), reportUnexpectedError),
+  );
+
+  server.registerTool(
+    "session_request",
+    {
+      title: "Request file access",
+      description:
+        "Request temporary access to read one exact workspace-relative file. The user must approve the returned URL.",
+      inputSchema: z.object({
+        machine: machineSchema,
+        path: relativePathSchema,
+        purpose: z.string().trim().min(1).max(512),
+        durationSeconds: z.number().int().min(60).max(86_400).default(900),
+      }),
+      annotations: readOnlyAnnotations,
+    },
+    async (input) =>
+      runTool(async () => {
+        const machine = await ods.resolveMachine(input.machine);
+        return ods.requestAgentSession({
+          agentId: identity.id,
+          agentName: identity.name,
+          purpose: input.purpose,
+          machineId: machine.id,
+          path: input.path,
+          durationSeconds: input.durationSeconds,
+        });
+      }, reportUnexpectedError),
+  );
+
+  server.registerTool(
+    "session_status",
+    {
+      title: "Check access request",
+      description:
+        "Check whether a request was approved. An approved credential is claimed once and kept private inside MCP.",
+      inputSchema: z.object({ requestId: z.string().uuid() }),
+      annotations: readOnlyAnnotations,
+    },
+    async ({ requestId }) =>
+      runTool(async () => {
+        const existingSessionId = requestSessions.get(requestId);
+        const existingClaim = existingSessionId
+          ? claims.get(existingSessionId)
+          : undefined;
+        if (existingClaim) return safeClaim(existingClaim);
+
+        const status = await ods.agentSessionRequestStatus(
+          requestId,
+          identity.id,
+        );
+        if (status.status === "approved") {
+          const claim = await ods.claimAgentSession(requestId, identity.id);
+          claims.set(claim.sessionId, claim);
+          requestSessions.set(requestId, claim.sessionId);
+          return safeClaim(claim);
+        }
+        if (status.status === "claimed") {
+          throw new ExpectedError(
+            "This request was already claimed by another MCP process.",
+            "session_claim_unavailable",
+          );
+        }
+        return status;
+      }, reportUnexpectedError),
+  );
+
+  server.registerTool(
+    "filesystem_read",
+    {
+      title: "Read approved file",
+      description:
+        "Read the exact file approved for a claimed temporary session.",
+      inputSchema: z.object({
+        sessionId: z.string().uuid(),
+        machine: machineSchema,
+        path: relativePathSchema,
+      }),
+      annotations: readOnlyAnnotations,
+    },
+    async (input) =>
+      runOperation(async () => {
+        const claim = claims.get(input.sessionId);
+        if (!claim) {
+          throw new ExpectedError(
+            "No claimed credential is available for this session.",
+            "session_claim_unavailable",
+          );
+        }
+        if (claim.machineId !== input.machine) {
+          throw new ExpectedError(
+            "The machine is outside the approved session scope.",
+            "machine_scope_denied",
+          );
+        }
+        if (
+          normalizeRelativePath(claim.path) !==
+          normalizeRelativePath(input.path)
+        ) {
+          throw new ExpectedError(
+            "The path is outside the approved session scope.",
+            "path_scope_denied",
+          );
+        }
+        try {
+          return await ods.readApprovedSession(claim);
+        } finally {
+          claims.delete(input.sessionId);
+        }
+      }, reportUnexpectedError),
+  );
+
+  return server;
+}
+
+function safeClaim(claim: ClaimedAgentSession): Record<string, unknown> {
+  return {
+    status: "ready",
+    sessionId: claim.sessionId,
+    machineId: claim.machineId,
+    path: claim.path,
+    expiresAt: claim.expiresAt,
+  };
+}
 
 export function createOdyshellMcpServer(
   ods: Odyshell,
@@ -190,6 +347,27 @@ export function serveOdyshellMcp(ods: Odyshell): StdioServerHandle {
     {
       onerror: (error) => {
         process.stderr.write(`[odyshell-mcp] Transport error: ${error.stack ?? error.message}\n`);
+      },
+    },
+  );
+}
+
+export function serveApprovedOdyshellMcp(
+  ods: Odyshell,
+  identity: McpAgentIdentity,
+): StdioServerHandle {
+  return serveStdio(
+    () =>
+      createApprovedOdyshellMcpServer(ods, identity, (error) => {
+        process.stderr.write(
+          `[odyshell-mcp] Unexpected tool error: ${formatUnexpectedError(error)}\n`,
+        );
+      }),
+    {
+      onerror: (error) => {
+        process.stderr.write(
+          `[odyshell-mcp] Transport error: ${error.stack ?? error.message}\n`,
+        );
       },
     },
   );

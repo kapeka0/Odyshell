@@ -11,6 +11,8 @@ export type StoredConfig = {
   workspaceId?: string;
   agentToken?: string;
   cliToken?: string;
+  mcpAgentId?: string;
+  mcpAgentName?: string;
   /** @deprecated Read only for existing development configurations. */
   agentKey?: string;
   adminKey?: string;
@@ -114,6 +116,8 @@ export async function resolveConfig(options: GlobalOptions): Promise<StoredConfi
     ...(workspaceId ? { workspaceId } : {}),
     ...(agentToken ? { agentToken } : {}),
     ...(cliToken ? { cliToken } : {}),
+    ...(stored?.mcpAgentId ? { mcpAgentId: stored.mcpAgentId } : {}),
+    ...(stored?.mcpAgentName ? { mcpAgentName: stored.mcpAgentName } : {}),
     ...(adminKey ? { adminKey } : {}),
   };
 }
