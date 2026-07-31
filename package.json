@@ -4,7 +4,7 @@
   "packageManager": "pnpm@11.1.2",
   "scripts": {
     "build": "pnpm -r --if-present build",
-    "typecheck": "tsc --noEmit && pnpm --filter @odyshell/web exec tsc --noEmit",
+    "typecheck": "tsc --noEmit && pnpm --filter @odyshell/web typecheck",
     "test": "vitest run",
     "test:docs": "node scripts/docs-smoke.mjs",
     "test:e2e": "node scripts/e2e.mjs",
