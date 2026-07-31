@@ -13,6 +13,10 @@ describe("temporary access", () => {
     const agentTokens = [createOpaqueToken("agent"), createOpaqueToken("agent")];
     const cliTokens = [createOpaqueToken("cli"), createOpaqueToken("cli")];
     const deviceCodes = [createOpaqueToken("device"), createOpaqueToken("device")];
+    const agentDeviceCodes = [
+      createOpaqueToken("agent_device"),
+      createOpaqueToken("agent_device"),
+    ];
     const approvalCodes = [
       createOpaqueToken("approval"),
       createOpaqueToken("approval"),
@@ -36,6 +40,9 @@ describe("temporary access", () => {
     for (const token of deviceCodes) {
       expect(token).toMatch(/^ods_device_[A-Za-z0-9_-]{43}$/);
     }
+    for (const token of agentDeviceCodes) {
+      expect(token).toMatch(/^ods_agent_device_[A-Za-z0-9_-]{43}$/);
+    }
     for (const token of approvalCodes) {
       expect(token).toMatch(/^ods_approval_[A-Za-z0-9_-]{43}$/);
     }
@@ -48,10 +55,11 @@ describe("temporary access", () => {
         ...agentTokens,
         ...cliTokens,
         ...deviceCodes,
+        ...agentDeviceCodes,
         ...approvalCodes,
         ...sessionTokens,
       ]).size,
-    ).toBe(12);
+    ).toBe(14);
   });
 
   it("never lets a session outlive its agent token", () => {

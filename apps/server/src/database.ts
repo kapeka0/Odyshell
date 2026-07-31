@@ -115,6 +115,21 @@ interface DeviceAuthorizationTable {
   createdAt: Generated<Date>;
 }
 
+interface AgentDeviceAuthorizationTable {
+  id: string;
+  deviceCodeHash: string;
+  userCodeHash: string;
+  agentName: string;
+  status: string;
+  workspaceId: string | null;
+  userId: string | null;
+  agentId: string | null;
+  expiresAt: Date;
+  approvedAt: Date | null;
+  consumedAt: Date | null;
+  createdAt: Generated<Date>;
+}
+
 interface HumanTable {
   workspaceId: string;
   id: string;
@@ -280,6 +295,7 @@ interface DatabaseSchema {
   agentTokens: AgentTokenTable;
   cliTokens: CliTokenTable;
   deviceAuthorizations: DeviceAuthorizationTable;
+  agentDeviceAuthorizations: AgentDeviceAuthorizationTable;
   humans: HumanTable;
   agents: AgentTable;
   agentCredentials: AgentCredentialTable;
@@ -357,6 +373,17 @@ export type DeviceExchangeResult =
       expiresAt: number;
     };
 
+export type AgentDeviceExchangeResult =
+  | { status: "pending" | "denied" | "expired" | "consumed" | "invalid" }
+  | {
+      status: "authorized";
+      workspaceId: string;
+      agentId: string;
+      agentName: string;
+      credentialId: string;
+      expiresAt: number;
+    };
+
 export type HumanIdentityRecord = Timestamped & {
   workspaceId: string;
   id: string;
@@ -372,6 +399,15 @@ export type AgentIdentityRecord = Timestamped & {
   parentAgentId?: string;
   createdByHumanId?: string;
   status: "active" | "disabled";
+};
+
+export type AgentCredentialPrincipal = {
+  workspaceId: string;
+  credentialId: string;
+  agentId: string;
+  agentName: string;
+  ownerHumanId: string;
+  expiresAt: number;
 };
 
 export type AgentSessionRecord = Timestamped & {
@@ -1650,6 +1686,48 @@ async function rollbackSessionRenewalLinks(
   `.execute(db);
 }
 
+async function migrateAgentDeviceAuthorization(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    create table if not exists odyshell.agent_device_authorizations (
+      id text primary key,
+      device_code_hash text not null unique,
+      user_code_hash text not null unique,
+      agent_name text not null,
+      status text not null check (
+        status in ('pending', 'approved', 'consumed', 'denied')
+      ),
+      workspace_id text,
+      user_id text,
+      agent_id text,
+      expires_at timestamptz not null,
+      approved_at timestamptz,
+      consumed_at timestamptz,
+      created_at timestamptz not null default now(),
+      foreign key (workspace_id) references odyshell.workspaces (id),
+      check (length(btrim(agent_name)) between 1 and 80)
+    )
+  `.execute(db);
+  await sql`
+    create index if not exists agent_device_authorizations_expiry_idx
+    on odyshell.agent_device_authorizations (expires_at)
+  `.execute(db);
+  await sql`
+    create unique index if not exists agent_credentials_token_hash_global_idx
+    on odyshell.agent_credentials (token_hash)
+  `.execute(db);
+}
+
+async function rollbackAgentDeviceAuthorization(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    drop index if exists odyshell.agent_credentials_token_hash_global_idx
+  `.execute(db);
+  await sql`drop table odyshell.agent_device_authorizations`.execute(db);
+}
+
 const migrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
     return {
@@ -1691,6 +1769,10 @@ const migrationProvider: MigrationProvider = {
       "011_session_renewal_links": {
         up: migrateSessionRenewalLinks,
         down: rollbackSessionRenewalLinks,
+      },
+      "012_agent_device_authorization": {
+        up: migrateAgentDeviceAuthorization,
+        down: rollbackAgentDeviceAuthorization,
       },
     };
   },
@@ -3273,6 +3355,285 @@ export class PostgresDatabase {
         tokenId: input.tokenId,
         workspaceId,
         userId,
+        expiresAt: expiresAt.getTime(),
+      };
+    });
+  }
+
+  async createAgentDeviceAuthorization(input: {
+    id: string;
+    deviceCodeHash: string;
+    userCodeHash: string;
+    agentName: string;
+    expiresAt: number;
+  }): Promise<void> {
+    await this.db
+      .insertInto("agentDeviceAuthorizations")
+      .values({
+        ...input,
+        agentName: input.agentName.trim(),
+        status: "pending",
+        workspaceId: null,
+        userId: null,
+        agentId: null,
+        expiresAt: new Date(input.expiresAt),
+        approvedAt: null,
+        consumedAt: null,
+      })
+      .execute();
+  }
+
+  async inspectAgentDeviceAuthorization(
+    userCodeHash: string,
+  ): Promise<
+    | { status: "pending"; agentName: string; expiresAt: number }
+    | { status: "expired" | "invalid" | "already_used" }
+  > {
+    const authorization = await this.db
+      .selectFrom("agentDeviceAuthorizations")
+      .selectAll()
+      .where("userCodeHash", "=", userCodeHash)
+      .executeTakeFirst();
+    const decision = deviceApprovalDecision(authorization ?? null);
+    if (decision !== "approved") return { status: decision };
+    if (!authorization) return { status: "invalid" };
+    return {
+      status: "pending",
+      agentName: authorization.agentName,
+      expiresAt: timestamp(authorization.expiresAt),
+    };
+  }
+
+  async approveAgentDeviceAuthorization(input: {
+    userCodeHash: string;
+    userId: string;
+    workspaceId: string;
+    agentId: string;
+  }): Promise<"approved" | "expired" | "invalid" | "already_used"> {
+    return await this.db.transaction().execute(async (transaction) => {
+      const authorization = await transaction
+        .selectFrom("agentDeviceAuthorizations")
+        .selectAll()
+        .where("userCodeHash", "=", input.userCodeHash)
+        .forUpdate()
+        .executeTakeFirst();
+      const decision = deviceApprovalDecision(authorization ?? null);
+      if (decision !== "approved") return decision;
+      if (!authorization) return "invalid";
+
+      await transaction
+        .insertInto("humans")
+        .values({
+          workspaceId: input.workspaceId,
+          id: input.userId,
+          externalId: input.userId,
+          status: "active",
+        })
+        .onConflict((conflict) =>
+          conflict.columns(["workspaceId", "id"]).doNothing(),
+        )
+        .execute();
+      await transaction
+        .insertInto("agents")
+        .values({
+          workspaceId: input.workspaceId,
+          id: input.agentId,
+          name: authorization.agentName,
+          kind: "independent",
+          parentAgentId: null,
+          createdByHumanId: input.userId,
+          status: "active",
+        })
+        .execute();
+      await transaction
+        .updateTable("agentDeviceAuthorizations")
+        .set({
+          status: "approved",
+          workspaceId: input.workspaceId,
+          userId: input.userId,
+          agentId: input.agentId,
+          approvedAt: new Date(),
+        })
+        .where("id", "=", authorization.id)
+        .execute();
+      return "approved";
+    });
+  }
+
+  async exchangeAgentDeviceAuthorization(input: {
+    deviceCodeHash: string;
+    credentialId: string;
+    credentialHash: string;
+    expiresAt: number;
+  }): Promise<AgentDeviceExchangeResult> {
+    return await this.db.transaction().execute(async (transaction) => {
+      const authorization = await transaction
+        .selectFrom("agentDeviceAuthorizations")
+        .selectAll()
+        .where("deviceCodeHash", "=", input.deviceCodeHash)
+        .forUpdate()
+        .executeTakeFirst();
+      const decision = deviceExchangeDecision(authorization ?? null);
+      if (decision !== "authorized") return { status: decision };
+      if (
+        !authorization?.workspaceId ||
+        !authorization.userId ||
+        !authorization.agentId
+      ) {
+        throw new Error("Authorized Agent device record is incomplete");
+      }
+      const expiresAt = new Date(input.expiresAt);
+      await transaction
+        .insertInto("agentCredentials")
+        .values({
+          workspaceId: authorization.workspaceId,
+          id: input.credentialId,
+          agentId: authorization.agentId,
+          tokenHash: input.credentialHash,
+          status: "active",
+          expiresAt,
+          retiringAt: null,
+          revokedAt: null,
+        })
+        .execute();
+      await transaction
+        .updateTable("agentDeviceAuthorizations")
+        .set({ status: "consumed", consumedAt: new Date() })
+        .where("id", "=", authorization.id)
+        .execute();
+      return {
+        status: "authorized",
+        workspaceId: authorization.workspaceId,
+        agentId: authorization.agentId,
+        agentName: authorization.agentName,
+        credentialId: input.credentialId,
+        expiresAt: expiresAt.getTime(),
+      };
+    });
+  }
+
+  async findAgentCredentialByTokenHash(
+    tokenHash: string,
+  ): Promise<AgentCredentialPrincipal | null> {
+    const now = new Date();
+    const credential = await this.db
+      .selectFrom("agentCredentials")
+      .innerJoin("agents", (join) =>
+        join
+          .onRef("agents.workspaceId", "=", "agentCredentials.workspaceId")
+          .onRef("agents.id", "=", "agentCredentials.agentId"),
+      )
+      .select([
+        "agentCredentials.workspaceId",
+        "agentCredentials.id as credentialId",
+        "agentCredentials.agentId",
+        "agentCredentials.expiresAt",
+        "agents.name as agentName",
+        "agents.createdByHumanId as ownerHumanId",
+      ])
+      .where("agentCredentials.tokenHash", "=", tokenHash)
+      .where("agentCredentials.revokedAt", "is", null)
+      .where("agentCredentials.expiresAt", ">", now)
+      .where("agents.kind", "=", "independent")
+      .where("agents.status", "=", "active")
+      .where((builder) =>
+        builder.or([
+          builder("agentCredentials.status", "=", "active"),
+          builder.and([
+            builder("agentCredentials.status", "=", "retiring"),
+            builder("agentCredentials.retiringAt", ">", now),
+          ]),
+        ]),
+      )
+      .executeTakeFirst();
+    if (!credential?.ownerHumanId) return null;
+    return {
+      workspaceId: credential.workspaceId,
+      credentialId: credential.credentialId,
+      agentId: credential.agentId,
+      agentName: credential.agentName,
+      ownerHumanId: credential.ownerHumanId,
+      expiresAt: timestamp(credential.expiresAt),
+    };
+  }
+
+  async rotateAgentCredential(input: {
+    currentTokenHash: string;
+    credentialId: string;
+    credentialHash: string;
+    expiresAt: number;
+    overlapMilliseconds: number;
+  }): Promise<AgentCredentialPrincipal | null> {
+    return await this.db.transaction().execute(async (transaction) => {
+      const now = new Date();
+      const current = await transaction
+        .selectFrom("agentCredentials")
+        .innerJoin("agents", (join) =>
+          join
+            .onRef("agents.workspaceId", "=", "agentCredentials.workspaceId")
+            .onRef("agents.id", "=", "agentCredentials.agentId"),
+        )
+        .select([
+          "agentCredentials.workspaceId",
+          "agentCredentials.id",
+          "agentCredentials.agentId",
+          "agentCredentials.expiresAt",
+          "agentCredentials.status",
+          "agentCredentials.revokedAt",
+          "agents.name as agentName",
+          "agents.createdByHumanId as ownerHumanId",
+          "agents.status as agentStatus",
+        ])
+        .where("agentCredentials.tokenHash", "=", input.currentTokenHash)
+        .forUpdate()
+        .executeTakeFirst();
+      if (
+        !current?.ownerHumanId ||
+        current.revokedAt ||
+        current.agentStatus !== "active" ||
+        current.expiresAt <= now ||
+        !["active", "retiring"].includes(current.status)
+      ) {
+        return null;
+      }
+      const expiresAt = new Date(input.expiresAt);
+      if (
+        expiresAt <= now ||
+        expiresAt.getTime() > now.getTime() + 365 * 24 * 60 * 60 * 1_000
+      ) {
+        return null;
+      }
+      const retiringAt = new Date(
+        Math.min(
+          current.expiresAt.getTime(),
+          now.getTime() + Math.min(input.overlapMilliseconds, 10 * 60 * 1_000),
+        ),
+      );
+      await transaction
+        .updateTable("agentCredentials")
+        .set({ status: "retiring", retiringAt })
+        .where("workspaceId", "=", current.workspaceId)
+        .where("id", "=", current.id)
+        .execute();
+      await transaction
+        .insertInto("agentCredentials")
+        .values({
+          workspaceId: current.workspaceId,
+          id: input.credentialId,
+          agentId: current.agentId,
+          tokenHash: input.credentialHash,
+          status: "active",
+          expiresAt,
+          retiringAt: null,
+          revokedAt: null,
+        })
+        .execute();
+      return {
+        workspaceId: current.workspaceId,
+        credentialId: input.credentialId,
+        agentId: current.agentId,
+        agentName: current.agentName,
+        ownerHumanId: current.ownerHumanId,
         expiresAt: expiresAt.getTime(),
       };
     });

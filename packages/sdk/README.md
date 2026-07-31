@@ -28,6 +28,20 @@ const result = await ods.process.exec({
 console.log(result.stdout);
 ```
 
+Headless orchestrators can register once through device authorization:
+
+```ts
+const authorization = await ods.startAgentDeviceAuthorization("OpenClaw");
+// Present authorization.verificationUriComplete to an administrator.
+const identity = await ods.exchangeAgentDeviceAuthorization(
+  authorization.deviceCode,
+);
+```
+
+Store `identity.accessToken` only in the trusted runtime. It proves Agent identity and can request
+Sessions, but cannot execute Operations. `rotateAgentCredential()` issues a successor with a
+bounded ten-minute overlap.
+
 The SDK supports typed process, filesystem, and Docker log operations. Permissions are still
 enforced by the Server, the agent token, and the Client on the target machine.
 

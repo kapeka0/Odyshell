@@ -596,4 +596,26 @@ describe("dashboard navigation performance boundary", () => {
       ).toContain("Skeleton");
     }
   });
+
+  it("requires an organization administrator to approve Agent registration", () => {
+    const webRoot = resolve(process.cwd(), "apps/web/src");
+    const route = readFileSync(
+      resolve(webRoot, "app/api/agent-device/approve/route.ts"),
+      "utf8",
+    );
+    const approvalPage = readFileSync(
+      resolve(webRoot, "app/activate-agent/page.tsx"),
+      "utf8",
+    );
+    const server = readFileSync(
+      resolve(process.cwd(), "apps/server/src/index.ts"),
+      "utf8",
+    );
+
+    expect(route).toContain("requireCloudAdminRouteIdentity");
+    expect(approvalPage).toContain('orgRole !== "org:admin"');
+    expect(server).toContain('"/v1/auth/agent/device"');
+    expect(server).toContain('"/v1/agent-credentials/rotate"');
+    expect(server).toContain("agent_identity_mismatch");
+  });
 });

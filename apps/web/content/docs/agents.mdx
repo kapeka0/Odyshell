@@ -26,6 +26,17 @@ ods login
 ods mcp
 ```
 
+For an unattended runtime, register an Independent Agent instead:
+
+```bash
+ods agent login "OpenClaw"
+```
+
+Open the displayed URL as a workspace administrator. Approval creates the persistent Agent and
+returns a 90-day Agent Credential to the runtime. It can request Sessions and inspect its own
+requests, but cannot execute an Operation or administer the workspace. Rotate it before expiry;
+the previous credential remains valid for at most ten minutes.
+
 The current MCP shortcut requests one exact file read. The Session protocol also supports
 multi-machine scopes with explicit filesystem paths, exact `process.exec` program and argument
 rules, and Docker container names.

@@ -115,6 +115,48 @@ describe("Odyshell SDK", () => {
     expect(requests[1]?.headers).not.toHaveProperty("authorization");
   });
 
+  it("registers and rotates an Agent without exposing its credential to public calls", async () => {
+    const requests: CapturedRequest[] = [];
+    const fetch = mockFetch(requests, () => ({
+      accessToken: "ods_agent_result",
+      tokenType: "Bearer",
+      workspaceId: "workspace-123",
+      agentId: "agent-123",
+      agentName: "OpenClaw",
+      credentialId: "credential-123",
+      expiresAt: "2026-10-29T18:00:00.000Z",
+      overlapSeconds: 600,
+    }));
+    const publicClient = new Odyshell({
+      serverUrl: "https://ods.example",
+      fetch,
+    });
+    await publicClient.startAgentDeviceAuthorization("OpenClaw");
+    await publicClient.exchangeAgentDeviceAuthorization("device-secret");
+
+    const agent = new Odyshell({
+      serverUrl: "https://ods.example",
+      agentToken: "agent-secret",
+      fetch,
+    });
+    await agent.rotateAgentCredential();
+
+    expect(requests[0]).toMatchObject({
+      path: "/v1/auth/agent/device",
+      body: { agentName: "OpenClaw" },
+    });
+    expect(requests[0]?.headers).not.toHaveProperty("authorization");
+    expect(requests[1]).toMatchObject({
+      path: "/v1/auth/agent/device/token",
+      body: { deviceCode: "device-secret" },
+    });
+    expect(requests[1]?.headers).not.toHaveProperty("authorization");
+    expect(requests[2]).toMatchObject({
+      path: "/v1/agent-credentials/rotate",
+      headers: { authorization: "Bearer agent-secret" },
+    });
+  });
+
   it("revokes a CLI token through its bearer credential", async () => {
     const requests: CapturedRequest[] = [];
     const fetch = mockFetch(requests, () => ({ revoked: true }));

@@ -31,6 +31,21 @@ export async function requireCloudRouteIdentity(): Promise<CloudRouteIdentity> {
   return { identity: await cloudIdentityFor(userId, orgId) };
 }
 
+export async function requireCloudAdminRouteIdentity(): Promise<CloudRouteIdentity> {
+  const authorization = await requireCloudRouteIdentity();
+  if (authorization.response) return authorization;
+  const { orgRole } = await auth();
+  if (orgRole !== "org:admin") {
+    return {
+      response: NextResponse.json(
+        { error: "organization_admin_required" },
+        { status: 403 },
+      ),
+    };
+  }
+  return authorization;
+}
+
 export function cloudRouteError(error: unknown): NextResponse {
   if (error instanceof CloudApiError) {
     return NextResponse.json(

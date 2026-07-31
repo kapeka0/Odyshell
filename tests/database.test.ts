@@ -261,4 +261,33 @@ describe("server storage boundaries", () => {
       cancellation.indexOf('.updateTable("agentSessions")'),
     );
   });
+
+  it("stores headless Agent authorization codes and credentials as hashes", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const migration = database.slice(
+      database.indexOf("async function migrateAgentDeviceAuthorization("),
+      database.indexOf("const migrationProvider"),
+    );
+    const exchange = database.slice(
+      database.indexOf("async exchangeAgentDeviceAuthorization("),
+      database.indexOf("async findAgentCredentialByTokenHash("),
+    );
+    const rotation = database.slice(
+      database.indexOf("async rotateAgentCredential("),
+      database.indexOf("async createEnrollmentToken("),
+    );
+
+    expect(migration).toContain("agent_device_authorizations");
+    expect(migration).toContain("device_code_hash text not null unique");
+    expect(migration).toContain("user_code_hash text not null unique");
+    expect(migration).not.toContain("device_code text");
+    expect(exchange).toContain('.insertInto("agentCredentials")');
+    expect(exchange).not.toContain("accessToken");
+    expect(rotation).toContain(".forUpdate()");
+    expect(rotation).toContain('status: "retiring"');
+    expect(rotation).toContain("10 * 60 * 1_000");
+  });
 });

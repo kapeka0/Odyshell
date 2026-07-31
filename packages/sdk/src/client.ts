@@ -190,6 +190,12 @@ export type DeviceToken = {
   expiresAt: string;
 };
 
+export type AgentDeviceToken = DeviceToken & {
+  agentId: string;
+  agentName: string;
+  credentialId: string;
+};
+
 export type AgentSessionRequestInput = {
   agentId: string;
   agentName: string;
@@ -366,6 +372,41 @@ export class Odyshell {
       method: "POST",
       authenticated: false,
       body: { deviceCode },
+    });
+  }
+
+  async startAgentDeviceAuthorization(
+    agentName: string,
+  ): Promise<DeviceAuthorization> {
+    return this.request("/v1/auth/agent/device", {
+      method: "POST",
+      authenticated: false,
+      body: { agentName },
+    });
+  }
+
+  async exchangeAgentDeviceAuthorization(
+    deviceCode: string,
+  ): Promise<AgentDeviceToken> {
+    return this.request("/v1/auth/agent/device/token", {
+      method: "POST",
+      authenticated: false,
+      body: { deviceCode },
+    });
+  }
+
+  async rotateAgentCredential(): Promise<
+    AgentDeviceToken & { overlapSeconds: number }
+  > {
+    if (!this.config.agentToken) {
+      throw new ExpectedError(
+        "No Agent Credential configured.",
+        "credentials_missing",
+      );
+    }
+    return this.request("/v1/agent-credentials/rotate", {
+      method: "POST",
+      credential: this.config.agentToken,
     });
   }
 

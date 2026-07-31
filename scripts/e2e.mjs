@@ -466,6 +466,211 @@ try {
     },
     approvalCode,
   };
+  const agentDeviceStartResponse = await fetch(
+    new URL("/v1/auth/agent/device", apiUrl),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agentName: "E2E Independent Agent" }),
+    },
+  );
+  const agentDevice = await agentDeviceStartResponse.json();
+  if (
+    agentDeviceStartResponse.status !== 201 ||
+    !agentDevice.deviceCode ||
+    !agentDevice.userCode
+  ) {
+    throw new Error("Independent Agent device authorization did not start");
+  }
+  const pendingAgentExchange = await fetch(
+    new URL("/v1/auth/agent/device/token", apiUrl),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deviceCode: agentDevice.deviceCode }),
+    },
+  );
+  if (pendingAgentExchange.status !== 400) {
+    throw new Error("Pending Agent device authorization was not held");
+  }
+  const agentApprovalBody = {
+    userId: cliUserId,
+    organization: approvalBody.organization,
+    userCode: agentDevice.userCode,
+  };
+  const inspectAgentDevice = await fetch(
+    new URL("/v1/internal/cloud/agent-device/inspect", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify(agentApprovalBody),
+    },
+  );
+  if (
+    inspectAgentDevice.status !== 200 ||
+    (await inspectAgentDevice.json()).agentName !== "E2E Independent Agent"
+  ) {
+    throw new Error("Agent registration approval omitted the proposed identity");
+  }
+  const approveAgentDevice = () =>
+    fetch(new URL("/v1/internal/cloud/agent-device/approve", apiUrl), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify(agentApprovalBody),
+    });
+  const approvedAgentDevice = await approveAgentDevice();
+  if (approvedAgentDevice.status !== 200) {
+    throw new Error("Independent Agent registration was not approved");
+  }
+  if ((await approveAgentDevice()).status !== 409) {
+    throw new Error("Agent registration approval replay was not rejected");
+  }
+  const agentExchangeResponse = await fetch(
+    new URL("/v1/auth/agent/device/token", apiUrl),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deviceCode: agentDevice.deviceCode }),
+    },
+  );
+  const agentCredential = await agentExchangeResponse.json();
+  if (
+    agentExchangeResponse.status !== 200 ||
+    !agentCredential.accessToken ||
+    !agentCredential.agentId
+  ) {
+    throw new Error("Agent Credential was not issued");
+  }
+  const replayAgentExchange = await fetch(
+    new URL("/v1/auth/agent/device/token", apiUrl),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deviceCode: agentDevice.deviceCode }),
+    },
+  );
+  if (replayAgentExchange.status !== 409) {
+    throw new Error("Agent device code replay was not rejected");
+  }
+  const directAgentOperation = await fetch(new URL("/v1/sessions", apiUrl), {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${agentCredential.accessToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      machineId: machine.id,
+      profile: "workspace",
+      ttlSeconds: 600,
+      capabilities: ["fs.read"],
+    }),
+  });
+  if (directAgentOperation.status !== 403) {
+    throw new Error("Agent Credential could access direct operation routes");
+  }
+  const rotationResponse = await fetch(
+    new URL("/v1/agent-credentials/rotate", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${agentCredential.accessToken}`,
+      },
+    },
+  );
+  const rotatedAgentCredential = await rotationResponse.json();
+  if (
+    rotationResponse.status !== 200 ||
+    !rotatedAgentCredential.accessToken ||
+    rotatedAgentCredential.overlapSeconds !== 600
+  ) {
+    throw new Error("Agent Credential rotation failed");
+  }
+  const independentRequestResponse = await fetch(
+    new URL("/v1/agent-session-requests", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${agentCredential.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        agentId: agentCredential.agentId,
+        agentName: agentCredential.agentName,
+        purpose: "Verify Independent Agent identity",
+        scopes: [
+          {
+            machineId: machine.id,
+            profile: "workspace",
+            capabilities: ["fs.read"],
+            restrictions: {
+              filesystem: {
+                paths: [
+                  { path: "approved.txt", includeDescendants: false },
+                ],
+              },
+            },
+          },
+        ],
+        durationSeconds: 600,
+      }),
+    },
+  );
+  const independentRequest = await independentRequestResponse.json();
+  if (independentRequestResponse.status !== 201) {
+    throw new Error("Independent Agent could not request a Session");
+  }
+  await compose([
+    "exec",
+    "-T",
+    "postgres",
+    "psql",
+    "-U",
+    "odyshell",
+    "-d",
+    "odyshell",
+    "-c",
+    `update odyshell.agent_credentials set retiring_at = now() - interval '1 second' where id = '${agentCredential.credentialId}';`,
+  ]);
+  const retiredStatus = await fetch(
+    new URL(
+      `/v1/agent-session-requests/${independentRequest.id}/status`,
+      apiUrl,
+    ),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${agentCredential.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ agentId: agentCredential.agentId }),
+    },
+  );
+  if (retiredStatus.status !== 401) {
+    throw new Error("Retired Agent Credential remained valid after overlap");
+  }
+  const rotatedStatus = await fetch(
+    new URL(
+      `/v1/agent-session-requests/${independentRequest.id}/status`,
+      apiUrl,
+    ),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${rotatedAgentCredential.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ agentId: agentCredential.agentId }),
+    },
+  );
+  if (rotatedStatus.status !== 200) {
+    throw new Error("Rotated Agent Credential could not inspect its request");
+  }
   const approval = await fetch(
     new URL("/v1/internal/cloud/session-requests/approve", apiUrl),
     {
@@ -999,7 +1204,7 @@ try {
           "odyshell",
           "-At",
           "-c",
-          `select status from odyshell.sessions where id = '${renewedSession.sessionId}';`,
+          `select s.status from odyshell.sessions s join odyshell.agent_session_targets t on t.runtime_session_id = s.id where t.session_id = '${renewedSession.sessionId}';`,
         ])
       ).trim(),
     }),

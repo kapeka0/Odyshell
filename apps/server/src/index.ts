@@ -57,6 +57,7 @@ import {
   createDatabase,
   DEFAULT_WORKSPACE_ID,
   type AgentTokenRecord,
+  type AgentCredentialPrincipal,
   type AuditRecord,
   type CliTokenRecord,
 } from "./database.js";
@@ -87,6 +88,15 @@ const renewAgentSessionSchema = agentIdentityReferenceSchema.extend({
 const cloudSessionSchema = cloudIdentitySchema
   .extend({ sessionId: z.string().uuid() })
   .strict();
+const startAgentDeviceAuthorizationSchema = z
+  .object({ agentName: z.string().trim().min(1).max(80) })
+  .strict();
+const exchangeAgentDeviceAuthorizationSchema = z
+  .object({ deviceCode: z.string().min(32).max(256) })
+  .strict();
+const cloudAgentDeviceSchema = cloudIdentitySchema
+  .extend({ userCode: z.string().min(8).max(32) })
+  .strict();
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
 await app.register(websocket, { options: { maxPayload: 2 * 1024 * 1024 } });
@@ -116,7 +126,7 @@ const gateway = new ClientGateway(db);
 gateway.register(app);
 
 type AgentPrincipal = {
-  kind: "agent" | "cli" | "development" | "session";
+  kind: "agent" | "agent_identity" | "cli" | "development" | "session";
   id: string;
   name: string;
   workspaceId: string;
@@ -128,10 +138,16 @@ type AgentPrincipal = {
 
 const requestPrincipals = new WeakMap<FastifyRequest, AgentPrincipal>();
 const requestCliPrincipals = new WeakMap<FastifyRequest, CliTokenRecord>();
+const requestAgentCredentialPrincipals = new WeakMap<
+  FastifyRequest,
+  AgentCredentialPrincipal
+>();
 const requestAdminWorkspaces = new WeakMap<FastifyRequest, string>();
 const requestAdminPrincipals = new WeakMap<FastifyRequest, string>();
 const deviceStartLimiter = new FixedWindowRateLimiter(12, 60_000);
 const devicePollLimiter = new FixedWindowRateLimiter(40, 60_000);
+const agentDeviceStartLimiter = new FixedWindowRateLimiter(12, 60_000);
+const agentDevicePollLimiter = new FixedWindowRateLimiter(40, 60_000);
 const enrollmentIssuanceLimiter = new ScopedRateLimiter(
   60,
   20,
@@ -245,6 +261,26 @@ async function requireCli(
   requestCliPrincipals.set(request, principal);
 }
 
+async function requireSessionRequester(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const token = bearerTokenFor(request);
+  if (token) {
+    const agent = await db.findAgentCredentialByTokenHash(hashToken(token));
+    if (agent) {
+      requestAgentCredentialPrincipals.set(request, agent);
+      return;
+    }
+    const cli = await db.findCliByTokenHash(hashToken(token));
+    if (cli) {
+      requestCliPrincipals.set(request, cli);
+      return;
+    }
+  }
+  await reply.code(401).send({ error: "invalid_requester_credential" });
+}
+
 async function requireAgent(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const bearerToken = bearerTokenFor(request);
   const legacyHeader = request.headers["x-odyshell-agent-key"];
@@ -274,6 +310,21 @@ async function requireAgent(request: FastifyRequest, reply: FastifyReply): Promi
         machineIds: new Set(principal.machineIds),
         capabilities: new Set(principal.capabilities),
         expiresAt: new Date(principal.expiresAt),
+      });
+      return;
+    }
+    const agentIdentity = await db.findAgentCredentialByTokenHash(
+      hashToken(token),
+    );
+    if (agentIdentity) {
+      requestPrincipals.set(request, {
+        kind: "agent_identity",
+        id: agentIdentity.agentId,
+        name: agentIdentity.agentName,
+        workspaceId: agentIdentity.workspaceId,
+        machineIds: null,
+        capabilities: new Set(),
+        expiresAt: new Date(agentIdentity.expiresAt),
       });
       return;
     }
@@ -340,6 +391,26 @@ function cliPrincipalFor(request: FastifyRequest): CliTokenRecord {
   const principal = requestCliPrincipals.get(request);
   if (!principal) throw new Error("Authenticated request has no CLI principal");
   return principal;
+}
+
+function sessionRequesterFor(request: FastifyRequest): {
+  workspaceId: string;
+  humanId: string;
+  agent?: AgentCredentialPrincipal;
+} {
+  const agent = requestAgentCredentialPrincipals.get(request);
+  if (agent) {
+    return {
+      workspaceId: agent.workspaceId,
+      humanId: agent.ownerHumanId,
+      agent,
+    };
+  }
+  const cli = cliPrincipalFor(request);
+  return {
+    workspaceId: cli.workspaceId,
+    humanId: cli.userId,
+  };
 }
 
 function adminWorkspaceFor(request: FastifyRequest): string {
@@ -551,6 +622,118 @@ app.get("/health", async () => {
   await db.health();
   return { status: "ok", protocol: 1 };
 });
+
+app.post("/v1/auth/agent/device", async (request, reply) => {
+  if (!webKey || !webUrl) {
+    return reply.code(503).send({ error: "cloud_authentication_disabled" });
+  }
+  if (!agentDeviceStartLimiter.allow(request.ip)) {
+    return reply.code(429).send({ error: "device_authorization_rate_limited" });
+  }
+  const parsed = startAgentDeviceAuthorizationSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: "invalid_request" });
+  }
+  const deviceCode = createOpaqueToken("agent_device");
+  const userCode = createDeviceUserCode();
+  const expiresIn = 600;
+  await db.createAgentDeviceAuthorization({
+    id: randomUUID(),
+    deviceCodeHash: hashToken(deviceCode),
+    userCodeHash: hashToken(normalizeDeviceUserCode(userCode)),
+    agentName: parsed.data.agentName,
+    expiresAt: Date.now() + expiresIn * 1_000,
+  });
+  const verificationUri = `${webUrl}/activate-agent`;
+  return reply.code(201).send({
+    deviceCode,
+    userCode,
+    verificationUri,
+    verificationUriComplete: `${verificationUri}?code=${encodeURIComponent(userCode)}`,
+    expiresIn,
+    interval: 2,
+  });
+});
+
+app.post("/v1/auth/agent/device/token", async (request, reply) => {
+  const parsed = exchangeAgentDeviceAuthorizationSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: "invalid_request" });
+  }
+  const deviceCodeHash = hashToken(parsed.data.deviceCode);
+  if (!agentDevicePollLimiter.allow(deviceCodeHash)) {
+    return reply.code(429).send({ error: "slow_down" });
+  }
+  const accessToken = createOpaqueToken("agent");
+  const expiresAt = Date.now() + 90 * 24 * 60 * 60 * 1_000;
+  const exchange = await db.exchangeAgentDeviceAuthorization({
+    deviceCodeHash,
+    credentialId: randomUUID(),
+    credentialHash: hashToken(accessToken),
+    expiresAt,
+  });
+  if (exchange.status === "pending") {
+    return reply.code(400).send({ error: "authorization_pending" });
+  }
+  if (exchange.status === "expired") {
+    return reply.code(400).send({ error: "expired_token" });
+  }
+  if (exchange.status === "denied") {
+    return reply.code(403).send({ error: "access_denied" });
+  }
+  if (exchange.status === "consumed") {
+    return reply.code(409).send({ error: "device_code_already_used" });
+  }
+  if (exchange.status === "invalid") {
+    return reply.code(401).send({ error: "invalid_device_code" });
+  }
+  if (exchange.status !== "authorized") {
+    throw new Error(`Unhandled Agent device state: ${exchange.status}`);
+  }
+  return {
+    accessToken,
+    tokenType: "Bearer",
+    workspaceId: exchange.workspaceId,
+    agentId: exchange.agentId,
+    agentName: exchange.agentName,
+    credentialId: exchange.credentialId,
+    expiresAt: isoTimestamp(exchange.expiresAt),
+  };
+});
+
+app.post(
+  "/v1/agent-credentials/rotate",
+  { preHandler: requireSessionRequester },
+  async (request, reply) => {
+    const principal = requestAgentCredentialPrincipals.get(request);
+    const currentToken = bearerTokenFor(request);
+    if (!principal || !currentToken) {
+      return reply.code(403).send({ error: "agent_credential_required" });
+    }
+    const accessToken = createOpaqueToken("agent");
+    const expiresAt = Date.now() + 90 * 24 * 60 * 60 * 1_000;
+    const rotated = await db.rotateAgentCredential({
+      currentTokenHash: hashToken(currentToken),
+      credentialId: randomUUID(),
+      credentialHash: hashToken(accessToken),
+      expiresAt,
+      overlapMilliseconds: 10 * 60 * 1_000,
+    });
+    if (!rotated) {
+      return reply.code(401).send({ error: "invalid_agent_credential" });
+    }
+    return {
+      accessToken,
+      tokenType: "Bearer",
+      workspaceId: rotated.workspaceId,
+      agentId: rotated.agentId,
+      agentName: rotated.agentName,
+      credentialId: rotated.credentialId,
+      expiresAt: isoTimestamp(rotated.expiresAt),
+      overlapSeconds: 600,
+    };
+  },
+);
 
 app.post("/v1/auth/device", async (request, reply) => {
   if (!webKey || !webUrl) {
@@ -987,6 +1170,85 @@ app.post(
     );
     gateway.notifyWorkspace(context.workspace.id);
     return { approved: true, workspace: context.workspace };
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/agent-device/inspect",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = cloudAgentDeviceSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request" });
+    }
+    await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const result = await db.inspectAgentDeviceAuthorization(
+      hashToken(normalizeDeviceUserCode(parsed.data.userCode)),
+    );
+    if (result.status === "invalid") {
+      return reply.code(404).send({ error: "device_code_not_found" });
+    }
+    if (result.status === "expired") {
+      return reply.code(410).send({ error: "device_code_expired" });
+    }
+    if (result.status === "already_used") {
+      return reply.code(409).send({ error: "device_code_already_used" });
+    }
+    if (result.status !== "pending") {
+      throw new Error(`Unhandled Agent approval state: ${result.status}`);
+    }
+    return {
+      agentName: result.agentName,
+      expiresAt: isoTimestamp(result.expiresAt),
+    };
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/agent-device/approve",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = cloudAgentDeviceSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request" });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const agentId = randomUUID();
+    const result = await db.approveAgentDeviceAuthorization({
+      userCodeHash: hashToken(
+        normalizeDeviceUserCode(parsed.data.userCode),
+      ),
+      userId: parsed.data.userId,
+      workspaceId: context.workspace.id,
+      agentId,
+    });
+    if (result === "invalid") {
+      return reply.code(404).send({ error: "device_code_not_found" });
+    }
+    if (result === "expired") {
+      return reply.code(410).send({ error: "device_code_expired" });
+    }
+    if (result === "already_used") {
+      return reply.code(409).send({ error: "device_code_already_used" });
+    }
+    await audit(
+      db,
+      context.workspace.id,
+      parsed.data.userId,
+      "agent.registered",
+      "agent",
+      agentId,
+    );
+    gateway.notifyWorkspace(context.workspace.id);
+    return { approved: true, agentId };
   },
 );
 
@@ -1632,7 +1894,7 @@ app.post<{ Params: { machineId: string } }>(
 
 app.post(
   "/v1/agent-session-requests",
-  { preHandler: requireCli },
+  { preHandler: requireSessionRequester },
   async (request, reply) => {
     if (!webUrl) {
       return reply
@@ -1645,9 +1907,20 @@ app.post(
         .code(400)
         .send({ error: "invalid_request", details: parsed.error.issues });
     }
-    const principal = cliPrincipalFor(request);
+    const principal = sessionRequesterFor(request);
+    const agentId = principal.agent?.agentId ?? parsed.data.agentId;
+    const agentName = principal.agent?.agentName ?? parsed.data.agentName;
     if (
-      !sessionRequestLimiter.allow(principal.workspaceId, principal.userId)
+      principal.agent &&
+      (parsed.data.agentId !== agentId || parsed.data.agentName !== agentName)
+    ) {
+      return reply.code(403).send({ error: "agent_identity_mismatch" });
+    }
+    if (
+      !sessionRequestLimiter.allow(
+        principal.workspaceId,
+        principal.agent?.credentialId ?? principal.humanId,
+      )
     ) {
       return reply
         .code(429)
@@ -1659,9 +1932,9 @@ app.post(
     const created = await db.createAgentSessionRequest({
       workspaceId: principal.workspaceId,
       requestId,
-      agentId: parsed.data.agentId,
-      agentName: parsed.data.agentName,
-      humanId: principal.userId,
+      agentId,
+      agentName,
+      humanId: principal.humanId,
       scopes: parsed.data.scopes,
       purpose: parsed.data.purpose,
       durationSeconds: parsed.data.durationSeconds,
@@ -1674,7 +1947,7 @@ app.post(
     await audit(
       db,
       principal.workspaceId,
-      parsed.data.agentId,
+      agentId,
       "session.requested",
       "session_request",
       requestId,
@@ -1704,7 +1977,7 @@ app.post(
 
 app.post<{ Params: { requestId: string } }>(
   "/v1/agent-session-requests/:requestId/status",
-  { preHandler: requireCli },
+  { preHandler: requireSessionRequester },
   async (request, reply) => {
     const parsed = agentIdentityReferenceSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -1712,12 +1985,15 @@ app.post<{ Params: { requestId: string } }>(
         .code(400)
         .send({ error: "invalid_request", details: parsed.error.issues });
     }
-    const principal = cliPrincipalFor(request);
+    const principal = sessionRequesterFor(request);
+    if (principal.agent && parsed.data.agentId !== principal.agent.agentId) {
+      return reply.code(403).send({ error: "agent_identity_mismatch" });
+    }
     const sessionRequest = await db.getAgentSessionRequest(
       principal.workspaceId,
       request.params.requestId,
       parsed.data.agentId,
-      principal.userId,
+      principal.humanId,
     );
     if (!sessionRequest) {
       return reply.code(404).send({ error: "session_request_not_found" });
@@ -1735,7 +2011,7 @@ app.post<{ Params: { requestId: string } }>(
 
 app.post<{ Params: { requestId: string } }>(
   "/v1/agent-session-requests/:requestId/claim",
-  { preHandler: requireCli },
+  { preHandler: requireSessionRequester },
   async (request, reply) => {
     const parsed = agentIdentityReferenceSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -1743,12 +2019,15 @@ app.post<{ Params: { requestId: string } }>(
         .code(400)
         .send({ error: "invalid_request", details: parsed.error.issues });
     }
-    const principal = cliPrincipalFor(request);
+    const principal = sessionRequesterFor(request);
+    if (principal.agent && parsed.data.agentId !== principal.agent.agentId) {
+      return reply.code(403).send({ error: "agent_identity_mismatch" });
+    }
     const current = await db.getAgentSessionRequest(
       principal.workspaceId,
       request.params.requestId,
       parsed.data.agentId,
-      principal.userId,
+      principal.humanId,
     );
     if (!current) {
       return reply.code(404).send({ error: "session_request_not_found" });
@@ -1758,7 +2037,7 @@ app.post<{ Params: { requestId: string } }>(
       workspaceId: principal.workspaceId,
       requestId: request.params.requestId,
       agentId: parsed.data.agentId,
-      humanId: principal.userId,
+      humanId: principal.humanId,
       sessionId: randomUUID(),
       credentialId: randomUUID(),
       credentialHash: hashToken(sessionToken),
@@ -1829,7 +2108,7 @@ app.post<{ Params: { requestId: string } }>(
 
 app.post<{ Params: { sessionId: string } }>(
   "/v1/agent-sessions/:sessionId/timeline",
-  { preHandler: requireCli },
+  { preHandler: requireSessionRequester },
   async (request, reply) => {
     const parsed = agentIdentityReferenceSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -1837,12 +2116,15 @@ app.post<{ Params: { sessionId: string } }>(
         .code(400)
         .send({ error: "invalid_request", details: parsed.error.issues });
     }
-    const principal = cliPrincipalFor(request);
+    const principal = sessionRequesterFor(request);
+    if (principal.agent && parsed.data.agentId !== principal.agent.agentId) {
+      return reply.code(403).send({ error: "agent_identity_mismatch" });
+    }
     const events = await db.listSessionTimeline(
       principal.workspaceId,
       request.params.sessionId,
       parsed.data.agentId,
-      principal.userId,
+      principal.humanId,
     );
     if (!events) {
       return reply.code(404).send({ error: "session_not_found" });
@@ -2101,7 +2383,7 @@ app.delete<{ Params: { sessionId: string } }>(
 
 app.post<{ Params: { sessionId: string } }>(
   "/v1/agent-sessions/:sessionId/cancel",
-  { preHandler: requireCli },
+  { preHandler: requireSessionRequester },
   async (request, reply) => {
     const parsed = agentIdentityReferenceSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -2109,12 +2391,15 @@ app.post<{ Params: { sessionId: string } }>(
         .code(400)
         .send({ error: "invalid_request", details: parsed.error.issues });
     }
-    const principal = cliPrincipalFor(request);
+    const principal = sessionRequesterFor(request);
+    if (principal.agent && parsed.data.agentId !== principal.agent.agentId) {
+      return reply.code(403).send({ error: "agent_identity_mismatch" });
+    }
     const termination = await db.cancelAgentSession({
       workspaceId: principal.workspaceId,
       sessionId: request.params.sessionId,
       agentId: parsed.data.agentId,
-      requestedByHumanId: principal.userId,
+      requestedByHumanId: principal.humanId,
       reason: "cancelled",
     });
     if (!termination) {
@@ -2154,7 +2439,7 @@ app.post<{ Params: { sessionId: string } }>(
 
 app.post<{ Params: { sessionId: string } }>(
   "/v1/agent-sessions/:sessionId/renew",
-  { preHandler: requireCli },
+  { preHandler: requireSessionRequester },
   async (request, reply) => {
     if (!webUrl) {
       return reply.code(503).send({ error: "session_approval_unavailable" });
@@ -2165,8 +2450,16 @@ app.post<{ Params: { sessionId: string } }>(
         .code(400)
         .send({ error: "invalid_request", details: parsed.error.issues });
     }
-    const principal = cliPrincipalFor(request);
-    if (!sessionRequestLimiter.allow(principal.workspaceId, principal.userId)) {
+    const principal = sessionRequesterFor(request);
+    if (principal.agent && parsed.data.agentId !== principal.agent.agentId) {
+      return reply.code(403).send({ error: "agent_identity_mismatch" });
+    }
+    if (
+      !sessionRequestLimiter.allow(
+        principal.workspaceId,
+        principal.agent?.credentialId ?? principal.humanId,
+      )
+    ) {
       return reply
         .code(429)
         .send({ error: "session_request_rate_limited" });
@@ -2175,7 +2468,7 @@ app.post<{ Params: { sessionId: string } }>(
       principal.workspaceId,
       request.params.sessionId,
       parsed.data.agentId,
-      principal.userId,
+      principal.humanId,
     );
     if (!predecessor) {
       return reply.code(404).send({ error: "session_not_found" });
@@ -2188,7 +2481,7 @@ app.post<{ Params: { sessionId: string } }>(
       requestId,
       agentId: parsed.data.agentId,
       agentName: predecessor.agentName,
-      humanId: principal.userId,
+      humanId: principal.humanId,
       scopes: predecessor.scopes,
       purpose: predecessor.purpose,
       durationSeconds:

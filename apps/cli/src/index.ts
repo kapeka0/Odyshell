@@ -455,6 +455,99 @@ token
 
 const agent = program.command("agent").description("manage scoped agent access");
 agent
+  .command("login")
+  .description("register this runtime as an Independent Agent")
+  .argument("[name]", "persistent Agent name", "Odyshell Agent")
+  .option("--no-browser", "do not open the verification page automatically")
+  .action(
+    async (
+      name: string,
+      options: { browser: boolean },
+      command: Command,
+    ) => {
+      const global = globals(command);
+      const configPath = global.configFile
+        ? resolve(global.configFile)
+        : defaultConfigPath();
+      const previous = await loadStoredConfig(configPath);
+      const resolved = await resolveConfig(global);
+      const api = new OdyshellApi({ serverUrl: resolved.serverUrl });
+      await api.health();
+      const authorization = await api.startAgentDeviceAuthorization(name);
+      const loginUrl = deviceLoginUrl(
+        authorization.verificationUri,
+        authorization.userCode,
+      );
+      if (global.json) {
+        printJson({
+          status: "authorization_required",
+          userCode: authorization.userCode,
+          verificationUriComplete: loginUrl,
+          expiresIn: authorization.expiresIn,
+        });
+      } else {
+        console.log("Open this link to register the Agent:");
+        console.log(`  ${pc.cyan(pc.bold(loginUrl))}`);
+        console.log(pc.dim("Waiting for approval…"));
+      }
+      if (options.browser) {
+        await open(loginUrl, { wait: false }).catch(() => undefined);
+      }
+      const deadline = Date.now() + authorization.expiresIn * 1_000;
+      while (Date.now() < deadline) {
+        await new Promise((resolveDelay) =>
+          setTimeout(resolveDelay, authorization.interval * 1_000),
+        );
+        try {
+          const token = await api.exchangeAgentDeviceAuthorization(
+            authorization.deviceCode,
+          );
+          await saveStoredConfig(
+            {
+              serverUrl: resolved.serverUrl,
+              workspaceId: token.workspaceId,
+              agentToken: token.accessToken,
+              mcpAgentId: token.agentId,
+              mcpAgentName: token.agentName,
+              ...(previous?.cliToken ? { cliToken: previous.cliToken } : {}),
+              ...(previous?.adminKey ? { adminKey: previous.adminKey } : {}),
+            },
+            configPath,
+          );
+          if (global.json) {
+            printJson({
+              authenticated: true,
+              mode: "agent",
+              agentId: token.agentId,
+              agentName: token.agentName,
+              workspaceId: token.workspaceId,
+              expiresAt: token.expiresAt,
+              configPath,
+            });
+          } else {
+            console.log(`${pc.green("✓")} Registered ${pc.bold(token.agentName)}`);
+            console.log(pc.dim(`  Credential expires ${token.expiresAt}`));
+            console.log(pc.dim(`  Credentials saved to ${configPath}`));
+          }
+          return;
+        } catch (error) {
+          if (
+            error instanceof ApiError &&
+            ["authorization_pending", "slow_down"].includes(error.code)
+          ) {
+            continue;
+          }
+          throw error;
+        }
+      }
+      throw new ExpectedError(
+        'The registration code expired. Run "ods agent login" again.',
+        "device_code_expired",
+      );
+    },
+  );
+
+agent
   .command("list")
   .description("list scoped agent access")
   .action(async (_options, command: Command) => {
@@ -539,6 +632,16 @@ program
       ? resolve(global.configFile)
       : defaultConfigPath();
     const config = await resolveConfig(global);
+    if (config.agentToken && config.mcpAgentId && config.mcpAgentName) {
+      serveApprovedOdyshellMcp(
+        new Odyshell({
+          serverUrl: config.serverUrl,
+          agentToken: config.agentToken,
+        }),
+        { id: config.mcpAgentId, name: config.mcpAgentName },
+      );
+      return;
+    }
     if (config.cliToken) {
       const agentId = config.mcpAgentId ?? randomUUID();
       const agentName = config.mcpAgentName ?? mcpOptions.name;
