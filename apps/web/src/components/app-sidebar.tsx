@@ -6,6 +6,7 @@ import {
   CpuIcon,
   GaugeIcon,
   SettingsIcon,
+  TimerIcon,
 } from "lucide-react";
 import { SidebarNav } from "@/components/sidebar-nav";
 import { SidebarUser } from "@/components/sidebar-user";
@@ -21,6 +22,7 @@ const workspaceItems = [
   { label: "Overview", href: "/dashboard", icon: GaugeIcon },
   { label: "Machines", href: "/dashboard/machines", icon: CpuIcon },
   { label: "Agents", href: "/dashboard/agents", icon: BotIcon },
+  { label: "Sessions", href: "/dashboard/sessions", icon: TimerIcon },
   { label: "Activity", href: "/dashboard/activity", icon: ActivityIcon },
 ] as const;
 

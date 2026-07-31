@@ -151,6 +151,9 @@ particular component, library or interaction pattern.
 - The overview makes the relationship between currently interacting agents,
   active sessions and machines directly inspectable even when the topology is
   crowded.
+- Persistent Agents remain visible without a machine link. Active Sessions are
+  temporary nodes between Agents and their target machines and link to their
+  Timeline.
 - The overview updates from live workspace state and shows agent-to-machine
   connections only while activity is actually in progress.
 - Online machines use a restrained green live indicator. Offline machines use

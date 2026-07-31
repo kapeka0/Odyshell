@@ -38,6 +38,51 @@ export type AgentAccess = {
   status: "active" | "expired" | "revoked";
 };
 
+export type CloudAgent = {
+  id: string;
+  name: string;
+  kind: "independent" | "managed";
+  status: "active" | "disabled";
+  parentAgentId: string | null;
+};
+
+export type CloudSession = {
+  id: string;
+  agentId: string;
+  agentName?: string;
+  purpose: string;
+  status: "active" | "completed" | "cancelled" | "revoked" | "expired";
+  expiresAt: string;
+  createdAt: string;
+  updatedAt?: string;
+  requestedByHumanId?: string;
+  predecessorSessionId?: string;
+  scopes?: Array<{
+    machineId: string;
+    profile: string;
+    capabilities: Capability[];
+    restrictions: Record<string, unknown>;
+  }>;
+  targets: Array<{
+    machineId: string;
+    machineName: string;
+    status: string;
+  }>;
+};
+
+export type SessionTimelineEvent = {
+  id: string;
+  eventType: string;
+  source: "verified" | "agent";
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type SessionTimelineDetail = {
+  session: CloudSession;
+  timeline: SessionTimelineEvent[];
+};
+
 export type ControlEvent = {
   id: string;
   principalId: string;
@@ -89,6 +134,8 @@ export type CloudContext = {
     }>;
   };
   machines: CloudMachine[];
+  agents: CloudAgent[];
+  sessions: CloudSession[];
   agentAccess: AgentAccess[];
   controlEvents: ControlEvent[];
 };

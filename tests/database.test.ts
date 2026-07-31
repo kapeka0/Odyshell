@@ -233,4 +233,32 @@ describe("server storage boundaries", () => {
     expect(lookup).toContain('.where("agentSessions.expiresAt", ">", now)');
     expect(lookup).toContain('.where("agents.status", "=", "active")');
   });
+
+  it("scopes workspace Session observability and cancellation to the requester", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const listing = database.slice(
+      database.indexOf("async listWorkspaceAgentSessions("),
+      database.indexOf("async createAgentSessionRequest("),
+    );
+    const cancellation = database.slice(
+      database.indexOf("async cancelAgentSession("),
+      database.indexOf("async rejectAgentSessionTarget("),
+    );
+
+    expect(listing).toContain(
+      '.where("agentSessions.workspaceId", "=", workspaceId)',
+    );
+    expect(listing).toContain(
+      '.where("agentSessionTargets.workspaceId", "=", workspaceId)',
+    );
+    expect(cancellation).toContain(
+      "request?.requestedByHumanId !== input.requestedByHumanId",
+    );
+    expect(cancellation.indexOf('.updateTable("sessionCredentials")')).toBeLessThan(
+      cancellation.indexOf('.updateTable("agentSessions")'),
+    );
+  });
 });

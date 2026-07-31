@@ -84,6 +84,9 @@ const agentIdentityReferenceSchema = z
 const renewAgentSessionSchema = agentIdentityReferenceSchema.extend({
   durationSeconds: z.number().int().min(60).max(24 * 60 * 60).optional(),
 });
+const cloudSessionSchema = cloudIdentitySchema
+  .extend({ sessionId: z.string().uuid() })
+  .strict();
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
 await app.register(websocket, { options: { maxPayload: 2 * 1024 * 1024 } });
@@ -426,6 +429,36 @@ function controlEventView(event: AuditRecord): {
   };
 }
 
+function privacyMinimalTimelineMetadata(
+  metadata: Record<string, unknown>,
+): Record<string, unknown> {
+  const safe: Record<string, unknown> = {};
+  for (const key of [
+    "machineId",
+    "machineIds",
+    "status",
+    "expiresAt",
+    "predecessorSessionId",
+  ]) {
+    if (metadata[key] !== undefined) safe[key] = metadata[key];
+  }
+  if (Array.isArray(metadata.scopes)) {
+    safe.scopes = metadata.scopes.map((scope) => {
+      if (!scope || typeof scope !== "object") return {};
+      const value = scope as Record<string, unknown>;
+      return {
+        ...(typeof value.machineId === "string"
+          ? { machineId: value.machineId }
+          : {}),
+        ...(Array.isArray(value.capabilities)
+          ? { capabilities: value.capabilities.filter((item) => typeof item === "string") }
+          : {}),
+      };
+    });
+  }
+  return safe;
+}
+
 const agentAccessDependencies: AgentAccessDependencies = {
   activeMachinesExist: (workspaceId, machineIds) =>
     db.activeMachinesExist(workspaceId, machineIds),
@@ -625,11 +658,21 @@ app.post(
       slug: parsed.data.organization.slug,
       name: parsed.data.organization.name,
     });
-    const [machines, usage, connections, agentAccess, controlEvents] = await Promise.all([
+    const [
+      machines,
+      usage,
+      connections,
+      agentAccess,
+      agents,
+      sessions,
+      controlEvents,
+    ] = await Promise.all([
       db.listMachines(context.workspace.id),
       db.workspacePlan(context.workspace.id),
       db.workspaceConnections(context.workspace.id),
       db.listAgentTokens(context.workspace.id),
+      db.listWorkspaceAgents(context.workspace.id),
+      db.listWorkspaceAgentSessions(context.workspace.id),
       db.listAudit(context.workspace.id, 50),
     ]);
     const plan = entitlementsFor(context.organization.plan);
@@ -668,9 +711,136 @@ app.post(
         enrolledAt: isoTimestamp(machine.enrolledAt),
         online: gateway.isOnline(machine.id),
       })),
+      agents: agents.map((agent) => ({
+        id: agent.id,
+        name: agent.name,
+        kind: agent.kind,
+        status: agent.status,
+        parentAgentId: agent.parentAgentId ?? null,
+      })),
+      sessions: sessions.map((session) => ({
+        id: session.id,
+        agentId: session.agentId,
+        agentName: session.agentName,
+        purpose: session.purpose,
+        status: session.status,
+        expiresAt: isoTimestamp(session.expiresAt),
+        createdAt: isoTimestamp(session.createdAt),
+        targets: session.targets,
+      })),
       agentAccess: agentAccess.map(agentAccessView),
       controlEvents: controlEvents.map(controlEventView),
     };
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/sessions/list",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = cloudIdentitySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request" });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const sessions = await db.listWorkspaceAgentSessions(context.workspace.id);
+    return {
+      data: sessions.map((session) => ({
+        ...session,
+        expiresAt: isoTimestamp(session.expiresAt),
+        createdAt: isoTimestamp(session.createdAt),
+        updatedAt: isoTimestamp(session.updatedAt),
+      })),
+    };
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/sessions/inspect",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = cloudSessionSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request" });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const [session, timeline] = await Promise.all([
+      db.workspaceAgentSession(context.workspace.id, parsed.data.sessionId),
+      db.workspaceSessionTimeline(context.workspace.id, parsed.data.sessionId),
+    ]);
+    if (!session || !timeline) {
+      return reply.code(404).send({ error: "session_not_found" });
+    }
+    return {
+      session: {
+        ...session,
+        expiresAt: isoTimestamp(session.expiresAt),
+        createdAt: isoTimestamp(session.createdAt),
+        updatedAt: isoTimestamp(session.updatedAt),
+      },
+      timeline: timeline.map((event) => ({
+        ...event,
+        metadata: privacyMinimalTimelineMetadata(event.metadata),
+        createdAt: isoTimestamp(event.createdAt),
+      })),
+    };
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/sessions/cancel",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = cloudSessionSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request" });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const session = await db.workspaceAgentSession(
+      context.workspace.id,
+      parsed.data.sessionId,
+    );
+    if (!session) {
+      return reply.code(404).send({ error: "session_not_found" });
+    }
+    const result = await db.cancelAgentSession({
+      workspaceId: context.workspace.id,
+      sessionId: session.id,
+      agentId: session.agentId,
+      requestedByHumanId: parsed.data.userId,
+      reason: "cancelled",
+      now: Date.now(),
+    });
+    if (!result) {
+      return reply.code(403).send({ error: "session_cancel_denied" });
+    }
+    for (const operation of result.operations) {
+      gateway.send(operation.machineId, {
+        type: "operation.cancel",
+        operationId: operation.id,
+      });
+    }
+    for (const target of result.targets) {
+      gateway.send(target.machineId, {
+        type: "session.close",
+        sessionId: target.runtimeSessionId,
+        reason: "workspace_member_cancelled",
+      });
+    }
+    gateway.notifyWorkspace(context.workspace.id);
+    return { id: result.id, status: result.status, transitioned: result.transitioned };
   },
 );
 

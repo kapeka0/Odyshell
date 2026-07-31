@@ -558,4 +558,42 @@ describe("dashboard navigation performance boundary", () => {
     expect(rootLayout).toContain("odyshell-square-light.svg");
     expect(rootLayout).toContain("odyshell-square-dark.svg");
   });
+
+  it("shows persistent Agents and temporary Sessions without leaking Timeline payloads", () => {
+    const webRoot = resolve(process.cwd(), "apps/web/src");
+    const canvas = readFileSync(
+      resolve(webRoot, "components/workspace-canvas.tsx"),
+      "utf8",
+    );
+    const sidebar = readFileSync(
+      resolve(webRoot, "components/app-sidebar.tsx"),
+      "utf8",
+    );
+    const server = readFileSync(
+      resolve(process.cwd(), "apps/server/src/index.ts"),
+      "utf8",
+    );
+    const sanitizer = server.slice(
+      server.indexOf("function privacyMinimalTimelineMetadata("),
+      server.indexOf("const agentAccessDependencies"),
+    );
+
+    expect(canvas).toContain("context.agents");
+    expect(canvas).toContain('type: "session"');
+    expect(canvas).toContain("session.targets.map");
+    expect(sidebar).toContain('href: "/dashboard/sessions"');
+    expect(sanitizer).toContain('"machineId"');
+    expect(sanitizer).toContain('"status"');
+    for (const sensitive of ["command", "path", "stdout", "stderr", "token"]) {
+      expect(sanitizer).not.toContain(`"${sensitive}"`);
+    }
+    for (const route of [
+      "sessions/loading.tsx",
+      "sessions/[sessionId]/loading.tsx",
+    ]) {
+      expect(
+        readFileSync(resolve(webRoot, "app/dashboard", route), "utf8"),
+      ).toContain("Skeleton");
+    }
+  });
 });

@@ -453,6 +453,17 @@ export type SessionTimelineEventRecord = {
   createdAt: number;
 };
 
+export type WorkspaceAgentSessionRecord = AgentSessionRecord & {
+  agentName: string;
+  requestedByHumanId: string;
+  scopes: SessionMachineScope[];
+  targets: Array<{
+    machineId: string;
+    machineName: string;
+    status: string;
+  }>;
+};
+
 export type SessionRecord = Timestamped & {
   id: string;
   machineId: string;
@@ -2117,6 +2128,121 @@ export class PostgresDatabase {
       .where("agents.status", "=", "active")
       .executeTakeFirst();
     return session ? agentSessionRecord(session) : null;
+  }
+
+  async listWorkspaceAgents(
+    workspaceId: string,
+  ): Promise<AgentIdentityRecord[]> {
+    return (
+      await this.db
+        .selectFrom("agents")
+        .selectAll()
+        .where("workspaceId", "=", workspaceId)
+        .orderBy("createdAt", "desc")
+        .execute()
+    ).map(agentIdentityRecord);
+  }
+
+  async listWorkspaceAgentSessions(
+    workspaceId: string,
+    limit = 200,
+  ): Promise<WorkspaceAgentSessionRecord[]> {
+    const sessions = await this.db
+      .selectFrom("agentSessions")
+      .innerJoin("agents", (join) =>
+        join
+          .onRef("agents.workspaceId", "=", "agentSessions.workspaceId")
+          .onRef("agents.id", "=", "agentSessions.agentId"),
+      )
+      .innerJoin("agentSessionRequests", (join) =>
+        join
+          .onRef(
+            "agentSessionRequests.workspaceId",
+            "=",
+            "agentSessions.workspaceId",
+          )
+          .onRef("agentSessionRequests.sessionId", "=", "agentSessions.id"),
+      )
+      .selectAll("agentSessions")
+      .select([
+        "agents.name as agentName",
+        "agentSessionRequests.requestedByHumanId",
+        "agentSessionRequests.scopes",
+      ])
+      .where("agentSessions.workspaceId", "=", workspaceId)
+      .orderBy("agentSessions.createdAt", "desc")
+      .limit(Math.min(Math.max(limit, 1), 500))
+      .execute();
+    if (sessions.length === 0) return [];
+
+    const sessionIds = sessions.map((session) => session.id);
+    const targets = await this.db
+      .selectFrom("agentSessionTargets")
+      .innerJoin("machines", (join) =>
+        join
+          .onRef("machines.workspaceId", "=", "agentSessionTargets.workspaceId")
+          .onRef("machines.id", "=", "agentSessionTargets.machineId"),
+      )
+      .select([
+        "agentSessionTargets.sessionId",
+        "agentSessionTargets.machineId",
+        "agentSessionTargets.status",
+        "machines.name as machineName",
+      ])
+      .where("agentSessionTargets.workspaceId", "=", workspaceId)
+      .where("agentSessionTargets.sessionId", "in", sessionIds)
+      .orderBy("agentSessionTargets.machineId")
+      .execute();
+    const targetsBySession = new Map<
+      string,
+      WorkspaceAgentSessionRecord["targets"]
+    >();
+    for (const target of targets) {
+      const values = targetsBySession.get(target.sessionId) ?? [];
+      values.push({
+        machineId: target.machineId,
+        machineName: target.machineName,
+        status: target.status,
+      });
+      targetsBySession.set(target.sessionId, values);
+    }
+    return sessions.map((session) => ({
+      ...agentSessionRecord(session),
+      agentName: session.agentName,
+      requestedByHumanId: session.requestedByHumanId,
+      scopes: session.scopes,
+      targets: targetsBySession.get(session.id) ?? [],
+    }));
+  }
+
+  async workspaceAgentSession(
+    workspaceId: string,
+    sessionId: string,
+  ): Promise<WorkspaceAgentSessionRecord | null> {
+    const sessions = await this.listWorkspaceAgentSessions(workspaceId, 500);
+    return sessions.find((session) => session.id === sessionId) ?? null;
+  }
+
+  async workspaceSessionTimeline(
+    workspaceId: string,
+    sessionId: string,
+  ): Promise<SessionTimelineEventRecord[] | null> {
+    const request = await this.db
+      .selectFrom("agentSessionRequests")
+      .select("id")
+      .where("workspaceId", "=", workspaceId)
+      .where("sessionId", "=", sessionId)
+      .executeTakeFirst();
+    if (!request) return null;
+    return (
+      await this.db
+        .selectFrom("sessionTimelineEvents")
+        .selectAll()
+        .where("workspaceId", "=", workspaceId)
+        .where("requestId", "=", request.id)
+        .orderBy("createdAt", "asc")
+        .execute()
+    ).map(sessionTimelineEventRecord);
   }
 
   async createAgentSessionRequest(input: {

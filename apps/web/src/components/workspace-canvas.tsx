@@ -15,7 +15,14 @@ import {
   type Node,
   type NodeProps,
 } from "@xyflow/react";
-import { BotIcon, CableIcon, CpuIcon, KeyRoundIcon, PlusIcon } from "lucide-react";
+import {
+  BotIcon,
+  CableIcon,
+  CpuIcon,
+  KeyRoundIcon,
+  PlusIcon,
+  TimerIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { useTheme } from "next-themes";
 import { useReducedMotion } from "motion/react";
@@ -34,16 +41,25 @@ type MachineNodeData = {
 
 type AgentNodeData = {
   name: string;
-  connections: number;
+  sessions: number;
+};
+
+type SessionNodeData = {
+  id: string;
+  purpose: string;
+  expiresAt: string;
+  targets: number;
 };
 
 type MachineFlowNode = Node<MachineNodeData, "machine">;
 type AgentFlowNode = Node<AgentNodeData, "agent">;
-type TopologyNode = MachineFlowNode | AgentFlowNode;
+type SessionFlowNode = Node<SessionNodeData, "session">;
+type TopologyNode = MachineFlowNode | AgentFlowNode | SessionFlowNode;
 
 const nodeTypes = {
   machine: MachineNode,
   agent: AgentNode,
+  session: SessionNode,
 };
 
 export function WorkspaceCanvas({ context }: { context: CloudContext }) {
@@ -229,13 +245,50 @@ function AgentNode({ data }: NodeProps<AgentFlowNode>) {
             {data.name}
           </Link>
           <span className="mt-0.5 block text-xs text-muted-foreground">
-            Interacting now
+            {data.sessions > 0 ? "Active" : "No active session"}
           </span>
         </span>
       </div>
       <div className="mt-4 border-t pt-3 text-xs text-muted-foreground">
-        {data.connections} active{" "}
-        {data.connections === 1 ? "connection" : "connections"}
+        {data.sessions} active {data.sessions === 1 ? "session" : "sessions"}
+      </div>
+    </div>
+  );
+}
+
+function SessionNode({ data }: NodeProps<SessionFlowNode>) {
+  return (
+    <div className="w-56 rounded-xl border bg-card p-4 text-card-foreground shadow-sm">
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="opacity-0"
+        isConnectable={false}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="opacity-0"
+        isConnectable={false}
+      />
+      <div className="flex items-start gap-3">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted text-muted-foreground">
+          <TimerIcon aria-hidden="true" className="size-4" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <Link
+            href={`/dashboard/sessions/${data.id}`}
+            className="nodrag block truncate font-medium hover:underline"
+          >
+            {data.purpose}
+          </Link>
+          <span className="mt-0.5 block text-xs text-muted-foreground">
+            Expires {formatCanvasExpiry(data.expiresAt)}
+          </span>
+        </span>
+      </div>
+      <div className="mt-4 border-t pt-3 text-xs text-muted-foreground">
+        {data.targets} {data.targets === 1 ? "target" : "targets"}
       </div>
     </div>
   );
@@ -270,35 +323,43 @@ function topologyFor(
   nodes: TopologyNode[];
   edges: Edge[];
 } {
-  const connections = context.connections?.connections ?? [];
-  const agents = [
-    ...new Map(
-      connections.map((connection) => [
-        connection.agentId,
-        {
-          id: connection.agentId,
-          name: connection.agentName,
-          connections: connections.filter(
-            (candidate) => candidate.agentId === connection.agentId,
-          ).length,
-        },
-      ]),
-    ).values(),
-  ];
+  const activeSessions = (context.sessions ?? []).filter(
+    (session) => session.status === "active",
+  );
+  const agents = context.agents ?? [];
   const hasAgents = agents.length > 0;
   const agentNodes: AgentFlowNode[] = agents.map((agent, index) => ({
     id: `agent:${agent.id}`,
     type: "agent",
     position: { x: 80, y: 130 + index * 170 },
-    data: { name: agent.name, connections: agent.connections },
+    data: {
+      name: agent.name,
+      sessions: activeSessions.filter(
+        (session) => session.agentId === agent.id,
+      ).length,
+    },
     draggable: true,
   }));
+  const sessionNodes: SessionFlowNode[] = activeSessions.map(
+    (session, index) => ({
+      id: `session:${session.id}`,
+      type: "session",
+      position: { x: 410, y: 115 + index * 170 },
+      data: {
+        id: session.id,
+        purpose: session.purpose,
+        expiresAt: session.expiresAt,
+        targets: session.targets.length,
+      },
+      draggable: true,
+    }),
+  );
   const machineNodes: MachineFlowNode[] = context.machines.map(
     (machine, index) => ({
       id: `machine:${machine.id}`,
       type: "machine",
       position: hasAgents
-        ? { x: 600, y: 100 + index * 165 }
+        ? { x: 760, y: 100 + index * 165 }
         : {
             x: 210 + (index % 3) * 300,
             y: 150 + Math.floor(index / 3) * 170,
@@ -306,24 +367,34 @@ function topologyFor(
       data: {
         name: machine.name,
         online: machine.online,
-        connections: connections.filter(
-          (connection) => connection.machineId === machine.id,
+        connections: activeSessions.filter((session) =>
+          session.targets.some((target) => target.machineId === machine.id),
         ).length,
       },
       draggable: true,
     }),
   );
-  const edges: Edge[] = connections.map((connection) => ({
-    id: `connection:${connection.id}`,
-    source: `agent:${connection.agentId}`,
-    target: `machine:${connection.machineId}`,
-    type: "smoothstep",
-    animated: animateConnections,
-    markerEnd: { type: MarkerType.ArrowClosed },
-    style: { stroke: "var(--muted-foreground)", strokeWidth: 1.5 },
-  }));
+  const edges: Edge[] = activeSessions.flatMap((session) => [
+    {
+      id: `agent-session:${session.id}`,
+      source: `agent:${session.agentId}`,
+      target: `session:${session.id}`,
+      type: "smoothstep",
+      animated: animateConnections,
+      style: { stroke: "var(--muted-foreground)", strokeWidth: 1.5 },
+    },
+    ...session.targets.map((target) => ({
+      id: `session-machine:${session.id}:${target.machineId}`,
+      source: `session:${session.id}`,
+      target: `machine:${target.machineId}`,
+      type: "smoothstep",
+      animated: animateConnections && target.status === "ready",
+      markerEnd: { type: MarkerType.ArrowClosed },
+      style: { stroke: "var(--muted-foreground)", strokeWidth: 1.5 },
+    })),
+  ]);
 
-  return { nodes: [...agentNodes, ...machineNodes], edges };
+  return { nodes: [...agentNodes, ...sessionNodes, ...machineNodes], edges };
 }
 
 const emptyConnections: CloudContext["connections"] = {
@@ -334,4 +405,11 @@ const emptyConnections: CloudContext["connections"] = {
 
 function emptySubscribe() {
   return () => {};
+}
+
+function formatCanvasExpiry(value: string): string {
+  return new Intl.DateTimeFormat("en", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 }

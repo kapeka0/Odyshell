@@ -910,6 +910,54 @@ try {
   if (predecessorLink !== claimedSession.sessionId) {
     throw new Error("Renewed Session did not retain its predecessor link");
   }
+  const cloudIdentityBody = {
+    userId: cliUserId,
+    organization: approvalBody.organization,
+  };
+  const cloudSessionsResponse = await fetch(
+    new URL("/v1/internal/cloud/sessions/list", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify(cloudIdentityBody),
+    },
+  );
+  const cloudSessions = await cloudSessionsResponse.json();
+  if (
+    cloudSessionsResponse.status !== 200 ||
+    !cloudSessions.data?.some(
+      (session) => session.id === renewedSession.sessionId,
+    )
+  ) {
+    throw new Error("Workspace Session listing omitted the renewed Session");
+  }
+  const cloudSessionDetailResponse = await fetch(
+    new URL("/v1/internal/cloud/sessions/inspect", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        ...cloudIdentityBody,
+        sessionId: renewedSession.sessionId,
+      }),
+    },
+  );
+  const cloudSessionDetail = await cloudSessionDetailResponse.json();
+  if (
+    cloudSessionDetailResponse.status !== 200 ||
+    cloudSessionDetail.session?.id !== renewedSession.sessionId ||
+    JSON.stringify(cloudSessionDetail.timeline).match(
+      /"path"|"stdout"|"stderr"|"token"/u,
+    )
+  ) {
+    throw new Error("Workspace Session detail was unavailable or not privacy-minimal");
+  }
   const cancelRenewed = () =>
     fetch(
       new URL(
