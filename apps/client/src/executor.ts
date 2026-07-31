@@ -97,5 +97,8 @@ export function validateEnvironment(environment: Record<string, string>): void {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
       throw new Error(`Invalid environment key: ${key}`);
     }
+    throw new Error(
+      `Caller-supplied environment variables are not allowed by Session policy: ${key}`,
+    );
   }
 }

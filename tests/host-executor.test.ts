@@ -129,6 +129,34 @@ describe("HostExecutor", () => {
         hooks(),
       ),
     ).rejects.toThrow("program_scope_denied");
+    await expect(
+      executor.execute(
+        crypto.randomUUID(),
+        session,
+        {
+          kind: "process.exec",
+          program: process.execPath,
+          args: ["-e", "process.stdout.write('safe')"],
+          cwd: ".",
+          env: { PATH: workspace },
+        },
+        hooks(),
+      ),
+    ).rejects.toThrow("not allowed by Session policy");
+    await expect(
+      executor.execute(
+        crypto.randomUUID(),
+        session,
+        {
+          kind: "process.exec",
+          program: process.execPath,
+          args: ["-e", "process.stdout.write('safe')"],
+          cwd: ".",
+          env: { BASH_ENV: "attacker-controlled" },
+        },
+        hooks(),
+      ),
+    ).rejects.toThrow("not allowed by Session policy");
   });
 
   it("rejects a symlink that resolves outside the workspace", async () => {

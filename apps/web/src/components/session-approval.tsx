@@ -16,30 +16,38 @@ export function SessionApprovalForm({
   approval: SessionApproval;
 }) {
   const router = useRouter();
-  const [pending, setPending] = useState(false);
+  const [pending, setPending] = useState<"approve" | "deny" | null>(null);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setPending(true);
+    await decide("approve");
+  }
+
+  async function decide(decision: "approve" | "deny") {
+    setPending(decision);
     try {
-      const response = await fetch("/api/session-requests/approve", {
+      const response = await fetch(`/api/session-requests/${decision}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ code }),
       });
       const body = (await response.json().catch(() => ({}))) as {
         approved?: boolean;
+        denied?: boolean;
         error?: string;
       };
-      if (!response.ok || !body.approved) {
+      if (
+        !response.ok ||
+        (decision === "approve" ? !body.approved : !body.denied)
+      ) {
         router.replace(sessionApprovalErrorPath(body.error));
         return;
       }
-      router.replace("/sessions/approve/success");
+      router.replace(`/sessions/approve/success?decision=${decision}`);
     } catch {
       router.replace(sessionApprovalErrorPath());
     } finally {
-      setPending(false);
+      setPending(null);
     }
   }
 
@@ -92,13 +100,16 @@ export function SessionApprovalForm({
         <Button
           type="button"
           variant="outline"
-          disabled={pending}
-          onClick={() => router.push("/dashboard")}
+          disabled={pending !== null || approval.status !== "pending"}
+          onClick={() => void decide("deny")}
         >
-          Cancel
+          {pending === "deny" ? "Denying…" : "Deny"}
         </Button>
-        <Button type="submit" disabled={pending || approval.status !== "pending"}>
-          {pending ? "Approving…" : "Approve"}
+        <Button
+          type="submit"
+          disabled={pending !== null || approval.status !== "pending"}
+        >
+          {pending === "approve" ? "Approving…" : "Approve"}
         </Button>
       </div>
     </form>

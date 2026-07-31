@@ -8,6 +8,7 @@ import {
 import { isIP } from "node:net";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { request as httpsRequest } from "node:https";
+import type { OperationAction } from "@odyshell/protocol";
 import { z } from "zod";
 
 export class EventSinkError extends Error {
@@ -198,7 +199,72 @@ const minimalKeys = new Set([
   "scopes",
 ]);
 const alwaysSensitiveKey = /(?:token|secret|password|credential|authorization|cookie|env)/iu;
-const diagnosticOnlyKey = /^(?:stdout|stderr|result|resultText)$/u;
+const diagnosticOnlyKey =
+  /^(?:command|query|stdout|stderr|result|resultText)$/u;
+
+export function operationTimelineMetadata(
+  action: OperationAction,
+): Record<string, unknown> {
+  switch (action.kind) {
+    case "process.exec":
+      return {
+        kind: action.kind,
+        program: action.program,
+        args: action.args,
+        cwd: action.cwd,
+      };
+    case "process.shell":
+      return {
+        kind: action.kind,
+        cwd: action.cwd,
+        command: action.command,
+      };
+    case "fs.search":
+      return {
+        kind: action.kind,
+        path: action.path,
+        query: action.query,
+        maxResults: action.maxResults,
+      };
+    case "docker.logs":
+      return {
+        kind: action.kind,
+        container: action.container,
+        tail: action.tail,
+        timestamps: action.timestamps,
+      };
+    default:
+      return {
+        kind: action.kind,
+        path: action.path,
+      };
+  }
+}
+
+const MAX_DIAGNOSTIC_STREAM_BYTES = 64 * 1024;
+
+export function diagnosticTimelineMetadata(
+  events: Array<{ stream: string; data: Uint8Array }>,
+): Record<string, string> {
+  const streams: Record<string, Buffer[]> = { stdout: [], stderr: [] };
+  const sizes: Record<string, number> = { stdout: 0, stderr: 0 };
+  for (const event of events) {
+    if (event.stream !== "stdout" && event.stream !== "stderr") continue;
+    const remaining = MAX_DIAGNOSTIC_STREAM_BYTES - sizes[event.stream]!;
+    if (remaining <= 0) continue;
+    const chunk = Buffer.from(event.data).subarray(0, remaining);
+    streams[event.stream]!.push(chunk);
+    sizes[event.stream] = sizes[event.stream]! + chunk.length;
+  }
+  return Object.fromEntries(
+    Object.entries(streams)
+      .filter(([, chunks]) => chunks.length > 0)
+      .map(([stream, chunks]) => [
+        stream,
+        Buffer.concat(chunks).toString("utf8"),
+      ]),
+  );
+}
 
 export function redactTimelineMetadata(
   metadata: Record<string, unknown>,

@@ -31,6 +31,10 @@ import {
   autoapprovalDecision,
   managedDelegationDecision,
 } from "./autoapproval.js";
+import {
+  diagnosticTimelineMetadata,
+  operationTimelineMetadata,
+} from "./event-sinks.js";
 
 const { Pool } = pg;
 export const DEFAULT_ORGANIZATION_ID = "default";
@@ -592,6 +596,10 @@ export type SessionApprovalView = AgentSessionRequestRecord & {
 
 export type SessionApprovalResult =
   | { status: "approved"; request: AgentSessionRequestRecord }
+  | { status: "invalid" | "expired" | "already_used" };
+
+export type SessionDenialResult =
+  | { status: "denied"; request: AgentSessionRequestRecord }
   | { status: "invalid" | "expired" | "already_used" };
 
 export type SessionClaimResult =
@@ -3575,6 +3583,52 @@ export class PostgresDatabase {
     ).map(sessionTimelineEventRecord);
   }
 
+  async operationTimelineMetadata(
+    workspaceId: string,
+    operationIds: string[],
+    includeDiagnosticOutput: boolean,
+  ): Promise<Map<string, Record<string, unknown>>> {
+    if (operationIds.length === 0) return new Map();
+    const operations = await this.db
+      .selectFrom("operations")
+      .select(["id", "action"])
+      .where("workspaceId", "=", workspaceId)
+      .where("id", "in", [...new Set(operationIds)])
+      .execute();
+    const metadata = new Map(
+      operations.map((operation) => [
+        operation.id,
+        operationTimelineMetadata(operation.action),
+      ]),
+    );
+    if (!includeDiagnosticOutput) return metadata;
+    const events = await this.db
+      .selectFrom("operationEvents")
+      .select(["operationId", "stream", "data"])
+      .where("workspaceId", "=", workspaceId)
+      .where("operationId", "in", [...new Set(operationIds)])
+      .where("stream", "in", ["stdout", "stderr"])
+      .orderBy("operationId", "asc")
+      .orderBy("sequence", "asc")
+      .execute();
+    const byOperation = new Map<
+      string,
+      Array<{ stream: string; data: Uint8Array }>
+    >();
+    for (const event of events) {
+      const operationEvents = byOperation.get(event.operationId) ?? [];
+      operationEvents.push(event);
+      byOperation.set(event.operationId, operationEvents);
+    }
+    for (const [operationId, operationEvents] of byOperation) {
+      metadata.set(operationId, {
+        ...metadata.get(operationId),
+        ...diagnosticTimelineMetadata(operationEvents),
+      });
+    }
+    return metadata;
+  }
+
   async workspaceEventSink(
     workspaceId: string,
   ): Promise<EventSinkRecord | null> {
@@ -4294,6 +4348,86 @@ export class PostgresDatabase {
       return {
         status: "approved",
         request: agentSessionRequestRecord(approved),
+      };
+    });
+  }
+
+  async denyAgentSessionRequest(input: {
+    workspaceId: string;
+    approvalCodeHash: string;
+    denierHumanId: string;
+    now: number;
+  }): Promise<SessionDenialResult> {
+    return await this.db.transaction().execute(async (transaction) => {
+      const request = await transaction
+        .selectFrom("agentSessionRequests")
+        .selectAll()
+        .where("workspaceId", "=", input.workspaceId)
+        .where("approvalCodeHash", "=", input.approvalCodeHash)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!request) return { status: "invalid" };
+      if (request.expiresAt <= new Date(input.now)) {
+        if (request.status === "pending") {
+          await transaction
+            .updateTable("agentSessionRequests")
+            .set({ status: "expired", updatedAt: new Date(input.now) })
+            .where("workspaceId", "=", input.workspaceId)
+            .where("id", "=", request.id)
+            .execute();
+        }
+        return { status: "expired" };
+      }
+      if (request.status !== "pending") return { status: "already_used" };
+
+      await transaction
+        .insertInto("humans")
+        .values({
+          workspaceId: input.workspaceId,
+          id: input.denierHumanId,
+          externalId: input.denierHumanId,
+          status: "active",
+        })
+        .onConflict((conflict) =>
+          conflict.columns(["workspaceId", "id"]).doNothing(),
+        )
+        .execute();
+      const denier = await transaction
+        .selectFrom("humans")
+        .select("id")
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", input.denierHumanId)
+        .where("externalId", "=", input.denierHumanId)
+        .where("status", "=", "active")
+        .forShare()
+        .executeTakeFirst();
+      if (!denier) return { status: "invalid" };
+
+      const deniedAt = new Date(input.now);
+      const denied = await transaction
+        .updateTable("agentSessionRequests")
+        .set({ status: "denied", updatedAt: deniedAt })
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", request.id)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await transaction
+        .insertInto("sessionTimelineEvents")
+        .values({
+          workspaceId: input.workspaceId,
+          id: randomUUID(),
+          sessionId: null,
+          requestId: request.id,
+          operationId: null,
+          eventType: "session.denied",
+          source: "verified",
+          metadata: JSON.stringify({}),
+          createdAt: deniedAt,
+        })
+        .execute();
+      return {
+        status: "denied",
+        request: agentSessionRequestRecord(denied),
       };
     });
   }
@@ -5254,7 +5388,7 @@ export class PostgresDatabase {
         current.revokedAt ||
         current.agentStatus !== "active" ||
         current.expiresAt <= now ||
-        !["active", "retiring"].includes(current.status)
+        current.status !== "active"
       ) {
         return null;
       }

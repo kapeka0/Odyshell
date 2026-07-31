@@ -32,6 +32,8 @@ ceiling remain pending rather than being reduced silently. Each automatically ap
 retains the policy ID and version that authorized it.
 `process.shell` is not accepted by restricted Sessions because it cannot be constrained
 structurally.
+Caller-supplied process environment variables are also denied until Session restrictions can
+authorize exact keys and values.
 
 Delegation is limited to one level. A Managed Agent receives no Agent Credential and cannot
 delegate again. Its policy must remain inside the active parent Delegation Policy, and the Server

@@ -345,6 +345,8 @@ describe("server storage boundaries", () => {
     expect(exchange).not.toContain("accessToken");
     expect(rotation).toContain(".forUpdate()");
     expect(rotation).toContain('status: "retiring"');
+    expect(rotation).toContain('current.status !== "active"');
+    expect(rotation).not.toContain('["active", "retiring"]');
     expect(rotation).toContain("10 * 60 * 1_000");
   });
 
@@ -387,6 +389,31 @@ describe("server storage boundaries", () => {
     );
     expect(claim).toContain(
       "autoapprovalPolicyVersion: request.autoapprovalPolicyVersion",
+    );
+  });
+
+  it("makes Session denial terminal and records it outside agent control", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const denial = database.slice(
+      database.indexOf("async denyAgentSessionRequest("),
+      database.indexOf("async claimAgentSessionRequest("),
+    );
+    const claim = database.slice(
+      database.indexOf("async claimAgentSessionRequest("),
+      database.indexOf("async findAgentSessionCredentialByTokenHash("),
+    );
+
+    expect(denial).toContain('.where("approvalCodeHash", "="');
+    expect(denial).toContain(".forUpdate()");
+    expect(denial).toContain('request.status !== "pending"');
+    expect(denial).toContain('status: "denied"');
+    expect(denial).toContain('eventType: "session.denied"');
+    expect(denial).toContain('source: "verified"');
+    expect(claim).toContain(
+      'if (request.status === "denied") return { status: "denied" }',
     );
   });
 
@@ -439,12 +466,29 @@ describe("server storage boundaries", () => {
       database.indexOf("async pendingEventSinkDeliveries("),
       database.indexOf("async completeEventSinkDelivery("),
     );
+    const diagnostics = database.slice(
+      database.indexOf("async operationTimelineMetadata("),
+      database.indexOf("async workspaceEventSink("),
+    );
+    const start = database.slice(
+      database.indexOf("async markOperationStarted("),
+      database.indexOf("async addOperationEvent("),
+    );
+    const completion = database.slice(
+      database.indexOf("async markOperationCompleted("),
+      database.indexOf("async getOperation("),
+    );
 
     expect(migration).toContain("secret_ciphertext text not null");
     expect(migration).not.toContain("signing_secret text");
     expect(migration).toContain(
       "unique (workspace_id, sink_id, event_id)",
     );
+    expect(diagnostics).toContain('.where("workspaceId", "=", workspaceId)');
+    expect(diagnostics).toContain("operationTimelineMetadata(operation.action)");
+    expect(diagnostics).toContain("diagnosticTimelineMetadata(operationEvents)");
+    expect(start).not.toContain("operationTimelineMetadata(operation.action)");
+    expect(completion).not.toContain("diagnosticTimelineMetadata");
     expect(migration).toContain(
       "foreign key (workspace_id, event_id)",
     );

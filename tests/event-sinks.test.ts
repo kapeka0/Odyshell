@@ -3,9 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 import {
   EventSinkReplayGuard,
   decryptEventSinkSecret,
+  diagnosticTimelineMetadata,
   encryptEventSinkSecret,
   eventSinkDestination,
   eventSinkRetryAt,
+  operationTimelineMetadata,
   redactTimelineMetadata,
   signedTimelineDelivery,
   verifyTimelineDeliverySignature,
@@ -129,5 +131,64 @@ describe("Timeline Event Sinks", () => {
       path: "config/app.json",
       stdout: "safe output",
     });
+  });
+
+  it("builds useful operational metadata without copying process environments or file content", () => {
+    expect(
+      operationTimelineMetadata({
+        kind: "process.exec",
+        program: "git",
+        args: ["status"],
+        cwd: ".",
+        env: { CI: "true" },
+      }),
+    ).toEqual({
+      kind: "process.exec",
+      program: "git",
+      args: ["status"],
+      cwd: ".",
+    });
+    expect(
+      operationTimelineMetadata({
+        kind: "fs.write",
+        path: "config.json",
+        contentBase64: Buffer.from("secret").toString("base64"),
+        createParents: false,
+      }),
+    ).toEqual({ kind: "fs.write", path: "config.json" });
+  });
+
+  it("keeps command text and bounded output diagnostic-only", () => {
+    const metadata = {
+      ...operationTimelineMetadata({
+        kind: "process.shell",
+        command: "printf safe",
+        cwd: ".",
+        env: {},
+      }),
+      ...diagnosticTimelineMetadata([
+        { stream: "stdout", data: Buffer.from("safe output") },
+        { stream: "result", data: Buffer.from("ignored") },
+      ]),
+    };
+
+    expect(redactTimelineMetadata(metadata, "operational")).toEqual({
+      kind: "process.shell",
+      cwd: ".",
+    });
+    expect(redactTimelineMetadata(metadata, "diagnostic")).toEqual({
+      kind: "process.shell",
+      cwd: ".",
+      command: "printf safe",
+      stdout: "safe output",
+    });
+    expect(
+      diagnosticTimelineMetadata([
+        {
+          stream: "stderr",
+          data: Buffer.alloc(70 * 1024, "x"),
+        },
+      ]).stderr,
+    ).toHaveLength(64 * 1024);
   });
 });

@@ -157,6 +157,10 @@ particular component, library or interaction pattern.
 - Persistent Agents remain visible without a machine link. Active Sessions are
   temporary nodes between Agents and their target machines and link to their
   Timeline.
+- Agent identity, runtime presence and Session authority are separate states.
+  Never use an active Session as a proxy for whether an Agent is online.
+  Until the product has a dedicated Agent heartbeat, show only identity status
+  and Session activity.
 - The overview updates from live workspace state and shows agent-to-machine
   connections only while activity is actually in progress.
 - Online machines use a restrained green live indicator. Offline machines use

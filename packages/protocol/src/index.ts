@@ -458,7 +458,17 @@ export const operationEnvironmentSchema = z.record(
     .max(256)
     .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "Invalid environment variable name"),
   z.string().max(65_536),
-);
+).superRefine((environment, context) => {
+  const key = Object.keys(environment)[0];
+  if (key !== undefined) {
+    context.addIssue({
+      code: "custom",
+      path: [key],
+      message:
+        "Caller-supplied environment variables require an explicit Session policy and are not supported",
+    });
+  }
+});
 
 export const operationActionSchema = z.discriminatedUnion("kind", [
   z.object({

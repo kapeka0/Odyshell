@@ -97,6 +97,21 @@ describe("web authentication boundaries", () => {
     expect(sessionApprovalErrorPath(code)).not.toContain(code);
   });
 
+  it("keeps Session approval and denial behind the same authenticated boundary", () => {
+    for (const decision of ["approve", "deny"]) {
+      const route = readFileSync(
+        resolve(
+          process.cwd(),
+          `apps/web/src/app/api/session-requests/${decision}/route.ts`,
+        ),
+        "utf8",
+      );
+      expect(route).toContain("requireCloudRouteIdentity()");
+      expect(route).toContain("sessionApprovalCodeSchema");
+      expect(route).not.toContain("approvalCode: request");
+    }
+  });
+
   it("uses an opaque identity for colored avatars without letters or email addresses", () => {
     const url = vercelAvatarUrl("org_2abc");
     expect(url).toBe("https://avatar.vercel.sh/org_2abc.svg?size=64");

@@ -550,27 +550,53 @@ function privacyMinimalTimelineMetadata(
   return safe;
 }
 
-function timelineExport(
+async function timelineExport(
+  workspaceId: string,
   sessionId: string,
   events: Awaited<ReturnType<typeof db.workspaceSessionTimeline>>,
   detailLevel: EventSinkDetailLevel,
   now = Date.now(),
-): TimelineExport {
+): Promise<TimelineExport> {
   const retainedAfter = now - retention.auditMilliseconds;
+  const operationMetadata =
+    detailLevel !== "privacy-minimal"
+      ? await db.operationTimelineMetadata(
+          workspaceId,
+          (events ?? []).flatMap((event) =>
+            event.operationId ? [event.operationId] : [],
+          ),
+          detailLevel === "diagnostic",
+        )
+      : new Map<string, Record<string, unknown>>();
   return {
     version: "2026-07-31",
     sessionId,
     exportedAt: new Date(now).toISOString(),
     events: (events ?? [])
       .filter((event) => event.createdAt >= retainedAfter)
-      .map((event) => ({
-        id: event.id,
-        eventType: event.eventType,
-        source: event.source,
-        ...(event.operationId ? { operationId: event.operationId } : {}),
-        metadata: redactTimelineMetadata(event.metadata, detailLevel),
-        createdAt: new Date(event.createdAt).toISOString(),
-      })),
+      .map((event) => {
+        const details = event.operationId
+          ? operationMetadata.get(event.operationId)
+          : undefined;
+        const { stdout: _stdout, stderr: _stderr, ...withoutOutput } =
+          details ?? {};
+        return {
+          id: event.id,
+          eventType: event.eventType,
+          source: event.source,
+          ...(event.operationId ? { operationId: event.operationId } : {}),
+          metadata: redactTimelineMetadata(
+            {
+              ...event.metadata,
+              ...(event.eventType === "operation.completed"
+                ? details
+                : withoutOutput),
+            },
+            detailLevel,
+          ),
+          createdAt: new Date(event.createdAt).toISOString(),
+        };
+      }),
   };
 }
 
@@ -1346,7 +1372,8 @@ app.post(
       parsed.data.sessionId,
     );
     if (!events) return reply.code(404).send({ error: "session_not_found" });
-    return timelineExport(
+    return await timelineExport(
+      context.workspace.id,
       parsed.data.sessionId,
       events,
       parsed.data.detailLevel,
@@ -1922,8 +1949,62 @@ app.post(
     if (result.status !== "approved") {
       return reply.code(500).send({ error: "session_approval_failed" });
     }
+    await audit(
+      db,
+      context.workspace.id,
+      parsed.data.userId,
+      "session_request.approved",
+      "session_request",
+      result.request.id,
+    );
     gateway.notifyWorkspace(context.workspace.id);
     return { approved: true, requestId: result.request.id };
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/session-requests/deny",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = sessionApprovalSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply
+        .code(400)
+        .send({ error: "invalid_request", details: parsed.error.issues });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const result = await db.denyAgentSessionRequest({
+      workspaceId: context.workspace.id,
+      approvalCodeHash: hashToken(parsed.data.approvalCode),
+      denierHumanId: parsed.data.userId,
+      now: Date.now(),
+    });
+    if (result.status === "invalid") {
+      return reply.code(404).send({ error: "session_request_not_found" });
+    }
+    if (result.status === "expired") {
+      return reply.code(410).send({ error: "session_request_expired" });
+    }
+    if (result.status === "already_used") {
+      return reply.code(409).send({ error: "session_request_already_used" });
+    }
+    if (result.status !== "denied") {
+      return reply.code(500).send({ error: "session_denial_failed" });
+    }
+    await audit(
+      db,
+      context.workspace.id,
+      parsed.data.userId,
+      "session_request.denied",
+      "session_request",
+      result.request.id,
+    );
+    gateway.notifyWorkspace(context.workspace.id);
+    return { denied: true, requestId: result.request.id };
   },
 );
 
@@ -2272,7 +2353,7 @@ app.get(
 
 app.put(
   "/v1/admin/event-sink",
-  { preHandler: requireWorkspaceAccess },
+  { preHandler: [requireAdmin, requireAdminWorkspace] },
   async (request, reply) => {
     const parsed = eventSinkConfigurationSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -2320,7 +2401,7 @@ app.put(
 
 app.delete(
   "/v1/admin/event-sink",
-  { preHandler: requireWorkspaceAccess },
+  { preHandler: [requireAdmin, requireAdminWorkspace] },
   async (request, reply) => {
     const workspaceId = adminWorkspaceFor(request);
     const sink = await db.workspaceEventSink(workspaceId);
@@ -2373,7 +2454,12 @@ app.get<{
       request.params.sessionId,
     );
     if (!events) return reply.code(404).send({ error: "session_not_found" });
-    return timelineExport(request.params.sessionId, events, detail.data);
+    return await timelineExport(
+      workspaceId,
+      request.params.sessionId,
+      events,
+      detail.data,
+    );
   },
 );
 
@@ -2818,7 +2904,8 @@ app.post<{ Params: { sessionId: string } }>(
       principal.humanId,
     );
     if (!events) return reply.code(404).send({ error: "session_not_found" });
-    return timelineExport(
+    return await timelineExport(
+      principal.workspaceId,
       request.params.sessionId,
       events,
       parsed.data.detailLevel,
@@ -3708,7 +3795,8 @@ const deliverEventSinks = async (): Promise<void> => {
           delivery.secretCiphertext,
           eventSinkEncryptionKey,
         );
-        const exported = timelineExport(
+        const exported = await timelineExport(
+          delivery.workspaceId,
           delivery.event.sessionId ?? `request:${delivery.event.requestId}`,
           [delivery.event],
           delivery.detailLevel,

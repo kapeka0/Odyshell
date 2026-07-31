@@ -399,6 +399,29 @@ try {
       `values ('default', '${crypto.randomUUID()}', 'unrelated-${cliUserId}', '${unrelatedCliTokenHash}', now() + interval '1 hour');`,
     ].join(" "),
   ]);
+  const memberSinkMutation = await fetch(
+    new URL("/v1/admin/event-sink", apiUrl),
+    {
+      method: "PUT",
+      headers: {
+        authorization: `Bearer ${cliToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        endpoint: "https://events.example/odyshell",
+        detailLevel: "privacy-minimal",
+        signingSecret: "member-must-not-configure-this-secret",
+      }),
+    },
+  );
+  const memberSinkMutationBody = await memberSinkMutation.json();
+  if (
+    memberSinkMutation.status !== 401 ||
+    memberSinkMutationBody.error !== "invalid_admin_key" ||
+    JSON.stringify(memberSinkMutationBody).includes("member-must-not")
+  ) {
+    throw new Error("A Workspace member configured an administrator Event Sink");
+  }
   const approvedAgentId = crypto.randomUUID();
   const requestResponse = await fetch(
     new URL("/v1/agent-session-requests", apiUrl),
@@ -613,6 +636,18 @@ try {
   ) {
     throw new Error("Agent Credential rotation failed");
   }
+  const repeatedRotationResponse = await fetch(
+    new URL("/v1/agent-credentials/rotate", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${agentCredential.accessToken}`,
+      },
+    },
+  );
+  if (repeatedRotationResponse.status !== 401) {
+    throw new Error("A retiring Agent Credential extended its overlap");
+  }
   const policyScope = {
     machineId: machine.id,
     profile: "workspace",
@@ -731,6 +766,50 @@ try {
     !widened.body.approvalUrl
   ) {
     throw new Error("Out-of-policy Session request did not remain pending");
+  }
+  const widenedApprovalCode = new URL(
+    widened.body.approvalUrl,
+  ).searchParams.get("code");
+  if (!widenedApprovalCode) {
+    throw new Error("Out-of-policy Session approval URL omitted its code");
+  }
+  const denyWidenedResponse = await fetch(
+    new URL("/v1/internal/cloud/session-requests/deny", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        ...approvalBody,
+        approvalCode: widenedApprovalCode,
+      }),
+    },
+  );
+  if (denyWidenedResponse.status !== 200) {
+    throw new Error("Pending Session request could not be denied");
+  }
+  const deniedClaimResponse = await fetch(
+    new URL(
+      `/v1/agent-session-requests/${widened.body.id}/claim`,
+      apiUrl,
+    ),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${rotatedAgentCredential.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ agentId: agentCredential.agentId }),
+    },
+  );
+  const deniedClaim = await deniedClaimResponse.json();
+  if (
+    deniedClaimResponse.status !== 403 ||
+    deniedClaim.error !== "denied"
+  ) {
+    throw new Error("Denied Session request could still be claimed");
   }
   const autoClaimResponse = await fetch(
     new URL(

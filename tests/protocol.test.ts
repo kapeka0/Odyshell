@@ -84,6 +84,26 @@ describe("protocol validation", () => {
         },
       }).success,
     ).toBe(false);
+    for (const key of [
+      "PATH",
+      "LD_AUDIT",
+      "BASH_ENV",
+      "PYTHONPATH",
+      "NODE_PATH",
+      "CI",
+    ]) {
+      expect(
+        operationRequestSchema.safeParse({
+          action: {
+            kind: "process.exec",
+            program: "git",
+            args: ["status"],
+            cwd: ".",
+            env: { [key]: "/tmp/attacker-controlled" },
+          },
+        }).success,
+      ).toBe(false);
+    }
   });
 
   it("accepts structured filesystem search and Docker log operations", () => {

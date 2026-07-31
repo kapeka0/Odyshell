@@ -42,6 +42,7 @@ type MachineNodeData = {
 type AgentNodeData = {
   name: string;
   sessions: number;
+  status: "active" | "disabled";
 };
 
 type SessionNodeData = {
@@ -146,7 +147,7 @@ export function WorkspaceCanvas({ context }: { context: CloudContext }) {
           />
           <CanvasMetric
             icon={<BotIcon />}
-            label={`${connections.connectedAgents} agents connected`}
+            label={`${connections.connectedAgents} agents with sessions`}
           />
           <CanvasMetric
             icon={<CableIcon />}
@@ -245,7 +246,7 @@ function AgentNode({ data }: NodeProps<AgentFlowNode>) {
             {data.name}
           </Link>
           <span className="mt-0.5 block text-xs text-muted-foreground">
-            {data.sessions > 0 ? "Active" : "No active session"}
+            {data.status === "disabled" ? "Disabled" : "Enabled"}
           </span>
         </span>
       </div>
@@ -337,6 +338,7 @@ function topologyFor(
       sessions: activeSessions.filter(
         (session) => session.agentId === agent.id,
       ).length,
+      status: agent.status,
     },
     draggable: true,
   }));
