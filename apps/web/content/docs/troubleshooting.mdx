@@ -15,7 +15,7 @@ ods client doctor
 
 ## Machine is offline
 
-The machine record exists but its Client connection is not active. On Linux:
+The machine record exists but its Client connection is not active:
 
 ```bash
 ods client status
@@ -24,6 +24,18 @@ ods up
 
 For a foreground Client, run `ods client start` and keep the process alive. Also verify outbound
 HTTPS/WSS access to the Server.
+
+## `client_upgrade_required`
+
+The machine authenticated with an incompatible protocol and remains offline. On that machine:
+
+```bash
+ods client update
+ods client doctor
+```
+
+Only patch updates inside the installed pre-1.0 minor line are automatic. Follow the release
+migration guide for a minor version change.
 
 ## `client_already_enrolled`
 

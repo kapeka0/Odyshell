@@ -45,7 +45,7 @@ ods --server https://company.example up --profile company <enrollment-options>
 ```
 
 Use the same `--profile` with `ods down` and `ods client status`. Profiles keep independent
-machine identities, local policies, state, and Linux services. Omitting it selects `default`.
+machine identities, local policies, state, and background services. Omitting it selects `default`.
 
 `ods` uses Odyshell Cloud by default. Self-hosted installations select their Server with
 `--server <url>` or `ODYSHELL_SERVER_URL`.
@@ -72,6 +72,17 @@ from the Cloud Workspace selected during `ods login`.
 
 Legacy Agent Access and direct Session creation commands return migration guidance and do not
 authorize work.
+
+Check or update the local Client without replacing its identity or configuration:
+
+```bash
+ods client doctor
+ods client update --check
+ods client update
+```
+
+Updates are downloaded from npm over HTTPS, verified against the registry SHA-512 integrity,
+limited to compatible patch releases, and rolled back if the background Client cannot restart.
 
 ## MCP
 

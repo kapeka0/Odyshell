@@ -92,6 +92,10 @@ export type Machine = {
   name: string;
   status: string;
   online: boolean;
+  compatible: boolean;
+  upgradeRequired: boolean;
+  clientVersion: string | null;
+  protocolVersion: number | null;
   runtime?: ClientRuntimeInfo | null;
   lastSeenAt: string | null;
   enrolledAt: string;

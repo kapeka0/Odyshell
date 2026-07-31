@@ -4,6 +4,7 @@ export type ResolvableMachine = {
   id: string;
   name: string;
   online: boolean;
+  compatible?: boolean;
   revokedAt?: string | null;
 };
 
@@ -47,6 +48,12 @@ export function resolveMachineReference<T extends ResolvableMachine>(
       throw new ExpectedError(`Machine "${reference}" has been revoked`, "machine_revoked");
     }
     throw new ExpectedError(`Machine "${reference}" was not found`, "machine_not_found");
+  }
+  if (machine.compatible === false) {
+    throw new ExpectedError(
+      `Machine "${machine.name}" uses an incompatible Odyshell Client. Run "ods client update" on that machine and reconnect.`,
+      "client_upgrade_required",
+    );
   }
   if (options.requireOnline && !machine.online) {
     throw new ExpectedError(

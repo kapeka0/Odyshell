@@ -527,6 +527,10 @@ export type ClientRuntimeInfo = {
   hostPlatform: HostPlatform;
   architecture: string;
   nodeVersion: string;
+  /** Additive runtime metadata used for compatibility diagnostics. */
+  protocolVersion?: number;
+  clientVersion?: string;
+  supportedCapabilities?: Capability[];
   executionRunners?: Array<"host" | "docker">;
   containerEngine?: "docker";
   containerOs?: "linux";
@@ -581,6 +585,11 @@ export type ClientConfig = z.infer<typeof clientConfigSchema>;
 export type ServerToClientMessage =
   | { type: "challenge"; connectionId: string; nonce: string }
   | { type: "authenticated"; machineId: string }
+  | {
+      type: "error";
+      code: "client_upgrade_required";
+      message: string;
+    }
   | { type: "ping"; pingId: string }
   | {
       type: "session.open";

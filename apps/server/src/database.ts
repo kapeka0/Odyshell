@@ -5785,6 +5785,23 @@ export class PostgresDatabase {
     return Number(result.numUpdatedRows) === 1;
   }
 
+  async setMachineIncompatible(
+    machineId: string,
+    runtime: unknown,
+  ): Promise<boolean> {
+    const result = await this.db
+      .updateTable("machines")
+      .set({
+        status: "offline",
+        lastSeenAt: new Date(),
+        runtime: JSON.stringify(runtime),
+      })
+      .where("id", "=", machineId)
+      .where("revokedAt", "is", null)
+      .executeTakeFirst();
+    return Number(result.numUpdatedRows) === 1;
+  }
+
   async heartbeat(machineId: string): Promise<void> {
     await this.db
       .updateTable("machines")

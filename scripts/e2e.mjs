@@ -352,7 +352,12 @@ try {
   if (
     !["linux", "macos", "windows"].includes(machine.runtime?.hostPlatform) ||
     !machine.runtime?.architecture ||
-    machine.runtime?.containerOs !== "linux"
+    machine.runtime?.containerOs !== "linux" ||
+    machine.runtime?.protocolVersion !== 1 ||
+    machine.runtime?.clientVersion !== "0.9.0" ||
+    !machine.runtime?.supportedCapabilities?.includes("fs.read") ||
+    machine.compatible !== true ||
+    machine.upgradeRequired !== false
   ) {
     throw new Error("Client runtime metadata was not reported");
   }
@@ -366,6 +371,10 @@ try {
   const cliToken = `ods_cli_e2e_${crypto.randomUUID()}`;
   const cliTokenHash = createHash("sha256").update(cliToken).digest("hex");
   const cliUserId = `e2e-user-${crypto.randomUUID()}`;
+  const unrelatedCliToken = `ods_cli_e2e_${crypto.randomUUID()}`;
+  const unrelatedCliTokenHash = createHash("sha256")
+    .update(unrelatedCliToken)
+    .digest("hex");
   await compose([
     "exec",
     "-T",
@@ -385,6 +394,9 @@ try {
       "insert into odyshell.cli_tokens",
       "(workspace_id, id, user_id, token_hash, expires_at)",
       `values ('default', '${crypto.randomUUID()}', '${cliUserId}', '${cliTokenHash}', now() + interval '1 hour');`,
+      "insert into odyshell.cli_tokens",
+      "(workspace_id, id, user_id, token_hash, expires_at)",
+      `values ('default', '${crypto.randomUUID()}', 'unrelated-${cliUserId}', '${unrelatedCliTokenHash}', now() + interval '1 hour');`,
     ].join(" "),
   ]);
   const approvedAgentId = crypto.randomUUID();
@@ -1203,23 +1215,22 @@ try {
   ) {
     throw new Error("The requesting human could not list its canonical Session");
   }
-  const unrelatedAgentSessionListResponse = await fetch(
+  const unrelatedSessionListResponse = await fetch(
     new URL("/v1/agent-sessions", apiUrl),
     {
       headers: {
-        authorization: `Bearer ${agentCredential.accessToken}`,
+        authorization: `Bearer ${unrelatedCliToken}`,
       },
     },
   );
-  const unrelatedAgentSessionList =
-    await unrelatedAgentSessionListResponse.json();
+  const unrelatedSessionList = await unrelatedSessionListResponse.json();
   if (
-    unrelatedAgentSessionListResponse.status !== 200 ||
-    unrelatedAgentSessionList.data?.some(
+    unrelatedSessionListResponse.status !== 200 ||
+    unrelatedSessionList.data?.some(
       (session) => session.id === claimedSession.sessionId,
     )
   ) {
-    throw new Error("An unrelated Agent could observe another Agent's Session");
+    throw new Error("An unrelated human could observe another human's Session");
   }
   const claimReplay = await fetch(
     new URL(

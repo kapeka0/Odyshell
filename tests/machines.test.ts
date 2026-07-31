@@ -25,6 +25,24 @@ describe("machine reference resolution", () => {
     expect(() =>
       resolveMachineReference(machines, "desktop", { requireOnline: true }),
     ).toThrowError(expect.objectContaining({ code: "machine_offline" }));
+    expect(() =>
+      resolveMachineReference(
+        [
+          ...machines,
+          {
+            id: "incompatible-id",
+            name: "old-client",
+            online: false,
+            compatible: false,
+            revokedAt: null,
+          },
+        ],
+        "old-client",
+        { requireOnline: true },
+      ),
+    ).toThrowError(
+      expect.objectContaining({ code: "client_upgrade_required" }),
+    );
   });
 
   it("requires an ID when active names are ambiguous", () => {

@@ -30,9 +30,11 @@ ods audit
 
 ## Client lifecycle
 
-- `ods up` enrolls when needed and starts the Linux background Client.
+- `ods up` enrolls when needed and starts the background Client on Linux, macOS, or Windows.
 - `ods down` stops that Client.
-- `ods client doctor` checks local prerequisites and configuration.
+- `ods client doctor` checks the installed version, protocol, prerequisites, service, and configuration.
+- `ods client update` verifies and installs the latest compatible patch, restarts the service, and
+  restores the previous version if activation fails.
 - `ods client enroll` creates a machine identity explicitly.
 - `ods client start` runs the Client in the foreground.
 

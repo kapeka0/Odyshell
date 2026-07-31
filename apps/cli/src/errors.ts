@@ -147,6 +147,9 @@ function connectionHint(value: ErrorReport): string | undefined {
   if (value.code === "machine_ping_timeout") {
     return 'Update and restart the Odyshell Client on that machine, then try "ods ping" again.';
   }
+  if (value.code === "client_upgrade_required") {
+    return 'Run "ods client update" on that machine, then retry the operation.';
+  }
   return undefined;
 }
 

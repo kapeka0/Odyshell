@@ -7,18 +7,20 @@ import { Command } from "commander";
 import open from "open";
 import pc from "picocolors";
 import {
+  PROTOCOL_VERSION,
   type OperationAction,
 } from "@odyshell/protocol";
 import {
+  CLIENT_VERSION,
   clientConfigPathForProfile,
   defaultClientConfigPath,
   clientServiceStatus,
   enrollClient,
   inspectClientRuntime,
-  installLinuxUserService,
+  installClientService,
   removeLinuxUserService,
   runClient,
-  stopLinuxUserService,
+  stopClientService,
 } from "@odyshell/client";
 import {
   ApiError,
@@ -39,6 +41,7 @@ import {
   saveStoredConfig,
   type GlobalOptions,
 } from "./config.js";
+import { updateClientPackage } from "./update.js";
 import {
   colorStatus,
   operationJson,
@@ -438,7 +441,7 @@ program
       localConfiguration.configExists
         ? clientServiceStatus(localConfiguration.configPath)
         : Promise.resolve({
-            supported: process.platform === "linux",
+            supported: ["linux", "darwin", "win32"].includes(process.platform),
             installed: false,
             active: false,
             enabled: false,
@@ -1100,7 +1103,7 @@ program
         };
       } else {
         try {
-          service = await installLinuxUserService({
+          service = await installClientService({
             nodePath: process.execPath,
             cliPath: fileURLToPath(import.meta.url),
             configPath,
@@ -1177,7 +1180,7 @@ program
       );
     }
     try {
-      await stopLinuxUserService(configPath);
+      await stopClientService(configPath);
     } catch (error) {
       throw new ExpectedError(
         `Could not stop the Odyshell Client service: ${error instanceof Error ? error.message : String(error)}`,
@@ -1202,10 +1205,27 @@ client
       () => false,
     );
     const runtime = await inspectClientRuntime([parseRunner(options.runner)]);
-    const report = { compatible: true, configPath, configFound, runtime };
+    const service = configFound
+      ? await clientServiceStatus(configPath)
+      : undefined;
+    const nodeMajor = Number(process.versions.node.split(".")[0]);
+    const compatible =
+      nodeMajor >= 24 &&
+      ["linux", "darwin", "win32"].includes(process.platform);
+    const report = {
+      compatible,
+      version: CLIENT_VERSION,
+      protocolVersion: PROTOCOL_VERSION,
+      configPath,
+      configFound,
+      runtime,
+      service,
+    };
     if (global.json) printJson(report);
     else {
       console.log(`${pc.green("✓")} ${runtime.hostPlatform}/${runtime.architecture}`);
+      console.log(`  Client  ${CLIENT_VERSION}`);
+      console.log(`  Protocol  ${PROTOCOL_VERSION}`);
       console.log(`  Node    ${runtime.nodeVersion}`);
       console.log(`  Runner  ${runtime.executionRunners?.join(", ") ?? "host"}`);
       if (runtime.containerEngineVersion) {
@@ -1216,6 +1236,37 @@ client
       console.log(`  Config  ${configFound ? configPath : `${configPath} (not enrolled)`}`);
     }
   });
+
+client
+  .command("update")
+  .description("install the latest compatible verified Client release")
+  .option("--config <path>", "client configuration", defaultClientConfigPath())
+  .option("--check", "check without installing")
+  .action(
+    async (
+      options: { config: string; check?: boolean },
+      command: Command,
+    ) => {
+      const global = globals(command);
+      const result = await updateClientPackage(
+        CLIENT_VERSION,
+        resolve(options.config),
+        options.check ?? false,
+      );
+      if (global.json) {
+        printJson(result);
+        return;
+      }
+      if (result.updated) {
+        console.log(`${pc.green("✓")} Updated to ${result.latestVersion}`);
+        if (result.restarted) console.log("  Client restarted");
+      } else if (result.currentVersion === result.latestVersion) {
+        console.log(`${pc.green("✓")} Client ${result.currentVersion} is current`);
+      } else {
+        console.log(`Client ${result.latestVersion} is available`);
+      }
+    },
+  );
 
 client
   .command("enroll")
@@ -1278,7 +1329,7 @@ client
     const status = configExists
       ? await clientServiceStatus(configPath)
       : {
-          supported: process.platform === "linux",
+          supported: ["linux", "darwin", "win32"].includes(process.platform),
           installed: false,
           active: false,
           enabled: false,

@@ -20,7 +20,7 @@ export function printMachines(
     return;
   }
   printTable(
-    ["NAME", "STATUS", "PLATFORM", "RUNNER", "ID", "LAST SEEN"],
+    ["NAME", "STATUS", "VERSION", "PLATFORM", "RUNNER", "ID", "LAST SEEN"],
     machines.map((machine) => [
       machine.name,
       machine.revokedAt
@@ -28,6 +28,9 @@ export function printMachines(
         : machine.online
           ? pc.green("online")
           : pc.dim("offline"),
+      machine.upgradeRequired
+        ? pc.red(`${machine.clientVersion ?? "unknown"} (update)`)
+        : (machine.clientVersion ?? pc.dim("unknown")),
       machine.runtime
         ? `${machine.runtime.hostPlatform}/${machine.runtime.architecture}`
         : pc.dim("unknown"),

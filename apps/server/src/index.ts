@@ -54,6 +54,7 @@ import {
   sessionOperationDecision,
   type AgentSessionPrincipal,
 } from "./agent-sessions.js";
+import { clientCompatibility } from "./compatibility.js";
 import { ClientGateway } from "./gateway.js";
 import { dataRetentionPolicy } from "./privacy.js";
 import {
@@ -1228,6 +1229,7 @@ app.post(
         lastSeenAt: isoTimestamp(machine.lastSeenAt),
         enrolledAt: isoTimestamp(machine.enrolledAt),
         online: gateway.isOnline(machine.id),
+        ...clientCompatibility(machine.runtime),
       })),
       agents: agents.map((agent) => ({
         id: agent.id,
@@ -2253,6 +2255,7 @@ app.get(
         enrolledAt: isoTimestamp(machine.enrolledAt),
         revokedAt: isoTimestamp(machine.revokedAt),
         online: machine.revokedAt === undefined && gateway.isOnline(machine.id),
+        ...clientCompatibility(machine.runtime),
       })),
     };
   },
@@ -2469,6 +2472,7 @@ app.get("/v1/machines", { preHandler: requireAgent }, async (request) => {
       lastSeenAt: isoTimestamp(machine.lastSeenAt),
       enrolledAt: isoTimestamp(machine.enrolledAt),
       online: gateway.isOnline(machine.id),
+      ...clientCompatibility(machine.runtime),
     })),
   };
 });

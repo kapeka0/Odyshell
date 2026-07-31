@@ -26,7 +26,7 @@ Create an enrollment token on the administrator machine:
 ods token create
 ```
 
-Then, on the private Linux machine:
+Then, on the private machine:
 
 ```bash
 ods up \
@@ -38,7 +38,8 @@ ods up \
   --allow 'process.exec,fs.stat,fs.list,fs.search,fs.read,fs.write'
 ```
 
-`ods up` enrolls the machine and starts a restartable systemd user service. The workspace,
+`ods up` enrolls the machine and starts a restartable user service: systemd on Linux, a LaunchAgent
+on macOS, or a limited Task Scheduler task on Windows. The workspace,
 operating-system user, and `--allow` list form the local policy. The Server and remote agents
 cannot grant themselves capabilities that the Client has not explicitly allowed.
 
@@ -51,7 +52,7 @@ ods --server https://personal.example up --profile personal <enrollment-options>
 ods --server https://company.example up --profile company <enrollment-options>
 ```
 
-Every Profile has an isolated configuration, machine identity, state directory, and systemd user
+Every Profile has an isolated configuration, machine identity, state directory, and background
 service. Omitting `--profile` selects `default` and imports the previous single Client
 configuration on first use. Migration conflicts fail closed. `--config` remains available for an
 explicit path and cannot be combined with `--profile`.
@@ -71,5 +72,9 @@ needs. `docker.logs` is an explicit high-trust capability because access to Dock
 
 Docker is only required when using Docker operations or the optional `--runner docker` profile.
 Node.js 24 or newer is required.
+
+`ods client doctor` reports the Client and protocol versions. `ods client update` accepts only a
+compatible patch release, verifies its npm SHA-512 integrity before installation, restarts the
+existing service, and restores the previous verified package if restart fails.
 
 [Back to Odyshell](../../README.md)

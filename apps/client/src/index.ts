@@ -5,6 +5,7 @@ import process from "node:process";
 import {
   MAX_CLIENT_CLOCK_SKEW_MILLISECONDS,
   PROTOCOL_VERSION,
+  allCapabilities,
   capabilitySchema,
   clientConfigSchema,
   parseServerMessage,
@@ -33,6 +34,8 @@ import {
   normalizeServerUrl,
 } from "./platform.js";
 
+export const CLIENT_VERSION = "0.9.0";
+
 export {
   clientConfigPathForProfile,
   defaultClientConfigPath,
@@ -59,14 +62,25 @@ export function adjustedSessionDeadline(
   return new Date(localNow + (absoluteExpiry - serverNow));
 }
 export {
+  activateMacLaunchAgent,
   activateLinuxUserService,
   clientServiceStatus,
+  installClientService,
   installLinuxUserService,
+  installMacLaunchAgent,
+  installWindowsTask,
   linuxServiceNameForConfig,
   linuxUserServicePath,
+  macLaunchAgentLabelForConfig,
+  macLaunchAgentPath,
   removeLinuxUserService,
+  renderMacLaunchAgent,
   renderLinuxUserService,
+  renderWindowsTaskCommand,
+  restartClientService,
+  stopClientService,
   stopLinuxUserService,
+  windowsTaskNameForConfig,
 } from "./service.js";
 
 export type EnrollClientOptions = {
@@ -157,6 +171,11 @@ export async function inspectClientRuntime(
     hostPlatform: hostPlatform(),
     architecture: process.arch,
     nodeVersion: process.version,
+    protocolVersion: PROTOCOL_VERSION,
+    clientVersion: CLIENT_VERSION,
+    supportedCapabilities: uniqueRunners.includes("host")
+      ? allCapabilities
+      : allCapabilities.filter((capability) => capability !== "docker.logs"),
     executionRunners: uniqueRunners,
   };
   if (uniqueRunners.includes("docker")) {
@@ -285,6 +304,10 @@ export class Client {
             });
           } catch {}
         }, 10_000);
+        break;
+      case "error":
+        console.error(`${message.code}: ${message.message}`);
+        this.socket?.close(4005, message.code);
         break;
       case "ping":
         this.send({

@@ -107,7 +107,7 @@ Create a one-time enrollment token:
 ods token create
 ```
 
-On a Linux machine, connect a workspace and start the persistent outbound Client:
+On a Linux, macOS, or Windows machine, connect a workspace and start the persistent outbound Client:
 
 ```bash
 ods up \

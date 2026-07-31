@@ -84,7 +84,12 @@ describe("0.9 release contract", () => {
       resolve(process.cwd(), "apps/cli/src/mcp.ts"),
       "utf8",
     );
+    const client = readFileSync(
+      resolve(process.cwd(), "apps/client/src/index.ts"),
+      "utf8",
+    );
     expect(cli).toContain(`.version("${releaseVersion}")`);
+    expect(client).toContain(`CLIENT_VERSION = "${releaseVersion}"`);
     expect(mcp.match(new RegExp(`version: "${releaseVersion}"`, "g"))).toHaveLength(
       2,
     );

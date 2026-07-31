@@ -150,7 +150,6 @@ export class ClientGateway {
     state: AuthState,
     message: Extract<ClientToServerMessage, { type: "authenticate" }>,
   ): Promise<void> {
-    if (message.protocolVersion !== PROTOCOL_VERSION) throw new Error("Unsupported protocol version");
     const machine = await this.db.machinePublicKey(message.machineId);
     if (!machine) throw new Error("Unknown machine");
 
@@ -162,6 +161,20 @@ export class ClientGateway {
       Buffer.from(message.signature, "base64url"),
     );
     if (!valid) throw new Error("Invalid client signature");
+    if (message.protocolVersion !== PROTOCOL_VERSION) {
+      await this.db.setMachineIncompatible(message.machineId, {
+        ...(message.runtime ?? {}),
+        protocolVersion: message.protocolVersion,
+      });
+      this.sendSocket(socket, {
+        type: "error",
+        code: "client_upgrade_required",
+        message: `This Server requires protocol ${PROTOCOL_VERSION}; the Client reported ${message.protocolVersion}. Update the Odyshell Client and reconnect.`,
+      });
+      socket.close(4005, "client_upgrade_required");
+      this.notifyWorkspace(machine.workspaceId);
+      return;
+    }
 
     const previous = this.connections.get(message.machineId);
     if (previous && previous !== socket) previous.close(4003, "Superseded connection");
