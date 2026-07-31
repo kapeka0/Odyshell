@@ -4,6 +4,7 @@ import type {
   ClientRuntimeInfo,
   OperationAction,
   OperationStatus,
+  SessionMachineScope,
 } from "@odyshell/protocol";
 import { ApiError, ExpectedError, ServerConnectionError } from "./errors.js";
 import { resolveMachineReference } from "./machines.js";
@@ -193,8 +194,7 @@ export type AgentSessionRequestInput = {
   agentId: string;
   agentName: string;
   purpose: string;
-  machineId: string;
-  path: string;
+  scopes: SessionMachineScope[];
   durationSeconds: number;
 };
 
@@ -203,6 +203,10 @@ export type AgentSessionRequest = {
   status: "pending";
   approvalUrl: string;
   expiresAt: string;
+  scopes: Array<{
+    machineId: string;
+    readiness: { ready: true } | { ready: false; reason: string };
+  }>;
 };
 
 export type AgentSessionRequestStatus = {
@@ -215,8 +219,7 @@ export type AgentSessionRequestStatus = {
 export type ClaimedAgentSession = {
   sessionId: string;
   sessionToken: string;
-  machineId: string;
-  path: string;
+  scopes: SessionMachineScope[];
   status: "opening";
   expiresAt: string;
 };
@@ -442,13 +445,26 @@ export class Odyshell {
       agentToken: claim.sessionToken,
       fetch: this.fetcher,
     });
+    const approvedScope = claim.scopes.find(
+      (scope) =>
+        scope.capabilities.includes("fs.read") &&
+        scope.restrictions.filesystem?.paths.length === 1,
+    );
+    const approvedPath = approvedScope?.restrictions.filesystem?.paths[0];
+    if (!approvedScope || !approvedPath || approvedPath.includeDescendants) {
+      throw new ExpectedError(
+        "The Session does not contain one exact file read scope.",
+        "path_scope_denied",
+      );
+    }
     const session = await scoped.waitForSession(claim.sessionId);
     try {
       const operation = await scoped.createOperation(
         session.id,
-        { kind: "fs.read", path: claim.path },
+        { kind: "fs.read", path: approvedPath.path },
         options.timeoutSeconds ?? 120,
         options.maxOutputBytes ?? 1024 * 1024,
+        approvedScope.machineId,
       );
       return decodeOperation(
         await scoped.waitForOperation(operation.id, options.onEvent),
@@ -580,11 +596,17 @@ export class Odyshell {
     action: OperationAction,
     timeoutSeconds = 120,
     maxOutputBytes = 1024 * 1024,
+    machineId?: string,
   ): Promise<{ id: string; status: string }> {
     return this.request(`/v1/sessions/${sessionId}/operations`, {
       method: "POST",
       headers: { "idempotency-key": randomUUID() },
-      body: { action, timeoutSeconds, maxOutputBytes },
+      body: {
+        action,
+        timeoutSeconds,
+        maxOutputBytes,
+        ...(machineId === undefined ? {} : { machineId }),
+      },
     });
   }
 

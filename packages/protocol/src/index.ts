@@ -173,27 +173,282 @@ export function normalizeRelativePath(value: string): string {
   return segments.join("/") || ".";
 }
 
-const exactReadPathSchema = relativePathSchema
-  .transform(normalizeRelativePath)
-  .refine((value) => value !== ".", "A file path is required");
+export const sessionPathRestrictionSchema = z
+  .object({
+    path: relativePathSchema.transform(normalizeRelativePath),
+    includeDescendants: z.boolean().default(false),
+  })
+  .strict();
+export type SessionPathRestriction = z.infer<
+  typeof sessionPathRestrictionSchema
+>;
+
+export const sessionProcessRuleSchema = z
+  .object({
+    program: z.string().trim().min(1).max(1024),
+    args: z.array(z.string().max(16_384)).max(256),
+    cwd: sessionPathRestrictionSchema,
+  })
+  .strict();
+export type SessionProcessRule = z.infer<typeof sessionProcessRuleSchema>;
+
+export const sessionRestrictionsSchema = z
+  .object({
+    filesystem: z
+      .object({
+        paths: z.array(sessionPathRestrictionSchema).min(1).max(100),
+      })
+      .strict()
+      .optional(),
+    process: z
+      .object({
+        programs: z.array(sessionProcessRuleSchema).min(1).max(100),
+      })
+      .strict()
+      .optional(),
+    docker: z
+      .object({
+        containers: z
+          .array(
+            z
+              .string()
+              .min(1)
+              .max(128)
+              .regex(
+                /^[A-Za-z0-9][A-Za-z0-9_.-]*$/,
+                "Invalid container name or ID",
+              ),
+          )
+          .min(1)
+          .max(100),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+export type SessionRestrictions = z.infer<typeof sessionRestrictionsSchema>;
+
+const filesystemCapabilities = new Set<Capability>([
+  "fs.stat",
+  "fs.list",
+  "fs.search",
+  "fs.read",
+  "fs.write",
+  "fs.mkdir",
+  "fs.remove",
+]);
+
+export const sessionMachineScopeSchema = z
+  .object({
+    machineId: z.string().uuid(),
+    profile: z.string().min(1).max(64).default("workspace"),
+    capabilities: z.array(capabilitySchema).min(1),
+    restrictions: sessionRestrictionsSchema,
+  })
+  .strict()
+  .superRefine((scope, context) => {
+    if (
+      scope.capabilities.some((capability) =>
+        filesystemCapabilities.has(capability),
+      ) &&
+      scope.restrictions.filesystem === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Filesystem capabilities require path restrictions",
+        path: ["restrictions", "filesystem"],
+      });
+    }
+    if (
+      scope.capabilities.includes("process.exec") &&
+      scope.restrictions.process === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "process.exec requires structured program restrictions",
+        path: ["restrictions", "process"],
+      });
+    }
+    if (scope.capabilities.includes("process.shell")) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "process.shell cannot be granted by a restricted Agent Session; use process.exec",
+        path: ["capabilities"],
+      });
+    }
+    if (
+      scope.capabilities.includes("docker.logs") &&
+      scope.restrictions.docker === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "docker.logs requires container restrictions",
+        path: ["restrictions", "docker"],
+      });
+    }
+  });
+export type SessionMachineScope = z.infer<typeof sessionMachineScopeSchema>;
 
 export const agentSessionRequestInputSchema = z
   .object({
     agentId: z.string().uuid(),
     agentName: z.string().trim().min(1).max(128),
     purpose: z.string().trim().min(1).max(280),
-    machineId: z.string().uuid(),
-    path: exactReadPathSchema,
+    scopes: z.array(sessionMachineScopeSchema).min(1).max(16),
     durationSeconds: z
       .number()
       .int()
       .min(60)
       .max(MAX_AGENT_SESSION_SECONDS),
   })
-  .strict();
+  .strict()
+  .superRefine((request, context) => {
+    const machineIds = request.scopes.map((scope) => scope.machineId);
+    if (new Set(machineIds).size !== machineIds.length) {
+      context.addIssue({
+        code: "custom",
+        message: "A Session can contain only one scope per machine",
+        path: ["scopes"],
+      });
+    }
+  });
 export type AgentSessionRequestInput = z.infer<
   typeof agentSessionRequestInputSchema
 >;
+
+export type SessionScopeDecision =
+  | { allowed: true }
+  | {
+      allowed: false;
+      code:
+        | "machine_scope_denied"
+        | "capability_denied"
+        | "path_scope_denied"
+        | "program_scope_denied"
+        | "container_scope_denied";
+    };
+
+export type SessionScopeSubsetDecision =
+  | { allowed: true }
+  | {
+      allowed: false;
+      code: "capability_widening" | "restriction_widening";
+    };
+
+function pathMatchesRestriction(
+  value: string,
+  restriction: SessionPathRestriction,
+): boolean {
+  const normalized = normalizeRelativePath(value);
+  const root = normalizeRelativePath(restriction.path);
+  if (normalized === root) return true;
+  return (
+    restriction.includeDescendants &&
+    (root === "." || normalized.startsWith(`${root}/`))
+  );
+}
+
+function pathRestrictionIsSubset(
+  requested: SessionPathRestriction,
+  ceiling: SessionPathRestriction,
+): boolean {
+  const requestedPath = normalizeRelativePath(requested.path);
+  const ceilingPath = normalizeRelativePath(ceiling.path);
+  if (requestedPath === ceilingPath) {
+    return !requested.includeDescendants || ceiling.includeDescendants;
+  }
+  return (
+    ceiling.includeDescendants &&
+    (ceilingPath === "." || requestedPath.startsWith(`${ceilingPath}/`))
+  );
+}
+
+export function sessionScopeSubsetDecision(
+  requested: SessionMachineScope,
+  ceiling: SessionMachineScope,
+): SessionScopeSubsetDecision {
+  if (
+    requested.machineId !== ceiling.machineId ||
+    requested.capabilities.some(
+      (capability) => !ceiling.capabilities.includes(capability),
+    )
+  ) {
+    return { allowed: false, code: "capability_widening" };
+  }
+  for (const path of requested.restrictions.filesystem?.paths ?? []) {
+    if (
+      !ceiling.restrictions.filesystem?.paths.some((allowed) =>
+        pathRestrictionIsSubset(path, allowed),
+      )
+    ) {
+      return { allowed: false, code: "restriction_widening" };
+    }
+  }
+  for (const rule of requested.restrictions.process?.programs ?? []) {
+    if (
+      !ceiling.restrictions.process?.programs.some(
+        (allowed) =>
+          allowed.program === rule.program &&
+          allowed.args.length === rule.args.length &&
+          allowed.args.every(
+            (argument, index) => argument === rule.args[index],
+          ) &&
+          pathRestrictionIsSubset(rule.cwd, allowed.cwd),
+      )
+    ) {
+      return { allowed: false, code: "restriction_widening" };
+    }
+  }
+  for (const container of requested.restrictions.docker?.containers ?? []) {
+    if (!ceiling.restrictions.docker?.containers.includes(container)) {
+      return { allowed: false, code: "restriction_widening" };
+    }
+  }
+  return { allowed: true };
+}
+
+export function sessionScopeDecision(
+  scope: SessionMachineScope,
+  machineId: string,
+  action: OperationAction,
+): SessionScopeDecision {
+  if (scope.machineId !== machineId) {
+    return { allowed: false, code: "machine_scope_denied" };
+  }
+  if (!scope.capabilities.includes(capabilityForAction(action))) {
+    return { allowed: false, code: "capability_denied" };
+  }
+  if ("path" in action && action.kind.startsWith("fs.")) {
+    const allowed = scope.restrictions.filesystem?.paths.some((restriction) =>
+      pathMatchesRestriction(action.path, restriction),
+    );
+    return allowed
+      ? { allowed: true }
+      : { allowed: false, code: "path_scope_denied" };
+  }
+  if (action.kind === "process.exec") {
+    const allowed = scope.restrictions.process?.programs.some(
+      (rule) =>
+        rule.program === action.program &&
+        rule.args.length === action.args.length &&
+        rule.args.every((argument, index) => argument === action.args[index]) &&
+        pathMatchesRestriction(action.cwd, rule.cwd),
+    );
+    return allowed
+      ? { allowed: true }
+      : { allowed: false, code: "program_scope_denied" };
+  }
+  if (action.kind === "docker.logs") {
+    const allowed =
+      scope.restrictions.docker?.containers.includes(action.container) ??
+      false;
+    return allowed
+      ? { allowed: true }
+      : { allowed: false, code: "container_scope_denied" };
+  }
+  return { allowed: false, code: "capability_denied" };
+}
 
 export const operationEnvironmentSchema = z.record(
   z
@@ -284,6 +539,7 @@ const profilePolicySchema = z.object({
   maxConcurrentSessions: z.number().int().min(1).max(32),
   maxOutputBytes: z.number().int().min(1024).max(16 * 1024 * 1024),
   capabilities: z.array(capabilitySchema).min(1),
+  restrictions: sessionRestrictionsSchema.optional(),
 });
 
 export const hostClientProfileSchema = profilePolicySchema.extend({
@@ -328,6 +584,8 @@ export type ServerToClientMessage =
       sessionId: string;
       profile: string;
       capabilities: Capability[];
+      /** Required for canonical Agent Sessions; omitted only by legacy authority. */
+      restrictions?: SessionRestrictions;
       expiresAt: string;
     }
   | { type: "session.close"; sessionId: string; reason: string }

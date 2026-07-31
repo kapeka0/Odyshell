@@ -390,8 +390,23 @@ try {
         agentId: approvedAgentId,
         agentName: "E2E MCP Agent",
         purpose: "Read the approved test file",
-        machineId: machine.id,
-        path: "approved.txt",
+        scopes: [
+          {
+            machineId: machine.id,
+            profile: "workspace",
+            capabilities: ["fs.read"],
+            restrictions: {
+              filesystem: {
+                paths: [
+                  {
+                    path: "approved.txt",
+                    includeDescendants: false,
+                  },
+                ],
+              },
+            },
+          },
+        ],
         durationSeconds: 600,
       }),
     },

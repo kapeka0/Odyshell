@@ -73,8 +73,23 @@ export function createApprovedOdyshellMcpServer(
           agentId: identity.id,
           agentName: identity.name,
           purpose: input.purpose,
-          machineId: machine.id,
-          path: input.path,
+          scopes: [
+            {
+              machineId: machine.id,
+              profile: "workspace",
+              capabilities: ["fs.read"],
+              restrictions: {
+                filesystem: {
+                  paths: [
+                    {
+                      path: normalizeRelativePath(input.path),
+                      includeDescendants: false,
+                    },
+                  ],
+                },
+              },
+            },
+          ],
           durationSeconds: input.durationSeconds,
         });
       }, reportUnexpectedError),
@@ -139,15 +154,22 @@ export function createApprovedOdyshellMcpServer(
             "session_claim_unavailable",
           );
         }
-        if (claim.machineId !== input.machine) {
+        const scope = claim.scopes.find(
+          (candidate) => candidate.machineId === input.machine,
+        );
+        if (!scope) {
           throw new ExpectedError(
             "The machine is outside the approved session scope.",
             "machine_scope_denied",
           );
         }
         if (
-          normalizeRelativePath(claim.path) !==
-          normalizeRelativePath(input.path)
+          !scope.restrictions.filesystem?.paths.some(
+            (restriction) =>
+              !restriction.includeDescendants &&
+              normalizeRelativePath(restriction.path) ===
+                normalizeRelativePath(input.path),
+          )
         ) {
           throw new ExpectedError(
             "The path is outside the approved session scope.",
@@ -166,11 +188,14 @@ export function createApprovedOdyshellMcpServer(
 }
 
 function safeClaim(claim: ClaimedAgentSession): Record<string, unknown> {
+  const firstScope = claim.scopes[0];
+  const firstPath = firstScope?.restrictions.filesystem?.paths[0]?.path;
   return {
     status: "ready",
     sessionId: claim.sessionId,
-    machineId: claim.machineId,
-    path: claim.path,
+    scopes: claim.scopes,
+    ...(firstScope ? { machineId: firstScope.machineId } : {}),
+    ...(firstPath ? { path: firstPath } : {}),
     expiresAt: claim.expiresAt,
   };
 }

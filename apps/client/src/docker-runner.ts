@@ -3,9 +3,11 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
   capabilityForAction,
+  sessionScopeDecision,
   type Capability,
   type ClientProfile,
   type OperationAction,
+  type SessionRestrictions,
 } from "@odyshell/protocol";
 import {
   type OperationExecutor,
@@ -110,6 +112,7 @@ export class DockerRunner implements OperationExecutor {
     sessionId: string,
     profile: ClientProfile,
     capabilities: Capability[],
+    restrictions: SessionRestrictions | undefined,
     expiresAt: Date,
     onExpire: () => void,
   ): Promise<RunningSession> {
@@ -117,7 +120,12 @@ export class DockerRunner implements OperationExecutor {
     await mkdir(profile.workspaceRoot, { recursive: true });
     const name = `odyshell-${sessionId}`;
     const mountSource = resolve(profile.workspaceRoot);
-    const ttlMilliseconds = validateSessionPolicy(profile, capabilities, expiresAt);
+    const ttlMilliseconds = validateSessionPolicy(
+      profile,
+      capabilities,
+      restrictions,
+      expiresAt,
+    );
     if (profile.network !== "none") {
       throw new Error("Network access is denied by local policy");
     }
@@ -175,6 +183,7 @@ export class DockerRunner implements OperationExecutor {
       containerName: name,
       profile,
       capabilities: new Set(capabilities),
+      restrictions,
       expiresAt,
       expiryTimer,
     };
@@ -198,6 +207,21 @@ export class DockerRunner implements OperationExecutor {
   ): Promise<RunningOperation> {
     const needed = capabilityForAction(action);
     if (!session.capabilities.has(needed)) throw new Error(`Capability ${needed} is not granted`);
+    const restrictionDecision = session.restrictions
+      ? sessionScopeDecision(
+      {
+        machineId: "local",
+        profile: "workspace",
+        capabilities: [...session.capabilities],
+        restrictions: session.restrictions,
+      },
+      "local",
+      action,
+      )
+      : { allowed: true as const };
+    if (!restrictionDecision.allowed) {
+      throw new Error(`Operation denied by local Session scope: ${restrictionDecision.code}`);
+    }
 
     if (isFilesystemAction(action)) {
       const done = executeFilesystemOperation(

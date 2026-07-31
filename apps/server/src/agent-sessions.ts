@@ -1,32 +1,37 @@
 import {
-  normalizeRelativePath,
+  sessionScopeDecision,
   type OperationAction,
+  type SessionMachineScope,
 } from "@odyshell/protocol";
 
 export type AgentSessionPrincipal = {
   workspaceId: string;
   agentId: string;
   sessionId: string;
-  machineId: string;
-  readPath: string;
+  scopes: SessionMachineScope[];
   expiresAt: number;
 };
 
 export type SessionOperationDecision =
-  | { allowed: true }
+  | { allowed: true; scope: SessionMachineScope }
   | {
       allowed: false;
       code:
         | "session_scope_denied"
         | "session_expired"
+        | "machine_scope_denied"
         | "capability_denied"
         | "path_scope_denied"
+        | "program_scope_denied"
+        | "container_scope_denied"
         | "timeout_exceeds_session";
+      machineId?: string;
     };
 
 export function sessionOperationDecision(
   principal: AgentSessionPrincipal,
   sessionId: string,
+  machineId: string,
   action: OperationAction,
   timeoutSeconds: number,
   now = Date.now(),
@@ -37,17 +42,15 @@ export function sessionOperationDecision(
   if (principal.expiresAt <= now) {
     return { allowed: false, code: "session_expired" };
   }
-  if (action.kind !== "fs.read") {
-    return { allowed: false, code: "capability_denied" };
-  }
-  if (
-    normalizeRelativePath(action.path) !==
-    normalizeRelativePath(principal.readPath)
-  ) {
-    return { allowed: false, code: "path_scope_denied" };
-  }
   if (now + timeoutSeconds * 1_000 > principal.expiresAt) {
     return { allowed: false, code: "timeout_exceeds_session" };
   }
-  return { allowed: true };
+  const scope = principal.scopes.find((candidate) => candidate.machineId === machineId);
+  if (!scope) {
+    return { allowed: false, code: "machine_scope_denied", machineId };
+  }
+  const decision = sessionScopeDecision(scope, machineId, action);
+  return decision.allowed
+    ? { allowed: true, scope }
+    : { ...decision, machineId };
 }

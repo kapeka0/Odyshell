@@ -6,9 +6,10 @@ description: Give a persistent agent temporary, least-privilege machine access.
 An Agent is a persistent programmatic identity. Signing in with `ods login` lets `ods mcp`
 register that identity without granting it access to a machine.
 
-For an interactive task, the Agent requests a temporary Session with an exact machine, capability,
-restriction, purpose and duration. A workspace member reviews it in the browser. The Agent then
-claims a Session Credential once; the Server stores only its hash.
+For an interactive task, the Agent requests a temporary Session with a purpose, duration, and one
+or more independent machine scopes. A workspace member reviews every machine, capability, and
+restriction in the browser. The Agent then claims a Session Credential once; the Server stores
+only its hash.
 
 ## Connect an agent
 
@@ -25,10 +26,13 @@ ods login
 ods mcp
 ```
 
-The current approval workflow reads one exact file. Its effective authority is the intersection
-of:
+The current MCP shortcut requests one exact file read. The Session protocol also supports
+multi-machine scopes with explicit filesystem paths, exact `process.exec` program and argument
+rules, and Docker container names.
 
-1. the approved Session machine, `fs.read` capability and exact path;
+Its effective authority is the intersection of:
+
+1. the selected machine scope and its typed restrictions;
 2. Session status and expiry;
 3. the target machine's local policy;
 4. the operating-system permissions of the Client process.

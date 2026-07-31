@@ -3,7 +3,9 @@ import type {
   Capability,
   ClientProfile,
   OperationAction,
+  SessionRestrictions,
 } from "@odyshell/protocol";
+import { sessionScopeSubsetDecision } from "@odyshell/protocol";
 
 export type RunningSession = {
   id: string;
@@ -11,6 +13,7 @@ export type RunningSession = {
   runtimeId: string;
   profile: ClientProfile;
   capabilities: Set<Capability>;
+  restrictions: SessionRestrictions | undefined;
   expiresAt: Date;
   expiryTimer: NodeJS.Timeout;
   containerId?: string;
@@ -36,6 +39,7 @@ export interface OperationExecutor {
     sessionId: string,
     profile: ClientProfile,
     capabilities: Capability[],
+    restrictions: SessionRestrictions | undefined,
     expiresAt: Date,
     onExpire: () => void,
   ): Promise<RunningSession>;
@@ -51,6 +55,7 @@ export interface OperationExecutor {
 export function validateSessionPolicy(
   profile: ClientProfile,
   capabilities: Capability[],
+  restrictions: SessionRestrictions | undefined,
   expiresAt: Date,
 ): number {
   const ttlMilliseconds = expiresAt.getTime() - Date.now();
@@ -60,6 +65,28 @@ export function validateSessionPolicy(
   for (const capability of capabilities) {
     if (!profile.capabilities.includes(capability)) {
       throw new Error(`Capability ${capability} is denied by local policy`);
+    }
+  }
+  if (profile.restrictions !== undefined) {
+    if (restrictions === undefined) {
+      throw new Error("Legacy unrestricted Sessions violate local restrictions");
+    }
+    const subset = sessionScopeSubsetDecision(
+      {
+        machineId: "local",
+        profile: "workspace",
+        capabilities,
+        restrictions,
+      },
+      {
+        machineId: "local",
+        profile: "workspace",
+        capabilities: profile.capabilities,
+        restrictions: profile.restrictions,
+      },
+    );
+    if (!subset.allowed) {
+      throw new Error(`Requested Session scope violates local policy: ${subset.code}`);
     }
   }
   return ttlMilliseconds;

@@ -47,19 +47,26 @@ export function SessionApprovalForm({
     <form className="space-y-5" onSubmit={submit}>
       <dl className="space-y-3 text-sm">
         <ApprovalRow label="Agent" value={approval.agent.name} />
-        <ApprovalRow label="Machine" value={approval.machine.name} />
-        <ApprovalRow
-          label="Capability"
-          value={<Badge variant="secondary">Read</Badge>}
-        />
-        <ApprovalRow
-          label="Path"
-          value={
-            <code className="max-w-64 break-all rounded-md border bg-muted/40 px-2 py-1 font-mono text-xs">
-              {approval.path}
-            </code>
-          }
-        />
+        <div className="space-y-3">
+          {approval.scopes.map((scope) => (
+            <div className="rounded-lg border p-3" key={scope.machineId}>
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-medium">{scope.machine.name}</span>
+                <Badge variant={scope.readiness.ready ? "secondary" : "outline"}>
+                  {scope.readiness.ready ? "Ready" : "Offline"}
+                </Badge>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {scope.capabilities.map((capability) => (
+                  <Badge key={capability} variant="secondary">
+                    {capability}
+                  </Badge>
+                ))}
+              </div>
+              <ScopeRestrictions scope={scope} />
+            </div>
+          ))}
+        </div>
         <ApprovalRow
           label="Duration"
           value={formatDuration(approval.durationSeconds)}
@@ -85,6 +92,36 @@ export function SessionApprovalForm({
         </Button>
       </div>
     </form>
+  );
+}
+
+function ScopeRestrictions({
+  scope,
+}: {
+  scope: SessionApproval["scopes"][number];
+}) {
+  const paths = scope.restrictions.filesystem?.paths ?? [];
+  const programs = scope.restrictions.process?.programs ?? [];
+  const containers = scope.restrictions.docker?.containers ?? [];
+  return (
+    <div className="mt-3 space-y-1 text-xs text-muted-foreground">
+      {paths.map((restriction) => (
+        <code className="block break-all font-mono" key={`${restriction.path}:${restriction.includeDescendants}`}>
+          {restriction.path}
+          {restriction.includeDescendants ? "/**" : ""}
+        </code>
+      ))}
+      {programs.map((rule) => (
+        <code className="block break-all font-mono" key={`${rule.program}:${JSON.stringify(rule.args)}`}>
+          {[rule.program, ...rule.args].join(" ")}
+        </code>
+      ))}
+      {containers.map((container) => (
+        <code className="block break-all font-mono" key={container}>
+          {container}
+        </code>
+      ))}
+    </div>
   );
 }
 

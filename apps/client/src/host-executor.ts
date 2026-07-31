@@ -3,9 +3,11 @@ import { mkdir } from "node:fs/promises";
 import process from "node:process";
 import {
   capabilityForAction,
+  sessionScopeDecision,
   type Capability,
   type ClientProfile,
   type OperationAction,
+  type SessionRestrictions,
 } from "@odyshell/protocol";
 import {
   type OperationExecutor,
@@ -31,18 +33,25 @@ export class HostExecutor implements OperationExecutor {
     sessionId: string,
     profile: ClientProfile,
     capabilities: Capability[],
+    restrictions: SessionRestrictions | undefined,
     expiresAt: Date,
     onExpire: () => void,
   ): Promise<RunningSession> {
     if (profile.runner !== "host") throw new Error("HostExecutor requires a host profile");
     await mkdir(profile.workspaceRoot, { recursive: true });
-    const ttlMilliseconds = validateSessionPolicy(profile, capabilities, expiresAt);
+    const ttlMilliseconds = validateSessionPolicy(
+      profile,
+      capabilities,
+      restrictions,
+      expiresAt,
+    );
     return {
       id: sessionId,
       runner: "host",
       runtimeId: `host:${process.pid}:${sessionId}`,
       profile,
       capabilities: new Set(capabilities),
+      restrictions,
       expiresAt,
       expiryTimer: setTimeout(onExpire, ttlMilliseconds),
     };
@@ -64,6 +73,21 @@ export class HostExecutor implements OperationExecutor {
     const needed = capabilityForAction(action);
     if (!session.capabilities.has(needed)) {
       throw new Error(`Capability ${needed} is not granted`);
+    }
+    const restrictionDecision = session.restrictions
+      ? sessionScopeDecision(
+      {
+        machineId: "local",
+        profile: "workspace",
+        capabilities: [...session.capabilities],
+        restrictions: session.restrictions,
+      },
+      "local",
+      action,
+      )
+      : { allowed: true as const };
+    if (!restrictionDecision.allowed) {
+      throw new Error(`Operation denied by local Session scope: ${restrictionDecision.code}`);
     }
 
     if (isFilesystemAction(action)) {

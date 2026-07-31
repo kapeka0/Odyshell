@@ -1,6 +1,7 @@
 import { createHash, createPublicKey, randomUUID, timingSafeEqual } from "node:crypto";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import { z } from "zod";
 import {
   agentSessionRequestInputSchema,
   agentTokenRequestSchema,
@@ -74,6 +75,12 @@ const webUrl = cloudWebUrl(process.env, webKey !== undefined);
 const developmentAgentKey = developmentCredentialsEnabled(process.env)
   ? (process.env.ODYSHELL_AGENT_KEY ?? "dev-agent-key")
   : undefined;
+const scopedOperationRequestSchema = operationRequestSchema
+  .extend({ machineId: z.string().uuid().optional() })
+  .strict();
+const agentIdentityReferenceSchema = z
+  .object({ agentId: z.string().uuid() })
+  .strict();
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
 await app.register(websocket, { options: { maxPayload: 2 * 1024 * 1024 } });
@@ -285,8 +292,7 @@ async function requireAgent(request: FastifyRequest, reply: FastifyReply): Promi
         workspaceId: sessionPrincipal.workspaceId,
         agentId: sessionPrincipal.agentId,
         sessionId: sessionPrincipal.sessionId,
-        machineId: sessionPrincipal.machineId,
-        readPath: sessionPrincipal.readPath,
+        scopes: sessionPrincipal.scopes,
         expiresAt: sessionPrincipal.expiresAt,
       };
       requestPrincipals.set(request, {
@@ -294,8 +300,12 @@ async function requireAgent(request: FastifyRequest, reply: FastifyReply): Promi
         id: sessionPrincipal.agentId,
         name: sessionPrincipal.agentName,
         workspaceId: sessionPrincipal.workspaceId,
-        machineIds: new Set([sessionPrincipal.machineId]),
-        capabilities: new Set(["fs.read"]),
+        machineIds: new Set(
+          sessionPrincipal.scopes.map((scope) => scope.machineId),
+        ),
+        capabilities: new Set(
+          sessionPrincipal.scopes.flatMap((scope) => scope.capabilities),
+        ),
         expiresAt: new Date(sessionPrincipal.expiresAt),
         sessionScope,
       });
@@ -840,13 +850,22 @@ app.post(
     return {
       id: sessionRequest.id,
       agent: { id: sessionRequest.agentId, name: sessionRequest.agentName },
-      machine: {
-        id: sessionRequest.machineId,
-        name: sessionRequest.machineName,
-      },
       purpose: sessionRequest.purpose,
-      capability: "fs.read",
-      path: sessionRequest.readPath,
+      scopes: sessionRequest.scopes.map((scope) => {
+        const machine = sessionRequest.machines.find(
+          (candidate) => candidate.id === scope.machineId,
+        );
+        return {
+          ...scope,
+          machine: {
+            id: scope.machineId,
+            name: machine?.name ?? scope.machineId,
+          },
+          readiness: gateway.isOnline(scope.machineId)
+            ? { ready: true }
+            : { ready: false, reason: "machine_offline" },
+        };
+      }),
       durationSeconds: sessionRequest.durationSeconds,
       status: sessionRequest.status,
       expiresAt: isoTimestamp(sessionRequest.expiresAt),
@@ -1460,9 +1479,6 @@ app.post(
         .code(429)
         .send({ error: "session_request_rate_limited" });
     }
-    if (!gateway.isOnline(parsed.data.machineId)) {
-      return reply.code(409).send({ error: "machine_offline" });
-    }
     const requestId = randomUUID();
     const approvalCode = createOpaqueToken("approval");
     const expiresAt = Date.now() + 10 * 60 * 1_000;
@@ -1472,9 +1488,8 @@ app.post(
       agentId: parsed.data.agentId,
       agentName: parsed.data.agentName,
       humanId: principal.userId,
-      machineId: parsed.data.machineId,
+      scopes: parsed.data.scopes,
       purpose: parsed.data.purpose,
-      readPath: parsed.data.path,
       durationSeconds: parsed.data.durationSeconds,
       approvalCodeHash: hashToken(approvalCode),
       expiresAt,
@@ -1490,8 +1505,10 @@ app.post(
       "session_request",
       requestId,
       {
-        machineId: parsed.data.machineId,
-        kind: "fs.read",
+        scopes: parsed.data.scopes.map((scope) => ({
+          machineId: scope.machineId,
+          capabilities: scope.capabilities,
+        })),
         durationSeconds: parsed.data.durationSeconds,
       },
     );
@@ -1499,6 +1516,12 @@ app.post(
     return reply.code(201).send({
       id: requestId,
       status: "pending",
+      scopes: parsed.data.scopes.map((scope) => ({
+        machineId: scope.machineId,
+        readiness: gateway.isOnline(scope.machineId)
+          ? { ready: true }
+          : { ready: false, reason: "machine_offline" },
+      })),
       approvalUrl: `${webUrl}/sessions/approve?code=${encodeURIComponent(approvalCode)}`,
       expiresAt: isoTimestamp(expiresAt),
     });
@@ -1509,9 +1532,7 @@ app.post<{ Params: { requestId: string } }>(
   "/v1/agent-session-requests/:requestId/status",
   { preHandler: requireCli },
   async (request, reply) => {
-    const parsed = agentSessionRequestInputSchema
-      .pick({ agentId: true })
-      .safeParse(request.body);
+    const parsed = agentIdentityReferenceSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply
         .code(400)
@@ -1542,9 +1563,7 @@ app.post<{ Params: { requestId: string } }>(
   "/v1/agent-session-requests/:requestId/claim",
   { preHandler: requireCli },
   async (request, reply) => {
-    const parsed = agentSessionRequestInputSchema
-      .pick({ agentId: true })
-      .safeParse(request.body);
+    const parsed = agentIdentityReferenceSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply
         .code(400)
@@ -1559,9 +1578,6 @@ app.post<{ Params: { requestId: string } }>(
     );
     if (!current) {
       return reply.code(404).send({ error: "session_request_not_found" });
-    }
-    if (!gateway.isOnline(current.machineId)) {
-      return reply.code(409).send({ error: "machine_offline" });
     }
     const sessionToken = createOpaqueToken("session");
     const result = await db.claimAgentSessionRequest({
@@ -1595,28 +1611,41 @@ app.post<{ Params: { requestId: string } }>(
     if (result.status !== "claimed") {
       return reply.code(500).send({ error: "session_claim_failed" });
     }
-    const sent = gateway.send(result.machineId, {
-      type: "session.open",
-      sessionId: result.session.id,
-      profile: "workspace",
-      capabilities: ["fs.read"],
-      expiresAt: new Date(result.session.expiresAt).toISOString(),
-    });
-    if (!sent) {
-      await db.failClaimedAgentSession(
-        principal.workspaceId,
-        result.session.id,
-        result.machineId,
-        "machine_disconnected",
-      );
-      return reply.code(409).send({ error: "machine_disconnected" });
+    const readiness: Array<{
+      machineId: string;
+      ready: boolean;
+      reason?: string;
+    }> = [];
+    for (const target of result.targets) {
+      const sent = gateway.send(target.machineId, {
+        type: "session.open",
+        sessionId: target.runtimeSessionId,
+        profile: target.scope.profile,
+        capabilities: target.scope.capabilities,
+        restrictions: target.scope.restrictions,
+        expiresAt: new Date(result.session.expiresAt).toISOString(),
+      });
+      if (!sent) {
+        await db.markSessionOpenFailed(
+          target.machineId,
+          target.runtimeSessionId,
+          "machine_disconnected",
+        );
+        readiness.push({
+          machineId: target.machineId,
+          ready: false,
+          reason: "machine_offline",
+        });
+      } else {
+        readiness.push({ machineId: target.machineId, ready: true });
+      }
     }
     gateway.notifyWorkspace(principal.workspaceId);
     return reply.code(201).send({
       sessionId: result.session.id,
       sessionToken,
-      machineId: result.machineId,
-      path: result.readPath,
+      scopes: result.targets.map((target) => target.scope),
+      readiness,
       status: "opening",
       expiresAt: isoTimestamp(result.session.expiresAt),
     });
@@ -1627,9 +1656,7 @@ app.post<{ Params: { sessionId: string } }>(
   "/v1/agent-sessions/:sessionId/timeline",
   { preHandler: requireCli },
   async (request, reply) => {
-    const parsed = agentSessionRequestInputSchema
-      .pick({ agentId: true })
-      .safeParse(request.body);
+    const parsed = agentIdentityReferenceSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply
         .code(400)
@@ -1763,6 +1790,44 @@ app.get<{ Params: { sessionId: string } }>(
     ) {
       return reply.code(404).send({ error: "session_not_found" });
     }
+    if (principal.sessionScope !== undefined) {
+      const targets = await db.listAgentSessionTargetRuntimes(
+        principal.workspaceId,
+        request.params.sessionId,
+        principal.id,
+      );
+      if (targets.length === 0) {
+        return reply.code(404).send({ error: "session_not_found" });
+      }
+      const status = targets.every((target) => target.status === "ready")
+        ? "ready"
+        : targets.some((target) => target.status === "opening")
+          ? "opening"
+          : targets.some((target) => target.status === "ready")
+            ? "ready"
+            : targets.some((target) => target.status === "failed")
+              ? "failed"
+          : targets.every((target) =>
+                ["closed", "expired"].includes(target.status),
+              )
+            ? "closed"
+            : "failed";
+      return {
+        id: request.params.sessionId,
+        status,
+        expiresAt: isoTimestamp(
+          Math.min(...targets.map((target) => target.expiresAt)),
+        ),
+        targets: targets.map((target) => ({
+          machineId: target.machineId,
+          profile: target.profile,
+          capabilities: target.capabilities,
+          restrictions: target.restrictions,
+          status: target.status,
+          error: target.error ?? null,
+        })),
+      };
+    }
     const session = await db.getSession(
       principal.workspaceId,
       request.params.sessionId,
@@ -1792,6 +1857,42 @@ app.delete<{ Params: { sessionId: string } }>(
       request.params.sessionId !== principal.sessionScope.sessionId
     ) {
       return reply.code(404).send({ error: "active_session_not_found" });
+    }
+    if (principal.sessionScope !== undefined) {
+      const targets = await db.listAgentSessionTargetRuntimes(
+        principal.workspaceId,
+        request.params.sessionId,
+        principal.id,
+      );
+      const activeTargets = targets.filter((target) =>
+        ["opening", "ready"].includes(target.status),
+      );
+      if (activeTargets.length === 0) {
+        return reply.code(404).send({ error: "active_session_not_found" });
+      }
+      for (const target of activeTargets) {
+        gateway.send(target.machineId, {
+          type: "session.close",
+          sessionId: target.runtimeSessionId,
+          reason: "agent_request",
+        });
+        await db.markSessionClosing(
+          principal.workspaceId,
+          target.runtimeSessionId,
+        );
+      }
+      await audit(
+        db,
+        principal.workspaceId,
+        principal.id,
+        "session.close_requested",
+        "session",
+        request.params.sessionId,
+        { machineIds: activeTargets.map((target) => target.machineId) },
+      );
+      return reply
+        .code(202)
+        .send({ id: request.params.sessionId, status: "closing" });
     }
     const session = await db.getActiveSession(
       principal.workspaceId,
@@ -1823,14 +1924,23 @@ app.post<{ Params: { sessionId: string } }>(
   { preHandler: requireAgent },
   async (request, reply) => {
     const principal = principalFor(request);
-    const parsed = operationRequestSchema.safeParse(request.body);
+    const parsed = scopedOperationRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: "invalid_request", details: parsed.error.issues });
     }
     if (principal.sessionScope !== undefined) {
+      const machineId =
+        parsed.data.machineId ??
+        (principal.sessionScope.scopes.length === 1
+          ? principal.sessionScope.scopes[0]!.machineId
+          : undefined);
+      if (!machineId) {
+        return reply.code(400).send({ error: "machine_id_required" });
+      }
       const decision = sessionOperationDecision(
         principal.sessionScope,
         request.params.sessionId,
+        machineId,
         parsed.data.action,
         parsed.data.timeoutSeconds,
       );
@@ -1853,8 +1963,100 @@ app.post<{ Params: { sessionId: string } }>(
             : decision.code === "timeout_exceeds_session"
               ? 400
               : 403;
-        return reply.code(status).send({ error: decision.code });
+        return reply.code(status).send({
+          error: decision.code,
+          details: {
+            machineId,
+            requiredCapability: capabilityForAction(parsed.data.action),
+          },
+        });
       }
+      const target = await db.getAgentSessionTargetRuntime(
+        principal.workspaceId,
+        request.params.sessionId,
+        principal.id,
+        machineId,
+      );
+      if (!target) {
+        return reply.code(404).send({ error: "session_target_not_found" });
+      }
+      if (target.status !== "ready") {
+        return reply
+          .code(409)
+          .send({ error: "session_not_ready", status: target.status });
+      }
+      if (!gateway.isOnline(target.machineId)) {
+        return reply.code(409).send({ error: "machine_offline" });
+      }
+      const idempotencyKey = request.headers["idempotency-key"] as
+        | string
+        | undefined;
+      if (idempotencyKey) {
+        const existing = await db.findOperationByIdempotency(
+          principal.workspaceId,
+          target.runtimeSessionId,
+          principal.id,
+          idempotencyKey,
+        );
+        if (existing) {
+          return reply
+            .code(200)
+            .send({ id: existing.id, status: existing.status });
+        }
+      }
+      const operationId = randomUUID();
+      const created = await db.createOperation({
+        workspaceId: principal.workspaceId,
+        id: operationId,
+        sessionId: target.runtimeSessionId,
+        principalId: principal.id,
+        action: parsed.data.action,
+        timeoutSeconds: parsed.data.timeoutSeconds,
+        maxOutputBytes: parsed.data.maxOutputBytes,
+        ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+      });
+      if (!created && idempotencyKey) {
+        const existing = await db.findOperationByIdempotency(
+          principal.workspaceId,
+          target.runtimeSessionId,
+          principal.id,
+          idempotencyKey,
+        );
+        if (existing) {
+          return reply
+            .code(200)
+            .send({ id: existing.id, status: existing.status });
+        }
+      }
+      const sent = gateway.send(target.machineId, {
+        type: "operation.start",
+        operationId,
+        sessionId: target.runtimeSessionId,
+        action: parsed.data.action,
+        timeoutSeconds: parsed.data.timeoutSeconds,
+        maxOutputBytes: parsed.data.maxOutputBytes,
+      });
+      if (sent) {
+        await db.markOperationDelivered(principal.workspaceId, operationId);
+      }
+      await audit(
+        db,
+        principal.workspaceId,
+        principal.id,
+        "operation.created",
+        "operation",
+        operationId,
+        {
+          sessionId: request.params.sessionId,
+          kind: parsed.data.action.kind,
+          machineId: target.machineId,
+          operation: operationAuditMetadata(parsed.data.action),
+        },
+      );
+      gateway.notifyWorkspace(principal.workspaceId);
+      return reply
+        .code(202)
+        .send({ id: operationId, status: sent ? "delivered" : "queued" });
     }
     const idempotencyKey = request.headers["idempotency-key"] as string | undefined;
     if (idempotencyKey) {

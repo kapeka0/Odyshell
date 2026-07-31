@@ -99,7 +99,9 @@ describe("Odyshell MCP server", () => {
     expect(readApprovedSession).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionToken: "ods_session_secret",
-        path: "config/app.json",
+        scopes: expect.arrayContaining([
+          expect.objectContaining({ machineId: "machine-id" }),
+        ]),
       }),
     );
     expect(textOf(result)).not.toContain("ods_session_secret");
@@ -375,6 +377,7 @@ function fakeApprovedOdyshell(
       status: "pending" as const,
       approvalUrl: "https://odyshell.com/sessions/approve?code=SAFE",
       expiresAt: "2026-07-29T18:10:00.000Z",
+      scopes: [],
     })),
     agentSessionRequestStatus: vi.fn(async () => ({
       id: "7d8730ef-075c-40d5-a72d-8101abe17260",
@@ -384,8 +387,23 @@ function fakeApprovedOdyshell(
     claimAgentSession: vi.fn(async () => ({
       sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
       sessionToken: "ods_session_secret",
-      machineId: "machine-id",
-      path: "config/app.json",
+      scopes: [
+        {
+          machineId: "machine-id",
+          profile: "workspace",
+          capabilities: ["fs.read"],
+          restrictions: {
+            filesystem: {
+              paths: [
+                {
+                  path: "config/app.json",
+                  includeDescendants: false,
+                },
+              ],
+            },
+          },
+        },
+      ],
       status: "opening" as const,
       expiresAt: "2026-07-29T19:00:00.000Z",
     })),

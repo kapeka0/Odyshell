@@ -296,6 +296,7 @@ export class Client {
         message.sessionId,
         profile,
         message.capabilities,
+        message.restrictions,
         new Date(message.expiresAt),
         () => void this.closeSession(message.sessionId, "expired"),
       );

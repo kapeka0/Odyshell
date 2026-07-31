@@ -3,6 +3,8 @@ import {
   MAX_AGENT_SESSION_SECONDS,
   type Capability,
   type OperationAction,
+  type SessionMachineScope,
+  type SessionRestrictions,
 } from "@odyshell/protocol";
 import {
   CamelCasePlugin,
@@ -179,6 +181,7 @@ interface AgentSessionRequestTable {
   machineId: string;
   purpose: string;
   readPath: string;
+  scopes: Json<SessionMachineScope[]>;
   durationSeconds: number;
   status: string;
   approvalCodeHash: string;
@@ -197,6 +200,9 @@ interface AgentSessionTargetTable {
   machineId: string;
   capabilities: Json<Capability[]>;
   readPath: string;
+  profile: Generated<string>;
+  restrictions: Json<SessionRestrictions>;
+  runtimeSessionId: string;
   status: string;
   createdAt: Generated<Date>;
   updatedAt: Generated<Date>;
@@ -385,6 +391,7 @@ export type AgentSessionRequestRecord = Timestamped & {
   machineId: string;
   purpose: string;
   readPath: string;
+  scopes: SessionMachineScope[];
   durationSeconds: number;
   status: "pending" | "approved" | "denied" | "expired" | "claimed";
   expiresAt: number;
@@ -396,7 +403,7 @@ export type AgentSessionRequestRecord = Timestamped & {
 
 export type SessionApprovalView = AgentSessionRequestRecord & {
   agentName: string;
-  machineName: string;
+  machines: Array<{ id: string; name: string }>;
 };
 
 export type SessionApprovalResult =
@@ -407,8 +414,11 @@ export type SessionClaimResult =
   | {
       status: "claimed";
       session: AgentSessionRecord;
-      machineId: string;
-      readPath: string;
+      targets: Array<{
+        machineId: string;
+        runtimeSessionId: string;
+        scope: SessionMachineScope;
+      }>;
     }
   | {
       status:
@@ -426,8 +436,7 @@ export type AgentSessionCredentialPrincipal = {
   agentId: string;
   agentName: string;
   sessionId: string;
-  machineId: string;
-  readPath: string;
+  scopes: SessionMachineScope[];
   expiresAt: number;
 };
 
@@ -449,6 +458,18 @@ export type SessionRecord = Timestamped & {
   principalId: string;
   profile: string;
   capabilities: Capability[];
+  status: string;
+  expiresAt: number;
+  error?: string;
+};
+
+export type AgentSessionTargetRuntime = {
+  canonicalSessionId: string;
+  runtimeSessionId: string;
+  machineId: string;
+  profile: string;
+  capabilities: Capability[];
+  restrictions: SessionRestrictions;
   status: string;
   expiresAt: number;
   error?: string;
@@ -605,6 +626,7 @@ function agentSessionRequestRecord(
     machineId: request.machineId,
     purpose: request.purpose,
     readPath: request.readPath,
+    scopes: request.scopes,
     durationSeconds: request.durationSeconds,
     status: request.status as AgentSessionRequestRecord["status"],
     expiresAt: timestamp(request.expiresAt),
@@ -1460,6 +1482,114 @@ async function rollbackSessionScopedIdempotency(
   `.execute(db);
 }
 
+async function migrateTypedMachineScopes(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    alter table odyshell.agent_session_requests
+    add column if not exists scopes jsonb
+  `.execute(db);
+  await sql`
+    update odyshell.agent_session_requests
+    set scopes = jsonb_build_array(
+      jsonb_build_object(
+        'machineId', machine_id,
+        'profile', 'workspace',
+        'capabilities', '["fs.read"]'::jsonb,
+        'restrictions', jsonb_build_object(
+          'filesystem', jsonb_build_object(
+            'paths', jsonb_build_array(
+              jsonb_build_object(
+                'path', read_path,
+                'includeDescendants', false
+              )
+            )
+          )
+        )
+      )
+    )
+    where scopes is null
+  `.execute(db);
+  await sql`
+    alter table odyshell.agent_session_requests
+    alter column scopes set not null
+  `.execute(db);
+
+  await sql`
+    alter table odyshell.agent_session_targets
+    add column if not exists profile text not null default 'workspace',
+    add column if not exists restrictions jsonb,
+    add column if not exists runtime_session_id text
+  `.execute(db);
+  await sql`
+    update odyshell.agent_session_targets
+    set restrictions = jsonb_build_object(
+      'filesystem', jsonb_build_object(
+        'paths', jsonb_build_array(
+          jsonb_build_object(
+            'path', read_path,
+            'includeDescendants', false
+          )
+        )
+      )
+    )
+    where restrictions is null
+  `.execute(db);
+  await sql`
+    update odyshell.agent_session_targets
+    set runtime_session_id = session_id
+    where runtime_session_id is null
+  `.execute(db);
+  await sql`
+    alter table odyshell.agent_session_targets
+    alter column restrictions set not null,
+    alter column runtime_session_id set not null
+  `.execute(db);
+  await sql`
+    alter table odyshell.agent_session_targets
+    drop constraint if exists agent_session_targets_check,
+    drop constraint if exists agent_session_targets_capabilities_check
+  `.execute(db);
+  await sql`
+    create unique index if not exists agent_session_targets_runtime_idx
+    on odyshell.agent_session_targets (runtime_session_id)
+  `.execute(db);
+}
+
+async function rollbackTypedMachineScopes(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  await sql`
+    do $migration$
+    begin
+      if exists (
+        select 1
+        from odyshell.agent_session_requests
+        where jsonb_array_length(scopes) <> 1
+          or scopes #>> '{0,capabilities,0}' <> 'fs.read'
+          or jsonb_array_length(scopes #> '{0,capabilities}') <> 1
+      )
+      then
+        raise exception 'Cannot roll back typed scopes after expanded scope data exists';
+      end if;
+    end
+    $migration$
+  `.execute(db);
+  await sql`
+    drop index if exists odyshell.agent_session_targets_runtime_idx
+  `.execute(db);
+  await sql`
+    alter table odyshell.agent_session_targets
+    drop column runtime_session_id,
+    drop column restrictions,
+    drop column profile
+  `.execute(db);
+  await sql`
+    alter table odyshell.agent_session_requests
+    drop column scopes
+  `.execute(db);
+}
+
 const migrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
     return {
@@ -1493,6 +1623,10 @@ const migrationProvider: MigrationProvider = {
       "009_session_scoped_idempotency": {
         up: migrateSessionScopedIdempotency,
         down: rollbackSessionScopedIdempotency,
+      },
+      "010_typed_machine_scopes": {
+        up: migrateTypedMachineScopes,
+        down: rollbackTypedMachineScopes,
       },
     };
   },
@@ -1938,9 +2072,8 @@ export class PostgresDatabase {
     agentId: string;
     agentName: string;
     humanId: string;
-    machineId: string;
+    scopes: SessionMachineScope[];
     purpose: string;
-    readPath: string;
     durationSeconds: number;
     approvalCodeHash: string;
     expiresAt: number;
@@ -1996,15 +2129,20 @@ export class PostgresDatabase {
         .executeTakeFirst();
       if (!agent) return null;
 
-      const machine = await transaction
+      const requestedMachineIds = input.scopes.map((scope) => scope.machineId);
+      const machines = await transaction
         .selectFrom("machines")
         .select("id")
         .where("workspaceId", "=", input.workspaceId)
-        .where("id", "=", input.machineId)
+        .where("id", "in", requestedMachineIds)
         .where("revokedAt", "is", null)
         .forShare()
-        .executeTakeFirst();
-      if (!machine) return null;
+        .execute();
+      if (machines.length !== requestedMachineIds.length) return null;
+
+      const primaryScope = input.scopes[0]!;
+      const primaryReadPath =
+        primaryScope.restrictions.filesystem?.paths[0]?.path ?? ".";
 
       const request = await transaction
         .insertInto("agentSessionRequests")
@@ -2013,9 +2151,10 @@ export class PostgresDatabase {
           id: input.requestId,
           agentId: input.agentId,
           requestedByHumanId: input.humanId,
-          machineId: input.machineId,
+          machineId: primaryScope.machineId,
           purpose: input.purpose,
-          readPath: input.readPath,
+          readPath: primaryReadPath,
+          scopes: JSON.stringify(input.scopes),
           durationSeconds: input.durationSeconds,
           status: "pending",
           approvalCodeHash: input.approvalCodeHash,
@@ -2038,8 +2177,11 @@ export class PostgresDatabase {
           eventType: "session.requested",
           source: "verified",
           metadata: JSON.stringify({
-            machineId: input.machineId,
-            capability: "fs.read",
+            machineIds: requestedMachineIds,
+            capabilities: input.scopes.map((scope) => ({
+              machineId: scope.machineId,
+              capabilities: scope.capabilities,
+            })),
             durationSeconds: input.durationSeconds,
           }),
         })
@@ -2059,17 +2201,8 @@ export class PostgresDatabase {
           .onRef("agents.workspaceId", "=", "agentSessionRequests.workspaceId")
           .onRef("agents.id", "=", "agentSessionRequests.agentId"),
       )
-      .innerJoin("machines", (join) =>
-        join
-          .onRef(
-            "machines.workspaceId",
-            "=",
-            "agentSessionRequests.workspaceId",
-          )
-          .onRef("machines.id", "=", "agentSessionRequests.machineId"),
-      )
       .selectAll("agentSessionRequests")
-      .select(["agents.name as agentName", "machines.name as machineName"])
+      .select(["agents.name as agentName"])
       .where("agentSessionRequests.workspaceId", "=", workspaceId)
       .where(
         "agentSessionRequests.approvalCodeHash",
@@ -2077,13 +2210,20 @@ export class PostgresDatabase {
         approvalCodeHash,
       )
       .executeTakeFirst();
-    return request
-      ? {
-          ...agentSessionRequestRecord(request),
-          agentName: request.agentName,
-          machineName: request.machineName,
-        }
-      : null;
+    if (!request) return null;
+    const scopes = request.scopes;
+    const machines = await this.db
+      .selectFrom("machines")
+      .select(["id", "name"])
+      .where("workspaceId", "=", workspaceId)
+      .where("id", "in", scopes.map((scope) => scope.machineId))
+      .execute();
+    if (machines.length !== scopes.length) return null;
+    return {
+      ...agentSessionRequestRecord(request),
+      agentName: request.agentName,
+      machines,
+    };
   }
 
   async getAgentSessionRequest(
@@ -2254,16 +2394,19 @@ export class PostgresDatabase {
         .where("status", "=", "active")
         .forShare()
         .executeTakeFirst();
-      const machine = await transaction
+      const requestedMachineIds = request.scopes.map((scope) => scope.machineId);
+      const machines = await transaction
         .selectFrom("machines")
         .select("id")
         .where("workspaceId", "=", input.workspaceId)
-        .where("id", "=", request.machineId)
+        .where("id", "in", requestedMachineIds)
         .where("revokedAt", "is", null)
         .forShare()
-        .executeTakeFirst();
+        .execute();
       if (!agent) return { status: "agent_denied" };
-      if (!machine) return { status: "machine_unavailable" };
+      if (machines.length !== requestedMachineIds.length) {
+        return { status: "machine_unavailable" };
+      }
 
       const claimedAt = new Date(input.now);
       const expiresAt = new Date(
@@ -2284,34 +2427,47 @@ export class PostgresDatabase {
         })
         .returningAll()
         .executeTakeFirstOrThrow();
+      const targets = request.scopes.map((scope) => ({
+        machineId: scope.machineId,
+        runtimeSessionId:
+          request.scopes.length === 1 ? input.sessionId : randomUUID(),
+        scope,
+      }));
       await transaction
         .insertInto("agentSessionTargets")
-        .values({
-          workspaceId: input.workspaceId,
-          sessionId: input.sessionId,
-          machineId: request.machineId,
-          capabilities: JSON.stringify(["fs.read"]),
-          readPath: request.readPath,
-          status: "opening",
-          createdAt: claimedAt,
-          updatedAt: claimedAt,
-        })
+        .values(
+          targets.map(({ machineId, runtimeSessionId, scope }) => ({
+            workspaceId: input.workspaceId,
+            sessionId: input.sessionId,
+            machineId,
+            capabilities: JSON.stringify(scope.capabilities),
+            readPath: scope.restrictions.filesystem?.paths[0]?.path ?? ".",
+            profile: scope.profile,
+            restrictions: JSON.stringify(scope.restrictions),
+            runtimeSessionId,
+            status: "opening",
+            createdAt: claimedAt,
+            updatedAt: claimedAt,
+          })),
+        )
         .execute();
       await transaction
         .insertInto("sessions")
-        .values({
-          workspaceId: input.workspaceId,
-          id: input.sessionId,
-          machineId: request.machineId,
-          principalId: input.agentId,
-          profile: "workspace",
-          capabilities: JSON.stringify(["fs.read"]),
-          status: "opening",
-          expiresAt,
-          error: null,
-          createdAt: claimedAt,
-          updatedAt: claimedAt,
-        })
+        .values(
+          targets.map(({ machineId, runtimeSessionId, scope }) => ({
+            workspaceId: input.workspaceId,
+            id: runtimeSessionId,
+            machineId,
+            principalId: input.agentId,
+            profile: scope.profile,
+            capabilities: JSON.stringify(scope.capabilities),
+            status: "opening",
+            expiresAt,
+            error: null,
+            createdAt: claimedAt,
+            updatedAt: claimedAt,
+          })),
+        )
         .execute();
       await transaction
         .insertInto("sessionCredentials")
@@ -2349,8 +2505,11 @@ export class PostgresDatabase {
           eventType: "session.started",
           source: "verified",
           metadata: JSON.stringify({
-            machineId: request.machineId,
-            capability: "fs.read",
+            machineIds: requestedMachineIds,
+            scopes: request.scopes.map((scope) => ({
+              machineId: scope.machineId,
+              capabilities: scope.capabilities,
+            })),
             expiresAt: expiresAt.toISOString(),
           }),
           createdAt: claimedAt,
@@ -2359,8 +2518,7 @@ export class PostgresDatabase {
       return {
         status: "claimed",
         session: agentSessionRecord(session),
-        machineId: request.machineId,
-        readPath: request.readPath,
+        targets,
       };
     });
   }
@@ -2369,7 +2527,7 @@ export class PostgresDatabase {
     tokenHash: string,
   ): Promise<AgentSessionCredentialPrincipal | null> {
     const now = new Date();
-    const principal = await this.db
+    const principals = await this.db
       .selectFrom("sessionCredentials")
       .innerJoin("agentSessions", (join) =>
         join
@@ -2404,7 +2562,9 @@ export class PostgresDatabase {
         "agents.name as agentName",
         "agentSessions.id as sessionId",
         "agentSessionTargets.machineId",
-        "agentSessionTargets.readPath",
+        "agentSessionTargets.profile",
+        "agentSessionTargets.capabilities",
+        "agentSessionTargets.restrictions",
         "agentSessions.expiresAt",
       ])
       .where("sessionCredentials.tokenHash", "=", tokenHash)
@@ -2415,13 +2575,117 @@ export class PostgresDatabase {
       .where("agentSessions.expiresAt", ">", now)
       .where("agents.status", "=", "active")
       .where("agentSessionTargets.status", "in", ["opening", "ready"])
+      .orderBy("agentSessionTargets.machineId")
+      .execute();
+    const principal = principals[0];
+    if (!principal) return null;
+    return {
+      workspaceId: principal.workspaceId,
+      agentId: principal.agentId,
+      agentName: principal.agentName,
+      sessionId: principal.sessionId,
+      scopes: principals.map((target) => ({
+        machineId: target.machineId,
+        profile: target.profile,
+        capabilities: target.capabilities,
+        restrictions: target.restrictions,
+      })),
+      expiresAt: timestamp(principal.expiresAt),
+    };
+  }
+
+  async getAgentSessionTargetRuntime(
+    workspaceId: string,
+    canonicalSessionId: string,
+    agentId: string,
+    machineId: string,
+  ): Promise<AgentSessionTargetRuntime | null> {
+    const target = await this.db
+      .selectFrom("agentSessionTargets")
+      .innerJoin("agentSessions", (join) =>
+        join
+          .onRef(
+            "agentSessions.workspaceId",
+            "=",
+            "agentSessionTargets.workspaceId",
+          )
+          .onRef("agentSessions.id", "=", "agentSessionTargets.sessionId"),
+      )
+      .innerJoin(
+        "sessions",
+        "sessions.id",
+        "agentSessionTargets.runtimeSessionId",
+      )
+      .select([
+        "agentSessionTargets.sessionId as canonicalSessionId",
+        "agentSessionTargets.runtimeSessionId",
+        "agentSessionTargets.machineId",
+        "agentSessionTargets.profile",
+        "agentSessionTargets.capabilities",
+        "agentSessionTargets.restrictions",
+        "sessions.status",
+        "sessions.expiresAt",
+        "sessions.error",
+      ])
+      .where("agentSessionTargets.workspaceId", "=", workspaceId)
+      .where("agentSessionTargets.sessionId", "=", canonicalSessionId)
+      .where("agentSessionTargets.machineId", "=", machineId)
+      .where("agentSessions.agentId", "=", agentId)
       .executeTakeFirst();
-    return principal
-      ? {
-          ...principal,
-          expiresAt: timestamp(principal.expiresAt),
-        }
-      : null;
+    if (!target) return null;
+    const { error, ...record } = target;
+    return {
+      ...record,
+      expiresAt: timestamp(target.expiresAt),
+      ...(error === null ? {} : { error }),
+    };
+  }
+
+  async listAgentSessionTargetRuntimes(
+    workspaceId: string,
+    canonicalSessionId: string,
+    agentId: string,
+  ): Promise<AgentSessionTargetRuntime[]> {
+    const targets = await this.db
+      .selectFrom("agentSessionTargets")
+      .innerJoin("agentSessions", (join) =>
+        join
+          .onRef(
+            "agentSessions.workspaceId",
+            "=",
+            "agentSessionTargets.workspaceId",
+          )
+          .onRef("agentSessions.id", "=", "agentSessionTargets.sessionId"),
+      )
+      .innerJoin(
+        "sessions",
+        "sessions.id",
+        "agentSessionTargets.runtimeSessionId",
+      )
+      .select([
+        "agentSessionTargets.sessionId as canonicalSessionId",
+        "agentSessionTargets.runtimeSessionId",
+        "agentSessionTargets.machineId",
+        "agentSessionTargets.profile",
+        "agentSessionTargets.capabilities",
+        "agentSessionTargets.restrictions",
+        "sessions.status",
+        "sessions.expiresAt",
+        "sessions.error",
+      ])
+      .where("agentSessionTargets.workspaceId", "=", workspaceId)
+      .where("agentSessionTargets.sessionId", "=", canonicalSessionId)
+      .where("agentSessions.agentId", "=", agentId)
+      .orderBy("agentSessionTargets.machineId")
+      .execute();
+    return targets.map((target) => {
+      const { error, ...record } = target;
+      return {
+        ...record,
+        expiresAt: timestamp(target.expiresAt),
+        ...(error === null ? {} : { error }),
+      };
+    });
   }
 
   async failClaimedAgentSession(
@@ -2440,11 +2704,17 @@ export class PostgresDatabase {
         .executeTakeFirst();
       if (!request) return;
       const now = new Date();
+      const targets = await transaction
+        .selectFrom("agentSessionTargets")
+        .select("runtimeSessionId")
+        .where("workspaceId", "=", workspaceId)
+        .where("sessionId", "=", sessionId)
+        .execute();
       await transaction
         .updateTable("sessions")
         .set({ status: "failed", error: reason, updatedAt: now })
         .where("workspaceId", "=", workspaceId)
-        .where("id", "=", sessionId)
+        .where("id", "in", targets.map((target) => target.runtimeSessionId))
         .where("status", "in", ACTIVE_SESSION_STATUSES)
         .execute();
       await transaction
@@ -2452,7 +2722,6 @@ export class PostgresDatabase {
         .set({ status: "rejected", updatedAt: now })
         .where("workspaceId", "=", workspaceId)
         .where("sessionId", "=", sessionId)
-        .where("machineId", "=", machineId)
         .execute();
       await transaction
         .updateTable("agentSessions")
@@ -3110,28 +3379,43 @@ export class PostgresDatabase {
         .returning(["principalId", "workspaceId"])
         .executeTakeFirst()) ?? null;
       if (!result) return null;
-      const request = await transaction
-        .selectFrom("agentSessionRequests")
-        .select("id")
-        .where("workspaceId", "=", result.workspaceId)
-        .where("sessionId", "=", sessionId)
+      const target = await transaction
+        .selectFrom("agentSessionTargets")
+        .innerJoin("agentSessionRequests", (join) =>
+          join
+            .onRef(
+              "agentSessionRequests.workspaceId",
+              "=",
+              "agentSessionTargets.workspaceId",
+            )
+            .onRef(
+              "agentSessionRequests.sessionId",
+              "=",
+              "agentSessionTargets.sessionId",
+            ),
+        )
+        .select([
+          "agentSessionRequests.id as requestId",
+          "agentSessionTargets.sessionId as canonicalSessionId",
+        ])
+        .where("agentSessionTargets.workspaceId", "=", result.workspaceId)
+        .where("agentSessionTargets.runtimeSessionId", "=", sessionId)
         .executeTakeFirst();
-      if (request) {
+      if (target) {
         const now = new Date();
         await transaction
           .updateTable("agentSessionTargets")
           .set({ status: "ready", updatedAt: now })
           .where("workspaceId", "=", result.workspaceId)
-          .where("sessionId", "=", sessionId)
-          .where("machineId", "=", machineId)
+          .where("runtimeSessionId", "=", sessionId)
           .execute();
         await transaction
           .insertInto("sessionTimelineEvents")
           .values({
             workspaceId: result.workspaceId,
             id: randomUUID(),
-            sessionId,
-            requestId: request.id,
+            sessionId: target.canonicalSessionId,
+            requestId: target.requestId,
             operationId: null,
             eventType: "target.ready",
             source: "verified",
@@ -3160,42 +3444,43 @@ export class PostgresDatabase {
         .returning(["principalId", "workspaceId"])
         .executeTakeFirst()) ?? null;
       if (!result) return null;
-      const request = await transaction
-        .selectFrom("agentSessionRequests")
-        .select("id")
-        .where("workspaceId", "=", result.workspaceId)
-        .where("sessionId", "=", sessionId)
+      const target = await transaction
+        .selectFrom("agentSessionTargets")
+        .innerJoin("agentSessionRequests", (join) =>
+          join
+            .onRef(
+              "agentSessionRequests.workspaceId",
+              "=",
+              "agentSessionTargets.workspaceId",
+            )
+            .onRef(
+              "agentSessionRequests.sessionId",
+              "=",
+              "agentSessionTargets.sessionId",
+            ),
+        )
+        .select([
+          "agentSessionRequests.id as requestId",
+          "agentSessionTargets.sessionId as canonicalSessionId",
+        ])
+        .where("agentSessionTargets.workspaceId", "=", result.workspaceId)
+        .where("agentSessionTargets.runtimeSessionId", "=", sessionId)
         .executeTakeFirst();
-      if (request) {
+      if (target) {
         const now = new Date();
         await transaction
           .updateTable("agentSessionTargets")
           .set({ status: "rejected", updatedAt: now })
           .where("workspaceId", "=", result.workspaceId)
-          .where("sessionId", "=", sessionId)
-          .where("machineId", "=", machineId)
-          .execute();
-        await transaction
-          .updateTable("agentSessions")
-          .set({ status: "cancelled", updatedAt: now })
-          .where("workspaceId", "=", result.workspaceId)
-          .where("id", "=", sessionId)
-          .where("status", "=", "active")
-          .execute();
-        await transaction
-          .updateTable("sessionCredentials")
-          .set({ status: "revoked", revokedAt: now })
-          .where("workspaceId", "=", result.workspaceId)
-          .where("sessionId", "=", sessionId)
-          .where("status", "=", "active")
+          .where("runtimeSessionId", "=", sessionId)
           .execute();
         await transaction
           .insertInto("sessionTimelineEvents")
           .values({
             workspaceId: result.workspaceId,
             id: randomUUID(),
-            sessionId,
-            requestId: request.id,
+            sessionId: target.canonicalSessionId,
+            requestId: target.requestId,
             operationId: null,
             eventType: "target.rejected",
             source: "verified",
@@ -3228,44 +3513,68 @@ export class PostgresDatabase {
         .set({ status, updatedAt: new Date() })
         .where("id", "=", sessionId)
         .execute();
-      const request = await transaction
-        .selectFrom("agentSessionRequests")
-        .select("id")
-        .where("workspaceId", "=", session.workspaceId)
-        .where("sessionId", "=", sessionId)
+      const target = await transaction
+        .selectFrom("agentSessionTargets")
+        .innerJoin("agentSessionRequests", (join) =>
+          join
+            .onRef(
+              "agentSessionRequests.workspaceId",
+              "=",
+              "agentSessionTargets.workspaceId",
+            )
+            .onRef(
+              "agentSessionRequests.sessionId",
+              "=",
+              "agentSessionTargets.sessionId",
+            ),
+        )
+        .select([
+          "agentSessionRequests.id as requestId",
+          "agentSessionTargets.sessionId as canonicalSessionId",
+        ])
+        .where("agentSessionTargets.workspaceId", "=", session.workspaceId)
+        .where("agentSessionTargets.runtimeSessionId", "=", sessionId)
         .executeTakeFirst();
-      if (request) {
+      if (target) {
         const now = new Date();
-        const canonicalStatus =
-          status === "expired" ? "expired" : "completed";
         await transaction
           .updateTable("agentSessionTargets")
           .set({ status: "closed", updatedAt: now })
           .where("workspaceId", "=", session.workspaceId)
-          .where("sessionId", "=", sessionId)
-          .where("machineId", "=", machineId)
+          .where("runtimeSessionId", "=", sessionId)
           .execute();
-        await transaction
-          .updateTable("agentSessions")
-          .set({ status: canonicalStatus, updatedAt: now })
+        const remaining = await transaction
+          .selectFrom("agentSessionTargets")
+          .select("machineId")
           .where("workspaceId", "=", session.workspaceId)
-          .where("id", "=", sessionId)
-          .where("status", "=", "active")
-          .execute();
-        await transaction
-          .updateTable("sessionCredentials")
-          .set({ status: "revoked", revokedAt: now })
-          .where("workspaceId", "=", session.workspaceId)
-          .where("sessionId", "=", sessionId)
-          .where("status", "=", "active")
-          .execute();
+          .where("sessionId", "=", target.canonicalSessionId)
+          .where("status", "in", ["opening", "ready"])
+          .executeTakeFirst();
+        if (!remaining) {
+          const canonicalStatus =
+            status === "expired" ? "expired" : "completed";
+          await transaction
+            .updateTable("agentSessions")
+            .set({ status: canonicalStatus, updatedAt: now })
+            .where("workspaceId", "=", session.workspaceId)
+            .where("id", "=", target.canonicalSessionId)
+            .where("status", "=", "active")
+            .execute();
+          await transaction
+            .updateTable("sessionCredentials")
+            .set({ status: "revoked", revokedAt: now })
+            .where("workspaceId", "=", session.workspaceId)
+            .where("sessionId", "=", target.canonicalSessionId)
+            .where("status", "=", "active")
+            .execute();
+        }
         await transaction
           .insertInto("sessionTimelineEvents")
           .values({
             workspaceId: session.workspaceId,
             id: randomUUID(),
-            sessionId,
-            requestId: request.id,
+            sessionId: target.canonicalSessionId,
+            requestId: target.requestId,
             operationId: null,
             eventType: "session.closed",
             source: "verified",
@@ -3368,10 +3677,26 @@ export class PostgresDatabase {
         .executeTakeFirst();
       if (!operation) return;
       const request = await transaction
-        .selectFrom("agentSessionRequests")
-        .select("id")
-        .where("workspaceId", "=", operation.workspaceId)
-        .where("sessionId", "=", operation.sessionId)
+        .selectFrom("agentSessionTargets")
+        .innerJoin("agentSessionRequests", (join) =>
+          join
+            .onRef(
+              "agentSessionRequests.workspaceId",
+              "=",
+              "agentSessionTargets.workspaceId",
+            )
+            .onRef(
+              "agentSessionRequests.sessionId",
+              "=",
+              "agentSessionTargets.sessionId",
+            ),
+        )
+        .select([
+          "agentSessionRequests.id",
+          "agentSessionTargets.sessionId as canonicalSessionId",
+        ])
+        .where("agentSessionTargets.workspaceId", "=", operation.workspaceId)
+        .where("agentSessionTargets.runtimeSessionId", "=", operation.sessionId)
         .executeTakeFirst();
       if (!request) return;
       await transaction
@@ -3379,7 +3704,7 @@ export class PostgresDatabase {
         .values({
           workspaceId: operation.workspaceId,
           id: randomUUID(),
-          sessionId: operation.sessionId,
+          sessionId: request.canonicalSessionId,
           requestId: request.id,
           operationId,
           eventType: "operation.started",
@@ -3468,10 +3793,26 @@ export class PostgresDatabase {
         .where("id", "=", input.operationId)
         .executeTakeFirstOrThrow();
       const request = await transaction
-        .selectFrom("agentSessionRequests")
-        .select("id")
-        .where("workspaceId", "=", operation.workspaceId)
-        .where("sessionId", "=", session.sessionId)
+        .selectFrom("agentSessionTargets")
+        .innerJoin("agentSessionRequests", (join) =>
+          join
+            .onRef(
+              "agentSessionRequests.workspaceId",
+              "=",
+              "agentSessionTargets.workspaceId",
+            )
+            .onRef(
+              "agentSessionRequests.sessionId",
+              "=",
+              "agentSessionTargets.sessionId",
+            ),
+        )
+        .select([
+          "agentSessionRequests.id",
+          "agentSessionTargets.sessionId as canonicalSessionId",
+        ])
+        .where("agentSessionTargets.workspaceId", "=", operation.workspaceId)
+        .where("agentSessionTargets.runtimeSessionId", "=", session.sessionId)
         .executeTakeFirst();
       if (request) {
         await transaction
@@ -3479,7 +3820,7 @@ export class PostgresDatabase {
           .values({
             workspaceId: operation.workspaceId,
             id: randomUUID(),
-            sessionId: session.sessionId,
+            sessionId: request.canonicalSessionId,
             requestId: request.id,
             operationId: input.operationId,
             eventType: "operation.completed",
@@ -3514,7 +3855,20 @@ export class PostgresDatabase {
       .where("workspaceId", "=", workspaceId)
       .where("id", "=", operationId)
       .where("principalId", "=", principalId);
-    if (sessionId !== undefined) query = query.where("sessionId", "=", sessionId);
+    if (sessionId !== undefined) {
+      query = query.where(({ exists, selectFrom }) =>
+        exists(
+          selectFrom("agentSessionTargets")
+            .select("agentSessionTargets.machineId")
+            .whereRef(
+              "agentSessionTargets.runtimeSessionId",
+              "=",
+              "operations.sessionId",
+            )
+            .where("agentSessionTargets.sessionId", "=", sessionId),
+        ),
+      );
+    }
     const operation = await query.executeTakeFirst();
     if (!operation) return null;
     const events = await this.listOperationEvents(workspaceId, operationId, -1);
@@ -3535,7 +3889,18 @@ export class PostgresDatabase {
         .where("operations.id", "=", operationId)
         .where("operations.principalId", "=", principalId);
     if (sessionId !== undefined) {
-      query = query.where("operations.sessionId", "=", sessionId);
+      query = query.where(({ exists, selectFrom }) =>
+        exists(
+          selectFrom("agentSessionTargets")
+            .select("agentSessionTargets.machineId")
+            .whereRef(
+              "agentSessionTargets.runtimeSessionId",
+              "=",
+              "operations.sessionId",
+            )
+            .where("agentSessionTargets.sessionId", "=", sessionId),
+        ),
+      );
     }
     return (await query.executeTakeFirst()) ?? null;
   }
@@ -3552,7 +3917,20 @@ export class PostgresDatabase {
         .where("workspaceId", "=", workspaceId)
         .where("id", "=", operationId)
         .where("principalId", "=", principalId);
-    if (sessionId !== undefined) query = query.where("sessionId", "=", sessionId);
+    if (sessionId !== undefined) {
+      query = query.where(({ exists, selectFrom }) =>
+        exists(
+          selectFrom("agentSessionTargets")
+            .select("agentSessionTargets.machineId")
+            .whereRef(
+              "agentSessionTargets.runtimeSessionId",
+              "=",
+              "operations.sessionId",
+            )
+            .where("agentSessionTargets.sessionId", "=", sessionId),
+        ),
+      );
+    }
     return Boolean(await query.executeTakeFirst());
   }
 

@@ -1,11 +1,10 @@
 # Agent and Session model
 
-> **Status:** Accepted product and architecture design. The first complete vertical is shipped:
-> a signed-in MCP Agent can request, receive browser approval for, claim, and complete one exact
-> `fs.read` through a Session Credential.
+> **Status:** Accepted product and architecture design. Typed, multi-machine Session Scopes are
+> implemented for filesystem, structured process execution, and Docker logs. The signed-in MCP
+> convenience flow currently requests one exact `fs.read`.
 >
-> Multi-machine Sessions, other capabilities, policy automation, delegation, renewal, and
-> headless Agent Credentials remain target design.
+> Policy automation, delegation, renewal, and headless Agent Credentials remain target design.
 
 ## Goal
 
@@ -147,26 +146,35 @@ type Session = {
   expiresAt: string;
   targets: Array<{
     machineId: string;
-    capabilities: {
-      "fs.read"?: { paths?: string[] };
-      "fs.write"?: { paths?: string[] };
-      "process.exec"?: { programs?: string[] };
-      "docker.logs"?: { containers?: string[] };
+    capabilities: string[];
+    restrictions: {
+      filesystem?: {
+        paths: Array<{ path: string; includeDescendants: boolean }>;
+      };
+      process?: {
+        programs: Array<{
+          program: string;
+          args: string[];
+          cwd: { path: string; includeDescendants: boolean };
+        }>;
+      };
+      docker?: {
+        containers: string[];
+      };
     };
   }>;
 };
 ```
 
-Typed restrictions are optional:
+Typed restrictions are required whenever their corresponding capability is present:
 
-- filesystem capabilities accept normalized path prefixes;
-- `process.exec` accepts exact programs;
+- filesystem capabilities accept exact normalized paths or explicit descendant trees;
+- `process.exec` accepts an exact program, argument array, and working-directory restriction;
 - `docker.logs` accepts exact container names;
 - initial policy does not use regular expressions;
-- omitting a restriction means the complete capability within the Local Policy.
+- unknown or malformed restrictions fail closed.
 
-`process.shell` cannot be constrained reliably. It always requires explicit human approval for
-each Session and never participates in autoapproval.
+`process.shell` cannot be constrained reliably and is not available in a restricted Agent Session.
 
 ### Duration and renewal
 

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { SessionMachineScope } from "@odyshell/protocol";
 
 export const sessionApprovalCodeSchema = z
   .string()
@@ -8,10 +9,13 @@ export const sessionApprovalCodeSchema = z
 export type SessionApproval = {
   id: string;
   agent: { id: string; name: string };
-  machine: { id: string; name: string };
   purpose: string;
-  capability: "fs.read";
-  path: string;
+  scopes: Array<
+    SessionMachineScope & {
+      machine: { id: string; name: string };
+      readiness: { ready: true } | { ready: false; reason: string };
+    }
+  >;
   durationSeconds: number;
   status: "pending" | "approved" | "expired" | "claimed";
   expiresAt: string;

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { Capability } from "../packages/protocol/src/index.js";
 import {
   agentSessionRequestInputSchema,
   agentIdentitySchema,
@@ -8,6 +9,7 @@ import {
   humanIdentitySchema,
   operationRequestSchema,
   normalizeRelativePath,
+  sessionScopeSubsetDecision,
   organizationRequestSchema,
   sessionRequestSchema,
   workspaceRequestSchema,
@@ -194,25 +196,87 @@ describe("protocol validation", () => {
     ).toBe(false);
   });
 
-  it("accepts only bounded exact-read Session requests with canonical paths", () => {
+  it("accepts bounded typed Session scopes with canonical paths", () => {
     const request = {
       agentId: "df64d093-b6f6-4d91-8132-38b8038ca7c5",
       agentName: "Claude desktop",
       purpose: "Read the application configuration",
-      machineId: "2dc24de7-ec0e-45b3-88c1-acbb900e51f8",
-      path: "config\\./app.json",
+      scopes: [
+        {
+          machineId: "2dc24de7-ec0e-45b3-88c1-acbb900e51f8",
+          capabilities: ["fs.read"],
+          restrictions: {
+            filesystem: {
+              paths: [
+                {
+                  path: "config\\./app.json",
+                  includeDescendants: false,
+                },
+              ],
+            },
+          },
+        },
+      ],
       durationSeconds: 3_600,
     };
 
     const parsed = agentSessionRequestInputSchema.parse(request);
-    expect(parsed.path).toBe("config/app.json");
+    expect(parsed.scopes[0]?.restrictions.filesystem?.paths[0]?.path).toBe(
+      "config/app.json",
+    );
     expect(normalizeRelativePath("config//./app.json")).toBe(
       "config/app.json",
     );
     expect(
       agentSessionRequestInputSchema.safeParse({
         ...request,
-        path: "../secrets.txt",
+        scopes: [
+          {
+            ...request.scopes[0],
+            restrictions: {
+              filesystem: {
+                paths: [
+                  {
+                    path: "../secrets.txt",
+                    includeDescendants: false,
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      agentSessionRequestInputSchema.safeParse({
+        ...request,
+        scopes: [
+          {
+            ...request.scopes[0],
+            restrictions: {
+              filesystem: request.scopes[0]!.restrictions.filesystem,
+              unknownAuthority: { paths: ["."] },
+            },
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      agentSessionRequestInputSchema.safeParse({
+        ...request,
+        scopes: [
+          {
+            ...request.scopes[0],
+            capabilities: ["fs.read"],
+            restrictions: {},
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      agentSessionRequestInputSchema.safeParse({
+        ...request,
+        scopes: [request.scopes[0], request.scopes[0]],
       }).success,
     ).toBe(false);
     expect(
@@ -224,9 +288,67 @@ describe("protocol validation", () => {
     expect(
       agentSessionRequestInputSchema.safeParse({
         ...request,
-        capability: "fs.write",
+        scopes: [
+          {
+            ...request.scopes[0],
+            capabilities: ["process.shell"],
+            restrictions: {},
+          },
+        ],
       }).success,
     ).toBe(false);
+  });
+
+  it("fails closed when a Session scope exceeds local typed restrictions", () => {
+    const ceiling = {
+      machineId: "2dc24de7-ec0e-45b3-88c1-acbb900e51f8",
+      profile: "workspace",
+      capabilities: ["fs.read", "process.exec"] as Capability[],
+      restrictions: {
+        filesystem: {
+          paths: [{ path: "config", includeDescendants: true }],
+        },
+        process: {
+          programs: [
+            {
+              program: "git",
+              args: ["status"],
+              cwd: { path: "repo", includeDescendants: true },
+            },
+          ],
+        },
+      },
+    };
+    expect(
+      sessionScopeSubsetDecision(
+        {
+          ...ceiling,
+          capabilities: ["fs.read"],
+          restrictions: {
+            filesystem: {
+              paths: [
+                { path: "config/app.json", includeDescendants: false },
+              ],
+            },
+          },
+        },
+        ceiling,
+      ),
+    ).toEqual({ allowed: true });
+    expect(
+      sessionScopeSubsetDecision(
+        {
+          ...ceiling,
+          capabilities: ["fs.read"],
+          restrictions: {
+            filesystem: {
+              paths: [{ path: ".", includeDescendants: true }],
+            },
+          },
+        },
+        ceiling,
+      ),
+    ).toEqual({ allowed: false, code: "restriction_widening" });
   });
 
   it("accepts canonical tenant slugs and rejects ambiguous identifiers", () => {

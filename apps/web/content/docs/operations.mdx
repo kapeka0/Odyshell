@@ -21,6 +21,16 @@ description: The typed process, filesystem, and Docker operations supported by O
 Filesystem paths are relative to the machine's configured workspace. The Client rejects parent
 traversal and paths that escape through symbolic links.
 
+Restricted Agent Sessions fail closed:
+
+- filesystem operations require an exact path or an explicitly approved descendant tree;
+- `process.exec` requires an exact executable, argument array, and working-directory rule;
+- `docker.logs` requires an exact container name;
+- `process.shell` is not available in a restricted Agent Session.
+
+The Server checks the selected machine scope, and the Client enforces the same restrictions again
+before executing locally.
+
 ## Process execution
 
 Prefer structured execution:

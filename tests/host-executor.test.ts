@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import process from "node:process";
@@ -27,6 +27,7 @@ describe("HostExecutor", () => {
       crypto.randomUUID(),
       profile(workspace),
       ["process.exec", "fs.write", "fs.read", "fs.search"],
+      undefined,
       new Date(Date.now() + 60_000),
       () => {},
     );
@@ -80,6 +81,67 @@ describe("HostExecutor", () => {
     expect(search).toEqual([
       expect.objectContaining({ path: "config/package.json" }),
     ]);
+  });
+
+  it("enforces typed Session restrictions again on the Client", async () => {
+    await executor.closeSession(session);
+    session = await executor.openSession(
+      crypto.randomUUID(),
+      profile(workspace),
+      ["process.exec", "fs.read"],
+      {
+        filesystem: {
+          paths: [{ path: "config", includeDescendants: true }],
+        },
+        process: {
+          programs: [
+            {
+              program: process.execPath,
+              args: ["-e", "process.stdout.write('safe')"],
+              cwd: { path: ".", includeDescendants: false },
+            },
+          ],
+        },
+      },
+      new Date(Date.now() + 60_000),
+      () => {},
+    );
+
+    await expect(
+      executor.execute(
+        crypto.randomUUID(),
+        session,
+        { kind: "fs.read", path: "secrets.env" },
+        hooks(),
+      ),
+    ).rejects.toThrow("path_scope_denied");
+    await expect(
+      executor.execute(
+        crypto.randomUUID(),
+        session,
+        {
+          kind: "process.exec",
+          program: process.execPath,
+          args: ["-e", "process.stdout.write('safe'); process.exit(1)"],
+          cwd: ".",
+          env: {},
+        },
+        hooks(),
+      ),
+    ).rejects.toThrow("program_scope_denied");
+  });
+
+  it("rejects a symlink that resolves outside the workspace", async () => {
+    const outside = await mkdtemp(join(tmpdir(), "odyshell-outside-"));
+    try {
+      await writeFile(join(outside, "secret.txt"), "secret");
+      await symlink(outside, join(workspace, "linked"), "junction");
+      await expect(
+        execute({ kind: "fs.read", path: "linked/secret.txt" }),
+      ).rejects.toThrow("Resolved path escapes the configured workspace");
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 
   async function execute(action: OperationAction): Promise<string> {
