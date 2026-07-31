@@ -30,6 +30,10 @@ import {
   deviceApprovalReason,
   deviceCodeSchema,
 } from "../apps/web/src/lib/device-activation.js";
+import {
+  sessionApprovalCodeSchema,
+  sessionApprovalErrorPath,
+} from "../apps/web/src/lib/session-approval.js";
 
 describe("web authentication boundaries", () => {
   it("keeps documentation pages outside the Clerk UI boundary", () => {
@@ -75,6 +79,22 @@ describe("web authentication boundaries", () => {
       "/activate/error?reason=approval_failed",
     );
     expect(deviceApprovalErrorPath(secret)).not.toContain(secret);
+  });
+
+  it("accepts only opaque Session approval codes and never reflects them", () => {
+    const code = `ods_approval_${"a".repeat(32)}`;
+    expect(sessionApprovalCodeSchema.parse(code)).toBe(code);
+    expect(
+      sessionApprovalCodeSchema.safeParse(`https://attacker.example/${code}`)
+        .success,
+    ).toBe(false);
+    expect(sessionApprovalCodeSchema.safeParse("ods_session_secret").success).toBe(
+      false,
+    );
+    expect(sessionApprovalErrorPath(code)).toBe(
+      "/sessions/approve/error?reason=approval_failed",
+    );
+    expect(sessionApprovalErrorPath(code)).not.toContain(code);
   });
 
   it("uses an opaque identity for colored avatars without letters or email addresses", () => {
