@@ -24,6 +24,9 @@ particular component, library or interaction pattern.
 - Keep public and promotional destinations outside the authenticated workspace.
 - Keep CLI activation outside the authenticated workspace and end it in an
   unambiguous success or failure state.
+- After CLI activation succeeds, keep terminal completion primary and present
+  unreleased follow-up commands as clearly unavailable. Never place activation
+  codes, tokens or session data in those commands.
 - Keep Agent registration, Session approval and policy approval as focused
   standalone routes. Policy approval shows the exact ceiling and requires a
   workspace administrator.

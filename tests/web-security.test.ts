@@ -92,6 +92,25 @@ describe("web authentication boundaries", () => {
     expect(deviceApprovalErrorPath(secret)).not.toContain(secret);
   });
 
+  it("keeps the upcoming Skill command static and separate from activation data", () => {
+    const successPage = readFileSync(
+      resolve(
+        process.cwd(),
+        "apps/web/src/app/activate/success/page.tsx",
+      ),
+      "utf8",
+    );
+
+    expect(successPage).toContain(
+      "npx skills add kapeka0/Odyshell --skill odyshell",
+    );
+    expect(successPage).toContain("Coming soon");
+    expect(successPage).toContain("<CopyableValue");
+    expect(successPage).not.toContain("searchParams");
+    expect(successPage).not.toContain("deviceCode");
+    expect(successPage).not.toContain("approvalCode");
+  });
+
   it("accepts only opaque Session approval codes and never reflects them", () => {
     const code = `ods_approval_${"a".repeat(32)}`;
     expect(sessionApprovalCodeSchema.parse(code)).toBe(code);
