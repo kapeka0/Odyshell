@@ -15,6 +15,7 @@ import {
   DataTableColumnHeader,
 } from "@/components/data-table";
 import { useDashboard } from "@/components/dashboard-provider";
+import { StatusBadge } from "@/components/status-badge";
 import { StatusDot } from "@/components/status-dot";
 import {
   AlertDialog,
@@ -26,7 +27,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -99,10 +99,10 @@ export function MachineList({ machines }: { machines: CloudMachine[] }) {
           <DataTableColumnHeader column={column} title="Status" />
         ),
         cell: ({ row }) => (
-          <span className="inline-flex items-center gap-2">
+          <StatusBadge status={row.original.online ? "online" : "offline"}>
             <StatusDot active={row.original.online} />
             {row.original.online ? "Online" : "Offline"}
-          </span>
+          </StatusBadge>
         ),
         filterFn: "equals",
       },
@@ -290,9 +290,10 @@ function MachineActions({
           </DialogHeader>
           <dl className="grid gap-4 text-sm sm:grid-cols-2">
             <Detail label="Status">
-              <Badge variant={machine.online ? "default" : "outline"}>
+              <StatusBadge status={machine.online ? "online" : "offline"}>
+                <StatusDot active={machine.online} />
                 {machine.online ? "Online" : "Offline"}
-              </Badge>
+              </StatusBadge>
             </Detail>
             <Detail label="Last seen">
               {formatTimestamp(machine.lastSeenAt)}

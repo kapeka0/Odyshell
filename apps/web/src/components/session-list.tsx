@@ -7,6 +7,7 @@ import { useMemo, useState } from "react";
 import { CopyableValue } from "@/components/copyable-value";
 import { DataTable, DataTableColumnHeader } from "@/components/data-table";
 import { useDashboard } from "@/components/dashboard-provider";
+import { StatusBadge } from "@/components/status-badge";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,7 +18,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -107,11 +107,7 @@ export function SessionList({ sessions }: { sessions: CloudSession[] }) {
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="Status" />
         ),
-        cell: ({ row }) => (
-          <Badge variant={row.original.status === "active" ? "default" : "outline"}>
-            {label(row.original.status)}
-          </Badge>
-        ),
+        cell: ({ row }) => <StatusBadge status={row.original.status} />,
         filterFn: "equals",
       },
       {
@@ -267,10 +263,6 @@ function SessionActions({
       </AlertDialog>
     </>
   );
-}
-
-function label(value: string): string {
-  return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
 }
 
 function formatTimestamp(value: string): string {

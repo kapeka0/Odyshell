@@ -1,4 +1,5 @@
 import { notFound, redirect } from "next/navigation";
+import { StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DownloadIcon } from "lucide-react";
@@ -103,9 +104,7 @@ export default async function SessionPage({
             <CardContent>
               <dl className="flex flex-col gap-4 text-sm">
                 <Detail label="Status">
-                  <Badge variant={session.status === "active" ? "default" : "outline"}>
-                    {eventLabel(session.status)}
-                  </Badge>
+                  <StatusBadge status={session.status} />
                 </Detail>
                 <Detail label="Executor">
                   {session.agentName ?? session.agentId}

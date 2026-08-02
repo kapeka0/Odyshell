@@ -8,7 +8,7 @@ import {
   DataTable,
   DataTableColumnHeader,
 } from "@/components/data-table";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -110,15 +110,7 @@ export function ControlEventList({
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="Result" />
         ),
-        cell: ({ row }) => (
-          <Badge
-            variant={
-              row.original.result === "denied" ? "destructive" : "outline"
-            }
-          >
-            {row.original.result === "denied" ? "Denied" : "Recorded"}
-          </Badge>
-        ),
+        cell: ({ row }) => <StatusBadge status={row.original.result} />,
         filterFn: "equals",
       },
       {

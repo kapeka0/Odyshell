@@ -5,7 +5,7 @@ import { ShieldCheckIcon } from "lucide-react";
 import { useMemo } from "react";
 import { CopyableValue } from "@/components/copyable-value";
 import { DataTable, DataTableColumnHeader } from "@/components/data-table";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/status-badge";
 import {
   Empty,
   EmptyDescription,
@@ -72,13 +72,7 @@ export function AgentPolicyList({
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="Status" />
         ),
-        cell: ({ row }) => (
-          <Badge
-            variant={row.original.status === "active" ? "default" : "outline"}
-          >
-            {label(row.original.status)}
-          </Badge>
-        ),
+        cell: ({ row }) => <StatusBadge status={row.original.status} />,
         filterFn: "equals",
       },
       {

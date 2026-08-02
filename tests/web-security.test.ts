@@ -34,6 +34,7 @@ import {
   sessionApprovalCodeSchema,
   sessionApprovalErrorPath,
 } from "../apps/web/src/lib/session-approval.js";
+import { statusTone } from "../apps/web/src/lib/status-tone.js";
 
 describe("web authentication boundaries", () => {
   it("initializes Clerk for every authenticated approval and API route", () => {
@@ -436,6 +437,35 @@ describe("dashboard navigation performance boundary", () => {
     );
     expect(canvas).toContain('color="var(--color-rule-strong)"');
     expect(canvas).not.toContain('color="var(--muted-foreground)"');
+  });
+
+  it("keeps operational status colors semantic and fail-safe", () => {
+    expect(statusTone("active")).toBe("success");
+    expect(statusTone("recorded")).toBe("info");
+    expect(statusTone("paused")).toBe("warning");
+    expect(statusTone("denied")).toBe("danger");
+    expect(statusTone("revoked")).toBe("danger");
+    expect(statusTone("disabled")).toBe("neutral");
+    expect(statusTone("unexpected-status")).toBe("neutral");
+
+    const componentsRoot = resolve(
+      process.cwd(),
+      "apps/web/src/components",
+    );
+    for (const file of [
+      "agent-list.tsx",
+      "agent-policy-list.tsx",
+      "control-event-list.tsx",
+      "machine-list.tsx",
+      "session-list.tsx",
+    ]) {
+      expect(readFileSync(resolve(componentsRoot, file), "utf8")).toContain(
+        "<StatusBadge",
+      );
+    }
+    expect(
+      readFileSync(resolve(process.cwd(), "apps/web/UI_RULES.md"), "utf8"),
+    ).toMatch(/Always pair color\s+with a text label/);
   });
 
   it("copies important table values without recording them in feedback", () => {

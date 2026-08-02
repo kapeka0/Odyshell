@@ -171,6 +171,11 @@ particular component, library or interaction pattern.
   actions menu.
 - Important table identifiers are copyable from the value itself. Reveal the
   copy affordance with a restrained horizontal hover or focus animation.
+- Status tags use restrained semantic color to make operational state scannable:
+  green for healthy or completed states, blue for informational or proposed
+  states, amber for paused or attention states, red for denied or revoked
+  states and neutral styling for inactive terminal states. Always pair color
+  with a text label.
 - Copyable values preserve readable text contrast in every interaction state,
   including when the surrounding surface inverts foreground and background.
 - Generated commands use a quiet secondary surface with a thin border. Avoid

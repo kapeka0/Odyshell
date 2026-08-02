@@ -7,7 +7,7 @@ import {
   DataTable,
   DataTableColumnHeader,
 } from "@/components/data-table";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/status-badge";
 import type { CloudAgent } from "@/lib/cloud-api";
 
 export function AgentList({ agents }: { agents: CloudAgent[] }) {
@@ -48,14 +48,7 @@ export function AgentList({ agents }: { agents: CloudAgent[] }) {
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="Status" />
         ),
-        cell: ({ row }) => (
-          <Badge
-            variant={row.original.status === "active" ? "secondary" : "outline"}
-            className="capitalize"
-          >
-            {row.original.status}
-          </Badge>
-        ),
+        cell: ({ row }) => <StatusBadge status={row.original.status} />,
         filterFn: "equals",
       },
       {
