@@ -730,6 +730,92 @@ export function operationSessionScope(
   }
 }
 
+/**
+ * Builds one least-privilege scope per machine for a group of typed
+ * operations. This lets an agent request a coherent task (for example search
+ * then read) without broadening any individual path, process, or container
+ * restriction.
+ */
+export function operationSessionScopes(
+  operations: Array<{
+    machineId: string;
+    action: OperationAction;
+    profile?: string;
+  }>,
+): SessionMachineScope[] {
+  const grouped = new Map<string, SessionMachineScope>();
+  for (const operation of operations) {
+    const scope = operationSessionScope(
+      operation.machineId,
+      operation.action,
+      operation.profile ?? "workspace",
+    );
+    const key = scope.machineId;
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, scope);
+      continue;
+    }
+    if (existing.profile !== scope.profile) {
+      throw new Error("A machine cannot use multiple profiles in one Session");
+    }
+    existing.capabilities = unique([
+      ...existing.capabilities,
+      ...scope.capabilities,
+    ]);
+    const filesystemPaths = uniqueObjects([
+      ...(existing.restrictions.filesystem?.paths ?? []),
+      ...(scope.restrictions.filesystem?.paths ?? []),
+    ]);
+    const processPrograms = uniqueObjects([
+      ...(existing.restrictions.process?.programs ?? []),
+      ...(scope.restrictions.process?.programs ?? []),
+    ]);
+    const dockerContainers = unique([
+      ...(existing.restrictions.docker?.containers ?? []),
+      ...(scope.restrictions.docker?.containers ?? []),
+    ]);
+    const filesystemCapabilities = unique(
+      [...existing.capabilities, ...scope.capabilities].filter((capability) =>
+        capability.startsWith("fs."),
+      ),
+    );
+    if (filesystemCapabilities.length > 1 && filesystemPaths.length > 1) {
+      throw new Error(
+        "Different filesystem capabilities cannot target different paths in one machine scope",
+      );
+    }
+    existing.restrictions = {
+      ...(filesystemPaths.length > 0
+        ? { filesystem: { paths: filesystemPaths } }
+        : {}),
+      ...(processPrograms.length > 0
+        ? { process: { programs: processPrograms } }
+        : {}),
+      ...(dockerContainers.length > 0
+        ? { docker: { containers: dockerContainers } }
+        : {}),
+    };
+  }
+  return [...grouped.values()].map((scope) =>
+    sessionMachineScopeSchema.parse(scope),
+  );
+}
+
+function unique<T>(values: T[]): T[] {
+  return [...new Set(values)];
+}
+
+function uniqueObjects<T>(values: T[]): T[] {
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    const key = JSON.stringify(value);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function parseClientMessage(raw: string): ClientToServerMessage {
   return JSON.parse(raw) as ClientToServerMessage;
 }

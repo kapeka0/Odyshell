@@ -13,6 +13,7 @@ import {
   operationRequestSchema,
   normalizeRelativePath,
   operationSessionScope,
+  operationSessionScopes,
   sessionScopeSubsetDecision,
   organizationRequestSchema,
   sessionRequestSchema,
@@ -54,6 +55,52 @@ describe("protocol validation", () => {
         env: {},
       }),
     ).toThrowError(/process\.exec/);
+  });
+
+  it("merges several exact operations into one scope per machine", () => {
+    const scopes = operationSessionScopes([
+      {
+        machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
+        action: { kind: "fs.read", path: "config/default.json" },
+      },
+      {
+        machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
+        action: { kind: "fs.read", path: "config/app.json" },
+      },
+    ]);
+
+    expect(scopes).toHaveLength(1);
+    expect(scopes[0]).toMatchObject({
+      capabilities: ["fs.read"],
+      restrictions: {
+        filesystem: {
+          paths: [
+            { path: "config/default.json", includeDescendants: false },
+            { path: "config/app.json", includeDescendants: false },
+          ],
+        },
+      },
+    });
+  });
+
+  it("rejects filesystem scope merges that create capability-path cross products", () => {
+    expect(() =>
+      operationSessionScopes([
+        {
+          machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
+          action: { kind: "fs.read", path: "public.txt" },
+        },
+        {
+          machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
+          action: {
+            kind: "fs.write",
+            path: "output.txt",
+            contentBase64: "",
+            createParents: false,
+          },
+        },
+      ]),
+    ).toThrow(/different filesystem capabilities/i);
   });
 
   it("rejects absolute and parent-traversing filesystem paths at the workspace boundary", () => {

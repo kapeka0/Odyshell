@@ -26,6 +26,7 @@ export type OperationOptions = {
   ttlSeconds?: number;
   timeoutSeconds?: number;
   maxOutputBytes?: number;
+  idempotencyKey?: string;
   onEvent?: (event: OperationEvent) => void;
 };
 
@@ -397,6 +398,19 @@ export class AgentClient {
     return this.ods.cancelAgentSession(sessionId, this.identity.id);
   }
 
+  complete(
+    sessionId: string,
+    outcome: "succeeded" | "failed",
+    summary?: string,
+  ) {
+    return this.ods.completeAgentSession(
+      sessionId,
+      this.identity.id,
+      outcome,
+      summary,
+    );
+  }
+
   timeline(sessionId: string) {
     return this.ods.sessionTimeline(sessionId, this.identity.id);
   }
@@ -433,7 +447,7 @@ export class SessionClient {
     action: OperationAction,
     options: Pick<
       OperationOptions,
-      "timeoutSeconds" | "maxOutputBytes" | "onEvent"
+      "timeoutSeconds" | "maxOutputBytes" | "idempotencyKey" | "onEvent"
     > = {},
   ): Promise<OperationResult> {
     const scope = this.claim.scopes.find(
@@ -459,6 +473,7 @@ export class SessionClient {
       options.timeoutSeconds ?? 120,
       options.maxOutputBytes ?? 1024 * 1024,
       machineId,
+      options.idempotencyKey,
     );
     return decodeOperation(
       await this.scoped.waitForOperation(operation.id, options.onEvent),
@@ -855,6 +870,25 @@ export class Odyshell {
     );
   }
 
+  async completeAgentSession(
+    sessionId: string,
+    agentId: string,
+    outcome: "succeeded" | "failed",
+    summary?: string,
+  ): Promise<{
+    id: string;
+    status: "completed";
+    transitioned: boolean;
+  }> {
+    return this.request(
+      `/v1/agent-sessions/${encodeURIComponent(sessionId)}/complete`,
+      {
+        method: "POST",
+        body: { agentId, outcome, ...(summary ? { summary } : {}) },
+      },
+    );
+  }
+
   async renewAgentSession(
     sessionId: string,
     agentId: string,
@@ -1066,10 +1100,11 @@ export class Odyshell {
     timeoutSeconds = 120,
     maxOutputBytes = 1024 * 1024,
     machineId?: string,
+    idempotencyKey: string = randomUUID(),
   ): Promise<{ id: string; status: string }> {
     return this.request(`/v1/sessions/${sessionId}/operations`, {
       method: "POST",
-      headers: { "idempotency-key": randomUUID() },
+      headers: { "idempotency-key": idempotencyKey },
       body: {
         action,
         timeoutSeconds,

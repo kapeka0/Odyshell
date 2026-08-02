@@ -9,6 +9,7 @@ import {
   type ApprovedMcpRuntime,
 } from "@odyshell/mcp";
 import {
+  operationSessionScopes,
   operationEnvironmentSchema,
   relativePathSchema,
 } from "@odyshell/protocol";
@@ -43,11 +44,31 @@ export function createApprovedOdyshellMcpServer(
       return ods.ping(resolved.id);
     },
     async request(input) {
-      const machine = await ods.resolveMachine(input.machine);
-      return ods.agent(identity).requestOperationSession({
-        machineId: machine.id,
+      const operations = await Promise.all(
+        input.operations.map(async (operation) => ({
+          machineId: (await ods.resolveMachine(operation.machine)).id,
+          action: operation.action,
+        })),
+      );
+      let scopes;
+      try {
+        scopes = operationSessionScopes(operations);
+      } catch {
+        const shellRequested = input.operations.some(
+          (operation) => operation.action.kind === "process.shell",
+        );
+        throw new ExpectedError(
+          shellRequested
+            ? "Free-form shell cannot be safely scoped. Use process.exec."
+            : "Operations cannot be combined without broadening their scope.",
+          shellRequested
+            ? "process_shell_unsupported"
+            : "session_scope_conflict",
+        );
+      }
+      return ods.agent(identity).requestSession({
         purpose: input.purpose,
-        action: input.action,
+        scopes,
         durationSeconds: input.durationSeconds,
         ...(input.runId ? { runId: input.runId } : {}),
       });
@@ -85,10 +106,15 @@ export function createApprovedOdyshellMcpServer(
       }
       return ods.claimedSession(claim).execute(input.machine, input.action, {
         timeoutSeconds: input.timeoutSeconds,
+        idempotencyKey: input.operationId,
       });
     },
-    complete(sessionId) {
-      return ods.agent(identity).cancel(sessionId);
+    complete(input) {
+      return ods.agent(identity).complete(
+        input.sessionId,
+        input.outcome,
+        input.summary,
+      );
     },
     timeline(sessionId) {
       return ods.agent(identity).timeline(sessionId);

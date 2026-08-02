@@ -87,6 +87,10 @@ Point the MCP hostname at the same Server process. PostgreSQL keeps MCP installa
 bindings; OAuth tokens are verified with Clerk and are not stored by Odyshell. Accounts with one
 Workspace can use `/mcp`; accounts with several use `/mcp/<workspace-id>`.
 
+Remote MCP requests one or more typed operations for approval. Every execution includes a stable
+operation ID, so a transport retry returns the original Operation instead of running it again.
+Completion is explicit, records the agent-reported outcome, and fails closed while work is active.
+
 ## Connect a machine
 
 Create a single-use enrollment token:

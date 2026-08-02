@@ -67,12 +67,16 @@ describe("Odyshell SDK", () => {
     await session.execute(
       "7a354999-6a6c-42db-9467-e1416da255f1",
       { kind: "fs.read", path: "config/app.json" },
+      { idempotencyKey: "stable-operation-key" },
     );
 
     expect(requests.find((request) => request.path.endsWith("/operations"))).toMatchObject({
       path: "/v1/sessions/session-id/operations",
       method: "POST",
-      headers: expect.objectContaining({ authorization: "Bearer session-secret" }),
+      headers: expect.objectContaining({
+        authorization: "Bearer session-secret",
+        "idempotency-key": "stable-operation-key",
+      }),
       body: expect.objectContaining({
         machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
         action: { kind: "fs.read", path: "config/app.json" },

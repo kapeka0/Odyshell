@@ -104,8 +104,8 @@ operation execution, and the verified Session timeline.
 The agent receives an approval URL; after a member approves it, MCP claims the Session Credential
 once and keeps it out of model-visible tool results.
 
-A request is derived from the operation: an exact path for filesystem work, an exact executable and
-arguments for `process.exec`, or an exact container for `docker.logs`. The MCP process cannot enroll
+A request is derived from one or more typed operations: exact paths for filesystem work, exact
+executables and arguments for `process.exec`, or exact containers for `docker.logs`. The MCP process cannot enroll
 or revoke machines, create broader authority, expose credentials, or use administrator controls.
 
 `ods shell` is deprecated for restricted Sessions. Use `ods exec` with an explicit program and

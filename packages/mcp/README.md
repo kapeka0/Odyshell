@@ -14,4 +14,8 @@ The surface includes machine discovery and ping, Session request/status/completi
 execution, and Session timelines. It contains no enrollment, member, billing, or administrator
 tools.
 
+Requests can group several exact operations into one least-privilege scope per machine. Stable
+Operation IDs make retries safe, and completion is rejected while an Operation remains active.
+Groups that would create capability-path cross products are rejected.
+
 [MCP documentation](https://odyshell.com/docs/mcp) · [Back to Odyshell](../../README.md)

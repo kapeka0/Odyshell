@@ -9,8 +9,7 @@ export type ApprovedMcpRuntime = {
   machines(): Promise<unknown>;
   ping(machine: string): Promise<unknown>;
   request(input: {
-    machine: string;
-    action: OperationAction;
+    operations: Array<{ machine: string; action: OperationAction }>;
     purpose: string;
     durationSeconds: number;
     runId?: string;
@@ -21,8 +20,13 @@ export type ApprovedMcpRuntime = {
     machine: string;
     action: OperationAction;
     timeoutSeconds: number;
+    operationId: string;
   }): Promise<ApprovedMcpOperationResult>;
-  complete(sessionId: string): Promise<unknown>;
+  complete(input: {
+    sessionId: string;
+    outcome: "succeeded" | "failed";
+    summary?: string;
+  }): Promise<unknown>;
   timeline(sessionId: string): Promise<unknown>;
 };
 
@@ -81,10 +85,17 @@ export function createApprovedMcpServer(
     {
       title: "Request operation access",
       description:
-        "Request a temporary Session scoped to one typed operation. A user approves the returned URL unless a matching policy applies.",
+        "Request a temporary Session scoped to one or more typed operations. A user approves the returned URL unless a matching policy applies.",
       inputSchema: z.object({
-        machine: machineSchema,
-        action: operationActionSchema,
+        operations: z
+          .array(
+            z.object({
+              machine: machineSchema,
+              action: operationActionSchema,
+            }),
+          )
+          .min(1)
+          .max(16),
         purpose: z.string().trim().min(1).max(512),
         durationSeconds: z.number().int().min(60).max(86_400).default(900),
         runId: z.string().trim().min(1).max(128).optional(),
@@ -95,8 +106,7 @@ export function createApprovedMcpServer(
       runTool(
         () =>
           runtime.request({
-            machine: input.machine,
-            action: input.action,
+            operations: input.operations,
             purpose: input.purpose,
             durationSeconds: input.durationSeconds,
             ...(input.runId ? { runId: input.runId } : {}),
@@ -129,6 +139,7 @@ export function createApprovedMcpServer(
         machine: machineSchema,
         action: operationActionSchema,
         timeoutSeconds: timeoutSchema,
+        operationId: z.string().uuid(),
       }),
       annotations: destructiveAnnotations,
     },
@@ -140,12 +151,25 @@ export function createApprovedMcpServer(
     "session_complete",
     {
       title: "Complete a Session",
-      description: "Close an approved Session when the task has finished.",
-      inputSchema: z.object({ sessionId: z.string().uuid() }),
+      description:
+        "Close an approved Session after all operations finish and record the agent-reported outcome.",
+      inputSchema: z.object({
+        sessionId: z.string().uuid(),
+        outcome: z.enum(["succeeded", "failed"]).default("succeeded"),
+        summary: z.string().trim().min(1).max(512).optional(),
+      }),
       annotations: destructiveAnnotations,
     },
-    async ({ sessionId }) =>
-      runTool(() => runtime.complete(sessionId), reportUnexpectedError),
+    async (input) =>
+      runTool(
+        () =>
+          runtime.complete({
+            sessionId: input.sessionId,
+            outcome: input.outcome,
+            ...(input.summary ? { summary: input.summary } : {}),
+          }),
+        reportUnexpectedError,
+      ),
   );
 
   server.registerTool(

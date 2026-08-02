@@ -179,13 +179,13 @@ MCP-compatible agents can use the browser-approved flow after `ods login`:
 }
 ```
 
-Odyshell Cloud also provides a remote OAuth MCP at `https://mcp.odyshell.com/mcp`. It creates one
-persistent Agent per approved installation and keeps Session authority inside the Server, so web
-clients such as Claude or ChatGPT do not need a local `ods` process.
+A Server configured with Clerk OAuth can expose the same tools as a remote MCP. It creates one
+persistent Agent per approved installation and keeps Session authority inside the Server, so
+hosted clients such as Claude or ChatGPT do not need a local `ods` process.
 
 The Agent keeps a persistent identity but receives no machine authority from login. It requests a
-temporary Session for one exact file, returns an approval URL, privately claims the credential
-once, performs the read, and closes the Session. The Server enforces the immutable machine,
+temporary Session for a bounded group of typed operations, returns an approval URL, privately
+claims the credential once, performs the task, and completes the Session. The Server enforces the immutable machine,
 capability, path, and expiry; the Client applies its own local policy as a second boundary.
 
 Independent Agents can propose versioned autoapproval policies for repeated bounded work. An

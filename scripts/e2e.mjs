@@ -1364,6 +1364,31 @@ try {
         }),
       },
     );
+  const missingIdempotency = await fetch(
+    new URL(`/v1/sessions/${claimedSession.sessionId}/operations`, apiUrl),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${claimedSession.sessionToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        action: { kind: "fs.read", path: "approved.txt" },
+        timeoutSeconds: 10,
+        maxOutputBytes: 1024,
+      }),
+    },
+  );
+  if (missingIdempotency.status !== 400) {
+    throw new Error("Operation creation accepted a missing idempotency key");
+  }
+  const oversizedIdempotency = await scopedOperation(
+    { kind: "fs.read", path: "approved.txt" },
+    "x".repeat(129),
+  );
+  if (oversizedIdempotency.status !== 400) {
+    throw new Error("Oversized idempotency keys were accepted");
+  }
   const wrongPath = await scopedOperation({
     kind: "fs.read",
     path: "different.txt",
@@ -1531,6 +1556,30 @@ try {
     (value) => value.status === "running",
     "running Operation before Session cancellation",
   );
+  const prematureCompletionResponse = await fetch(
+    new URL(
+      `/v1/agent-sessions/${claimedSession.sessionId}/complete`,
+      apiUrl,
+    ),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${cliToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        agentId: approvedAgentId,
+        outcome: "succeeded",
+      }),
+    },
+  );
+  if (
+    prematureCompletionResponse.status !== 409 ||
+    (await prematureCompletionResponse.json()).error !==
+      "session_operations_active"
+  ) {
+    throw new Error("Session completion did not fail closed with active Operations");
+  }
   const cancelActiveResponse = await fetch(
     new URL(
       `/v1/agent-sessions/${claimedSession.sessionId}/cancel`,
@@ -1773,10 +1822,10 @@ try {
   ) {
     throw new Error("Workspace Session detail was unavailable or not privacy-minimal");
   }
-  const cancelRenewed = () =>
+  const completeRenewed = () =>
     fetch(
       new URL(
-        `/v1/agent-sessions/${renewedSession.sessionId}/cancel`,
+        `/v1/agent-sessions/${renewedSession.sessionId}/complete`,
         apiUrl,
       ),
       {
@@ -1785,22 +1834,119 @@ try {
           authorization: `Bearer ${cliToken}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ agentId: approvedAgentId }),
+        body: JSON.stringify({
+          agentId: approvedAgentId,
+          outcome: "succeeded",
+          summary: "Verified the renewed Session lifecycle",
+        }),
       },
     );
-  const firstCancelResponse = await cancelRenewed();
-  const firstCancel = await firstCancelResponse.json();
-  const replayCancelResponse = await cancelRenewed();
-  const replayCancel = await replayCancelResponse.json();
+  const raceOperationIdempotencyKey = crypto.randomUUID();
+  const [raceOperationResponse, raceCompletionResponse] = await Promise.all([
+    fetch(
+      new URL(
+        `/v1/sessions/${renewedSession.sessionId}/operations`,
+        apiUrl,
+      ),
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${renewedSession.sessionToken}`,
+          "content-type": "application/json",
+          "idempotency-key": raceOperationIdempotencyKey,
+        },
+        body: JSON.stringify({
+          action: {
+            kind: "process.exec",
+            program: "sleep",
+            args: ["30"],
+            cwd: ".",
+            env: {},
+          },
+          timeoutSeconds: 60,
+          maxOutputBytes: 1024,
+        }),
+      },
+    ),
+    completeRenewed(),
+  ]);
   if (
-    firstCancelResponse.status !== 200 ||
-    firstCancel.transitioned !== true ||
-    replayCancelResponse.status !== 200 ||
-    replayCancel.transitioned !== false
+    raceOperationResponse.status === 202 &&
+    raceCompletionResponse.status === 200
+  ) {
+    throw new Error("Session completion raced past Operation creation");
+  }
+  if (raceOperationResponse.status === 202) {
+    const raceOperation = await raceOperationResponse.json();
+    const cancellationResponse = await fetch(
+      new URL(`/v1/operations/${raceOperation.id}/cancel`, apiUrl),
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${renewedSession.sessionToken}`,
+        },
+      },
+    );
+    if (cancellationResponse.status !== 202) {
+      throw new Error("Could not cancel the Operation used by the completion race test");
+    }
+    await waitUntil(
+      async () => {
+        const response = await fetch(
+          new URL(`/v1/operations/${raceOperation.id}`, apiUrl),
+          {
+            headers: {
+              authorization: `Bearer ${renewedSession.sessionToken}`,
+            },
+          },
+        );
+        return response.json();
+      },
+      (operation) =>
+        !["queued", "delivered", "running"].includes(operation.status),
+      "completion race Operation cancellation",
+    );
+  } else if (raceCompletionResponse.status !== 200) {
+    throw new Error(
+      `Completion race failed closed on neither side: operation=${raceOperationResponse.status} completion=${raceCompletionResponse.status}`,
+    );
+  }
+  const firstCompletionResponse =
+    raceCompletionResponse.status === 200
+      ? raceCompletionResponse
+      : await completeRenewed();
+  const firstCompletion = await firstCompletionResponse.json();
+  const replayCompletionResponse = await completeRenewed();
+  const replayCompletion = await replayCompletionResponse.json();
+  if (
+    firstCompletionResponse.status !== 200 ||
+    firstCompletion.status !== "completed" ||
+    firstCompletion.transitioned !== true ||
+    replayCompletionResponse.status !== 200 ||
+    replayCompletion.status !== "completed" ||
+    replayCompletion.transitioned !== false
   ) {
     throw new Error(
-      `Session cancellation was not idempotent: first=${firstCancelResponse.status}/${JSON.stringify(firstCancel)} replay=${replayCancelResponse.status}/${JSON.stringify(replayCancel)}`,
+      `Session completion was not idempotent: first=${firstCompletionResponse.status}/${JSON.stringify(firstCompletion)} replay=${replayCompletionResponse.status}/${JSON.stringify(replayCompletion)}`,
     );
+  }
+  const completionTimeline = (
+    await compose([
+      "exec",
+      "-T",
+      "postgres",
+      "psql",
+      "-U",
+      "odyshell",
+      "-d",
+      "odyshell",
+      "-At",
+      "-c",
+      `select source || ':' || ((metadata::jsonb)->>'outcome') from odyshell.session_timeline_events where session_id = '${renewedSession.sessionId}' and event_type = 'session.outcome_reported';`,
+    ])
+  ).trim();
+  if (completionTimeline !== "agent:succeeded") {
+    throw new Error("Session completion outcome was not recorded as agent-reported");
   }
   await waitUntil(
     async () => ({
@@ -1842,7 +1988,7 @@ try {
     },
   );
   if (revokedReplay.status !== 401) {
-    throw new Error("A cancelled Session Credential could be replayed");
+    throw new Error("A completed Session Credential could be replayed");
   }
   const storedCredentialLeak = (
     await compose([

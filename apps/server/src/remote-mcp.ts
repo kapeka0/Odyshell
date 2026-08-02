@@ -25,6 +25,20 @@ type RemoteMcpConfiguration = {
 export type RemoteMcpDependencies = {
   database: Database;
   runtime(installation: McpInstallationRecord): ApprovedMcpRuntime;
+  oauth?: RemoteMcpOauth;
+};
+
+export type RemoteMcpOauthIdentity = {
+  userId: string;
+  clientId: string;
+  scopes: string[];
+  organizationIds: string[];
+  token: string;
+};
+
+export type RemoteMcpOauth = {
+  authenticate(request: Request): Promise<RemoteMcpOauthIdentity | null>;
+  applicationName(clientId: string): Promise<string | undefined>;
 };
 
 export function remoteMcpConfiguration(
@@ -82,6 +96,44 @@ export function registerRemoteMcp(
     secretKey: configuration.secretKey,
     publishableKey: configuration.publishableKey,
   });
+  const oauth: RemoteMcpOauth = dependencies.oauth ?? {
+    async authenticate(webRequest) {
+      const state = await clerk.authenticateRequest(webRequest, {
+        acceptsToken: "oauth_token",
+      });
+      const auth = state.toAuth();
+      if (
+        !auth.isAuthenticated ||
+        auth.tokenType !== "oauth_token" ||
+        !auth.userId ||
+        !auth.clientId
+      ) {
+        return null;
+      }
+      const memberships = await clerk.users.getOrganizationMembershipList({
+        userId: auth.userId,
+        limit: 100,
+      });
+      const token = bearerToken(webRequest.headers.get("authorization") ?? undefined);
+      if (!token) return null;
+      return {
+        userId: auth.userId,
+        clientId: auth.clientId,
+        scopes: auth.scopes,
+        organizationIds: memberships.data.map(
+          (membership) => membership.organization.id,
+        ),
+        token,
+      };
+    },
+    async applicationName(clientId) {
+      try {
+        return (await clerk.oauthApplications.get(clientId)).name;
+      } catch {
+        return undefined;
+      }
+    },
+  };
   const handler = createMcpHandler(
     async (context) => {
       const installationId = context.authInfo?.extra?.installationId;
@@ -98,7 +150,7 @@ export function registerRemoteMcp(
       );
     },
     {
-      legacy: "stateless",
+      legacy: "reject",
       responseMode: "json",
       onerror: (error) => app.log.error(error, "Remote MCP request failed"),
     },
@@ -128,56 +180,37 @@ export function registerRemoteMcp(
           return reply.code(403).send({ error: "origin_denied" });
         }
         const webRequest = fastifyWebRequest(request, configuration.resource);
-        const state = await clerk.authenticateRequest(webRequest, {
-          acceptsToken: "oauth_token",
-        });
-        const auth = state.toAuth();
-        if (
-          !auth.isAuthenticated ||
-          auth.tokenType !== "oauth_token" ||
-          !auth.userId ||
-          !auth.clientId
-        ) {
+        const identity = await oauth.authenticate(webRequest);
+        if (!identity) {
           reply.header(
             "www-authenticate",
             `Bearer resource_metadata="${new URL("/.well-known/oauth-protected-resource", configuration.resource).href}"`,
           );
           return reply.code(401).send({ error: "oauth_token_required" });
         }
-        const memberships = await clerk.users.getOrganizationMembershipList({
-          userId: auth.userId,
-          limit: 100,
-        });
         const workspace = await resolveWorkspace(
           dependencies.database,
           request.params.workspaceId,
-          memberships.data.map((membership) => membership.organization.id),
+          identity.organizationIds,
         );
         if (!workspace) {
           return reply.code(403).send({ error: "workspace_access_denied" });
         }
-        let agentName = "MCP Agent";
-        try {
-          const application = await clerk.oauthApplications.get(auth.clientId);
-          agentName = application.name;
-        } catch {
-          // Dynamically registered clients may not expose an application record.
-        }
+        const agentName =
+          (await oauth.applicationName(identity.clientId)) ?? "MCP Agent";
         const installation = await dependencies.database.ensureMcpInstallation({
           workspaceId: workspace.workspaceId,
-          userId: auth.userId,
-          oauthClientId: auth.clientId,
+          userId: identity.userId,
+          oauthClientId: identity.clientId,
           agentName,
         });
         if (!installation) {
           return reply.code(403).send({ error: "mcp_installation_revoked" });
         }
-        const bearer = bearerToken(request.headers.authorization);
-        if (!bearer) return reply.code(401).send({ error: "oauth_token_required" });
         const authInfo: AuthInfo = {
-          token: bearer,
-          clientId: auth.clientId,
-          scopes: auth.scopes,
+          token: identity.token,
+          clientId: identity.clientId,
+          scopes: identity.scopes,
           resource: configuration.resource,
           extra: { installationId: installation.id, installation },
         };

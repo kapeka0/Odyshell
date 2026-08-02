@@ -748,6 +748,15 @@ export type AgentSessionTermination = {
   operations: Array<{ id: string; machineId: string }>;
 };
 
+export type AgentSessionCompletion =
+  | { status: "busy" }
+  | {
+      id: string;
+      status: "completed";
+      transitioned: boolean;
+      targets: Array<{ machineId: string; runtimeSessionId: string }>;
+    };
+
 export type OperationRecord = Timestamped & {
   id: string;
   sessionId: string;
@@ -5337,6 +5346,143 @@ export class PostgresDatabase {
     );
   }
 
+  async completeAgentSession(input: {
+    workspaceId: string;
+    sessionId: string;
+    agentId: string;
+    requestedByHumanId?: string;
+    outcome: "succeeded" | "failed";
+    summary?: string;
+    now?: number;
+  }): Promise<AgentSessionCompletion | null> {
+    return await withDatabaseDeadlockRetry(() =>
+      this.db.transaction().execute(async (transaction) => {
+        const session = await transaction
+          .selectFrom("agentSessions")
+          .selectAll()
+          .where("workspaceId", "=", input.workspaceId)
+          .where("id", "=", input.sessionId)
+          .where("agentId", "=", input.agentId)
+          .forUpdate()
+          .executeTakeFirst();
+        if (!session) return null;
+        const request = await transaction
+          .selectFrom("agentSessionRequests")
+          .select(["id", "requestedByHumanId"])
+          .where("workspaceId", "=", input.workspaceId)
+          .where("sessionId", "=", input.sessionId)
+          .executeTakeFirst();
+        if (
+          !request ||
+          (input.requestedByHumanId !== undefined &&
+            request.requestedByHumanId !== input.requestedByHumanId)
+        ) {
+          return null;
+        }
+        const targets = await transaction
+          .selectFrom("agentSessionTargets")
+          .select(["machineId", "runtimeSessionId"])
+          .where("workspaceId", "=", input.workspaceId)
+          .where("sessionId", "=", input.sessionId)
+          .execute();
+        if (session.status === "completed") {
+          return {
+            id: session.id,
+            status: "completed",
+            transitioned: false,
+            targets,
+          };
+        }
+        if (session.status !== "active") return null;
+        const runtimeIds = targets.map((target) => target.runtimeSessionId);
+        if (runtimeIds.length > 0) {
+          const activeOperation = await transaction
+            .selectFrom("operations")
+            .select("id")
+            .where("workspaceId", "=", input.workspaceId)
+            .where("sessionId", "in", runtimeIds)
+            .where("status", "in", ACTIVE_OPERATION_STATUSES)
+            .executeTakeFirst();
+          if (activeOperation) return { status: "busy" };
+        }
+
+        const now = new Date(input.now ?? Date.now());
+        await transaction
+          .updateTable("sessionCredentials")
+          .set({ status: "revoked", revokedAt: now })
+          .where("workspaceId", "=", input.workspaceId)
+          .where("sessionId", "=", input.sessionId)
+          .where("status", "=", "active")
+          .execute();
+        await transaction
+          .updateTable("mcpSessionGrants")
+          .set({ status: "revoked", revokedAt: now })
+          .where("workspaceId", "=", input.workspaceId)
+          .where("sessionId", "=", input.sessionId)
+          .where("status", "=", "active")
+          .execute();
+        await transaction
+          .updateTable("agentSessions")
+          .set({ status: "completed", updatedAt: now })
+          .where("workspaceId", "=", input.workspaceId)
+          .where("id", "=", input.sessionId)
+          .where("status", "=", "active")
+          .execute();
+        if (runtimeIds.length > 0) {
+          await transaction
+            .updateTable("sessions")
+            .set({ status: "closing", updatedAt: now })
+            .where("workspaceId", "=", input.workspaceId)
+            .where("id", "in", runtimeIds)
+            .where("status", "in", ACTIVE_SESSION_STATUSES)
+            .execute();
+        }
+        await transaction
+          .updateTable("agentSessionTargets")
+          .set({ status: "closed", updatedAt: now })
+          .where("workspaceId", "=", input.workspaceId)
+          .where("sessionId", "=", input.sessionId)
+          .execute();
+        await transaction
+          .insertInto("sessionTimelineEvents")
+          .values([
+            {
+              workspaceId: input.workspaceId,
+              id: randomUUID(),
+              sessionId: input.sessionId,
+              requestId: request.id,
+              operationId: null,
+              eventType: "session.completed",
+              source: "verified",
+              metadata: JSON.stringify({}),
+              createdAt: now,
+            },
+            {
+              workspaceId: input.workspaceId,
+              id: randomUUID(),
+              sessionId: input.sessionId,
+              requestId: request.id,
+              operationId: null,
+              eventType: "session.outcome_reported",
+              source: "agent",
+              metadata: JSON.stringify({
+                outcome: input.outcome,
+                ...(input.summary ? { summary: input.summary } : {}),
+              }),
+              createdAt: now,
+            },
+          ])
+          .execute();
+        return {
+          id: session.id,
+          status: "completed",
+          transitioned: true,
+          targets,
+        };
+      }),
+    );
+  }
+
   async failClaimedAgentSession(
     workspaceId: string,
     sessionId: string,
@@ -6782,27 +6928,51 @@ export class PostgresDatabase {
     action: OperationAction;
     timeoutSeconds: number;
     maxOutputBytes: number;
-    idempotencyKey?: string;
+    idempotencyKey: string;
   }): Promise<boolean> {
-    const result = await this.db
-      .insertInto("operations")
-      .values({
-        ...input,
-        action: JSON.stringify(input.action),
-        status: "queued",
-        exitCode: null,
-        error: null,
-        outputTruncated: false,
-        idempotencyKey: input.idempotencyKey ?? null,
-      })
-      .onConflict((conflict) =>
-        conflict
-          .columns(["sessionId", "principalId", "idempotencyKey"])
-          .doNothing(),
-      )
-      .returning("id")
-      .executeTakeFirst();
-    return result !== undefined;
+    return await this.db.transaction().execute(async (transaction) => {
+      const canonical = await transaction
+        .selectFrom("agentSessionTargets")
+        .innerJoin("agentSessions", (join) =>
+          join
+            .onRef(
+              "agentSessions.workspaceId",
+              "=",
+              "agentSessionTargets.workspaceId",
+            )
+            .onRef("agentSessions.id", "=", "agentSessionTargets.sessionId"),
+        )
+        .select(["agentSessions.agentId", "agentSessions.status"])
+        .where("agentSessionTargets.workspaceId", "=", input.workspaceId)
+        .where("agentSessionTargets.runtimeSessionId", "=", input.sessionId)
+        .forShare()
+        .executeTakeFirst();
+      if (
+        canonical &&
+        (canonical.agentId !== input.principalId ||
+          canonical.status !== "active")
+      ) {
+        return false;
+      }
+      const result = await transaction
+        .insertInto("operations")
+        .values({
+          ...input,
+          action: JSON.stringify(input.action),
+          status: "queued",
+          exitCode: null,
+          error: null,
+          outputTruncated: false,
+        })
+        .onConflict((conflict) =>
+          conflict
+            .columns(["sessionId", "principalId", "idempotencyKey"])
+            .doNothing(),
+        )
+        .returning("id")
+        .executeTakeFirst();
+      return result !== undefined;
+    });
   }
 
   async markOperationDelivered(workspaceId: string, operationId: string): Promise<void> {

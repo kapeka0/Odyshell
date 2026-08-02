@@ -72,6 +72,40 @@ describe("Odyshell MCP server", () => {
     expect(textOf(result)).not.toContain("ods_session_secret");
   });
 
+  it("rejects a request that would broaden capability-path combinations", async () => {
+    const server = createApprovedOdyshellMcpServer(fakeApprovedOdyshell(), {
+      id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+      name: "Codex",
+    });
+    const { client } = await connectServer(server);
+
+    const result = await client.callTool({
+      name: "session_request",
+      arguments: {
+        operations: [
+          {
+            machine: "rpi5",
+            action: { kind: "fs.read", path: "public.txt" },
+          },
+          {
+            machine: "rpi5",
+            action: {
+              kind: "fs.write",
+              path: "output.txt",
+              contentBase64: "",
+              createParents: false,
+            },
+          },
+        ],
+        purpose: "Copy selected data",
+        durationSeconds: 600,
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("session_scope_conflict");
+  });
+
   it("keeps the credential inside MCP while executing the approved operation", async () => {
     const execute = vi.fn(async () =>
       successfulOperation("safe content"),
@@ -93,6 +127,7 @@ describe("Odyshell MCP server", () => {
         sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
         machine: "machine-id",
         action: { kind: "fs.read", path: "config/app.json" },
+        operationId: "f87d486b-928d-4df9-b19e-f843855867dc",
       },
     });
 
@@ -100,7 +135,10 @@ describe("Odyshell MCP server", () => {
     expect(execute).toHaveBeenCalledWith(
       "machine-id",
       { kind: "fs.read", path: "config/app.json" },
-      { timeoutSeconds: 120 },
+      {
+        timeoutSeconds: 120,
+        idempotencyKey: "f87d486b-928d-4df9-b19e-f843855867dc",
+      },
     );
     expect(textOf(result)).not.toContain("ods_session_secret");
   });
@@ -128,6 +166,7 @@ describe("Odyshell MCP server", () => {
         sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
         machine: "machine-id",
         action: { kind: "fs.read", path: "secrets.env" },
+        operationId: "2fc42fa3-b4d8-46e2-9384-76477aa8979f",
       },
     });
 
@@ -138,15 +177,15 @@ describe("Odyshell MCP server", () => {
   });
 
   it("closes Sessions and reads their verified timeline through the shared tools", async () => {
-    const cancel = vi.fn(async () => ({
+    const complete = vi.fn(async () => ({
       id: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
-      status: "cancelled" as const,
+      status: "completed" as const,
       transitioned: true,
     }));
     const timeline = vi.fn(async () => [
       { id: "event-id", eventType: "session.started", source: "verified" },
     ]);
-    const ods = fakeApprovedOdyshell({ cancel, timeline });
+    const ods = fakeApprovedOdyshell({ complete, timeline });
     const server = createApprovedOdyshellMcpServer(ods, {
       id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
       name: "Codex",
@@ -155,7 +194,10 @@ describe("Odyshell MCP server", () => {
 
     const timelineResult = await client.callTool({
       name: "timeline_list",
-      arguments: { sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7" },
+      arguments: {
+        sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
+        outcome: "succeeded",
+      },
     });
     const completeResult = await client.callTool({
       name: "session_complete",
@@ -165,8 +207,10 @@ describe("Odyshell MCP server", () => {
     expect(timelineResult.isError).not.toBe(true);
     expect(textOf(timelineResult)).toContain("session.started");
     expect(completeResult.isError).not.toBe(true);
-    expect(cancel).toHaveBeenCalledWith(
+    expect(complete).toHaveBeenCalledWith(
       "c837dd55-fdf0-47bb-887f-e4f857245dc7",
+      "succeeded",
+      undefined,
     );
   });
 
@@ -405,7 +449,11 @@ function fakeApprovedOdyshell(
       action: unknown,
       options: unknown,
     ) => Promise<OperationResult>;
-    cancel?: (sessionId: string) => Promise<unknown>;
+    complete?: (
+      sessionId: string,
+      outcome: "succeeded" | "failed",
+      summary?: string,
+    ) => Promise<unknown>;
     timeline?: (sessionId: string) => Promise<unknown>;
   } = {},
 ): Odyshell {
@@ -450,10 +498,11 @@ function fakeApprovedOdyshell(
       enrolledAt: "2026-07-29T18:00:00.000Z",
     })),
     agent: vi.fn(() => ({
-      requestOperationSession: requestAgentSession,
+      requestSession: requestAgentSession,
       status,
       claim,
-      cancel: overrides.cancel ?? vi.fn(async () => ({ status: "cancelled" })),
+      complete:
+        overrides.complete ?? vi.fn(async () => ({ status: "completed" })),
       timeline: overrides.timeline ?? vi.fn(async () => []),
     })),
     claimedSession: vi.fn(() => ({

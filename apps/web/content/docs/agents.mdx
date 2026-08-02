@@ -13,8 +13,8 @@ only its hash.
 
 ## Connect an agent
 
-For a remote MCP client, add `https://mcp.odyshell.com/mcp` and approve the OAuth connection in the
-browser. For a local stdio client, install the CLI in the agent's environment:
+For a remote MCP client, add the `/mcp` URL of a Server configured with Clerk OAuth and approve the
+connection in the browser. For a local stdio client, install the CLI in the agent's environment:
 
 ```npm
 npm install --global @odyshell/cli
@@ -38,8 +38,8 @@ returns a 90-day Agent Credential to the runtime. It can request Sessions and in
 requests, but cannot execute an Operation or administer the workspace. Rotate it before expiry;
 the previous credential remains valid for at most ten minutes.
 
-The MCP requests one typed operation at a time. Sessions can authorize explicit filesystem paths,
-exact `process.exec` program and argument rules, and exact Docker container names.
+The MCP requests a bounded task as one or more typed operations. Sessions can authorize explicit
+filesystem paths, exact `process.exec` program and argument rules, and exact Docker container names.
 
 Its effective authority is the intersection of:
 
@@ -52,7 +52,8 @@ Its effective authority is the intersection of:
 
 Session authority begins when it is claimed and cannot outlive its expiry. A Session Credential
 cannot create another Session or change its approved scope. The Server revokes the credential and
-the Client cancels active work when the Session expires or is cancelled.
+the Client cancels active work when the Session expires or is cancelled. Completion is separate:
+it records the agent-reported outcome and fails while an Operation remains active.
 
 Renewal never extends an active Session. It creates a successor with the same immutable scope, a
 new expiry, and a new approval. Cancelling a Session is safe to retry and immediately prevents

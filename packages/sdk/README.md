@@ -123,11 +123,15 @@ parent credential cascades to every derived Agent and active Session.
 log it, or persist it. `readApprovedSession` uses it only for the approved Session and closes that
 Session after the read.
 
-Cancel a claimed Session when the task finishes:
+Complete a claimed Session when the task finishes and record the Agent-reported outcome:
 
 ```ts
-await ods.cancelAgentSession(claim.sessionId, agentId);
+await agent.complete(claim.sessionId, "succeeded", "Configuration verified");
 ```
+
+Completion is rejected while an Operation remains active. Use
+`ods.cancelAgentSession(claim.sessionId, agentId)` only to abort active work. Supply a stable
+`idempotencyKey` to `claimedSession.execute()` when the caller may retry the same request.
 
 Export a redacted, versioned Timeline with `agent.exportTimeline(sessionId)`. Workspace
 administrators can use `configureEventSink()`, `eventSink()` and `deleteEventSink()` for signed

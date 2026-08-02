@@ -9,17 +9,17 @@ approves a temporary Session.
 
 ## Remote MCP
 
-Add this URL to an MCP-compatible client:
+On a Server with Clerk OAuth enabled, add its MCP resource to an MCP-compatible client:
 
 ```text
-https://mcp.odyshell.com/mcp
+https://mcp.example.com/mcp
 ```
 
 The client opens Clerk in the browser. Sign in and approve access to your Odyshell account. If your
 account can access more than one Workspace, use the Workspace-specific URL shown by Odyshell:
 
 ```text
-https://mcp.odyshell.com/mcp/<workspace-id>
+https://mcp.example.com/mcp/<workspace-id>
 ```
 
 OAuth identifies the MCP installation. It does not authorize machine Operations. Odyshell creates
@@ -67,15 +67,19 @@ The approval-based workflow exposes seven tools:
 
 1. `machines_list` finds the target machine.
 2. `machine_ping` checks the complete connection path.
-3. `session_request` accepts one typed operation and returns an approval URL.
+3. `session_request` accepts one or more typed operations and returns an approval URL.
 4. `session_status` checks the decision and privately binds the approved Session.
-5. `operation_execute` executes only the approved operation.
-6. `session_complete` closes access when the task finishes.
+5. `operation_execute` executes only an approved operation. Its stable operation ID makes retries safe.
+6. `session_complete` closes access when no Operation is active and records the agent-reported outcome.
 7. `timeline_list` reads the verified Session timeline.
 
-The operation determines the capability and restriction automatically. Filesystem operations use
+Each operation determines its capability and restriction automatically. Scopes for the same
+machine are combined without broadening their exact restrictions. Filesystem operations use
 an exact path, `process.exec` uses an exact executable and arguments, and `docker.logs` uses an
 exact container. Approval codes expire, are single-use and are bound to their Workspace.
+
+If combining filesystem operations would authorize a capability on a path that was not requested,
+Odyshell rejects the group. Request those operations in separate Sessions.
 
 The Server validates Session identity, machine, capability, path and expiry on every Operation.
 The Client applies its local policy independently.
