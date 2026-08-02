@@ -3,16 +3,41 @@ title: MCP
 description: Let an MCP-compatible agent request temporary access to a private machine.
 ---
 
-`ods mcp` runs a local MCP server using the workspace authorized by `ods login`. The agent has a
-persistent identity but no machine authority until a member approves a temporary Session.
+Odyshell exposes the same approval-based tools through a remote OAuth connection and through the
+local `ods mcp` process. An agent has a persistent identity but no machine authority until a member
+approves a temporary Session.
 
-## Install
+## Remote MCP
+
+Add this URL to an MCP-compatible client:
+
+```text
+https://mcp.odyshell.com/mcp
+```
+
+The client opens Clerk in the browser. Sign in and approve access to your Odyshell account. If your
+account can access more than one Workspace, use the Workspace-specific URL shown by Odyshell:
+
+```text
+https://mcp.odyshell.com/mcp/<workspace-id>
+```
+
+OAuth identifies the MCP installation. It does not authorize machine Operations. Odyshell creates
+or restores one persistent Agent for that installation, then requires a scoped Session for every
+task. Approved Sessions are bound to the installation in PostgreSQL, so Server restarts do not lose
+them and no Session Credential is returned to the model.
+
+## Local MCP
+
+Use the local process when a client supports stdio MCP or when you self-host without Clerk OAuth.
+
+### Install
 
 ```npm
 npm install --global @odyshell/cli
 ```
 
-## Configure an agent
+### Configure an agent
 
 First sign in:
 
@@ -33,17 +58,20 @@ Then add:
 }
 ```
 
-The MCP process uses the existing local `ods` configuration. Its identity is saved locally. A
-claimed Session Credential stays in MCP memory and is never returned in a tool result.
+The process uses the existing local `ods` configuration. Its identity is saved locally. A claimed
+Session Credential stays in MCP memory and is never returned in a tool result.
 
 ## Request an operation
 
-The approval-based workflow exposes four tools:
+The approval-based workflow exposes seven tools:
 
 1. `machines_list` finds the target machine.
-2. `session_request` accepts one typed operation and returns an approval URL.
-3. `session_status` checks the decision and privately claims the credential once.
-4. `operation_execute` executes only that operation with the claimed Session.
+2. `machine_ping` checks the complete connection path.
+3. `session_request` accepts one typed operation and returns an approval URL.
+4. `session_status` checks the decision and privately binds the approved Session.
+5. `operation_execute` executes only the approved operation.
+6. `session_complete` closes access when the task finishes.
+7. `timeline_list` reads the verified Session timeline.
 
 The operation determines the capability and restriction automatically. Filesystem operations use
 an exact path, `process.exec` uses an exact executable and arguments, and `docker.logs` uses an

@@ -5,7 +5,7 @@ export default defineConfig({
   format: ["esm"],
   platform: "node",
   target: "node24",
-  noExternal: ["@odyshell/protocol"],
+  noExternal: ["@odyshell/mcp", "@odyshell/protocol"],
   removeNodeProtocol: false,
   sourcemap: true,
 });

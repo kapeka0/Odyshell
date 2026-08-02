@@ -35,9 +35,12 @@ describe("Odyshell MCP server", () => {
 
     expect(tools.map((tool) => tool.name)).toEqual([
       "machines_list",
+      "machine_ping",
       "session_request",
       "session_status",
       "operation_execute",
+      "session_complete",
+      "timeline_list",
     ]);
     expect(JSON.stringify(tools)).not.toContain("sessionToken");
     expect(
@@ -132,6 +135,39 @@ describe("Odyshell MCP server", () => {
     expect(textOf(result)).toContain("path_scope_denied");
     expect(textOf(result)).not.toContain("internalRestriction");
     expect(textOf(result)).not.toContain("config/app.json");
+  });
+
+  it("closes Sessions and reads their verified timeline through the shared tools", async () => {
+    const cancel = vi.fn(async () => ({
+      id: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
+      status: "cancelled" as const,
+      transitioned: true,
+    }));
+    const timeline = vi.fn(async () => [
+      { id: "event-id", eventType: "session.started", source: "verified" },
+    ]);
+    const ods = fakeApprovedOdyshell({ cancel, timeline });
+    const server = createApprovedOdyshellMcpServer(ods, {
+      id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+      name: "Codex",
+    });
+    const { client } = await connectServer(server);
+
+    const timelineResult = await client.callTool({
+      name: "timeline_list",
+      arguments: { sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7" },
+    });
+    const completeResult = await client.callTool({
+      name: "session_complete",
+      arguments: { sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7" },
+    });
+
+    expect(timelineResult.isError).not.toBe(true);
+    expect(textOf(timelineResult)).toContain("session.started");
+    expect(completeResult.isError).not.toBe(true);
+    expect(cancel).toHaveBeenCalledWith(
+      "c837dd55-fdf0-47bb-887f-e4f857245dc7",
+    );
   });
 
   it("publishes agent operations without administrator controls", async () => {
@@ -369,6 +405,8 @@ function fakeApprovedOdyshell(
       action: unknown,
       options: unknown,
     ) => Promise<OperationResult>;
+    cancel?: (sessionId: string) => Promise<unknown>;
+    timeline?: (sessionId: string) => Promise<unknown>;
   } = {},
 ): Odyshell {
   const requestAgentSession = vi.fn(async () => ({
@@ -415,11 +453,18 @@ function fakeApprovedOdyshell(
       requestOperationSession: requestAgentSession,
       status,
       claim,
+      cancel: overrides.cancel ?? vi.fn(async () => ({ status: "cancelled" })),
+      timeline: overrides.timeline ?? vi.fn(async () => []),
     })),
     claimedSession: vi.fn(() => ({
       execute:
         overrides.execute ??
         vi.fn(async () => successfulOperation("safe content")),
+    })),
+    ping: vi.fn(async (machineId: string) => ({
+      reply: "pong" as const,
+      machineId,
+      latencyMs: 1,
     })),
   } as unknown as Odyshell;
 }

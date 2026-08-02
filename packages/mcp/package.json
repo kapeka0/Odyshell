@@ -1,0 +1,14 @@
+{
+  "name": "@odyshell/mcp",
+  "version": "0.9.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "@odyshell/protocol": "workspace:*",
+    "zod": "^4.4.3"
+  }
+}

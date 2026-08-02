@@ -26,6 +26,10 @@ Approval codes expire, can be used once, and are looked up only inside the authe
 workspace. The credential produced by a claim is returned once to the trusted runtime. MCP keeps
 it outside model-visible results.
 
+Remote MCP uses Clerk OAuth to identify a user and client installation. The Server persists only
+the resulting Agent and Session bindings, not OAuth access or refresh tokens. Revoking or expiring
+the Odyshell Session blocks execution independently of the OAuth connection.
+
 Autoapproval policies are inactive until an administrator approves their exact ceiling. They are
 versioned, expire within one year, and fail closed for unknown restrictions. Requests outside the
 ceiling remain pending rather than being reduced silently. Each automatically approved Session

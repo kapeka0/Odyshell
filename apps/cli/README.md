@@ -99,7 +99,8 @@ Run `ods login`, then configure your agent to launch Odyshell:
 }
 ```
 
-The signed-in flow exposes machine discovery, Session request/status and typed operation execution.
+The signed-in flow exposes machine discovery and ping, Session request/status/completion, typed
+operation execution, and the verified Session timeline.
 The agent receives an approval URL; after a member approves it, MCP claims the Session Credential
 once and keeps it out of model-visible tool results.
 

@@ -5,7 +5,10 @@ import {
   type StdioServerHandle,
 } from "@modelcontextprotocol/server/stdio";
 import {
-  operationActionSchema,
+  createApprovedMcpServer,
+  type ApprovedMcpRuntime,
+} from "@odyshell/mcp";
+import {
   operationEnvironmentSchema,
   relativePathSchema,
 } from "@odyshell/protocol";
@@ -33,64 +36,23 @@ export function createApprovedOdyshellMcpServer(
 ): McpServer {
   const claims = new Map<string, ClaimedAgentSession>();
   const requestSessions = new Map<string, string>();
-  const server = new McpServer(
-    { name: "odyshell", version: "0.9.0" },
-    {
-      instructions:
-        "Request an explicit temporary Session for one typed operation. Ask the user to approve the URL, check session_status, then call operation_execute. Session credentials remain inside this MCP process.",
+  const runtime: ApprovedMcpRuntime = {
+    machines: () => ods.machines(),
+    async ping(machine) {
+      const resolved = await ods.resolveMachine(machine);
+      return ods.ping(resolved.id);
     },
-  );
-
-  server.registerTool(
-    "machines_list",
-    {
-      title: "List Odyshell machines",
-      description: "List the signed-in workspace machines available for a request.",
-      inputSchema: z.object({}),
-      annotations: readOnlyAnnotations,
+    async request(input) {
+      const machine = await ods.resolveMachine(input.machine);
+      return ods.agent(identity).requestOperationSession({
+        machineId: machine.id,
+        purpose: input.purpose,
+        action: input.action,
+        durationSeconds: input.durationSeconds,
+        ...(input.runId ? { runId: input.runId } : {}),
+      });
     },
-    async () => runTool(() => ods.machines(), reportUnexpectedError),
-  );
-
-  server.registerTool(
-    "session_request",
-    {
-      title: "Request operation access",
-      description:
-        "Request a temporary Session scoped to one typed operation. The user approves the returned URL unless a matching policy applies.",
-      inputSchema: z.object({
-        machine: machineSchema,
-        action: operationActionSchema,
-        purpose: z.string().trim().min(1).max(512),
-        durationSeconds: z.number().int().min(60).max(86_400).default(900),
-        runId: z.string().trim().min(1).max(128).optional(),
-      }),
-      annotations: requestAnnotations,
-    },
-    async (input) =>
-      runTool(async () => {
-        const machine = await ods.resolveMachine(input.machine);
-        return ods.agent(identity).requestOperationSession({
-          machineId: machine.id,
-          purpose: input.purpose,
-          action: input.action,
-          durationSeconds: input.durationSeconds,
-          ...(input.runId ? { runId: input.runId } : {}),
-        });
-      }, reportUnexpectedError),
-  );
-
-  server.registerTool(
-    "session_status",
-    {
-      title: "Check access request",
-      description:
-        "Check whether a request was approved. An approved credential is claimed once and kept private inside MCP.",
-      inputSchema: z.object({ requestId: z.string().uuid() }),
-      annotations: claimAnnotations,
-    },
-    async ({ requestId }) =>
-      runTool(async () => {
+    async status(requestId) {
         const existingSessionId = requestSessions.get(requestId);
         const existingClaim = existingSessionId
           ? claims.get(existingSessionId)
@@ -112,47 +74,27 @@ export function createApprovedOdyshellMcpServer(
           );
         }
         return status;
-      }, reportUnexpectedError),
-  );
-
-  server.registerTool(
-    "operation_execute",
-    {
-      title: "Execute approved operation",
-      description:
-        "Execute a typed process, filesystem or Docker operation inside a claimed Session.",
-      inputSchema: z.object({
-        sessionId: z.string().uuid(),
-        machine: machineSchema,
-        action: operationActionSchema,
-        timeoutSeconds: timeoutSchema,
-      }),
-      annotations: {
-        title: "Execute approved operation",
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: false,
-        openWorldHint: false,
-      },
     },
-    async (input) =>
-      runOperation(async () => {
-        const claim = claims.get(input.sessionId);
-        if (!claim) {
-          throw new ExpectedError(
-            "No claimed credential is available for this session.",
-            "session_claim_unavailable",
-          );
-        }
-        return ods.claimedSession(claim).execute(
-          input.machine,
-          input.action,
-          { timeoutSeconds: input.timeoutSeconds },
+    async execute(input) {
+      const claim = claims.get(input.sessionId);
+      if (!claim) {
+        throw new ExpectedError(
+          "No claimed credential is available for this session.",
+          "session_claim_unavailable",
         );
-      }, reportUnexpectedError),
-  );
-
-  return server;
+      }
+      return ods.claimedSession(claim).execute(input.machine, input.action, {
+        timeoutSeconds: input.timeoutSeconds,
+      });
+    },
+    complete(sessionId) {
+      return ods.agent(identity).cancel(sessionId);
+    },
+    timeline(sessionId) {
+      return ods.agent(identity).timeline(sessionId);
+    },
+  };
+  return createApprovedMcpServer(runtime, reportUnexpectedError);
 }
 
 function safeClaim(claim: ClaimedAgentSession): Record<string, unknown> {
@@ -498,20 +440,6 @@ const readOnlyAnnotations = {
   readOnlyHint: true,
   destructiveHint: false,
   idempotentHint: true,
-  openWorldHint: false,
-} as const;
-
-const requestAnnotations = {
-  readOnlyHint: false,
-  destructiveHint: false,
-  idempotentHint: false,
-  openWorldHint: false,
-} as const;
-
-const claimAnnotations = {
-  readOnlyHint: false,
-  destructiveHint: false,
-  idempotentHint: false,
   openWorldHint: false,
 } as const;
 

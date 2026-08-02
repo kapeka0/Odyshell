@@ -9,7 +9,10 @@
     "build": "tsup"
   },
   "dependencies": {
+    "@clerk/backend": "^3.13.2",
     "@fastify/websocket": "^11.2.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "@odyshell/mcp": "workspace:*",
     "@odyshell/protocol": "workspace:*",
     "fastify": "^5.4.0",
     "kysely": "^0.29.4",

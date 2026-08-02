@@ -52,6 +52,9 @@ A production deployment needs:
 - Optional `ODYSHELL_WEB_KEY` and `ODYSHELL_WEB_URL` to enable the cloud web bridge.
 - Optional `ODYSHELL_EVENT_SINK_ENCRYPTION_KEY`, a base64url-encoded 32-byte key, to enable signed
   Timeline delivery.
+- Optional `ODYSHELL_MCP_URL`, `CLERK_OAUTH_ISSUER`, `CLERK_SECRET_KEY`, and
+  `CLERK_PUBLISHABLE_KEY` to enable the remote OAuth MCP. `ODYSHELL_MCP_ALLOWED_ORIGINS` may contain
+  a comma-separated list of exact browser origins.
 
 Railway supplies `PORT` automatically. PostgreSQL stores machine identities, scoped tokens,
 temporary sessions, operations, and content-minimal control events. Operation payloads expire
@@ -72,6 +75,10 @@ Browser-approved Sessions use persistent Agent identities and one-time Session C
 Server stores only credential hashes and enforces the Session's exact machine, capability, path,
 and expiry on every Operation. Verified lifecycle transitions form a privacy-minimal Session
 Timeline without recording credentials or operation output.
+
+Remote MCP installations use Clerk OAuth only for human and client identity. The Server stores the
+installation-to-Agent and installation-to-Session bindings in PostgreSQL, but never stores OAuth
+access or refresh tokens. Every Operation still passes the normal Session scope and expiry checks.
 
 Independent Agents may propose versioned autoapproval policies. Policies stay inactive until an
 administrator approves their exact machine, capability, restriction, duration, and validity

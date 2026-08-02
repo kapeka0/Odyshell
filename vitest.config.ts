@@ -9,6 +9,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@odyshell/client": workspaceSource("./apps/client/src/index.ts"),
+      "@odyshell/mcp": workspaceSource("./packages/mcp/src/index.ts"),
       "@odyshell/protocol": workspaceSource("./packages/protocol/src/index.ts"),
       "@odyshell/sdk": workspaceSource("./packages/sdk/src/index.ts"),
     },

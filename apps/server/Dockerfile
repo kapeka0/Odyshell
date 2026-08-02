@@ -3,9 +3,11 @@ RUN corepack enable
 WORKDIR /app
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* tsconfig.json ./
 COPY packages/protocol/package.json packages/protocol/package.json
+COPY packages/mcp/package.json packages/mcp/package.json
 COPY apps/server/package.json apps/server/package.json
 RUN pnpm install --no-frozen-lockfile
 COPY packages/protocol packages/protocol
+COPY packages/mcp packages/mcp
 COPY apps/server apps/server
 RUN pnpm --filter @odyshell/server build
 
@@ -16,6 +18,7 @@ ENV NODE_ENV=production
 COPY --from=build /app/package.json /app/pnpm-workspace.yaml /app/pnpm-lock.yaml ./
 COPY --from=build /app/apps/server/package.json apps/server/package.json
 COPY --from=build /app/packages/protocol/package.json packages/protocol/package.json
+COPY --from=build /app/packages/mcp/package.json packages/mcp/package.json
 COPY --from=build /app/node_modules node_modules
 COPY --from=build /app/apps/server/node_modules apps/server/node_modules
 COPY --from=build /app/apps/server/dist apps/server/dist

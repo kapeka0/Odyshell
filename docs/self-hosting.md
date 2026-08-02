@@ -70,6 +70,23 @@ docker run -d \
 Put the Server behind HTTPS before connecting over the internet. Never enable
 `ODYSHELL_ALLOW_DEV_CREDENTIALS` in production.
 
+## Optional remote MCP
+
+The local `ods mcp` transport works without an identity provider. To let hosted MCP clients connect
+directly, configure Clerk as the OAuth authorization server and enable dynamic client registration:
+
+```dotenv
+ODYSHELL_MCP_URL=https://mcp.example.com/mcp
+ODYSHELL_MCP_ALLOWED_ORIGINS=https://app.example.com
+CLERK_OAUTH_ISSUER=https://your-instance.clerk.accounts.dev
+CLERK_SECRET_KEY=<clerk-secret-key>
+CLERK_PUBLISHABLE_KEY=<clerk-publishable-key>
+```
+
+Point the MCP hostname at the same Server process. PostgreSQL keeps MCP installation and Session
+bindings; OAuth tokens are verified with Clerk and are not stored by Odyshell. Accounts with one
+Workspace can use `/mcp`; accounts with several use `/mcp/<workspace-id>`.
+
 ## Connect a machine
 
 Create a single-use enrollment token:

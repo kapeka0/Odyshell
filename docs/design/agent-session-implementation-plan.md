@@ -1,7 +1,8 @@
 # Agent and Session implementation plan
 
 > **Status:** Active implementation plan. The shared Human, Agent, and Session contracts plus the
-> additive PostgreSQL expansion are implemented. No target Agent or Session workflow should be
+> additive PostgreSQL expansion and the first remote MCP vertical are implemented. No target Agent
+> or Session workflow should be
 > presented as shipped until its vertical is tested, deployed, and reflected in public
 > documentation.
 

@@ -1,8 +1,8 @@
 # Agent and Session model
 
 > **Status:** Accepted product and architecture design. Typed, multi-machine Session Scopes are
-> implemented for filesystem, structured process execution, and Docker logs. The signed-in MCP
-> convenience flow currently requests one exact `fs.read`.
+> implemented for filesystem, structured process execution, and Docker logs. Local stdio and
+> remote Clerk OAuth MCP transports share the typed, approval-based Session tools.
 >
 > Headless Agent Credentials, renewal, typed multi-machine scopes, strict Session termination, and
 > versioned policies, and one-level Managed Agent delegation are implemented.

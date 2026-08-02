@@ -240,6 +240,27 @@ interface SessionCredentialTable {
   createdAt: Generated<Date>;
 }
 
+interface McpInstallationTable {
+  workspaceId: string;
+  id: string;
+  provider: string;
+  userId: string;
+  oauthClientId: string;
+  agentId: string;
+  status: string;
+  createdAt: Generated<Date>;
+  updatedAt: Generated<Date>;
+}
+
+interface McpSessionGrantTable {
+  workspaceId: string;
+  installationId: string;
+  sessionId: string;
+  status: string;
+  createdAt: Generated<Date>;
+  revokedAt: Date | null;
+}
+
 interface AgentSessionRequestTable {
   workspaceId: string;
   id: string;
@@ -413,6 +434,8 @@ interface DatabaseSchema {
   agentCredentials: AgentCredentialTable;
   agentSessions: AgentSessionTable;
   sessionCredentials: SessionCredentialTable;
+  mcpInstallations: McpInstallationTable;
+  mcpSessionGrants: McpSessionGrantTable;
   agentSessionRequests: AgentSessionRequestTable;
   agentPolicies: AgentPolicyTable;
   agentSessionTargets: AgentSessionTargetTable;
@@ -525,6 +548,22 @@ export type AgentCredentialPrincipal = {
   agentName: string;
   ownerHumanId: string;
   expiresAt: number;
+};
+
+export type McpInstallationRecord = Timestamped & {
+  workspaceId: string;
+  id: string;
+  userId: string;
+  oauthClientId: string;
+  agentId: string;
+  agentName: string;
+  status: "active" | "revoked";
+};
+
+export type McpWorkspaceRecord = {
+  workspaceId: string;
+  workspaceName: string;
+  organizationExternalId: string;
 };
 
 export type AgentSessionRecord = Timestamped & {
@@ -2422,6 +2461,50 @@ async function rollbackAuthorityCutover(
   await sql`drop table odyshell.authority_cutovers`.execute(db);
 }
 
+async function migrateRemoteMcp(db: Kysely<DatabaseSchema>): Promise<void> {
+  await sql`
+    create table odyshell.mcp_installations (
+      workspace_id text not null,
+      id text not null,
+      provider text not null check (provider = 'clerk'),
+      user_id text not null,
+      oauth_client_id text not null,
+      agent_id text not null,
+      status text not null check (status in ('active', 'revoked')),
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      primary key (workspace_id, id),
+      unique (workspace_id, provider, user_id, oauth_client_id),
+      foreign key (workspace_id, agent_id)
+        references odyshell.agents (workspace_id, id)
+    )
+  `.execute(db);
+  await sql`
+    create table odyshell.mcp_session_grants (
+      workspace_id text not null,
+      installation_id text not null,
+      session_id text not null,
+      status text not null check (status in ('active', 'revoked')),
+      created_at timestamptz not null default now(),
+      revoked_at timestamptz,
+      primary key (workspace_id, installation_id, session_id),
+      foreign key (workspace_id, installation_id)
+        references odyshell.mcp_installations (workspace_id, id),
+      foreign key (workspace_id, session_id)
+        references odyshell.agent_sessions (workspace_id, id)
+    )
+  `.execute(db);
+  await sql`
+    create index mcp_session_grants_session_idx
+    on odyshell.mcp_session_grants (workspace_id, session_id, status)
+  `.execute(db);
+}
+
+async function rollbackRemoteMcp(db: Kysely<DatabaseSchema>): Promise<void> {
+  await sql`drop table odyshell.mcp_session_grants`.execute(db);
+  await sql`drop table odyshell.mcp_installations`.execute(db);
+}
+
 const migrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
     return {
@@ -2483,6 +2566,10 @@ const migrationProvider: MigrationProvider = {
       "016_authority_cutover": {
         up: migrateAuthorityCutover,
         down: rollbackAuthorityCutover,
+      },
+      "017_remote_mcp": {
+        up: migrateRemoteMcp,
+        down: rollbackRemoteMcp,
       },
     };
   },
@@ -2696,6 +2783,49 @@ export class PostgresDatabase {
     };
   }
 
+  async mcpWorkspace(workspaceId: string): Promise<McpWorkspaceRecord | null> {
+    const workspace = await this.db
+      .selectFrom("workspaces")
+      .innerJoin("organizations", "organizations.id", "workspaces.organizationId")
+      .select([
+        "workspaces.id as workspaceId",
+        "workspaces.name as workspaceName",
+        "organizations.externalId as organizationExternalId",
+      ])
+      .where("workspaces.id", "=", workspaceId)
+      .where("organizations.externalId", "is not", null)
+      .executeTakeFirst();
+    return workspace?.organizationExternalId
+      ? {
+          workspaceId: workspace.workspaceId,
+          workspaceName: workspace.workspaceName,
+          organizationExternalId: workspace.organizationExternalId,
+        }
+      : null;
+  }
+
+  async mcpWorkspacesForOrganizations(
+    organizationExternalIds: string[],
+  ): Promise<McpWorkspaceRecord[]> {
+    if (organizationExternalIds.length === 0) return [];
+    const rows = await this.db
+      .selectFrom("workspaces")
+      .innerJoin("organizations", "organizations.id", "workspaces.organizationId")
+      .select([
+        "workspaces.id as workspaceId",
+        "workspaces.name as workspaceName",
+        "organizations.externalId as organizationExternalId",
+      ])
+      .where("organizations.externalId", "in", organizationExternalIds)
+      .orderBy("workspaces.createdAt", "asc")
+      .execute();
+    return rows.flatMap((row) =>
+      row.organizationExternalId
+        ? [{ ...row, organizationExternalId: row.organizationExternalId }]
+        : [],
+    );
+  }
+
   async authorityCutoverReport(): Promise<AuthorityCutoverInvariant> {
     const result = await sql<{
       missingWorkspaces: string;
@@ -2902,6 +3032,102 @@ export class PostgresDatabase {
         .returningAll()
         .executeTakeFirst();
       return agent ? agentIdentityRecord(agent) : null;
+    });
+  }
+
+  async ensureMcpInstallation(input: {
+    workspaceId: string;
+    userId: string;
+    oauthClientId: string;
+    agentName: string;
+  }): Promise<McpInstallationRecord | null> {
+    return await this.db.transaction().execute(async (transaction) => {
+      await transaction
+        .insertInto("humans")
+        .values({
+          workspaceId: input.workspaceId,
+          id: input.userId,
+          externalId: input.userId,
+          status: "active",
+        })
+        .onConflict((conflict) =>
+          conflict.columns(["workspaceId", "id"]).doNothing(),
+        )
+        .execute();
+      const existing = await transaction
+        .selectFrom("mcpInstallations")
+        .innerJoin("agents", (join) =>
+          join
+            .onRef("agents.workspaceId", "=", "mcpInstallations.workspaceId")
+            .onRef("agents.id", "=", "mcpInstallations.agentId"),
+        )
+        .selectAll("mcpInstallations")
+        .select("agents.name as agentName")
+        .where("mcpInstallations.workspaceId", "=", input.workspaceId)
+        .where("mcpInstallations.provider", "=", "clerk")
+        .where("mcpInstallations.userId", "=", input.userId)
+        .where("mcpInstallations.oauthClientId", "=", input.oauthClientId)
+        .executeTakeFirst();
+      if (existing) {
+        if (existing.status !== "active") return null;
+        return {
+          workspaceId: existing.workspaceId,
+          id: existing.id,
+          userId: existing.userId,
+          oauthClientId: existing.oauthClientId,
+          agentId: existing.agentId,
+          agentName: existing.agentName,
+          status: "active",
+          createdAt: timestamp(existing.createdAt),
+          updatedAt: timestamp(existing.updatedAt),
+        };
+      }
+
+      const now = new Date();
+      const agentId = randomUUID();
+      const installationId = randomUUID();
+      const agent = await transaction
+        .insertInto("agents")
+        .values({
+          workspaceId: input.workspaceId,
+          id: agentId,
+          name: input.agentName,
+          kind: "independent",
+          parentAgentId: null,
+          createdByHumanId: input.userId,
+          status: "active",
+          deletedAt: null,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      const installation = await transaction
+        .insertInto("mcpInstallations")
+        .values({
+          workspaceId: input.workspaceId,
+          id: installationId,
+          provider: "clerk",
+          userId: input.userId,
+          oauthClientId: input.oauthClientId,
+          agentId,
+          status: "active",
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      return {
+        workspaceId: installation.workspaceId,
+        id: installation.id,
+        userId: installation.userId,
+        oauthClientId: installation.oauthClientId,
+        agentId: installation.agentId,
+        agentName: agent.name,
+        status: "active",
+        createdAt: timestamp(installation.createdAt),
+        updatedAt: timestamp(installation.updatedAt),
+      };
     });
   }
 
@@ -4438,8 +4664,9 @@ export class PostgresDatabase {
     agentId: string;
     humanId: string;
     sessionId: string;
-    credentialId: string;
-    credentialHash: string;
+    authority:
+      | { kind: "credential"; credentialId: string; credentialHash: string }
+      | { kind: "mcp"; installationId: string };
     now: number;
   }): Promise<SessionClaimResult> {
     return await this.db.transaction().execute(async (transaction) => {
@@ -4482,6 +4709,19 @@ export class PostgresDatabase {
         .where("status", "=", "active")
         .forShare()
         .executeTakeFirst();
+      if (input.authority.kind === "mcp") {
+        const installation = await transaction
+          .selectFrom("mcpInstallations")
+          .select("id")
+          .where("workspaceId", "=", input.workspaceId)
+          .where("id", "=", input.authority.installationId)
+          .where("userId", "=", input.humanId)
+          .where("agentId", "=", input.agentId)
+          .where("status", "=", "active")
+          .forShare()
+          .executeTakeFirst();
+        if (!installation) return { status: "agent_denied" };
+      }
       const requestedMachineIds = request.scopes.map((scope) => scope.machineId);
       const machines = await transaction
         .selectFrom("machines")
@@ -4559,20 +4799,34 @@ export class PostgresDatabase {
           })),
         )
         .execute();
-      await transaction
-        .insertInto("sessionCredentials")
-        .values({
-          workspaceId: input.workspaceId,
-          id: input.credentialId,
-          sessionId: input.sessionId,
-          tokenHash: input.credentialHash,
-          status: "active",
-          expiresAt,
-          claimedAt,
-          revokedAt: null,
-          createdAt: claimedAt,
-        })
-        .execute();
+      if (input.authority.kind === "credential") {
+        await transaction
+          .insertInto("sessionCredentials")
+          .values({
+            workspaceId: input.workspaceId,
+            id: input.authority.credentialId,
+            sessionId: input.sessionId,
+            tokenHash: input.authority.credentialHash,
+            status: "active",
+            expiresAt,
+            claimedAt,
+            revokedAt: null,
+            createdAt: claimedAt,
+          })
+          .execute();
+      } else {
+        await transaction
+          .insertInto("mcpSessionGrants")
+          .values({
+            workspaceId: input.workspaceId,
+            installationId: input.authority.installationId,
+            sessionId: input.sessionId,
+            status: "active",
+            createdAt: claimedAt,
+            revokedAt: null,
+          })
+          .execute();
+      }
       await transaction
         .updateTable("agentSessionRequests")
         .set({
@@ -4697,6 +4951,162 @@ export class PostgresDatabase {
       })),
       expiresAt: timestamp(principal.expiresAt),
     };
+  }
+
+  async mcpGrantedSessionForRequest(input: {
+    workspaceId: string;
+    installationId: string;
+    requestId: string;
+  }): Promise<AgentSessionCredentialPrincipal | null> {
+    const request = await this.db
+      .selectFrom("agentSessionRequests")
+      .innerJoin("mcpSessionGrants", (join) =>
+        join
+          .onRef("mcpSessionGrants.workspaceId", "=", "agentSessionRequests.workspaceId")
+          .onRef("mcpSessionGrants.sessionId", "=", "agentSessionRequests.sessionId"),
+      )
+      .select("agentSessionRequests.sessionId")
+      .where("agentSessionRequests.workspaceId", "=", input.workspaceId)
+      .where("agentSessionRequests.id", "=", input.requestId)
+      .where("mcpSessionGrants.installationId", "=", input.installationId)
+      .where("mcpSessionGrants.status", "=", "active")
+      .where("mcpSessionGrants.revokedAt", "is", null)
+      .executeTakeFirst();
+    return request?.sessionId
+      ? this.findMcpSessionPrincipal({
+          workspaceId: input.workspaceId,
+          installationId: input.installationId,
+          sessionId: request.sessionId,
+        })
+      : null;
+  }
+
+  async mcpSessionForRequest(input: {
+    workspaceId: string;
+    installationId: string;
+    requestId: string;
+  }): Promise<{ sessionId: string; status: string; expiresAt: number } | null> {
+    const session = await this.db
+      .selectFrom("agentSessionRequests")
+      .innerJoin("mcpSessionGrants", (join) =>
+        join
+          .onRef("mcpSessionGrants.workspaceId", "=", "agentSessionRequests.workspaceId")
+          .onRef("mcpSessionGrants.sessionId", "=", "agentSessionRequests.sessionId"),
+      )
+      .innerJoin("agentSessions", (join) =>
+        join
+          .onRef("agentSessions.workspaceId", "=", "mcpSessionGrants.workspaceId")
+          .onRef("agentSessions.id", "=", "mcpSessionGrants.sessionId"),
+      )
+      .select([
+        "agentSessions.id as sessionId",
+        "agentSessions.status",
+        "agentSessions.expiresAt",
+      ])
+      .where("agentSessionRequests.workspaceId", "=", input.workspaceId)
+      .where("agentSessionRequests.id", "=", input.requestId)
+      .where("mcpSessionGrants.installationId", "=", input.installationId)
+      .executeTakeFirst();
+    return session
+      ? {
+          sessionId: session.sessionId,
+          status: session.status,
+          expiresAt: timestamp(session.expiresAt),
+        }
+      : null;
+  }
+
+  async findMcpSessionPrincipal(input: {
+    workspaceId: string;
+    installationId: string;
+    sessionId: string;
+  }): Promise<AgentSessionCredentialPrincipal | null> {
+    const now = new Date();
+    const principals = await this.db
+      .selectFrom("mcpSessionGrants")
+      .innerJoin("mcpInstallations", (join) =>
+        join
+          .onRef("mcpInstallations.workspaceId", "=", "mcpSessionGrants.workspaceId")
+          .onRef("mcpInstallations.id", "=", "mcpSessionGrants.installationId"),
+      )
+      .innerJoin("agentSessions", (join) =>
+        join
+          .onRef("agentSessions.workspaceId", "=", "mcpSessionGrants.workspaceId")
+          .onRef("agentSessions.id", "=", "mcpSessionGrants.sessionId"),
+      )
+      .innerJoin("agents", (join) =>
+        join
+          .onRef("agents.workspaceId", "=", "agentSessions.workspaceId")
+          .onRef("agents.id", "=", "agentSessions.agentId"),
+      )
+      .innerJoin("agentSessionTargets", (join) =>
+        join
+          .onRef("agentSessionTargets.workspaceId", "=", "agentSessions.workspaceId")
+          .onRef("agentSessionTargets.sessionId", "=", "agentSessions.id"),
+      )
+      .select([
+        "agentSessions.workspaceId",
+        "agentSessions.agentId",
+        "agents.name as agentName",
+        "agentSessions.id as sessionId",
+        "agentSessionTargets.machineId",
+        "agentSessionTargets.profile",
+        "agentSessionTargets.capabilities",
+        "agentSessionTargets.restrictions",
+        "agentSessions.expiresAt",
+      ])
+      .where("mcpSessionGrants.workspaceId", "=", input.workspaceId)
+      .where("mcpSessionGrants.installationId", "=", input.installationId)
+      .where("mcpSessionGrants.sessionId", "=", input.sessionId)
+      .where("mcpSessionGrants.status", "=", "active")
+      .where("mcpSessionGrants.revokedAt", "is", null)
+      .where("mcpInstallations.status", "=", "active")
+      .where("agentSessions.status", "=", "active")
+      .where("agentSessions.expiresAt", ">", now)
+      .where("agents.status", "=", "active")
+      .where("agentSessionTargets.status", "in", ["opening", "ready"])
+      .orderBy("agentSessionTargets.machineId")
+      .execute();
+    const principal = principals[0];
+    if (!principal) return null;
+    return {
+      workspaceId: principal.workspaceId,
+      agentId: principal.agentId,
+      agentName: principal.agentName,
+      sessionId: principal.sessionId,
+      scopes: principals.map((row) => ({
+        machineId: row.machineId,
+        profile: row.profile,
+        capabilities: row.capabilities,
+        restrictions: row.restrictions,
+      })),
+      expiresAt: timestamp(principal.expiresAt),
+    };
+  }
+
+  async mcpSessionOwner(input: {
+    workspaceId: string;
+    installationId: string;
+    sessionId: string;
+  }): Promise<{ agentId: string; userId: string } | null> {
+    return (
+      (await this.db
+        .selectFrom("mcpSessionGrants")
+        .innerJoin("mcpInstallations", (join) =>
+          join
+            .onRef("mcpInstallations.workspaceId", "=", "mcpSessionGrants.workspaceId")
+            .onRef("mcpInstallations.id", "=", "mcpSessionGrants.installationId"),
+        )
+        .select([
+          "mcpInstallations.agentId",
+          "mcpInstallations.userId",
+        ])
+        .where("mcpSessionGrants.workspaceId", "=", input.workspaceId)
+        .where("mcpSessionGrants.installationId", "=", input.installationId)
+        .where("mcpSessionGrants.sessionId", "=", input.sessionId)
+        .where("mcpInstallations.status", "=", "active")
+        .executeTakeFirst()) ?? null
+    );
   }
 
   async getAgentSessionTargetRuntime(
@@ -4861,6 +5271,13 @@ export class PostgresDatabase {
         .where("status", "=", "active")
         .execute();
       await transaction
+        .updateTable("mcpSessionGrants")
+        .set({ status: "revoked", revokedAt: now })
+        .where("workspaceId", "=", input.workspaceId)
+        .where("sessionId", "=", input.sessionId)
+        .where("status", "=", "active")
+        .execute();
+      await transaction
         .updateTable("agentSessions")
         .set({ status: input.reason, updatedAt: now })
         .where("workspaceId", "=", input.workspaceId)
@@ -4964,6 +5381,13 @@ export class PostgresDatabase {
         .execute();
       await transaction
         .updateTable("sessionCredentials")
+        .set({ status: "revoked", revokedAt: now })
+        .where("workspaceId", "=", workspaceId)
+        .where("sessionId", "=", sessionId)
+        .where("status", "=", "active")
+        .execute();
+      await transaction
+        .updateTable("mcpSessionGrants")
         .set({ status: "revoked", revokedAt: now })
         .where("workspaceId", "=", workspaceId)
         .where("sessionId", "=", sessionId)
