@@ -76,10 +76,12 @@ export {
   removeLinuxUserService,
   renderMacLaunchAgent,
   renderLinuxUserService,
-  renderWindowsTaskCommand,
+  renderWindowsTaskAction,
+  renderWindowsTaskLauncher,
   restartClientService,
   stopClientService,
   stopLinuxUserService,
+  windowsTaskLauncherPath,
   windowsTaskNameForConfig,
 } from "./service.js";
 

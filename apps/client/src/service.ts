@@ -79,6 +79,10 @@ export function windowsTaskNameForConfig(
     : `Odyshell Client ${digestPath(normalizedConfigPath)}`;
 }
 
+export function windowsTaskLauncherPath(configPath: string): string {
+  return win32.join(win32.dirname(win32.resolve(configPath)), "client-service.ps1");
+}
+
 export function renderLinuxUserService(options: {
   nodePath: string;
   cliPath: string;
@@ -135,32 +139,50 @@ ${argumentsList.map((argument) => `    <string>${xmlEscape(argument)}</string>`)
 `;
 }
 
-export function renderWindowsTaskCommand(
+export function renderWindowsTaskLauncher(
   options: InstallClientServiceOptions,
 ): string {
-  return [options.nodePath, ...windowsTaskArguments(options)]
-    .map(quoteWindowsArgument)
-    .join(" ");
-}
-
-export function renderWindowsTaskArguments(
-  options: InstallClientServiceOptions,
-): string {
-  return windowsTaskArguments(options)
-    .map(quoteWindowsArgument)
-    .join(" ");
-}
-
-function windowsTaskArguments(
-  options: InstallClientServiceOptions,
-): string[] {
-  return [
+  const invocation = [
+    options.nodePath,
     options.cliPath,
     "client",
     "start",
     "--config",
     win32.resolve(options.configPath),
-  ];
+  ]
+    .map(quotePowerShellLiteral)
+    .join(" ");
+  return `Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+& ${invocation}
+exit $LASTEXITCODE
+`;
+}
+
+export function renderWindowsTaskAction(
+  options: InstallClientServiceOptions,
+  windowsDirectory = process.env.SystemRoot ?? "C:\\Windows",
+): { execute: string; arguments: string } {
+  return {
+    execute: win32.join(
+      windowsDirectory,
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "powershell.exe",
+    ),
+    arguments: [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-WindowStyle",
+      "Hidden",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      quoteWindowsArgument(windowsTaskLauncherPath(options.configPath)),
+    ].join(" "),
+  };
 }
 
 export async function installClientService(
@@ -227,6 +249,12 @@ export async function installWindowsTask(
 ): Promise<{ servicePath: string; lingering: undefined }> {
   await readFile(resolve(options.configPath), "utf8");
   const taskName = windowsTaskNameForConfig(options.configPath);
+  const launcherPath = windowsTaskLauncherPath(options.configPath);
+  await mkdir(dirname(launcherPath), { recursive: true });
+  await writeFile(launcherPath, renderWindowsTaskLauncher(options), {
+    encoding: "utf8",
+    mode: 0o600,
+  });
   await registerWindowsTask(taskName, options);
   await startWindowsTask(taskName);
   await getWindowsTask(taskName);
@@ -275,6 +303,7 @@ export async function stopClientService(
     const taskName = windowsTaskNameForConfig(configPath);
     await stopWindowsTask(taskName).catch(() => {});
     await unregisterWindowsTask(taskName);
+    await rm(windowsTaskLauncherPath(configPath), { force: true });
     return;
   }
   throw new Error(`Background service management does not support ${process.platform}`);
@@ -410,10 +439,11 @@ async function registerWindowsTask(
   taskName: string,
   options: InstallClientServiceOptions,
 ): Promise<void> {
+  const action = renderWindowsTaskAction(options);
   await windowsTaskPowerShell(
     [
       "$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()",
-      "$action = New-ScheduledTaskAction -Execute $env:ODYSHELL_NODE_PATH -Argument $env:ODYSHELL_TASK_ARGUMENTS",
+      "$action = New-ScheduledTaskAction -Execute $env:ODYSHELL_TASK_EXECUTABLE -Argument $env:ODYSHELL_TASK_ARGUMENTS",
       "$principal = New-ScheduledTaskPrincipal -UserId $identity.Name -LogonType Interactive -RunLevel Limited",
       "$trigger = New-ScheduledTaskTrigger -AtLogOn -User $identity.Name",
       "$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries",
@@ -421,8 +451,8 @@ async function registerWindowsTask(
     ].join("; "),
     {
       ODYSHELL_TASK_NAME: taskName,
-      ODYSHELL_NODE_PATH: options.nodePath,
-      ODYSHELL_TASK_ARGUMENTS: renderWindowsTaskArguments(options),
+      ODYSHELL_TASK_EXECUTABLE: action.execute,
+      ODYSHELL_TASK_ARGUMENTS: action.arguments,
     },
   );
 }
@@ -544,4 +574,11 @@ function quoteWindowsArgument(value: string): string {
   return `"${value
     .replace(/(\\*)"/g, "$1$1\\\"")
     .replace(/(\\+)$/g, "$1$1")}"`;
+}
+
+function quotePowerShellLiteral(value: string): string {
+  if (/[\r\n\0]/.test(value)) {
+    throw new Error("Windows service arguments cannot contain control characters");
+  }
+  return `'${value.replaceAll("'", "''")}'`;
 }

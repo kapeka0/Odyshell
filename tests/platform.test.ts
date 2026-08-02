@@ -19,8 +19,9 @@ import {
   macLaunchAgentPath,
   renderMacLaunchAgent,
   renderLinuxUserService,
-  renderWindowsTaskArguments,
-  renderWindowsTaskCommand,
+  renderWindowsTaskAction,
+  renderWindowsTaskLauncher,
+  windowsTaskLauncherPath,
   windowsTaskNameForConfig,
 } from "../apps/client/src/service.js";
 import {
@@ -196,31 +197,42 @@ describe("client platform support", () => {
     expect(windowsTaskNameForConfig(windowsConfig)).toMatch(
       /^Odyshell Client [a-f0-9]{12}$/,
     );
-    expect(
-      renderWindowsTaskCommand({
-        nodePath: "C:\\Program Files\\nodejs\\node.exe",
-        cliPath: "C:\\Program Files\\Odyshell\\ods.js",
-        configPath: windowsConfig,
-      }),
-    ).toBe(
-      '"C:\\Program Files\\nodejs\\node.exe" "C:\\Program Files\\Odyshell\\ods.js" "client" "start" "--config" "C:\\Users\\Ada & team\\client.json"',
-    );
-    expect(
-      renderWindowsTaskArguments({
-        nodePath: "C:\\Program Files\\nodejs\\node.exe",
-        cliPath: "C:\\Program Files\\Odyshell\\ods.js",
-        configPath: windowsConfig,
-      }),
-    ).toBe(
-      '"C:\\Program Files\\Odyshell\\ods.js" "client" "start" "--config" "C:\\Users\\Ada & team\\client.json"',
-    );
     expect(() =>
-      renderWindowsTaskArguments({
+      renderWindowsTaskLauncher({
         nodePath: "C:\\Program Files\\nodejs\\node.exe",
         cliPath: "C:\\Program Files\\Odyshell\\ods.js\r\nWrite-Output injected",
         configPath: windowsConfig,
       }),
     ).toThrow("control characters");
+  });
+
+  it("starts the Windows Client through a hidden per-Profile launcher", () => {
+    const options = {
+      nodePath: "C:\\Program Files\\nodejs\\node.exe",
+      cliPath: "C:\\Program Files\\Odyshell\\ods.js",
+      configPath: "C:\\Users\\Ada & team\\Odyshell\\clients\\work\\client.json",
+    };
+
+    expect(windowsTaskLauncherPath(options.configPath)).toBe(
+      "C:\\Users\\Ada & team\\Odyshell\\clients\\work\\client-service.ps1",
+    );
+    expect(renderWindowsTaskLauncher(options)).toContain(
+      "& 'C:\\Program Files\\nodejs\\node.exe'",
+    );
+    expect(renderWindowsTaskLauncher(options)).toContain(
+      "'C:\\Users\\Ada & team\\Odyshell\\clients\\work\\client.json'",
+    );
+    expect(renderWindowsTaskLauncher(options)).not.toContain("ods_enroll_");
+
+    const action = renderWindowsTaskAction(options, "C:\\Windows");
+    expect(action.execute).toBe(
+      "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    );
+    expect(action.arguments).toContain("-WindowStyle Hidden");
+    expect(action.arguments).toContain(
+      '"C:\\Users\\Ada & team\\Odyshell\\clients\\work\\client-service.ps1"',
+    );
+    expect(action.arguments).not.toContain(options.nodePath);
   });
 
   it("uses a deterministic isolated path for every named Client Profile", () => {

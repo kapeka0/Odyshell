@@ -39,8 +39,9 @@ ods up \
 ```
 
 `ods up` enrolls the machine and starts a restartable user service: systemd on Linux, a LaunchAgent
-on macOS, or a limited Task Scheduler task for the signed-in Windows user. No administrator
-privileges are required. The workspace,
+on macOS, or a hidden Task Scheduler task for the signed-in Windows user. The command returns after
+the background Client starts, and closing the terminal does not disconnect the machine. No
+administrator privileges are required. The workspace,
 operating-system user, and `--allow` list form the local policy. The Server and remote agents
 cannot grant themselves capabilities that the Client has not explicitly allowed.
 
