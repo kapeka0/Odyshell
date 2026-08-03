@@ -520,7 +520,7 @@ describe("dashboard navigation performance boundary", () => {
       resolve(process.cwd(), "apps/web/tokens.css"),
       "utf8",
     );
-    expect(tokens).toContain("--color-rule-strong: oklch(0.78 0 0)");
+    expect(tokens).toContain("--color-rule-strong: oklch(0.7 0 0)");
     expect(tokens).toContain("--color-rule-strong: oklch(0.38 0 0)");
   });
 
