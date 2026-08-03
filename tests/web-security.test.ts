@@ -789,5 +789,6 @@ describe("dashboard navigation performance boundary", () => {
     expect(sessionList).not.toContain("?? value.requestedByAgentId");
     expect(identity).toContain("getOrganizationMembershipList");
     expect(identity).toContain("user.hasImage");
+    expect(identity).toContain('return [];');
   });
 });

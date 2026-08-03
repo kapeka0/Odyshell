@@ -1,5 +1,4 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import { unstable_cache } from "next/cache";
 import type { CloudIdentity, CloudMember } from "@/lib/cloud-api";
 
 export async function currentCloudIdentity(): Promise<CloudIdentity | null> {
@@ -28,8 +27,10 @@ export async function cloudIdentityFor(
   };
 }
 
-export const organizationMembers = unstable_cache(
-  async (organizationId: string): Promise<CloudMember[]> => {
+export async function organizationMembers(
+  organizationId: string,
+): Promise<CloudMember[]> {
+  try {
     const clerk = await clerkClient();
     const memberships = await clerk.organizations.getOrganizationMembershipList({
       organizationId,
@@ -45,7 +46,11 @@ export const organizationMembers = unstable_cache(
         ...(user.hasImage ? { imageUrl: user.imageUrl } : {}),
       }];
     });
-  },
-  ["clerk-organization-members"],
-  { revalidate: 60 },
-);
+  } catch (error) {
+    console.warn(
+      "Clerk Organization members are temporarily unavailable",
+      error instanceof Error ? error.message : "Unknown Clerk error",
+    );
+    return [];
+  }
+}
