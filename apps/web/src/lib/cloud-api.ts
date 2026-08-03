@@ -73,6 +73,7 @@ export type CloudSessionRequest = {
   requestedByAgentId?: string | null;
   runId?: string | null;
   machines: Array<{ id: string; name: string }>;
+  approvalUrl?: string;
 };
 
 export type CloudMember = {

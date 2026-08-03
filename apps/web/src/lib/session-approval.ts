@@ -1,10 +1,7 @@
 import { z } from "zod";
 import type { SessionMachineScope } from "@odyshell/protocol";
 
-export const sessionApprovalCodeSchema = z
-  .string()
-  .trim()
-  .regex(/^ods_approval_[A-Za-z0-9_-]{20,}$/);
+export const sessionApprovalRequestIdSchema = z.string().trim().uuid();
 
 export type SessionApproval = {
   id: string;

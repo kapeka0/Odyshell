@@ -5,7 +5,7 @@ import { SessionApprovalForm } from "@/components/session-approval";
 import { cloudRequest, CloudApiError } from "@/lib/cloud-api";
 import { currentCloudIdentity } from "@/lib/clerk-identity";
 import {
-  sessionApprovalCodeSchema,
+  sessionApprovalRequestIdSchema,
   sessionApprovalErrorPath,
   type SessionApproval,
 } from "@/lib/session-approval";
@@ -13,17 +13,17 @@ import {
 export default async function SessionApprovePage({
   searchParams,
 }: {
-  searchParams: Promise<{ code?: string | string[] }>;
+  searchParams: Promise<{ request?: string | string[] }>;
 }) {
   const params = await searchParams;
-  const parsedCode = sessionApprovalCodeSchema.safeParse(
-    typeof params.code === "string" ? params.code : "",
+  const parsedRequestId = sessionApprovalRequestIdSchema.safeParse(
+    typeof params.request === "string" ? params.request : "",
   );
-  if (!parsedCode.success) redirect(sessionApprovalErrorPath());
+  if (!parsedRequestId.success) redirect(sessionApprovalErrorPath());
 
   const { userId } = await auth();
   if (!userId) {
-    const destination = `/sessions/approve?code=${encodeURIComponent(parsedCode.data)}`;
+    const destination = `/sessions/approve?request=${encodeURIComponent(parsedRequestId.data)}`;
     redirect(`/sign-in?redirect_url=${encodeURIComponent(destination)}`);
   }
   const identity = await currentCloudIdentity();
@@ -34,7 +34,7 @@ export default async function SessionApprovePage({
     approval = await cloudRequest<SessionApproval>(
       "/v1/internal/cloud/session-requests/inspect",
       identity,
-      { extraBody: { approvalCode: parsedCode.data } },
+      { extraBody: { requestId: parsedRequestId.data } },
     );
   } catch (error) {
     if (error instanceof CloudApiError) {
@@ -48,7 +48,10 @@ export default async function SessionApprovePage({
       title="Approve agent access"
       description="Review the exact temporary access requested."
     >
-      <SessionApprovalForm code={parsedCode.data} approval={approval} />
+      <SessionApprovalForm
+        requestId={parsedRequestId.data}
+        approval={approval}
+      />
     </ActivationShell>
   );
 }

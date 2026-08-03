@@ -38,6 +38,7 @@ import {
   revokeCloudMachineSchema,
   ScopedConcurrencyLimiter,
   ScopedRateLimiter,
+  sessionApprovalUrl,
   startDeviceAuthorizationSchema,
   verifyCloudLiveToken,
   sessionApprovalSchema,
@@ -1312,6 +1313,9 @@ app.post(
         requestedByAgentId: sessionRequest.requestedByAgentId ?? null,
         runId: sessionRequest.runId ?? null,
         machines: sessionRequest.machines,
+        ...(sessionRequest.status === "pending" && webUrl
+          ? { approvalUrl: sessionApprovalUrl(webUrl, sessionRequest.id) }
+          : {}),
       })),
       policies: policies.map((policy) => ({
         ...policy,
@@ -1913,7 +1917,7 @@ app.post(
     });
     const sessionRequest = await db.sessionRequestForApproval(
       context.workspace.id,
-      hashToken(parsed.data.approvalCode),
+      hashToken(parsed.data.requestId),
     );
     if (!sessionRequest) {
       return reply.code(404).send({ error: "session_request_not_found" });
@@ -1970,7 +1974,7 @@ app.post(
     });
     const result = await db.approveAgentSessionRequest({
       workspaceId: context.workspace.id,
-      approvalCodeHash: hashToken(parsed.data.approvalCode),
+      approvalCodeHash: hashToken(parsed.data.requestId),
       approverHumanId: parsed.data.userId,
       now: Date.now(),
     });
@@ -2016,7 +2020,7 @@ app.post(
     });
     const result = await db.denyAgentSessionRequest({
       workspaceId: context.workspace.id,
-      approvalCodeHash: hashToken(parsed.data.approvalCode),
+      approvalCodeHash: hashToken(parsed.data.requestId),
       denierHumanId: parsed.data.userId,
       now: Date.now(),
     });
@@ -2674,7 +2678,6 @@ app.post(
         .send({ error: "session_request_rate_limited" });
     }
     const requestId = randomUUID();
-    const approvalCode = createOpaqueToken("approval");
     const expiresAt = Date.now() + 10 * 60 * 1_000;
     const created = await db.createAgentSessionRequest({
       workspaceId: principal.workspaceId,
@@ -2689,7 +2692,7 @@ app.post(
       scopes: parsed.data.scopes,
       purpose: parsed.data.purpose,
       durationSeconds: parsed.data.durationSeconds,
-      approvalCodeHash: hashToken(approvalCode),
+      approvalCodeHash: hashToken(requestId),
       expiresAt,
     });
     if (!created) {
@@ -2725,9 +2728,9 @@ app.post(
           ? { ready: true }
           : { ready: false, reason: "machine_offline" },
       })),
-      ...(created.status === "pending"
+      ...(created.status === "pending" && webUrl
         ? {
-            approvalUrl: `${webUrl}/sessions/approve?code=${encodeURIComponent(approvalCode)}`,
+            approvalUrl: sessionApprovalUrl(webUrl, requestId),
           }
         : {}),
       ...(created.autoapprovalPolicyId
@@ -3389,7 +3392,6 @@ app.post<{ Params: { sessionId: string } }>(
       return reply.code(404).send({ error: "session_not_found" });
     }
     const requestId = randomUUID();
-    const approvalCode = createOpaqueToken("approval");
     const expiresAt = Date.now() + 10 * 60_000;
     const created = await db.createAgentSessionRequest({
       workspaceId: principal.workspaceId,
@@ -3404,7 +3406,7 @@ app.post<{ Params: { sessionId: string } }>(
       purpose: predecessor.purpose,
       durationSeconds:
         parsed.data.durationSeconds ?? predecessor.durationSeconds,
-      approvalCodeHash: hashToken(approvalCode),
+      approvalCodeHash: hashToken(requestId),
       expiresAt,
       predecessorSessionId: request.params.sessionId,
     });
@@ -3431,9 +3433,9 @@ app.post<{ Params: { sessionId: string } }>(
           ? { ready: true }
           : { ready: false, reason: "machine_offline" },
       })),
-      ...(created.status === "pending"
+      ...(created.status === "pending" && webUrl
         ? {
-            approvalUrl: `${webUrl}/sessions/approve?code=${encodeURIComponent(approvalCode)}`,
+            approvalUrl: sessionApprovalUrl(webUrl, requestId),
           }
         : {}),
       ...(created.autoapprovalPolicyId

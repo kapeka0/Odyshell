@@ -109,6 +109,15 @@ export function SessionList({
               >
                 {row.original.value.purpose}
               </Link>
+            ) : row.original.value.status === "pending" &&
+              row.original.value.approvalUrl ? (
+              <Link
+                href={row.original.value.approvalUrl}
+                title={row.original.value.purpose}
+                className="block truncate font-medium hover:underline"
+              >
+                {row.original.value.purpose}
+              </Link>
             ) : (
               <span
                 title={row.original.value.purpose}
@@ -174,7 +183,9 @@ export function SessionList({
         cell: ({ row }) =>
           row.original.kind === "session" ? (
             <SessionActions session={row.original.value} refresh={refresh} />
-          ) : null,
+          ) : (
+            <RequestActions request={row.original.value} />
+          ),
       },
     ],
     [agents, members, refresh],
@@ -218,6 +229,33 @@ export function SessionList({
       }}
       emptyMessage="No sessions match these filters."
     />
+  );
+}
+
+function RequestActions({ request }: { request: CloudSessionRequest }) {
+  if (request.status !== "pending" || !request.approvalUrl) return null;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={`Actions for ${request.purpose}`}
+          />
+        }
+      >
+        <EllipsisIcon aria-hidden="true" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem render={<Link href={request.approvalUrl} />}>
+          <EyeIcon aria-hidden="true" />
+          Review
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

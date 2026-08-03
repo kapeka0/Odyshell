@@ -79,7 +79,8 @@ The approval-based workflow exposes seven tools:
 When approval is required, the agent shows the URL returned by `session_request` as a clickable
 link and waits. Open it to review the exact machines and Operations, then approve or deny the
 request. The Sessions page shows the pending request immediately, then replaces it with the active
-Session after approval and one-time claim. The agent calls `session_status` and continues only if
+Session after approval and one-time claim. Its pending row opens the same review URL shown by the
+agent. The agent calls `session_status` and continues only if
 Odyshell grants the Session and the Client reports it ready.
 
 Each operation determines its capability and restriction automatically. Scopes for the same

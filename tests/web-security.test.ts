@@ -34,9 +34,10 @@ import {
   deviceCodeSchema,
 } from "../apps/web/src/lib/device-activation.js";
 import {
-  sessionApprovalCodeSchema,
+  sessionApprovalRequestIdSchema,
   sessionApprovalErrorPath,
 } from "../apps/web/src/lib/session-approval.js";
+import { sessionApprovalUrl } from "../apps/server/src/cloud.js";
 import { statusTone } from "../apps/web/src/lib/status-tone.js";
 
 describe("web authentication boundaries", () => {
@@ -127,20 +128,24 @@ describe("web authentication boundaries", () => {
     expect(successPage).not.toContain("approvalCode");
   });
 
-  it("accepts only opaque Session approval codes and never reflects them", () => {
-    const code = `ods_approval_${"a".repeat(32)}`;
-    expect(sessionApprovalCodeSchema.parse(code)).toBe(code);
+  it("accepts only Session request IDs and builds one local review URL", () => {
+    const requestId = "7d8730ef-075c-40d5-a72d-8101abe17260";
+    expect(sessionApprovalRequestIdSchema.parse(requestId)).toBe(requestId);
     expect(
-      sessionApprovalCodeSchema.safeParse(`https://attacker.example/${code}`)
+      sessionApprovalRequestIdSchema.safeParse(
+        `https://attacker.example/${requestId}`,
+      )
         .success,
     ).toBe(false);
-    expect(sessionApprovalCodeSchema.safeParse("ods_session_secret").success).toBe(
-      false,
+    expect(sessionApprovalRequestIdSchema.safeParse("ods_session_secret").success)
+      .toBe(false);
+    expect(sessionApprovalUrl("https://odyshell.com", requestId)).toBe(
+      `https://odyshell.com/sessions/approve?request=${requestId}`,
     );
-    expect(sessionApprovalErrorPath(code)).toBe(
+    expect(sessionApprovalErrorPath(requestId)).toBe(
       "/sessions/approve/error?reason=approval_failed",
     );
-    expect(sessionApprovalErrorPath(code)).not.toContain(code);
+    expect(sessionApprovalErrorPath(requestId)).not.toContain(requestId);
   });
 
   it("keeps Session approval and denial behind the same authenticated boundary", () => {
@@ -153,8 +158,8 @@ describe("web authentication boundaries", () => {
         "utf8",
       );
       expect(route).toContain("requireCloudRouteIdentity()");
-      expect(route).toContain("sessionApprovalCodeSchema");
-      expect(route).not.toContain("approvalCode: request");
+      expect(route).toContain("sessionApprovalRequestIdSchema");
+      expect(route).not.toContain("approvalCode");
     }
   });
 
@@ -661,6 +666,10 @@ describe("dashboard navigation performance boundary", () => {
       resolve(webRoot, "components/app-sidebar.tsx"),
       "utf8",
     );
+    const sessionList = readFileSync(
+      resolve(webRoot, "components/session-list.tsx"),
+      "utf8",
+    );
     const server = readFileSync(
       resolve(process.cwd(), "apps/server/src/index.ts"),
       "utf8",
@@ -674,6 +683,11 @@ describe("dashboard navigation performance boundary", () => {
     expect(canvas).toContain('type: "session"');
     expect(canvas).toContain("session.targets.map");
     expect(sidebar).toContain('href: "/dashboard/sessions"');
+    expect(sessionList).toContain("request.approvalUrl");
+    expect(sessionList).toContain("Review");
+    expect(server).toContain(
+      "approvalUrl: sessionApprovalUrl(webUrl, sessionRequest.id)",
+    );
     expect(sanitizer).toContain('"machineId"');
     expect(sanitizer).toContain('"status"');
     expect(sanitizer).toContain('"executorAgentId"');

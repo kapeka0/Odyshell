@@ -178,6 +178,8 @@ particular component, library or interaction pattern.
 - Session requests appear in the Sessions collection as soon as access is
   requested, before the Agent claims an approved Session. Claimed requests are
   replaced by their canonical Session instead of duplicated.
+- Pending Session requests open the same standalone review URL returned to the
+  requesting Agent, whether approval starts from the Agent or the dashboard.
 - Session purposes remain single-line and truncate when necessary. Human
   requesters use their recognizable name and profile image; internal identity
   IDs are never presented as names.

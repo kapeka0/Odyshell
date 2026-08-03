@@ -6,8 +6,7 @@ import type {
 import {
   operationSessionScopes,
 } from "@odyshell/protocol";
-import { createOpaqueToken } from "./access.js";
-import { type ScopedRateLimiter } from "./cloud.js";
+import { sessionApprovalUrl, type ScopedRateLimiter } from "./cloud.js";
 import {
   audit,
   type AgentSessionCredentialPrincipal,
@@ -102,7 +101,6 @@ export function createRemoteMcpRuntime(
         );
       }
       const requestId = randomUUID();
-      const approvalCode = createOpaqueToken("approval");
       const created = await db.createAgentSessionRequest({
         workspaceId: installation.workspaceId,
         requestId,
@@ -113,7 +111,7 @@ export function createRemoteMcpRuntime(
         scopes,
         purpose: input.purpose,
         durationSeconds: input.durationSeconds,
-        approvalCodeHash: hashToken(approvalCode),
+        approvalCodeHash: hashToken(requestId),
         expiresAt: Date.now() + 10 * 60 * 1_000,
       });
       if (!created) {
@@ -143,7 +141,7 @@ export function createRemoteMcpRuntime(
         status: created.status,
         ...(created.status === "pending"
           ? {
-              approvalUrl: `${webUrl}/sessions/approve?code=${encodeURIComponent(approvalCode)}`,
+              approvalUrl: sessionApprovalUrl(webUrl, requestId),
             }
           : {}),
         expiresAt: isoTimestamp(created.expiresAt),
@@ -493,9 +491,14 @@ async function remoteMcpSessionStatus(
       principal.sessionId,
       principal.agentId,
     );
-    const status = targets.every((target) => target.status === "ready")
-      ? "ready"
-      : "opening";
+    const failedTarget = targets.find(
+      (target) => target.status !== "opening" && target.status !== "ready",
+    );
+    const status = failedTarget
+      ? "failed"
+      : targets.every((target) => target.status === "ready")
+        ? "ready"
+        : "opening";
     const result = {
       status,
       sessionId: principal.sessionId,
@@ -503,21 +506,50 @@ async function remoteMcpSessionStatus(
         machineId: target.machineId,
         capabilities: target.capabilities,
         status: target.status,
+        ...(target.status === "opening" || target.status === "ready"
+          ? {}
+          : { reason: sessionOpenFailureReason(target.error) }),
       })),
+      ...(failedTarget
+        ? { reason: sessionOpenFailureReason(failedTarget.error) }
+        : {}),
       expiresAt: isoTimestamp(principal.expiresAt),
     };
     if (
-      status === "ready" ||
-      targets.some(
-        (target) =>
-          target.status !== "opening" && target.status !== "ready",
-      ) ||
+      status !== "opening" ||
       Date.now() >= deadline
     ) {
       return result;
     }
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
   }
+}
+
+function sessionOpenFailureReason(error?: string): string {
+  const normalized = error?.toLowerCase() ?? "";
+  if (normalized.includes("machine_disconnected")) return "machine_offline";
+  if (
+    normalized.includes("capability") &&
+    normalized.includes("denied by local policy")
+  ) {
+    return "capability_denied_by_machine";
+  }
+  if (normalized.includes("scope violates local policy")) {
+    return "scope_denied_by_machine";
+  }
+  if (normalized.includes("session ttl violates local policy")) {
+    return "ttl_denied_by_machine";
+  }
+  if (normalized.includes("concurrent session limit")) {
+    return "machine_session_limit";
+  }
+  if (normalized.includes("unknown local profile")) {
+    return "profile_unavailable";
+  }
+  if (normalized.includes("executor") && normalized.includes("unavailable")) {
+    return "executor_unavailable";
+  }
+  return "machine_rejected_session";
 }
 
 async function waitForRemoteMcpOperation(

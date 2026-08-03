@@ -179,7 +179,8 @@ describe("remote MCP security boundary", () => {
     const request = vi.fn(async () => ({
       id: "7d8730ef-075c-40d5-a72d-8101abe17260",
       status: "pending",
-      approvalUrl: "https://odyshell.com/sessions/approve?code=SAFE",
+      approvalUrl:
+        "https://odyshell.com/sessions/approve?request=7d8730ef-075c-40d5-a72d-8101abe17260",
       expiresAt: "2026-08-03T11:17:26.648Z",
     }));
     const app = remoteMcpApp({ runtime: fakeRuntime({ request }) });
@@ -293,7 +294,8 @@ describe("remote MCP security boundary", () => {
     const request = vi.fn(async () => ({
       id: "7d8730ef-075c-40d5-a72d-8101abe17260",
       status: "pending",
-      approvalUrl: "https://odyshell.com/sessions/approve?code=SAFE",
+      approvalUrl:
+        "https://odyshell.com/sessions/approve?request=7d8730ef-075c-40d5-a72d-8101abe17260",
       expiresAt: "2026-08-03T11:17:26.648Z",
     }));
     const app = remoteMcpApp({ runtime: fakeRuntime({ request }) });
@@ -329,7 +331,7 @@ describe("remote MCP security boundary", () => {
     expect(response.statusCode).toBe(200);
     expect(response.payload).toContain("Open this link to approve or deny");
     expect(response.payload).toContain(
-      "https://odyshell.com/sessions/approve?code=SAFE",
+      "https://odyshell.com/sessions/approve?request=7d8730ef-075c-40d5-a72d-8101abe17260",
     );
     expect(request).toHaveBeenCalledOnce();
   });
@@ -468,6 +470,36 @@ describe("remote MCP security boundary", () => {
       runtime.status("7d8730ef-075c-40d5-a72d-8101abe17260"),
     ).resolves.toMatchObject({ status: "ready" });
     expect(listAgentSessionTargetRuntimes).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports a local capability rejection instead of leaving the Session opening", async () => {
+    const runtime = remoteRuntime({
+      mcpSessionForRequest: vi.fn(async () => null),
+      mcpGrantedSessionForRequest: vi.fn(async () => sessionPrincipal()),
+      listAgentSessionTargetRuntimes: vi.fn(async () => [
+        {
+          machineId: "machine-id",
+          capabilities: ["process.exec"],
+          status: "failed",
+          error: "Capability process.exec is denied by local policy",
+        },
+      ]),
+    });
+
+    await expect(
+      runtime.status("7d8730ef-075c-40d5-a72d-8101abe17260"),
+    ).resolves.toMatchObject({
+      status: "failed",
+      reason: "capability_denied_by_machine",
+      machines: [
+        {
+          machineId: "machine-id",
+          capabilities: ["process.exec"],
+          status: "failed",
+          reason: "capability_denied_by_machine",
+        },
+      ],
+    });
   });
 
   it("denies an operation outside the granted path before dispatch", async () => {

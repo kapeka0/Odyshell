@@ -51,12 +51,12 @@ export const approveDeviceSchema = cloudIdentitySchema.extend({
 });
 
 export const sessionApprovalSchema = cloudIdentitySchema.extend({
-  approvalCode: z
-    .string()
-    .min(32)
-    .max(128)
-    .regex(/^ods_approval_[A-Za-z0-9_-]+$/u),
+  requestId: z.string().uuid(),
 });
+
+export function sessionApprovalUrl(webUrl: string, requestId: string): string {
+  return `${webUrl}/sessions/approve?request=${encodeURIComponent(requestId)}`;
+}
 
 export const createCloudAgentAccessSchema = cloudIdentitySchema.extend(
   agentTokenRequestSchema.shape,

@@ -5,10 +5,10 @@ import {
   cloudRouteError,
   requireCloudRouteIdentity,
 } from "@/lib/cloud-route";
-import { sessionApprovalCodeSchema } from "@/lib/session-approval";
+import { sessionApprovalRequestIdSchema } from "@/lib/session-approval";
 
 const requestSchema = z.object({
-  code: sessionApprovalCodeSchema,
+  requestId: sessionApprovalRequestIdSchema,
 });
 
 export async function POST(request: Request) {
@@ -19,7 +19,7 @@ export async function POST(request: Request) {
   );
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "invalid_approval_code" },
+      { error: "invalid_session_request" },
       { status: 400 },
     );
   }
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     }>(
       "/v1/internal/cloud/session-requests/approve",
       authorization.identity,
-      { extraBody: { approvalCode: parsed.data.code } },
+      { extraBody: { requestId: parsed.data.requestId } },
     );
     return NextResponse.json(result);
   } catch (error) {

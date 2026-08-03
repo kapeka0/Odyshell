@@ -17,6 +17,8 @@ tools.
 When a Session needs human approval, the tool result tells the agent to show the approval link and
 wait for the user's decision before checking the request status.
 
+The same pending request and review link are available from the Odyshell Sessions dashboard.
+
 Requests can group several exact operations into one least-privilege scope per machine. Stable
 Operation IDs make retries safe, and completion is rejected while an Operation remains active.
 Groups that would create capability-path cross products are rejected.

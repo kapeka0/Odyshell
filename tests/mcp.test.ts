@@ -460,7 +460,8 @@ function fakeApprovedOdyshell(
   const requestAgentSession = vi.fn(async () => ({
     id: "7d8730ef-075c-40d5-a72d-8101abe17260",
     status: "pending" as const,
-    approvalUrl: "https://odyshell.com/sessions/approve?code=SAFE",
+    approvalUrl:
+      "https://odyshell.com/sessions/approve?request=7d8730ef-075c-40d5-a72d-8101abe17260",
     expiresAt: "2026-07-29T18:10:00.000Z",
     scopes: [],
   }));

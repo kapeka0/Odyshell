@@ -9,10 +9,10 @@ import type { SessionApproval } from "@/lib/session-approval";
 import { sessionApprovalErrorPath } from "@/lib/session-approval";
 
 export function SessionApprovalForm({
-  code,
+  requestId,
   approval,
 }: {
-  code: string;
+  requestId: string;
   approval: SessionApproval;
 }) {
   const router = useRouter();
@@ -29,7 +29,7 @@ export function SessionApprovalForm({
       const response = await fetch(`/api/session-requests/${decision}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ code }),
+        body: JSON.stringify({ requestId }),
       });
       const body = (await response.json().catch(() => ({}))) as {
         approved?: boolean;
