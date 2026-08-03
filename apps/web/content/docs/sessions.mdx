@@ -1,0 +1,44 @@
+---
+title: Sessions
+description: Grant an Agent temporary, scoped access to one or more machines.
+---
+
+A Session is the only object that grants an Agent machine authority. Agent identities remain
+persistent, while every Session has an immutable scope and a maximum duration of 24 hours.
+Its duration starts when the first target becomes ready. Opening is bounded
+to one minute and does not consume the granted duration.
+
+## Create a Session
+
+An Agent normally calls `session_request`. Odyshell returns a browser link when a member must
+approve the request. The Agent checks `session_status` after the decision and uses the explicit
+`sessionId` for every Operation.
+
+Every request has a short title used in tables, notifications and the canvas. A longer purpose is
+optional.
+
+Workspace members can also select **New** on the Sessions page. Choose an Agent with an active
+credential, an online machine, a duration, capabilities, and their exact restrictions. A manual
+Session is approved by its creator and opens immediately when that Agent has an active MCP
+installation. Otherwise, the Agent claims the approved request when it next connects.
+
+Durations are 15 minutes, 1 hour, 4 hours, 8 hours, or 24 hours. Sessions cannot be widened,
+extended, or made permanent. Create a new Session when authority must change.
+If the Client does not acknowledge a target within 60 seconds, Odyshell fails that target closed.
+Other ready targets remain usable. A disconnected target can retry the same approved authority if
+its Client reconnects before the Session expires.
+
+Transport loss terminates local Operations and closes local execution state before the Client
+reconnects. The Server marks interrupted Operations as having an unknown execution result; it does
+not assume that an interrupted command succeeded.
+
+## Timeline
+
+Open a Session to follow its lifecycle and Operations chronologically. The Timeline updates while
+the page is open and attributes actions to the Agent, the responsible member, or Odyshell.
+
+Privacy-minimal Timeline events include a conservatively redacted command shape and exit status
+needed for audit. Argument values are hidden by default. They never retain stdout, stderr, file
+contents, credentials, authorization headers, or environment values. Operation output is returned
+live to the Agent so it can decide the next step. Executable paths are reduced to their basename,
+and typed filesystem and Docker events do not retain paths, queries, or container names.

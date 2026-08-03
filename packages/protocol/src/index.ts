@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 export const DEFAULT_CLOUD_SERVER_URL =
   "https://server-production-30ab.up.railway.app";
 export const MAX_AGENT_ACCESS_SECONDS = 365 * 24 * 60 * 60;
@@ -61,23 +61,28 @@ export const agentSessionSchema = z
     workspaceId: identityIdSchema,
     id: identityIdSchema,
     agentId: identityIdSchema,
-    purpose: z.string().trim().min(1).max(280),
+    title: z.string().trim().min(1).max(96),
+    purpose: z.string().trim().min(1).max(280).nullable().optional(),
     status: z.enum(["active", "completed", "cancelled", "revoked", "expired"]),
     createdAt: z.string().datetime({ offset: true }),
+    readyAt: z.string().datetime({ offset: true }).nullable().optional(),
     expiresAt: z.string().datetime({ offset: true }),
     predecessorSessionId: identityIdSchema.nullable(),
   })
   .strict()
   .superRefine((session, context) => {
     const createdAt = Date.parse(session.createdAt);
+    const readyAt = session.readyAt ? Date.parse(session.readyAt) : undefined;
     const expiresAt = Date.parse(session.expiresAt);
+    const authorityStartedAt = readyAt ?? createdAt;
     if (
-      expiresAt <= createdAt ||
-      expiresAt - createdAt > MAX_AGENT_SESSION_SECONDS * 1_000
+      (readyAt !== undefined && readyAt < createdAt) ||
+      expiresAt <= authorityStartedAt ||
+      expiresAt - authorityStartedAt > MAX_AGENT_SESSION_SECONDS * 1_000
     ) {
       context.addIssue({
         code: "custom",
-        message: "Session expiry must be after creation and within 24 hours",
+        message: "Session expiry must be after authority starts and within 24 hours",
         path: ["expiresAt"],
       });
     }
@@ -318,14 +323,6 @@ export const sessionMachineScopeSchema = z
         path: ["restrictions", "process"],
       });
     }
-    if (scope.capabilities.includes("process.shell")) {
-      context.addIssue({
-        code: "custom",
-        message:
-          "process.shell cannot be granted by a restricted Agent Session; use process.exec",
-        path: ["capabilities"],
-      });
-    }
     if (
       scope.capabilities.includes("docker.logs") &&
       scope.restrictions.docker === undefined
@@ -343,7 +340,8 @@ export const agentSessionRequestInputSchema = z
   .object({
     agentId: z.string().uuid(),
     agentName: z.string().trim().min(1).max(128),
-    purpose: z.string().trim().min(1).max(280),
+    title: z.string().trim().min(1).max(96),
+    purpose: z.string().trim().min(1).max(280).optional(),
     scopes: z.array(sessionMachineScopeSchema).min(1).max(16),
     durationSeconds: z
       .number()
@@ -497,6 +495,9 @@ export function sessionScopeDecision(
       ? { allowed: true }
       : { allowed: false, code: "program_scope_denied" };
   }
+  if (action.kind === "process.shell") {
+    return { allowed: true };
+  }
   if (action.kind === "docker.logs") {
     const allowed =
       scope.restrictions.docker?.containers.includes(action.container) ??
@@ -556,6 +557,7 @@ const processShellOperationActionSchema = z.object({
 
 const sessionOperationActionSchemas = [
   processExecOperationActionSchema,
+  processShellOperationActionSchema,
   z.object({ kind: z.literal("fs.stat"), path: filesystemPathSchema }),
   z.object({ kind: z.literal("fs.list"), path: filesystemPathSchema.default(".") }),
   z.object({
@@ -594,7 +596,6 @@ export type SessionOperationAction = z.infer<
 >;
 
 export const operationActionSchema = z.discriminatedUnion("kind", [
-  processShellOperationActionSchema,
   ...sessionOperationActionSchemas,
 ]);
 export type OperationAction = z.infer<typeof operationActionSchema>;
@@ -621,6 +622,7 @@ export type HostPlatform = "linux" | "macos" | "windows";
 export type ClientRuntimeInfo = {
   hostPlatform: HostPlatform;
   architecture: string;
+  defaultShell: string;
   nodeVersion: string;
   /** Additive runtime metadata used for compatibility diagnostics. */
   protocolVersion?: number;
@@ -640,7 +642,7 @@ export type ClientRuntimeInfo = {
 
 const profilePolicySchema = z.object({
   workspaceRoot: z.string().min(1).max(4096),
-  maxSessionTtlSeconds: z.number().int().min(10).max(3600),
+  maxSessionTtlSeconds: z.number().int().min(10).max(MAX_AGENT_SESSION_SECONDS),
   maxConcurrentSessions: z.number().int().min(1).max(32),
   maxOutputBytes: z.number().int().min(1024).max(16 * 1024 * 1024),
   capabilities: z.array(capabilitySchema).min(1),
@@ -698,6 +700,12 @@ export type ServerToClientMessage =
       capabilities: Capability[];
       /** Required for canonical Agent Sessions; omitted only by legacy authority. */
       restrictions?: SessionRestrictions;
+      expiresAt: string;
+      serverTime?: string;
+    }
+  | {
+      type: "session.expires";
+      sessionId: string;
       expiresAt: string;
       serverTime?: string;
     }
@@ -785,9 +793,12 @@ export function operationSessionScope(
         },
       };
     case "process.shell":
-      throw new Error(
-        "process.shell cannot be scoped safely; use process.exec with an explicit program and arguments",
-      );
+      return {
+        machineId,
+        profile,
+        capabilities: [capability],
+        restrictions: {},
+      };
     case "fs.stat":
     case "fs.list":
     case "fs.search":

@@ -70,6 +70,7 @@ import {
   eventSinkDetailLevels,
   eventSinkRetryAt,
   postSignedTimeline,
+  redactEventSinkMetadata,
   redactTimelineMetadata,
   signedTimelineDelivery,
   type EventSinkDetailLevel,
@@ -103,8 +104,20 @@ const completeAgentSessionSchema = agentIdentityReferenceSchema
 const cloudSessionSchema = cloudIdentitySchema
   .extend({ sessionId: z.string().uuid() })
   .strict();
+const cloudManualSessionSchema = cloudIdentitySchema
+  .extend({
+    title: z.string().trim().min(1).max(96),
+    purpose: z.string().trim().max(280).optional(),
+    agentId: z.string().uuid(),
+    scopes: agentSessionRequestInputSchema.shape.scopes,
+    durationSeconds: z.number().int().min(15 * 60).max(24 * 60 * 60),
+  })
+  .strict();
 const cloudNotificationSchema = cloudIdentitySchema
-  .extend({ notificationId: z.string().uuid() })
+  .extend({
+    notificationId: z.string().uuid(),
+    read: z.boolean().default(true),
+  })
   .strict();
 const startAgentDeviceAuthorizationSchema = z
   .object({ agentName: z.string().trim().min(1).max(80) })
@@ -555,7 +568,18 @@ function privacyMinimalTimelineMetadata(
     "predecessorSessionId",
     "executorAgentId",
     "requesterAgentId",
+    "actorHumanId",
+    "actorAgentId",
     "runId",
+    "kind",
+    "command",
+    "program",
+    "args",
+    "exitCode",
+    "outputTruncated",
+    "errorCode",
+    "correlationId",
+    "outcome",
   ]) {
     if (metadata[key] !== undefined) safe[key] = metadata[key];
   }
@@ -582,6 +606,7 @@ async function timelineExport(
   events: Awaited<ReturnType<typeof db.workspaceSessionTimeline>>,
   detailLevel: EventSinkDetailLevel,
   now = Date.now(),
+  audience: "timeline" | "event-sink" = "timeline",
 ): Promise<TimelineExport> {
   const retainedAfter = now - retention.auditMilliseconds;
   const operationMetadata =
@@ -611,7 +636,9 @@ async function timelineExport(
           eventType: event.eventType,
           source: event.source,
           ...(event.operationId ? { operationId: event.operationId } : {}),
-          metadata: redactTimelineMetadata(
+          metadata: (audience === "event-sink"
+            ? redactEventSinkMetadata
+            : redactTimelineMetadata)(
             {
               ...event.metadata,
               ...(event.eventType === "operation.completed"
@@ -690,10 +717,12 @@ async function deleteWorkspaceAgent(
   workspaceId: string,
   principalId: string,
   agentId: string,
+  notifyUserId?: string,
 ): Promise<{
   deletedAgents: number;
   terminatedSessions: number;
 } | null> {
+  const agent = await db.getAgentIdentity(workspaceId, agentId);
   const hierarchy = await db.deleteWorkspaceAgent(workspaceId, agentId);
   if (!hierarchy) return null;
   let terminatedSessions = 0;
@@ -724,6 +753,17 @@ async function deleteWorkspaceAgent(
     deletedAgents: hierarchy.agentIds.length,
     terminatedSessions,
   });
+  if (notifyUserId) {
+    await db.createNotification({
+      workspaceId,
+      userId: notifyUserId,
+      kind: "agent.revoked",
+      title: "Agent removed",
+      description: `${agent?.name ?? "Agent"} no longer has access`,
+      href: "/dashboard/agents",
+      resourceId: agentId,
+    });
+  }
   gateway.notifyWorkspace(workspaceId);
   return {
     deletedAgents: hierarchy.agentIds.length,
@@ -1279,6 +1319,7 @@ app.post(
       usage,
       connections,
       agents,
+      runnableAgentIds,
       sessions,
       sessionRequests,
       policies,
@@ -1289,6 +1330,7 @@ app.post(
       db.workspacePlan(context.workspace.id),
       db.workspaceConnections(context.workspace.id),
       db.listWorkspaceAgents(context.workspace.id),
+      db.listRunnableAgentIds(context.workspace.id),
       db.listWorkspaceAgentSessions(context.workspace.id),
       db.listWorkspaceAgentSessionRequests(context.workspace.id),
       db.listAgentPolicies(context.workspace.id),
@@ -1338,6 +1380,7 @@ app.post(
         kind: agent.kind,
         status: agent.status,
         parentAgentId: agent.parentAgentId ?? null,
+        credentialActive: runnableAgentIds.includes(agent.id),
       })),
       notifications: notifications.map((notification) => ({
         ...notification,
@@ -1348,19 +1391,23 @@ app.post(
         id: session.id,
         agentId: session.agentId,
         agentName: session.agentName,
+        title: session.title,
         purpose: session.purpose,
         status: session.status,
         expiresAt: isoTimestamp(session.expiresAt),
+        readyAt: isoTimestamp(session.readyAt),
         createdAt: isoTimestamp(session.createdAt),
         requestedByHumanId: session.requestedByHumanId,
         requestedByAgentId: session.requestedByAgentId ?? null,
         runId: session.runId ?? null,
+        scopes: session.scopes,
         targets: session.targets,
       })),
       sessionRequests: sessionRequests.map((sessionRequest) => ({
         id: sessionRequest.id,
         agentId: sessionRequest.agentId,
         agentName: sessionRequest.agentName,
+        title: sessionRequest.title,
         purpose: sessionRequest.purpose,
         durationSeconds: sessionRequest.durationSeconds,
         status: sessionRequest.status,
@@ -1404,10 +1451,108 @@ app.post(
       data: sessions.map((session) => ({
         ...session,
         expiresAt: isoTimestamp(session.expiresAt),
+        readyAt: isoTimestamp(session.readyAt),
         createdAt: isoTimestamp(session.createdAt),
         updatedAt: isoTimestamp(session.updatedAt),
       })),
     };
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/sessions/create",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = cloudManualSessionSchema.safeParse(request.body);
+    if (!parsed.success || parsed.data.scopes.length !== 1) {
+      return reply.code(400).send({ error: "invalid_request" });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const [agent, runnableAgentIds] = await Promise.all([
+      db.getAgentIdentity(context.workspace.id, parsed.data.agentId),
+      db.listRunnableAgentIds(context.workspace.id),
+    ]);
+    if (!agent || agent.status !== "active" || !runnableAgentIds.includes(agent.id)) {
+      return reply.code(409).send({ error: "agent_credential_unavailable" });
+    }
+    const requestId = randomUUID();
+    const approvalCodeHash = hashToken(requestId);
+    const created = await db.createAgentSessionRequest({
+      workspaceId: context.workspace.id,
+      requestId,
+      agentId: agent.id,
+      agentName: agent.name,
+      humanId: parsed.data.userId,
+      scopes: parsed.data.scopes,
+      title: parsed.data.title,
+      ...(parsed.data.purpose ? { purpose: parsed.data.purpose } : {}),
+      durationSeconds: parsed.data.durationSeconds,
+      approvalCodeHash,
+      expiresAt: Date.now() + 10 * 60_000,
+      allowWorkspaceAgent: true,
+      notifyRequester: false,
+    });
+    if (!created) return reply.code(403).send({ error: "session_scope_denied" });
+    if (created.status === "pending") {
+      const approved = await db.approveAgentSessionRequest({
+        workspaceId: context.workspace.id,
+        approvalCodeHash,
+        approverHumanId: parsed.data.userId,
+        now: Date.now(),
+      });
+      if (approved.status !== "approved") {
+        return reply.code(409).send({ error: `session_${approved.status}` });
+      }
+    }
+
+    const installation = await db.activeMcpInstallationForAgent(
+      context.workspace.id,
+      agent.id,
+    );
+    if (!installation) {
+      gateway.notifyWorkspace(context.workspace.id);
+      return reply.code(201).send({ requestId, status: "approved" });
+    }
+    const claimed = await db.claimAgentSessionRequest({
+      workspaceId: context.workspace.id,
+      requestId,
+      agentId: agent.id,
+      humanId: installation.userId,
+      sessionId: randomUUID(),
+      authority: { kind: "mcp", installationId: installation.id },
+      now: Date.now(),
+    });
+    if (claimed.status !== "claimed") {
+      return reply.code(409).send({ error: `session_${claimed.status}` });
+    }
+    for (const target of claimed.targets) {
+      const sent = gateway.send(target.machineId, {
+        type: "session.open",
+        sessionId: target.runtimeSessionId,
+        profile: target.scope.profile,
+        capabilities: target.scope.capabilities,
+        restrictions: target.scope.restrictions,
+        expiresAt: new Date(claimed.session.expiresAt).toISOString(),
+        serverTime: new Date().toISOString(),
+      });
+      if (!sent) {
+        await db.markSessionOpenFailed(
+          target.machineId,
+          target.runtimeSessionId,
+          "machine_disconnected",
+        );
+      }
+    }
+    gateway.notifyWorkspace(context.workspace.id);
+    return reply.code(201).send({
+      requestId,
+      sessionId: claimed.session.id,
+      status: "opening",
+    });
   },
 );
 
@@ -1428,10 +1573,11 @@ app.post(
       context.workspace.id,
       parsed.data.userId,
       parsed.data.notificationId,
+      parsed.data.read,
     );
     if (!marked) return reply.code(404).send({ error: "notification_not_found" });
     gateway.notifyWorkspace(context.workspace.id);
-    return { read: true };
+    return { read: parsed.data.read };
   },
 );
 
@@ -2274,6 +2420,7 @@ app.post(
       context.workspace.id,
       parsed.data.userId,
       parsed.data.agentId,
+      parsed.data.userId,
     );
     if (!result) return reply.code(404).send({ error: "agent_not_found" });
     return { deleted: true, ...result };
@@ -2872,7 +3019,8 @@ app.post(
         : {}),
       ...(parsed.data.runId ? { runId: parsed.data.runId } : {}),
       scopes: parsed.data.scopes,
-      purpose: parsed.data.purpose,
+      title: parsed.data.title,
+      ...(parsed.data.purpose ? { purpose: parsed.data.purpose } : {}),
       durationSeconds: parsed.data.durationSeconds,
       approvalCodeHash: hashToken(requestId),
       expiresAt,
@@ -2925,6 +3073,46 @@ app.post(
         : {}),
       expiresAt: isoTimestamp(created.expiresAt),
     });
+  },
+);
+
+app.get(
+  "/v1/agent-session-requests",
+  { preHandler: requireSessionRequester },
+  async (request, reply) => {
+    const parsed = agentIdentityReferenceSchema.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request" });
+    }
+    const principal = sessionRequesterFor(request);
+    if (
+      principal.agent &&
+      !(await requestedAgentFor(principal, parsed.data.agentId))
+    ) {
+      return reply.code(403).send({ error: "agent_identity_mismatch" });
+    }
+    const requests = await db.listAgentSessionRequests(
+      principal.workspaceId,
+      parsed.data.agentId,
+      principal.humanId,
+      20,
+    );
+    return {
+      data: requests.map((sessionRequest) => ({
+        id: sessionRequest.id,
+        title: sessionRequest.title,
+        ...(sessionRequest.purpose
+          ? { purpose: sessionRequest.purpose }
+          : {}),
+        scopes: sessionRequest.scopes,
+        durationSeconds: sessionRequest.durationSeconds,
+        status: sessionRequest.status,
+        expiresAt: isoTimestamp(sessionRequest.expiresAt),
+        ...(sessionRequest.sessionId
+          ? { sessionId: sessionRequest.sessionId }
+          : {}),
+      })),
+    };
   },
 );
 
@@ -3146,10 +3334,9 @@ app.get(
     const sessions = await db.listWorkspaceAgentSessions(
       principal.workspaceId,
       200,
-      {
-        humanId: principal.humanId,
-        ...(principal.agent ? { agentId: principal.agent.agentId } : {}),
-      },
+      principal.agent
+        ? { agentId: principal.agent.agentId }
+        : { humanId: principal.humanId },
     );
     return {
       data: sessions.map((session) => ({
@@ -3294,12 +3481,10 @@ app.get<{ Params: { sessionId: string } }>(
       if (targets.length === 0) {
         return reply.code(404).send({ error: "session_not_found" });
       }
-      const status = targets.every((target) => target.status === "ready")
+      const status = targets.some((target) => target.status === "ready")
         ? "ready"
         : targets.some((target) => target.status === "opening")
           ? "opening"
-          : targets.some((target) => target.status === "ready")
-            ? "ready"
             : targets.some((target) => target.status === "failed")
               ? "failed"
           : targets.every((target) =>
@@ -3443,6 +3628,9 @@ app.post<{ Params: { sessionId: string } }>(
       sessionId: request.params.sessionId,
       agentId: parsed.data.agentId,
       requestedByHumanId: principal.humanId,
+      ...(principal.agent
+        ? { actorAgentId: principal.agent.agentId }
+        : { actorHumanId: principal.humanId }),
       reason: "cancelled",
     });
     if (!termination) {
@@ -3502,6 +3690,9 @@ app.post<{ Params: { sessionId: string } }>(
       sessionId: request.params.sessionId,
       agentId: parsed.data.agentId,
       requestedByHumanId: principal.humanId,
+      ...(principal.agent
+        ? { actorAgentId: principal.agent.agentId }
+        : { actorHumanId: principal.humanId }),
       outcome: parsed.data.outcome,
       ...(parsed.data.summary ? { summary: parsed.data.summary } : {}),
     });
@@ -3585,7 +3776,8 @@ app.post<{ Params: { sessionId: string } }>(
         ? { requesterAgentId: principal.agent.agentId }
         : {}),
       scopes: predecessor.scopes,
-      purpose: predecessor.purpose,
+      title: predecessor.title,
+      ...(predecessor.purpose ? { purpose: predecessor.purpose } : {}),
       durationSeconds:
         parsed.data.durationSeconds ?? predecessor.durationSeconds,
       approvalCodeHash: hashToken(requestId),
@@ -3701,7 +3893,7 @@ app.post<{ Params: { sessionId: string } }>(
       if (!target) {
         return reply.code(404).send({ error: "session_target_not_found" });
       }
-      if (target.status !== "ready") {
+      if (!target.canonicalReady || target.status !== "ready") {
         return reply
           .code(409)
           .send({ error: "session_not_ready", status: target.status });
@@ -4041,6 +4233,32 @@ app.get<{ Querystring: { limit?: string } }>(
 
 const expiryTimer = setInterval(() => {
   void (async () => {
+    const staleOpenings = await db.failStaleSessionOpenings();
+    const changedWorkspaces = new Set<string>();
+    for (const session of staleOpenings.failed) {
+      gateway.send(session.machineId, {
+        type: "session.close",
+        sessionId: session.id,
+        reason: "opening_timeout",
+      });
+      changedWorkspaces.add(session.workspaceId);
+    }
+    for (const session of staleOpenings.ready) {
+      const expiresAt = new Date(session.expiresAt).toISOString();
+      const serverTime = new Date().toISOString();
+      for (const target of session.targets) {
+        gateway.send(target.machineId, {
+          type: "session.expires",
+          sessionId: target.runtimeSessionId,
+          expiresAt,
+          serverTime,
+        });
+      }
+      changedWorkspaces.add(session.workspaceId);
+    }
+    for (const workspaceId of await db.notifyStaleOfflineMachines()) {
+      changedWorkspaces.add(workspaceId);
+    }
     const expired = await db.expireSessions();
     for (const session of expired) {
       gateway.send(session.machineId, {
@@ -4049,8 +4267,11 @@ const expiryTimer = setInterval(() => {
         reason: "expired",
       });
     }
+    for (const workspaceId of changedWorkspaces) {
+      gateway.notifyWorkspace(workspaceId);
+    }
   })().catch((error: unknown) => app.log.error(error, "Session expiry sweep failed"));
-}, 60_000);
+}, 10_000);
 
 const retentionTimer = setInterval(() => {
   void purgeExpiredData().catch((error: unknown) =>
@@ -4083,6 +4304,7 @@ const deliverEventSinks = async (): Promise<void> => {
           [delivery.event],
           delivery.detailLevel,
           now,
+          "event-sink",
         );
         const signed = signedTimelineDelivery(
           exported,

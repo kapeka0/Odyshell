@@ -89,16 +89,9 @@ export function createRemoteMcpRuntime(
       try {
         scopes = operationSessionScopes(operations);
       } catch {
-        const shellRequested = input.operations.some(
-          (operation) => operation.action.kind === "process.shell",
-        );
         throw new RemoteMcpError(
-          shellRequested
-            ? "Free-form shell cannot be safely scoped. Use process.exec."
-            : "Operations cannot be combined without broadening their scope.",
-          shellRequested
-            ? "process_shell_unsupported"
-            : "session_scope_conflict",
+          "Operations cannot be combined without broadening their scope.",
+          "session_scope_conflict",
           400,
         );
       }
@@ -111,7 +104,8 @@ export function createRemoteMcpRuntime(
         humanId: installation.userId,
         ...(input.runId ? { runId: input.runId } : {}),
         scopes,
-        purpose: input.purpose,
+        title: input.title,
+        ...(input.purpose ? { purpose: input.purpose } : {}),
         durationSeconds: input.durationSeconds,
         approvalCodeHash: hashToken(requestId),
         expiresAt: Date.now() + 10 * 60 * 1_000,
@@ -149,23 +143,52 @@ export function createRemoteMcpRuntime(
         expiresAt: isoTimestamp(created.expiresAt),
       };
     },
-    async requests() {
+    async sessions({ includeHistory = false } = {}) {
       const requests = await db.listAgentSessionRequests(
         installation.workspaceId,
         installation.agentId,
         installation.userId,
         20,
       );
+      const sessions = await db.listWorkspaceAgentSessions(
+        installation.workspaceId,
+        100,
+        { agentId: installation.agentId },
+      );
       return {
-        data: requests.map((request) => ({
-          id: request.id,
-          status: request.status,
-          purpose: request.purpose,
-          ...(request.status === "pending" && webUrl
-            ? { approvalUrl: sessionApprovalUrl(webUrl, request.id) }
-            : {}),
-          expiresAt: isoTimestamp(request.expiresAt),
-        })),
+        data: [
+          ...sessions
+            .filter((session) => includeHistory || session.status === "active")
+            .map((session) => ({
+              kind: "session",
+              sessionId: session.id,
+              title: session.title,
+              status: session.status,
+              purpose: session.purpose,
+              expiresAt: isoTimestamp(session.expiresAt),
+              machines: session.targets.map((target) => ({
+                id: target.machineId,
+                name: target.machineName,
+                status: target.status,
+                ...mcpMachineExecutionFacts(target.machineRuntime),
+              })),
+            })),
+          ...requests
+            .filter((request) =>
+              includeHistory || ["pending", "approved"].includes(request.status),
+            )
+            .map((request) => ({
+              kind: "request",
+              id: request.id,
+              ...(request.title ? { title: request.title } : {}),
+              status: request.status,
+              purpose: request.purpose,
+              ...(request.status === "pending" && webUrl
+                ? { approvalUrl: sessionApprovalUrl(webUrl, request.id) }
+                : {}),
+              expiresAt: isoTimestamp(request.expiresAt),
+            })),
+        ],
       };
     },
     async status(requestId) {
@@ -429,7 +452,6 @@ export function createRemoteMcpRuntime(
         workspaceId: principal.workspaceId,
         sessionId,
         agentId: principal.agentId,
-        requestedByHumanId: installation.userId,
         outcome: input.outcome,
         ...(input.summary ? { summary: input.summary } : {}),
       });
@@ -488,6 +510,7 @@ function mcpMachineExecutionFacts(runtime: unknown): {
   runner: "host" | "docker" | null;
   capabilities: Capability[] | null;
   clientVersion: string | null;
+  defaultShell: string | null;
 } {
   if (!isRecord(runtime)) {
     return {
@@ -496,6 +519,7 @@ function mcpMachineExecutionFacts(runtime: unknown): {
       runner: null,
       capabilities: null,
       clientVersion: null,
+      defaultShell: null,
     };
   }
   const platform =
@@ -505,9 +529,10 @@ function mcpMachineExecutionFacts(runtime: unknown): {
       ? runtime.hostPlatform
       : null;
   const profiles = Array.isArray(runtime.profiles) ? runtime.profiles : [];
-  const workspace = profiles.find(
-    (profile) => isRecord(profile) && profile.name === "workspace",
-  );
+  const workspace =
+    profiles.find(
+      (profile) => isRecord(profile) && profile.name === "default",
+    ) ?? profiles.find((profile) => isRecord(profile));
   const runner =
     isRecord(workspace) &&
     (workspace.runner === "host" || workspace.runner === "docker")
@@ -522,6 +547,7 @@ function mcpMachineExecutionFacts(runtime: unknown): {
     runner,
     capabilities,
     clientVersion: safeRuntimeString(runtime.clientVersion),
+    defaultShell: safeRuntimeString(runtime.defaultShell),
   };
 }
 
@@ -574,26 +600,26 @@ async function remoteMcpSessionStatus(
       principal.sessionId,
       principal.agentId,
     );
+    const readyTarget = targets.find((target) => target.status === "ready");
+    const openingTarget = targets.find((target) => target.status === "opening");
     const failedTarget = targets.find(
       (target) => target.status !== "opening" && target.status !== "ready",
     );
-    const status = failedTarget
-      ? "failed"
-      : targets.every((target) => target.status === "ready")
-        ? "ready"
-        : "opening";
+    const status = readyTarget ? "ready" : openingTarget ? "opening" : "failed";
     const result = {
       status,
       sessionId: principal.sessionId,
       machines: targets.map((target) => ({
         machineId: target.machineId,
+        name: target.machineName ?? target.machineId,
+        ...mcpMachineExecutionFacts(target.machineRuntime),
         capabilities: target.capabilities,
         status: target.status,
         ...(target.status === "opening" || target.status === "ready"
           ? {}
           : { reason: sessionOpenFailureReason(target.error) }),
       })),
-      ...(failedTarget
+      ...(status === "failed" && failedTarget
         ? { reason: sessionOpenFailureReason(failedTarget.error) }
         : {}),
       expiresAt: isoTimestamp(principal.expiresAt),

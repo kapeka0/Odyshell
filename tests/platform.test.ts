@@ -11,8 +11,13 @@ import { parseDockerRuntime } from "../apps/client/src/docker-runner.js";
 import {
   adjustedSessionDeadline,
   inspectClientRuntime,
+  terminateLocalAuthority,
 } from "../apps/client/src/index.js";
 import { clientCompatibility } from "../apps/server/src/compatibility.js";
+import {
+  MachineLifecycleQueue,
+  socketReadyForAuthentication,
+} from "../apps/server/src/gateway.js";
 import {
   activateMacLaunchAgent,
   activateLinuxUserService,
@@ -128,14 +133,14 @@ describe("client platform support", () => {
     });
     expect(
       clientCompatibility({
-        protocolVersion: 1,
+        protocolVersion: 2,
         clientVersion: "0.9.0",
       }),
     ).toMatchObject({
       compatible: true,
       upgradeRequired: false,
       clientVersion: "0.9.0",
-      protocolVersion: 1,
+      protocolVersion: 2,
     });
     expect(
       clientCompatibility({
@@ -155,6 +160,8 @@ describe("client platform support", () => {
       gateway.indexOf("message.protocolVersion !== PROTOCOL_VERSION"),
     );
     expect(gateway).toContain("setMachineIncompatible");
+    expect(gateway).toContain("queueMachineLifecycle(");
+    expect(gateway).toContain("this.connections.get(state.machineId!) !== socket");
   });
 
   it("uses an unprivileged container identity on every host", () => {
@@ -173,6 +180,97 @@ describe("client platform support", () => {
     expect(() => parseDockerRuntime("windows\tx86_64\t28.1.0\tDocker Desktop")).toThrow(
       "Linux container engine",
     );
+  });
+
+  it("serializes disconnect and reconnect state for one machine", async () => {
+    const queue = new MachineLifecycleQueue();
+    const order: string[] = [];
+    let releaseDisconnect!: () => void;
+    let markDisconnectStarted!: () => void;
+    const disconnectGate = new Promise<void>((resolveGate) => {
+      releaseDisconnect = resolveGate;
+    });
+    const disconnectStarted = new Promise<void>((resolveStarted) => {
+      markDisconnectStarted = resolveStarted;
+    });
+    const disconnect = queue.run("machine-a", async () => {
+      order.push("disconnect:start");
+      markDisconnectStarted();
+      await disconnectGate;
+      order.push("disconnect:end");
+    });
+    const reconnect = queue.run("machine-a", async () => {
+      order.push("reconnect");
+    });
+
+    await disconnectStarted;
+    expect(order).toEqual(["disconnect:start"]);
+    releaseDisconnect();
+    await Promise.all([disconnect, reconnect]);
+    expect(order).toEqual(["disconnect:start", "disconnect:end", "reconnect"]);
+  });
+
+  it("does not activate a socket that closes while authentication is queued", async () => {
+    const queue = new MachineLifecycleQueue();
+    const socket = { readyState: 1 };
+    let releaseBlocker!: () => void;
+    let blockerStarted!: () => void;
+    const started = new Promise<void>((resolveStarted) => {
+      blockerStarted = resolveStarted;
+    });
+    const blocker = queue.run("machine-a", async () => {
+      blockerStarted();
+      await new Promise<void>((resolveBlocker) => {
+        releaseBlocker = resolveBlocker;
+      });
+    });
+    let activated = false;
+    const authentication = queue.run("machine-a", async () => {
+      if (!socketReadyForAuthentication(socket)) return;
+      activated = true;
+    });
+
+    await started;
+    socket.readyState = 3;
+    releaseBlocker();
+    await Promise.all([blocker, authentication]);
+
+    expect(activated).toBe(false);
+    const gateway = readFileSync(
+      resolve(process.cwd(), "apps/server/src/gateway.ts"),
+      "utf8",
+    );
+    expect(gateway.indexOf("state.machineId = message.machineId")).toBeLessThan(
+      gateway.indexOf("await this.queueMachineLifecycle(message.machineId"),
+    );
+    expect(gateway).toContain("if (!socketReadyForAuthentication(socket)) return");
+  });
+
+  it("resumes an identical local Session after transport reconnect", () => {
+    const client = readFileSync(
+      resolve(process.cwd(), "apps/client/src/index.ts"),
+      "utf8",
+    );
+
+    expect(client).toContain("const existing = this.sessions.get(message.sessionId)");
+    expect(client).toContain("sessionScopeSubsetDecision(requested, current)");
+    expect(client).toContain("sessionScopeSubsetDecision(current, requested)");
+    expect(client).toContain("Session retry scope does not match active local authority");
+    expect(client).toContain("await this.dropLocalAuthority()");
+    expect(client).toContain("void this.dropLocalAuthority()");
+    expect(client).toContain("this.operations.clear()");
+    expect(client).toContain("this.sessions.clear()");
+    expect(client).toContain("Local authority cleanup could not be verified; Client stopped");
+  });
+
+  it("terminates Operations and local Session state before reconnect", async () => {
+    const events: string[] = [];
+    await terminateLocalAuthority(
+      [async () => { events.push("operation:cancelled"); }],
+      [async () => { events.push("session:closed"); }],
+    );
+
+    expect(events).toEqual(["operation:cancelled", "session:closed"]);
   });
 
   it("renders a restartable Linux user service without relying on PATH", () => {

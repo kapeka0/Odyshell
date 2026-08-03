@@ -47,15 +47,18 @@ describe("protocol validation", () => {
     },
   );
 
-  it("refuses to translate unrestricted shell text into a restricted Session", () => {
-    expect(() =>
+  it("models shell as an explicit broad Session capability", () => {
+    expect(
       operationSessionScope("7a354999-6a6c-42db-9467-e1416da255f1", {
         kind: "process.shell",
         command: "git status",
         cwd: ".",
         env: {},
       }),
-    ).toThrowError(/process\.exec/);
+    ).toMatchObject({
+      capabilities: ["process.shell"],
+      restrictions: {},
+    });
   });
 
   it("accepts an absolute working directory for an exact process operation", () => {
@@ -304,6 +307,7 @@ describe("protocol validation", () => {
       workspaceId: "workspace-a",
       id: "session-a",
       agentId: "agent-a",
+      title: "Inspect dependencies",
       purpose: "Inspect dependency versions",
       status: "active",
       createdAt: "2026-07-30T10:00:00.000Z",
@@ -321,6 +325,20 @@ describe("protocol validation", () => {
     expect(
       agentSessionSchema.safeParse({
         ...session,
+        readyAt: "2026-07-30T12:00:00.000Z",
+        expiresAt: "2026-07-31T12:00:00.000Z",
+      }).success,
+    ).toBe(true);
+    expect(
+      agentSessionSchema.safeParse({
+        ...session,
+        readyAt: "2026-07-30T12:00:00.000Z",
+        expiresAt: "2026-07-31T12:00:00.001Z",
+      }).success,
+    ).toBe(false);
+    expect(
+      agentSessionSchema.safeParse({
+        ...session,
         sessionCredential: "ods_session_secret",
       }).success,
     ).toBe(false);
@@ -330,6 +348,7 @@ describe("protocol validation", () => {
     const request = {
       agentId: "df64d093-b6f6-4d91-8132-38b8038ca7c5",
       agentName: "Claude desktop",
+      title: "Read application configuration",
       purpose: "Read the application configuration",
       scopes: [
         {
@@ -354,6 +373,18 @@ describe("protocol validation", () => {
     expect(parsed.scopes[0]?.restrictions.filesystem?.paths[0]?.path).toBe(
       "config/app.json",
     );
+    expect(
+      agentSessionRequestInputSchema.safeParse({
+        ...request,
+        purpose: undefined,
+      }).success,
+    ).toBe(true);
+    expect(
+      agentSessionRequestInputSchema.safeParse({
+        ...request,
+        title: undefined,
+      }).success,
+    ).toBe(false);
     expect(normalizeRelativePath("config//./app.json")).toBe(
       "config/app.json",
     );
@@ -449,7 +480,7 @@ describe("protocol validation", () => {
           },
         ],
       }).success,
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("fails closed when a Session scope exceeds local typed restrictions", () => {
@@ -572,5 +603,36 @@ describe("protocol validation", () => {
         },
       }).success,
     ).toBe(true);
+  });
+
+  it("keeps Client policy compatible with the 24-hour Session boundary", () => {
+    const profile = {
+      runner: "host" as const,
+      workspaceRoot: "/srv/app",
+      maxConcurrentSessions: 2,
+      maxOutputBytes: 1024 * 1024,
+      capabilities: ["process.exec" as const],
+    };
+    const config = {
+      serverUrl: "https://api.odyshell.test",
+      workspaceId: "workspace-a",
+      machineId: "2dc24de7-ec0e-45b3-88c1-acbb900e51f8",
+      machineName: "linux-server",
+      privateKeyPem: "private-key",
+      stateDirectory: "/tmp/odyshell",
+      profiles: {
+        workspace: { ...profile, maxSessionTtlSeconds: 24 * 60 * 60 },
+      },
+    };
+
+    expect(clientConfigSchema.safeParse(config).success).toBe(true);
+    expect(
+      clientConfigSchema.safeParse({
+        ...config,
+        profiles: {
+          workspace: { ...profile, maxSessionTtlSeconds: 24 * 60 * 60 + 1 },
+        },
+      }).success,
+    ).toBe(false);
   });
 });

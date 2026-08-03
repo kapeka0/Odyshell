@@ -13,11 +13,12 @@ export type ApprovedMcpRuntime = {
   ping(machine: string): Promise<unknown>;
   request(input: {
     operations: Array<{ machine: string; action: OperationAction }>;
-    purpose: string;
+    title: string;
+    purpose?: string;
     durationSeconds: number;
     runId?: string;
   }): Promise<ApprovedMcpSessionRequest>;
-  requests(): Promise<unknown>;
+  sessions(input?: { includeHistory?: boolean }): Promise<unknown>;
   status(requestId: string): Promise<unknown>;
   execute(input: {
     sessionId: string;
@@ -61,10 +62,10 @@ export function createApprovedMcpServer(
   reportUnexpectedError: (error: unknown) => void = () => undefined,
 ): McpServer {
   const server = new McpServer(
-    { name: "odyshell", version: "0.11.0" },
+    { name: "odyshell", version: "0.12.0" },
     {
       instructions:
-        "List machines before choosing platform-specific operations. Request an explicit temporary Session for a typed operation. Relative filesystem paths resolve from the Client working directory; exact absolute host paths are also supported. Absolute paths require an exact approved scope and a host execution profile. Use process.exec for exact executable and argument rules; process.shell is unavailable. When session_request returns an approval URL, show it verbatim as a clickable link and wait for the user to approve or deny it. Then follow nextAction and check session_status before executing. If a tool response is lost, use session_requests_list to recover the request. Credentials stay inside Odyshell.",
+        "Inspect machines before choosing platform-specific operations. Machine and Session results include platform, architecture, runner, capabilities and default shell. Prefer typed filesystem, Docker and process.exec operations. Request process.shell only for multi-step work that must use prior stdout or stderr; it grants broad shell access for a short Session, is never autoapproved and every command is audited. Show approval links verbatim, then call session_status. Use sessions_list to recover active authority after a lost response or a new chat. Always pass the explicit sessionId to operation_execute. Credentials stay inside Odyshell.",
     },
   );
 
@@ -97,7 +98,7 @@ export function createApprovedMcpServer(
     {
       title: "Request operation access",
       description:
-        "Request a temporary Session scoped to one or more typed operations. Relative filesystem paths resolve from the Client working directory; exact absolute host paths are also supported. Absolute paths require a host profile and are approved as exact filesystem scopes. Use process.exec for an exact executable and arguments. Free-form shell is unavailable. If approval is required, show the returned link to the user and wait for their decision, then follow nextAction.",
+        "Request a temporary Session scoped to one or more operations. Prefer structured operations. Use process.shell only when a multi-step task must inspect output before choosing the next command; it grants broad shell access, requires manual approval and remains temporary. Use machine platform and defaultShell metadata before composing OS-specific commands. If approval is required, show the returned link and follow nextAction.",
       inputSchema: z.object({
         operations: z
           .array(
@@ -108,8 +109,9 @@ export function createApprovedMcpServer(
           )
           .min(1)
           .max(16),
-        purpose: z.string().trim().min(1).max(512),
-        durationSeconds: z.number().int().min(60).max(86_400).default(900),
+        title: z.string().trim().min(1).max(96),
+        purpose: z.string().trim().min(1).max(280).optional(),
+        durationSeconds: z.number().int().min(60).max(86_400).optional(),
         runId: z.string().trim().min(1).max(128).optional(),
       }),
       annotations: requestAnnotations,
@@ -119,8 +121,9 @@ export function createApprovedMcpServer(
         () =>
           runtime.request({
             operations: input.operations,
-            purpose: input.purpose,
-            durationSeconds: input.durationSeconds,
+            title: input.title,
+            ...(input.purpose ? { purpose: input.purpose } : {}),
+            durationSeconds: input.durationSeconds ?? 3_600,
             ...(input.runId ? { runId: input.runId } : {}),
           }),
         reportUnexpectedError,
@@ -128,15 +131,16 @@ export function createApprovedMcpServer(
   );
 
   server.registerTool(
-    "session_requests_list",
+    "sessions_list",
     {
-      title: "List recent access requests",
+      title: "List Sessions",
       description:
-        "Recover recent Session requests owned by this MCP installation, for example after a previous tool response was lost.",
-      inputSchema: z.object({}),
+        "List pending requests and active Sessions owned by this Agent. Active authority is returned by default so a new chat can reuse an explicit Session identifier; request history only when needed.",
+      inputSchema: z.object({ includeHistory: z.boolean().default(false) }),
       annotations: readOnlyAnnotations,
     },
-    async () => runTool(() => runtime.requests(), reportUnexpectedError),
+    async ({ includeHistory }) =>
+      runTool(() => runtime.sessions({ includeHistory }), reportUnexpectedError),
   );
 
   server.registerTool(
@@ -242,6 +246,10 @@ async function runOperation(
 ): Promise<CallToolResult> {
   try {
     const result = await operation();
+    const unavailableProgram = [
+      result.operation.error,
+      result.stderr,
+    ].some((value) => typeof value === "string" && /(?:ENOENT|not recognized|not found)/i.test(value));
     return {
       ...textResult({
         operationId: result.operation.id,
@@ -254,6 +262,12 @@ async function runOperation(
         stderr: result.stderr,
         result: result.result,
         resultText: result.resultText,
+        ...(unavailableProgram
+          ? {
+              guidance:
+                "The requested program is unavailable on this machine. Call machines_list, inspect platform and defaultShell, then choose a native command and request a new Session if its scope must change.",
+            }
+          : {}),
       }),
       ...(result.operation.status === "succeeded" ? {} : { isError: true }),
     };

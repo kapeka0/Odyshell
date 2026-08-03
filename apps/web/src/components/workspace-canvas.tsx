@@ -27,7 +27,10 @@ import Link from "next/link";
 import { useTheme } from "next-themes";
 import { useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { AgentIdentityAvatar } from "@/components/identity-avatar";
+import {
+  AgentIdentityAvatar,
+  UserIdentityAvatar,
+} from "@/components/identity-avatar";
 import { StatusDot } from "@/components/status-dot";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -49,9 +52,15 @@ type AgentNodeData = {
 
 type SessionNodeData = {
   id: string;
-  purpose: string;
+  title: string;
   expiresAt: string;
   targets: number;
+  requester: {
+    kind: "human" | "agent";
+    id: string;
+    name: string;
+    imageUrl?: string;
+  } | null;
 };
 
 type MachineFlowNode = Node<MachineNodeData, "machine">;
@@ -281,13 +290,30 @@ function SessionNode({ data }: NodeProps<SessionFlowNode>) {
             href={`/dashboard/sessions/${data.id}`}
             className="nodrag block truncate font-medium hover:underline"
           >
-            {data.purpose}
+            {data.title}
           </Link>
           <SessionCountdown expiresAt={data.expiresAt} />
         </span>
       </div>
-      <div className="mt-4 border-t pt-3 text-xs text-muted-foreground">
-        {data.targets} {data.targets === 1 ? "target" : "targets"}
+      <div className="mt-4 flex items-center justify-between gap-3 border-t pt-3 text-xs text-muted-foreground">
+        <span>{data.targets} {data.targets === 1 ? "target" : "targets"}</span>
+        {data.requester ? (
+          <span className="flex min-w-0 items-center gap-1.5">
+            {data.requester.kind === "agent" ? (
+              <AgentIdentityAvatar name={data.requester.name} className="size-5" />
+            ) : (
+              <UserIdentityAvatar
+                identity={data.requester.id}
+                imageUrl={data.requester.imageUrl}
+                name={data.requester.name}
+                className="size-5"
+              />
+            )}
+            <span className="max-w-20 truncate">{data.requester.name}</span>
+          </span>
+        ) : (
+          <span>System</span>
+        )}
       </div>
     </div>
   );
@@ -344,6 +370,8 @@ function topologyFor(
     (session) => session.status === "active",
   );
   const agents = context.agents ?? [];
+  const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
+  const members = new Map((context.members ?? []).map((member) => [member.id, member]));
   const hasAgents = agents.length > 0;
   const agentNodes: AgentFlowNode[] = agents.map((agent, index) => ({
     id: `agent:${agent.id}`,
@@ -365,9 +393,24 @@ function topologyFor(
       position: { x: 410, y: 115 + index * 170 },
       data: {
         id: session.id,
-        purpose: session.purpose,
+        title: session.title,
         expiresAt: session.expiresAt,
         targets: session.targets.length,
+        requester: session.requestedByAgentId
+          ? {
+              kind: "agent" as const,
+              id: session.requestedByAgentId,
+              name: agentsById.get(session.requestedByAgentId)?.name ?? "Agent",
+            }
+          : session.requestedByHumanId
+            ? {
+                kind: "human" as const,
+                ...(members.get(session.requestedByHumanId) ?? {
+                  id: session.requestedByHumanId,
+                  name: "Member",
+                }),
+              }
+            : null,
       },
       draggable: true,
     }),

@@ -222,10 +222,29 @@ particular component, library or interaction pattern.
   not a floating toast.
 - Workspace notifications use a compact Sheet beside Quick actions. Show a
   restrained red indicator only while unread items exist, and let members mark
-  one item or all items as read.
+  one item as read or unread and all items as read. Opening the Sheet alone does
+  not change read state. Each item has a concise title and description; clicking
+  it marks it read and opens the relevant destination.
+- Notification relative time never counts seconds. Use Just now for the first
+  minute, then minute-or-larger units, and expose the exact timestamp in the
+  user's timezone on hover. Retain notifications for 30 days.
 - Direct operational notifications go to the member responsible for the
   initiating action. Keep notification copy privacy-minimal: never include
   commands, paths, operation output, credentials or Session purpose.
+- Sessions use a concise required title and optional longer purpose. Tables and
+  canvas nodes lead with the title. Session tables include the target machine;
+  multi-machine Sessions show one machine and a compact remaining count.
+- Session detail uses a chronological live Timeline. Show lifecycle and
+  Operation events with their human, Agent or Odyshell actor. Keep verified
+  command text sanitized, show exit status, and never render retained stdout or
+  stderr. Auto-scroll only while the viewer remains at the bottom.
+- Manual Session creation uses a right-side Sheet with title, optional purpose,
+  Agent, machine, duration, capabilities and capability-specific scope. Offline
+  machines and Agents without an active credential remain visible but disabled.
+  Read only and Full access are shortcuts; shell access includes an explicit
+  warning and is never autoapproved.
+- Session nodes on the canvas show the requesting Agent first, otherwise the
+  responsible human, in a quiet footer. Use System when no actor exists.
 - Personal settings and workspace settings have separate destinations.
   Workspace security settings are visible to members and editable only by
   administrators.

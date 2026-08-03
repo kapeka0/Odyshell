@@ -39,7 +39,7 @@ The final schema needs independent records for:
 - `agent_credentials`: hash, lifecycle, expiry, retirement, and provenance;
 - `agent_policies`: self-Session and delegation ceilings with validity;
 - `managed_agent_policies`: child-specific subsets of a parent ceiling;
-- `session_requests`: purpose, optional plan, requested duration, requester, and decision;
+- `session_requests`: required title, optional purpose, requested duration, requester, and decision;
 - `sessions`: immutable claimed authority, lifecycle, expiry, predecessor, and reported outcome;
 - `session_targets`: machine-specific scope and readiness;
 - `session_credentials`: one-time claim hash and revocation state;
@@ -90,7 +90,7 @@ Deliver the smallest complete workflow:
 
 1. remote MCP OAuth creates or restores one Agent per installation;
 2. `machines_list` returns machines without granting access;
-3. `session_request` accepts purpose, duration, and per-machine scopes;
+3. `session_request` accepts a title, optional purpose, duration, and per-machine scopes;
 4. an authenticated Member approves or denies through a standalone web route;
 5. MCP polls, claims once, and hides the Session Credential;
 6. typed tools require explicit Session and machine references;

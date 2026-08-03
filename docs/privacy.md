@@ -13,7 +13,10 @@ Odyshell records the minimum information required to answer:
 - when the lifecycle event happened.
 
 It does not place command text, arguments, environment values, file paths, file contents, stdout,
-or stderr in the durable control-event trail.
+or stderr in the durable control-event trail. A Session Timeline is a separate, scoped record: for
+process Operations it retains a conservatively redacted command shape and exit status so a member
+can audit what ran. Typed filesystem and Docker Timeline entries retain only the Operation kind,
+not paths, queries, or container names. Executable paths are reduced to their basename.
 
 ## Data classes
 

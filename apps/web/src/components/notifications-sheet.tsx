@@ -1,6 +1,6 @@
 "use client";
 
-import { BellIcon, CheckIcon } from "lucide-react";
+import { BellIcon, CheckIcon, CircleIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useDashboard } from "@/components/dashboard-provider";
@@ -25,12 +25,14 @@ export function NotificationsSheet() {
   const notifications = state.status === "ready" ? state.context.notifications : [];
   const unread = notifications.filter((notification) => !notification.readAt);
 
-  async function markRead(notification: CloudNotification) {
-    if (notification.readAt || pending) return;
+  async function setRead(notification: CloudNotification, read: boolean) {
+    if (Boolean(notification.readAt) === read || pending) return;
     setPending(notification.id);
     try {
       const response = await fetch(`/api/notifications/${notification.id}/read`, {
         method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ read }),
       });
       if (!response.ok) throw new Error("notification_read_failed");
       await refresh();
@@ -42,7 +44,7 @@ export function NotificationsSheet() {
   }
 
   async function openNotification(notification: CloudNotification) {
-    await markRead(notification);
+    await setRead(notification, true);
     setOpen(false);
     router.push(notification.href);
   }
@@ -123,25 +125,31 @@ export function NotificationsSheet() {
                       <span className="block truncate text-sm font-medium">
                         {notification.title}
                       </span>
+                      <span className="mt-0.5 line-clamp-2 block text-sm text-muted-foreground">
+                        {notification.description}
+                      </span>
                       <span
                         className="mt-1 block text-xs text-muted-foreground"
                         suppressHydrationWarning
+                        title={exactTime(notification.createdAt)}
                       >
                         {relativeTime(notification.createdAt)}
                       </span>
                     </button>
-                    {!notification.readAt ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        disabled={pending !== null}
-                        aria-label={`Mark ${notification.title} as read`}
-                        onClick={() => void markRead(notification)}
-                      >
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      disabled={pending !== null}
+                      aria-label={`Mark ${notification.title} as ${notification.readAt ? "unread" : "read"}`}
+                      onClick={() => void setRead(notification, !notification.readAt)}
+                    >
+                      {notification.readAt ? (
+                        <CircleIcon aria-hidden="true" />
+                      ) : (
                         <CheckIcon aria-hidden="true" />
-                      </Button>
-                    ) : null}
+                      )}
+                    </Button>
                   </div>
                 </li>
               ))}
@@ -156,10 +164,17 @@ export function NotificationsSheet() {
 function relativeTime(value: string): string {
   const seconds = Math.max(0, Math.round((Date.now() - Date.parse(value)) / 1_000));
   const formatter = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
-  if (seconds < 60) return formatter.format(-seconds, "second");
-  const minutes = Math.round(seconds / 60);
+  if (seconds < 60) return "Just now";
+  const minutes = Math.max(1, Math.floor(seconds / 60));
   if (minutes < 60) return formatter.format(-minutes, "minute");
   const hours = Math.round(minutes / 60);
   if (hours < 24) return formatter.format(-hours, "hour");
   return formatter.format(-Math.round(hours / 24), "day");
+}
+
+function exactTime(value: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
 }

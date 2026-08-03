@@ -36,7 +36,7 @@ describe("Odyshell MCP server", () => {
       "machines_list",
       "machine_ping",
       "session_request",
-      "session_requests_list",
+      "sessions_list",
       "session_status",
       "operation_execute",
       "session_complete",
@@ -79,6 +79,7 @@ describe("Odyshell MCP server", () => {
             action: { kind: "fs.read", path: "config/app.json" },
           },
         ],
+        title: "Inspect configuration",
         purpose: "Inspect configuration",
         durationSeconds: 900,
       },
@@ -90,7 +91,7 @@ describe("Odyshell MCP server", () => {
     );
 
     const recovered = await client.callTool({
-      name: "session_requests_list",
+      name: "sessions_list",
       arguments: {},
     });
 
@@ -99,6 +100,83 @@ describe("Odyshell MCP server", () => {
       "7d8730ef-075c-40d5-a72d-8101abe17260",
     );
     expect(textOf(recovered)).toContain("Inspect configuration");
+  });
+
+  it("defaults Agent-requested Sessions to one hour", async () => {
+    const requestSession = vi.fn(async () => ({
+      id: "default-duration-request",
+      status: "pending" as const,
+      approvalUrl: "https://odyshell.com/sessions/approve?request=default-duration-request",
+      expiresAt: "2026-07-29T18:10:00.000Z",
+      scopes: [],
+    }));
+    const ods = fakeApprovedOdyshell({ requestSession });
+    vi.spyOn(ods, "resolveMachine").mockResolvedValue({
+      id: "29f34f33-418c-4624-84c3-25818db42023",
+      name: "rpi5",
+      status: "online",
+      online: true,
+      lastSeenAt: null,
+      enrolledAt: "2026-08-03T16:00:00.000Z",
+      compatible: true,
+      upgradeRequired: false,
+      clientVersion: "0.12.0",
+      protocolVersion: 2,
+    });
+    const server = createApprovedOdyshellMcpServer(ods, {
+      id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+      name: "Codex",
+    });
+    const { client } = await connectServer(server);
+
+    const response = await client.callTool({
+      name: "session_request",
+      arguments: {
+        operations: [
+          {
+            machine: "rpi5",
+            action: { kind: "fs.read", path: "config/app.json" },
+          },
+        ],
+        title: "Inspect configuration",
+      },
+    });
+
+    expect(response.isError, textOf(response)).not.toBe(true);
+    expect(requestSession).toHaveBeenCalledWith(
+      expect.objectContaining({ durationSeconds: 3_600 }),
+    );
+  });
+
+  it("recovers a dashboard-approved request in a fresh local MCP process", async () => {
+    const ods = fakeApprovedOdyshell({
+      requests: async () => [
+        {
+          id: "dashboard-request",
+          title: "Inspect desktop storage",
+          status: "approved",
+          scopes: [],
+          durationSeconds: 900,
+          expiresAt: "2026-07-29T18:10:00.000Z",
+        },
+      ],
+      sessions: async () => [],
+    });
+    const server = createApprovedOdyshellMcpServer(ods, {
+      id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+      name: "Codex",
+    });
+    const { client } = await connectServer(server);
+
+    const recovered = await client.callTool({
+      name: "sessions_list",
+      arguments: {},
+    });
+
+    expect(recovered.isError).not.toBe(true);
+    expect(textOf(recovered)).toContain("dashboard-request");
+    expect(textOf(recovered)).toContain("Inspect desktop storage");
+    expect(textOf(recovered)).toContain('"status": "approved"');
   });
 
   it("accepts an exact absolute host path through local MCP approval", async () => {
@@ -130,6 +208,7 @@ describe("Odyshell MCP server", () => {
             action: { kind: "fs.read", path: "/etc/hosts" },
           },
         ],
+        title: "Inspect host configuration",
         purpose: "Inspect host configuration",
         durationSeconds: 900,
       },
@@ -186,6 +265,7 @@ describe("Odyshell MCP server", () => {
             },
           },
         ],
+        title: "Copy selected data",
         purpose: "Copy selected data",
         durationSeconds: 600,
       },
@@ -263,6 +343,38 @@ describe("Odyshell MCP server", () => {
     expect(textOf(result)).toContain("path_scope_denied");
     expect(textOf(result)).not.toContain("internalRestriction");
     expect(textOf(result)).not.toContain("config/app.json");
+  });
+
+  it("guides the Agent back to machine metadata when a program is unavailable", async () => {
+    const failed = successfulOperation("");
+    failed.operation.status = "failed";
+    failed.operation.exitCode = null;
+    failed.operation.error = "spawn df ENOENT";
+    failed.stderr = "spawn df ENOENT";
+    const execute = vi.fn(async () => failed);
+    const server = createApprovedOdyshellMcpServer(
+      fakeApprovedOdyshell({ execute }),
+      { id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb", name: "Codex" },
+    );
+    const { client } = await connectServer(server);
+    await client.callTool({
+      name: "session_status",
+      arguments: { requestId: "7d8730ef-075c-40d5-a72d-8101abe17260" },
+    });
+
+    const result = await client.callTool({
+      name: "operation_execute",
+      arguments: {
+        sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
+        machine: "desktop",
+        action: { kind: "process.exec", program: "df", args: ["-h"] },
+        operationId: "f87d486b-928d-4df9-b19e-f843855867dc",
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("machines_list");
+    expect(textOf(result)).toContain("platform");
   });
 
   it("closes Sessions and reads their verified timeline through the shared tools", async () => {
@@ -356,9 +468,12 @@ function fakeApprovedOdyshell(
       summary?: string,
     ) => Promise<unknown>;
     timeline?: (sessionId: string) => Promise<unknown>;
+    requests?: () => Promise<unknown[]>;
+    sessions?: () => Promise<unknown[]>;
+    requestSession?: (...args: unknown[]) => Promise<unknown>;
   } = {},
 ): Odyshell {
-  const requestAgentSession = vi.fn(async () => ({
+  const requestAgentSession = overrides.requestSession ?? vi.fn(async () => ({
     id: "7d8730ef-075c-40d5-a72d-8101abe17260",
     status: "pending" as const,
     approvalUrl:
@@ -401,6 +516,23 @@ function fakeApprovedOdyshell(
     })),
     agent: vi.fn(() => ({
       requestSession: requestAgentSession,
+      requests: vi.fn(overrides.requests ?? (async () => [])),
+      sessions: vi.fn(overrides.sessions ?? (async () => [
+        {
+          id: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
+          agentId: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+          agentName: "Codex",
+          title: "Inspect configuration",
+          status: "active",
+          expiresAt: "2026-07-29T19:00:00.000Z",
+          scopes: [],
+          targets: [
+            { machineId: "machine-id", machineName: "rpi5", status: "ready" },
+          ],
+          createdAt: "2026-07-29T18:00:00.000Z",
+          updatedAt: "2026-07-29T18:00:01.000Z",
+        },
+      ])),
       status,
       claim,
       complete:

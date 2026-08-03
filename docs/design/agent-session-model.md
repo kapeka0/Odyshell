@@ -100,7 +100,8 @@ A Session Request contains:
 
 - the Agent that will execute;
 - the Agent or human that requested it;
-- a required short purpose;
+- a required short title;
+- an optional longer purpose;
 - an optional structured plan;
 - requested duration;
 - one or more per-machine Session Scopes.
@@ -131,9 +132,11 @@ stateDiagram-v2
     Active --> Expired: Session TTL ends
 ```
 
-Session duration begins at claim, not approval or first Operation. MCP claims and stores the
-Session Credential internally so the model never sees it. API and SDK orchestrators can receive
-the credential once and inject it into a trusted worker.
+Session duration begins when the Client confirms the first target is ready, not while approval is
+pending. An approved target has 60 seconds for each opening attempt. A failed attempt remains
+closed, but the same immutable target can retry if its Client reconnects before the Session
+expires. MCP keeps the Session Credential internally so the model never sees it. API and SDK
+orchestrators can receive the credential once and inject it into a trusted worker.
 
 ## Sessions
 
@@ -143,7 +146,8 @@ machine has an independent scope and readiness state.
 ```ts
 type Session = {
   agentId: string;
-  purpose: string;
+  title: string;
+  purpose?: string;
   expiresAt: string;
   targets: Array<{
     machineId: string;
@@ -175,7 +179,11 @@ Typed restrictions are required whenever their corresponding capability is prese
 - initial policy does not use regular expressions;
 - unknown or malformed restrictions fail closed.
 
-`process.shell` cannot be constrained reliably and is not available in a restricted Agent Session.
+`process.shell` is intentionally broader than typed Operations. It grants shell commands for the
+Session duration, is never autoapproved, is bounded by the machine Local Policy, and records each
+command and status in the Timeline after secret redaction. It is appropriate for multi-step work
+where the Agent must inspect one result before choosing the next command. It does not create a
+persistent terminal or PTY: every Operation has an explicit working directory and deadline.
 
 ### Duration and renewal
 
@@ -333,6 +341,12 @@ The MCP surface includes:
 - typed process, filesystem, and Docker Operations;
 - Session Timeline tools.
 
+`machines_list` exposes machine name, platform, architecture, runner, Local Policy capabilities,
+and default shell. Session and execution tools repeat the relevant machine context so an Agent can
+recover correctly after a lost tool result or a new chat. `sessions_list` returns active requests
+and Sessions by default; history is an explicit option. Agents always select the Session identifier
+they intend to use.
+
 Human membership, billing, and unrestricted Workspace administration are not MCP tools.
 
 ### CLI
@@ -376,8 +390,14 @@ Each Session Timeline combines two visibly different sources:
 1. verified Server and Client events;
 2. optional Agent-provided plan, progress, outcome, and summary.
 
-Privacy-minimal is the default. It retains Agent, machine, Operation kind, status, duration, and
-timestamps without command text, arguments, paths, file contents, stdout, or stderr.
+Privacy-minimal is the default. It retains Agent, human actor, machine, Operation kind, sanitized
+command, status or exit code, duration, and timestamps. It never retains stdout, stderr, file
+contents, credentials, authorization headers, environment values, or an unredacted command.
+
+Timeline events are immutable and identify their actor as the Agent, the responsible human member,
+or Odyshell for automatic lifecycle changes. The web renders them chronologically and updates a
+visible Timeline live. Once retention removes older events, the Timeline is explicitly marked as
+partial.
 
 Retention defaults:
 
@@ -388,6 +408,20 @@ Retention defaults:
 | Temporary Operation payload | At most 1 hour |
 | stdout and stderr | Not persisted by default |
 
+## Workspace notifications
+
+Notifications are private, durable Workspace signals rather than an Operation log. Each has a
+short title, a useful description, a destination, a responsible member, read state, and timestamp.
+Opening the notification panel does not mark anything read; opening an item marks it read and
+navigates to its destination. Members can mark an item read or unread and mark all items read.
+
+Initial notifications cover Session approval, manually created Session lifecycle, machine
+enrollment, a machine remaining offline for more than five minutes, and Agent identity or
+credential revocation. They never include commands, paths, output, credentials, or Session purpose.
+They are retained for 30 days. Delivery targets the member responsible for the initiating action;
+the oldest active Workspace member is the deterministic fallback for historical records without
+an owner.
+
 Activity remains separate from Sessions. Sessions answer what task an Agent performed; Activity
 answers what security or administrative changes occurred across the Workspace.
 
@@ -395,9 +429,10 @@ Event Sinks can select:
 
 - `minimal`: identifiers, targets, Operation kinds, results, and times;
 - `operational`: programs, arguments, paths, and containers;
-- `diagnostic`: live stdout and stderr without Odyshell persistence.
+- `diagnostic`: temporarily retained stdout and stderr while Operation delivery data exists.
 
-Credentials, authorization headers, and environment variables are never sent. Sink endpoints are
+Structured credential fields, authorization headers, and environment variables are never sent.
+Diagnostic output is customer-provided content and may itself contain secrets. Sink endpoints are
 configured in Workspace Settings, receive signed events, and must be protected against private
 network targets and other SSRF destinations. Feature availability by commercial plan is deferred
 until the workflow is validated.

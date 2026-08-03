@@ -8,6 +8,8 @@ import {
   eventSinkDestination,
   eventSinkRetryAt,
   operationTimelineMetadata,
+  privacyMinimalOperationMetadata,
+  redactEventSinkMetadata,
   redactTimelineMetadata,
   signedTimelineDelivery,
   verifyTimelineDeliverySignature,
@@ -179,7 +181,7 @@ describe("Timeline Event Sinks", () => {
     expect(redactTimelineMetadata(metadata, "diagnostic")).toEqual({
       kind: "process.shell",
       cwd: ".",
-      command: "printf safe",
+      command: "printf [REDACTED]",
       stdout: "safe output",
     });
     expect(
@@ -190,5 +192,186 @@ describe("Timeline Event Sinks", () => {
         },
       ]).stderr,
     ).toHaveLength(64 * 1024);
+  });
+
+  it("exports privacy-minimal Timeline attribution and verified results", () => {
+    expect(
+      redactTimelineMetadata(
+        {
+          kind: "process.exec",
+          program: "git",
+          args: ["status"],
+          actorAgentId: "agent-a",
+          exitCode: 0,
+          outcome: "succeeded",
+          summary: "Dependency check completed",
+          stdout: "private output",
+          path: "/private/path",
+        },
+        "privacy-minimal",
+      ),
+    ).toEqual({
+      kind: "process.exec",
+      program: "git",
+      args: ["status"],
+      actorAgentId: "agent-a",
+      exitCode: 0,
+      outcome: "succeeded",
+    });
+  });
+
+  it("keeps privacy-minimal Event Sinks free of command and Agent content", () => {
+    const metadata = {
+      kind: "process.exec",
+      machineId: "machine-a",
+      actorAgentId: "agent-a",
+      status: "succeeded",
+      exitCode: 0,
+      program: "git",
+      args: ["status"],
+      command: "git status",
+      summary: "Agent-authored detail",
+    };
+
+    expect(redactEventSinkMetadata(metadata, "privacy-minimal")).toEqual({
+      kind: "process.exec",
+      machineId: "machine-a",
+      actorAgentId: "agent-a",
+      status: "succeeded",
+      exitCode: 0,
+    });
+    expect(redactEventSinkMetadata(metadata, "operational")).toEqual({
+      kind: "process.exec",
+      machineId: "machine-a",
+      actorAgentId: "agent-a",
+      status: "succeeded",
+      exitCode: 0,
+      program: "git",
+      args: ["status"],
+    });
+    expect(redactEventSinkMetadata(metadata, "diagnostic")).not.toHaveProperty(
+      "summary",
+    );
+  });
+
+  it("redacts nested process credentials at every export level", () => {
+    const metadata = {
+      kind: "process.exec",
+      program: "/private/tools/database-client",
+      args: ["--password", "hunter2", "--api-key=abc123", "status"],
+      command: "curl --token secret https://private.example",
+      summary: "stdout contained ods_session_secret",
+    };
+
+    for (const level of ["privacy-minimal", "operational", "diagnostic"] as const) {
+      const exported = JSON.stringify(redactTimelineMetadata(metadata, level));
+      expect(exported).not.toMatch(
+        /hunter2|abc123|ods_session_secret|private\/tools|private\.example/u,
+      );
+    }
+  });
+
+  it("keeps a sanitized command for the privacy-minimal Session timeline", () => {
+    expect(
+      privacyMinimalOperationMetadata({
+        kind: "process.shell",
+        command: "curl --token super-secret https://example.com",
+        cwd: ".",
+        env: {},
+      }),
+    ).toEqual({
+      kind: "process.shell",
+      command: "curl --token [REDACTED] [REDACTED]",
+    });
+    expect(
+      privacyMinimalOperationMetadata({
+        kind: "process.exec",
+        program: "tool",
+        args: ["--password", "hunter2", "status"],
+        cwd: ".",
+        env: {},
+      }),
+    ).toEqual({
+      kind: "process.exec",
+      program: "tool",
+      args: ["--password", "[REDACTED]", "status"],
+    });
+  });
+
+  it("fails closed when command arguments could contain credentials", () => {
+    const shell = privacyMinimalOperationMetadata({
+      kind: "process.shell",
+      command: 'curl --password="secret" -H Authorization: Bearer abc123 https://user:pass@example.com',
+      cwd: "/private/workspace",
+      env: {},
+    });
+    const process = privacyMinimalOperationMetadata({
+      kind: "process.exec",
+      program: "database-client",
+      args: ["-p", "hunter2", "--api-key=abc123", "postgres://user:pass@db/app"],
+      cwd: "/private/workspace",
+      env: {},
+    });
+
+    expect(JSON.stringify({ shell, process })).not.toMatch(
+      /secret|hunter2|abc123|user:pass|private\/workspace/u,
+    );
+    expect(shell).toEqual({
+      kind: "process.shell",
+      command: "curl --password=[REDACTED] -H Authorization: [REDACTED] [REDACTED] [REDACTED]",
+    });
+    expect(process).toEqual({
+      kind: "process.exec",
+      program: "database-client",
+      args: ["-p", "[REDACTED]", "--api-key=[REDACTED]", "[REDACTED]"],
+    });
+  });
+
+  it("does not retain filesystem paths or Docker container names", () => {
+    const filesystem = privacyMinimalOperationMetadata({
+      kind: "fs.read",
+      path: "/srv/private/customer-a/credentials.json",
+    });
+    const docker = privacyMinimalOperationMetadata({
+      kind: "docker.logs",
+      container: "payments-production-secret",
+      tail: 100,
+      timestamps: false,
+    });
+
+    expect(filesystem).toEqual({ kind: "fs.read" });
+    expect(docker).toEqual({ kind: "docker.logs" });
+    expect(JSON.stringify({ filesystem, docker })).not.toMatch(
+      /customer-a|credentials|payments-production-secret/u,
+    );
+  });
+
+  it("retains executable identity without its private path", () => {
+    const process = privacyMinimalOperationMetadata({
+      kind: "process.exec",
+      program: "/srv/private-customer/bin/deploy-tool",
+      args: [],
+      cwd: "/srv/private-customer",
+      env: {},
+    });
+    const shell = privacyMinimalOperationMetadata({
+      kind: "process.shell",
+      command: '"C:\\Customers\\Private\\audit.exe" --version',
+      cwd: "C:\\Customers\\Private",
+      env: {},
+    });
+
+    expect(process).toEqual({
+      kind: "process.exec",
+      program: "deploy-tool",
+      args: [],
+    });
+    expect(shell).toEqual({
+      kind: "process.shell",
+      command: "audit.exe --version",
+    });
+    expect(JSON.stringify({ process, shell })).not.toMatch(
+      /private-customer|Customers|Private/u,
+    );
   });
 });

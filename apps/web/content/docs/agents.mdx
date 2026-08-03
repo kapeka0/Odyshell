@@ -6,14 +6,14 @@ description: Give a persistent agent temporary, least-privilege machine access.
 An Agent is a persistent programmatic identity. Connecting the remote OAuth MCP or signing in with
 `ods login` lets Odyshell register that identity without granting it access to a machine.
 
-For an interactive task, the Agent requests a temporary Session with a purpose, duration, and one
-or more independent machine scopes. A workspace member reviews every machine, capability, and
-restriction in the browser. The Agent then claims a Session Credential once; the Server stores
-only its hash.
+For an interactive task, the Agent requests a temporary Session with a short title, an optional
+purpose, a duration, and one or more independent machine scopes. A workspace member reviews every
+machine, capability, and restriction in the browser. The Agent then claims a Session Credential
+once; the Server stores only its hash.
 
-The member responsible for a pending request receives a notification in the dashboard. Opening it
-goes directly to the same approval page returned to the Agent; notifications can be marked read
-individually or together.
+The responsible member receives private dashboard notifications for approvals, Session lifecycle,
+machine enrollment and sustained machine outages. Opening one marks it read and goes to the
+related resource. Notifications can also be marked read or unread individually or together.
 
 ## Connect an agent
 
@@ -54,7 +54,7 @@ Its effective authority is the intersection of:
 
 ## Expiry
 
-Session authority begins when it is claimed and cannot outlive its expiry. A Session Credential
+Session authority begins when the Client confirms that a target is ready and cannot outlive its expiry. A Session Credential
 cannot create another Session or change its approved scope. The Server revokes the credential and
 the Client cancels active work when the Session expires or is cancelled. Completion is separate:
 it records the agent-reported outcome and fails while an Operation remains active.
@@ -109,6 +109,7 @@ const child = await ods.createManagedAgent({
 const request = await ods.requestAgentSession({
   agentId: child.id,
   agentName: child.name,
+  title: "Check dependency updates",
   purpose: "Check dependency updates",
   scopes,
   durationSeconds: 600,

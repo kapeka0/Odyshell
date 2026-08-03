@@ -9,7 +9,7 @@ import {
 const notificationIdSchema = z.string().uuid();
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ notificationId: string }> },
 ) {
   const authorization = await requireCloudRouteIdentity();
@@ -22,10 +22,12 @@ export async function POST(
     );
   }
   try {
-    const result = await cloudRequest<{ read: true }>(
+    const body = (await request.json().catch(() => ({}))) as { read?: unknown };
+    const read = typeof body.read === "boolean" ? body.read : true;
+    const result = await cloudRequest<{ read: boolean }>(
       "/v1/internal/cloud/notifications/read",
       authorization.identity,
-      { extraBody: { notificationId: parsed.data } },
+      { extraBody: { notificationId: parsed.data, read } },
     );
     return NextResponse.json(result, {
       headers: { "cache-control": "no-store" },

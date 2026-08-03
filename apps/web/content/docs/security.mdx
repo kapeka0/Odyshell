@@ -34,8 +34,10 @@ Autoapproval policies are inactive until an administrator approves their exact c
 versioned, expire within one year, and fail closed for unknown restrictions. Requests outside the
 ceiling remain pending rather than being reduced silently. Each automatically approved Session
 retains the policy ID and version that authorized it.
-`process.shell` is not accepted by restricted Sessions because it cannot be constrained
-structurally.
+`process.shell` is deliberately broader than structured execution. It is never autoapproved,
+requires an explicit Session capability, remains bounded by expiry and the Client Local Policy,
+and records every sanitized command and status. Prefer `process.exec` whenever an exact program
+and argument list is sufficient.
 Caller-supplied process environment variables are also denied until Session restrictions can
 authorize exact keys and values.
 
@@ -67,8 +69,9 @@ removal, or Docker access only when the task requires them.
 
 ## Privacy
 
-Privacy-minimal Session Timeline events contain verified lifecycle metadata, not file contents,
-stdout, stderr, or credentials.
+Privacy-minimal Session Timeline events contain verified lifecycle metadata, sanitized command
+text, and exit status, but never file contents, stdout, stderr, credentials, authorization headers,
+or environment values.
 
 Timeline exports and Event Sinks redact credentials at every detail level. Signing secrets are
 encrypted at rest and never returned after configuration. Sink delivery resolves and pins a

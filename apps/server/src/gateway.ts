@@ -19,9 +19,31 @@ type AuthState = {
   lastHeartbeatPersistedAt?: number;
 };
 
+export class MachineLifecycleQueue {
+  private readonly queues = new Map<string, Promise<void>>();
+
+  async run<T>(machineId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.queues.get(machineId) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(operation);
+    const settled = current.then(() => undefined, () => undefined);
+    this.queues.set(machineId, settled);
+    void settled.finally(() => {
+      if (this.queues.get(machineId) === settled) this.queues.delete(machineId);
+    });
+    return await current;
+  }
+}
+
+export function socketReadyForAuthentication(
+  socket: Pick<WebSocket, "readyState">,
+): boolean {
+  return socket.readyState === 1;
+}
+
 export class ClientGateway {
   readonly events = new EventEmitter();
   private readonly connections = new Map<string, WebSocket>();
+  private readonly machineLifecycles = new MachineLifecycleQueue();
 
   constructor(private readonly db: Database) {
     this.events.setMaxListeners(0);
@@ -57,11 +79,11 @@ export class ClientGateway {
 
       socket.on("close", () => {
         clearTimeout(authTimer);
-        if (state.machineId && this.connections.get(state.machineId) === socket) {
-          this.connections.delete(state.machineId);
-          void this.db
-            .markMachineDisconnected(state.machineId)
-            .then((result) => {
+        if (state.machineId) {
+          void this.queueMachineLifecycle(state.machineId, async () => {
+            if (this.connections.get(state.machineId!) !== socket) return;
+            this.connections.delete(state.machineId!);
+            const result = await this.db.markMachineDisconnected(state.machineId!);
               if (result && (result.operations > 0 || result.targets > 0)) {
                 app.log.info(
                   {
@@ -72,10 +94,8 @@ export class ClientGateway {
                   "Machine disconnect terminated active authority",
                 );
               }
-            })
-            .finally(() => {
-              if (state.workspaceId) this.notifyWorkspace(state.workspaceId);
-            });
+            if (state.workspaceId) this.notifyWorkspace(state.workspaceId);
+          });
         }
       });
     });
@@ -130,6 +150,13 @@ export class ClientGateway {
     socket.send(JSON.stringify(message));
   }
 
+  private async queueMachineLifecycle<T>(
+    machineId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    return await this.machineLifecycles.run(machineId, operation);
+  }
+
   private async handleMessage(socket: WebSocket, state: AuthState, raw: string): Promise<void> {
     const message = parseClientMessage(raw);
     if (!state.authenticated) {
@@ -176,18 +203,35 @@ export class ClientGateway {
       return;
     }
 
-    const previous = this.connections.get(message.machineId);
-    if (previous && previous !== socket) previous.close(4003, "Superseded connection");
-
-    state.authenticated = true;
+    // Record the verified identity before waiting so a concurrent close queues
+    // cleanup for the same machine lifecycle.
     state.machineId = message.machineId;
     state.workspaceId = machine.workspaceId;
-    state.lastHeartbeatPersistedAt = Date.now();
-    this.connections.set(message.machineId, socket);
-    await this.db.setMachineOnline(message.machineId, message.runtime);
-    this.sendSocket(socket, { type: "authenticated", machineId: message.machineId });
-    this.events.emit("machine.online", message.machineId);
-    this.notifyWorkspace(machine.workspaceId);
+    await this.queueMachineLifecycle(message.machineId, async () => {
+      if (!socketReadyForAuthentication(socket)) return;
+      const previous = this.connections.get(message.machineId);
+      if (previous && previous !== socket) previous.close(4003, "Superseded connection");
+
+      state.authenticated = true;
+      state.lastHeartbeatPersistedAt = Date.now();
+      this.connections.set(message.machineId, socket);
+      await this.db.setMachineOnline(message.machineId, message.runtime);
+      this.sendSocket(socket, { type: "authenticated", machineId: message.machineId });
+      const retryTargets = await this.db.retryAgentSessionTargets(message.machineId);
+      for (const target of retryTargets) {
+        this.sendSocket(socket, {
+          type: "session.open",
+          sessionId: target.runtimeSessionId,
+          profile: target.profile,
+          capabilities: target.capabilities,
+          restrictions: target.restrictions,
+          expiresAt: new Date(target.expiresAt).toISOString(),
+          serverTime: new Date().toISOString(),
+        });
+      }
+      this.events.emit("machine.online", message.machineId);
+      this.notifyWorkspace(machine.workspaceId);
+    });
   }
 
   private async persistMessage(
@@ -225,6 +269,20 @@ export class ClientGateway {
               { machineId: state.machineId },
             );
           }
+          if (
+            result?.reconciliation?.state === "ready"
+          ) {
+            const expiresAt = new Date(result.reconciliation.expiresAt).toISOString();
+            const serverTime = new Date().toISOString();
+            for (const target of result.reconciliation.targets) {
+              this.send(target.machineId, {
+                type: "session.expires",
+                sessionId: target.runtimeSessionId,
+                expiresAt,
+                serverTime,
+              });
+            }
+          }
           this.events.emit(`session:${message.sessionId}`);
           this.notifyWorkspace(state.workspaceId);
         }
@@ -250,6 +308,20 @@ export class ClientGateway {
                 machineId: state.machineId,
               },
             );
+          }
+          if (
+            result?.reconciliation?.state === "ready"
+          ) {
+            const expiresAt = new Date(result.reconciliation.expiresAt).toISOString();
+            const serverTime = new Date().toISOString();
+            for (const target of result.reconciliation.targets) {
+              this.send(target.machineId, {
+                type: "session.expires",
+                sessionId: target.runtimeSessionId,
+                expiresAt,
+                serverTime,
+              });
+            }
           }
           this.events.emit(`session:${message.sessionId}`);
           this.notifyWorkspace(state.workspaceId);

@@ -183,35 +183,102 @@ function spawnOperation(
   let cancellation: Promise<void> | undefined;
   const cancel = async (): Promise<void> => {
     const pid = child.pid;
-    if (child.exitCode !== null || !pid) return;
+    if (child.exitCode !== null || child.signalCode !== null || !pid) return;
     cancellation ??= (async () => {
-      try {
-        if (detached) process.kill(-pid, "SIGTERM");
-        else child.kill("SIGTERM");
-      } catch {}
-      const forceTimer = setTimeout(() => {
-        if (child.exitCode !== null || !child.pid) return;
+      if (process.platform === "win32") {
+        let terminationError: unknown;
         try {
-          if (detached) process.kill(-pid, "SIGKILL");
-          else child.kill("SIGKILL");
-        } catch {}
-      }, 2_000);
-      forceTimer.unref();
-      try {
-        await Promise.race([
-          done.catch(() => ({ exitCode: null })),
-          new Promise((resolvePromise) => {
-            const safetyTimer = setTimeout(resolvePromise, 4_000);
-            safetyTimer.unref();
-          }),
-        ]);
-      } finally {
-        clearTimeout(forceTimer);
+          await terminateWindowsProcessTree(pid);
+        } catch (error) {
+          terminationError = error;
+        }
+        if (await processExited(done, 4_000)) return;
+        throw terminationError instanceof Error
+          ? terminationError
+          : new Error("Unable to confirm Windows process-tree termination");
+      }
+      signalProcessGroup(pid, "SIGTERM");
+      if (await processGroupExited(pid, 2_000)) {
+        if (await processExited(done, 500)) return;
+        throw new Error("Unable to confirm process exit after process-group termination");
+      }
+      signalProcessGroup(pid, "SIGKILL");
+      if (!(await processGroupExited(pid, 2_000))) {
+        throw new Error("Unable to confirm process-group termination");
+      }
+      if (!(await processExited(done, 500))) {
+        throw new Error("Unable to confirm process exit after process-group termination");
       }
     })();
     await cancellation;
   };
   return { child, cancel, done };
+}
+
+function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
+}
+
+async function processGroupExited(
+  pid: number,
+  timeoutMilliseconds: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMilliseconds;
+  while (processGroupExists(pid)) {
+    if (Date.now() >= deadline) return false;
+    await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 25));
+  }
+  return true;
+}
+
+function processGroupExists(pid: number): boolean {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return false;
+    if (code === "EPERM") return true;
+    throw error;
+  }
+}
+
+async function terminateWindowsProcessTree(pid: number): Promise<void> {
+  await new Promise<void>((resolvePromise, reject) => {
+    const killer = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], {
+      windowsHide: true,
+      stdio: "ignore",
+    });
+    killer.once("error", reject);
+    killer.once("close", (exitCode) => {
+      if (exitCode === 0) resolvePromise();
+      else reject(new Error(`taskkill exited with status ${exitCode ?? "unknown"}`));
+    });
+  });
+}
+
+async function processExited(
+  done: Promise<{ exitCode: number | null }>,
+  timeoutMilliseconds: number,
+): Promise<boolean> {
+  return await new Promise<boolean>((resolvePromise) => {
+    const timeout = setTimeout(() => resolvePromise(false), timeoutMilliseconds);
+    timeout.unref();
+    void done.then(
+      () => {
+        clearTimeout(timeout);
+        resolvePromise(true);
+      },
+      () => {
+        clearTimeout(timeout);
+        resolvePromise(true);
+      },
+    );
+  });
 }
 
 function processEnvironment(): NodeJS.ProcessEnv {

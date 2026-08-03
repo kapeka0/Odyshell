@@ -53,7 +53,7 @@ export function printSessions(sessions: ListedAgentSession[]): void {
       colorStatus(session.status),
       session.agentName,
       session.targets.map((target) => target.machineName).join(", ") || "none",
-      session.purpose,
+      session.purpose ?? session.title,
       session.id,
       new Date(session.expiresAt).toLocaleString(),
     ]),

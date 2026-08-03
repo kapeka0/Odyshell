@@ -14,6 +14,7 @@ import {
   type ColumnType,
   type Generated,
   type Selectable,
+  type Transaction,
 } from "kysely";
 import {
   Migrator,
@@ -34,6 +35,7 @@ import {
 import {
   diagnosticTimelineMetadata,
   operationTimelineMetadata,
+  privacyMinimalOperationMetadata,
 } from "./event-sinks.js";
 
 const { Pool } = pg;
@@ -116,6 +118,7 @@ interface MachineTable {
   lastSeenAt: Date | null;
   enrolledAt: Generated<Date>;
   revokedAt: Date | null;
+  createdByHumanId: string | null;
 }
 
 interface EnrollmentTokenTable {
@@ -133,6 +136,7 @@ interface NotificationTable {
   userId: string;
   kind: string;
   title: string;
+  description: string;
   href: string;
   resourceId: string;
   readAt: Date | null;
@@ -231,9 +235,11 @@ interface AgentSessionTable {
   workspaceId: string;
   id: string;
   agentId: string;
-  purpose: string;
+  title: string;
+  purpose: string | null;
   status: string;
   expiresAt: Date;
+  readyAt: Date | null;
   predecessorSessionId: string | null;
   autoapprovalPolicyId: string | null;
   autoapprovalPolicyVersion: number | null;
@@ -282,7 +288,8 @@ interface AgentSessionRequestTable {
   requestedByAgentId: string | null;
   runId: string | null;
   machineId: string;
-  purpose: string;
+  title: string;
+  purpose: string | null;
   readPath: string;
   scopes: Json<SessionMachineScope[]>;
   durationSeconds: number;
@@ -487,8 +494,17 @@ export type WorkspaceRecord = {
 
 export type NotificationRecord = {
   id: string;
-  kind: "session.requested" | "machine.enrolled";
+  kind:
+    | "session.requested"
+    | "session.ready"
+    | "session.failed"
+    | "session.completed"
+    | "session.revoked"
+    | "machine.enrolled"
+    | "machine.offline"
+    | "agent.revoked";
   title: string;
+  description: string;
   href: string;
   readAt?: number;
   createdAt: number;
@@ -593,9 +609,11 @@ export type AgentSessionRecord = Timestamped & {
   workspaceId: string;
   id: string;
   agentId: string;
-  purpose: string;
+  title: string;
+  purpose?: string;
   status: "active" | "completed" | "cancelled" | "revoked" | "expired";
   expiresAt: number;
+  readyAt?: number;
   predecessorSessionId?: string;
   autoapprovalPolicyId?: string;
   autoapprovalPolicyVersion?: number;
@@ -609,7 +627,8 @@ export type AgentSessionRequestRecord = Timestamped & {
   requestedByAgentId?: string;
   runId?: string;
   machineId: string;
-  purpose: string;
+  title: string;
+  purpose?: string;
   readPath: string;
   scopes: SessionMachineScope[];
   durationSeconds: number;
@@ -736,6 +755,7 @@ export type WorkspaceAgentSessionRecord = AgentSessionRecord & {
     machineId: string;
     machineName: string;
     status: string;
+    machineRuntime?: unknown;
   }>;
 };
 
@@ -760,12 +780,15 @@ export type AgentSessionTargetRuntime = {
   canonicalSessionId: string;
   runtimeSessionId: string;
   machineId: string;
+  machineName: string;
+  machineRuntime?: unknown;
   profile: string;
   capabilities: Capability[];
   restrictions: SessionRestrictions;
   status: string;
   expiresAt: number;
   error?: string;
+  canonicalReady: boolean;
 };
 
 export type AgentSessionTermination = {
@@ -917,9 +940,11 @@ function agentSessionRecord(
     workspaceId: session.workspaceId,
     id: session.id,
     agentId: session.agentId,
-    purpose: session.purpose,
+    title: session.title,
+    ...(session.purpose === null ? {} : { purpose: session.purpose }),
     status: session.status as AgentSessionRecord["status"],
     expiresAt: timestamp(session.expiresAt),
+    ...(session.readyAt === null ? {} : { readyAt: timestamp(session.readyAt) }),
     ...(session.predecessorSessionId === null
       ? {}
       : { predecessorSessionId: session.predecessorSessionId }),
@@ -947,7 +972,8 @@ function agentSessionRequestRecord(
       : { requestedByAgentId: request.requestedByAgentId }),
     ...(request.runId === null ? {} : { runId: request.runId }),
     machineId: request.machineId,
-    purpose: request.purpose,
+    title: request.title,
+    ...(request.purpose === null ? {} : { purpose: request.purpose }),
     readPath: request.readPath,
     scopes: request.scopes,
     durationSeconds: request.durationSeconds,
@@ -2575,6 +2601,141 @@ async function rollbackNotifications(db: Kysely<DatabaseSchema>): Promise<void> 
   `.execute(db);
 }
 
+async function migrateSessionExperience(db: Kysely<DatabaseSchema>): Promise<void> {
+  await sql`
+    alter table odyshell.agent_session_requests add column title text;
+    update odyshell.agent_session_requests
+    set title = left(purpose, 96);
+    alter table odyshell.agent_session_requests alter column title set not null;
+    alter table odyshell.agent_session_requests
+      add constraint agent_session_requests_title_check
+      check (length(title) between 1 and 96);
+
+    alter table odyshell.agent_sessions add column title text;
+    update odyshell.agent_sessions set title = left(purpose, 96);
+    alter table odyshell.agent_sessions alter column title set not null;
+    alter table odyshell.agent_sessions
+      add constraint agent_sessions_title_check
+      check (length(title) between 1 and 96);
+    alter table odyshell.agent_sessions add column ready_at timestamptz;
+
+    alter table odyshell.agent_session_requests
+      alter column purpose drop not null;
+    alter table odyshell.agent_sessions
+      alter column purpose drop not null;
+
+    alter table odyshell.machines
+      add column created_by_human_id text;
+    update odyshell.machines machine
+    set created_by_human_id = (
+      select user_id
+      from odyshell.notifications
+      where workspace_id = machine.workspace_id
+        and kind = 'machine.enrolled'
+        and resource_id = machine.id
+      order by created_at asc
+      limit 1
+    );
+
+    do $migration$
+    declare expiry_foreign_key text;
+    begin
+      select constraint_record.conname into expiry_foreign_key
+      from pg_constraint constraint_record
+      join pg_class table_record on table_record.oid = constraint_record.conrelid
+      join pg_namespace schema_record on schema_record.oid = table_record.relnamespace
+      where schema_record.nspname = 'odyshell'
+        and table_record.relname = 'session_credentials'
+        and constraint_record.contype = 'f'
+        and pg_get_constraintdef(constraint_record.oid) like '%expires_at%';
+      if expiry_foreign_key is not null then
+        execute format(
+          'alter table odyshell.session_credentials drop constraint %I',
+          expiry_foreign_key
+        );
+      end if;
+    end
+    $migration$;
+    alter table odyshell.session_credentials
+      add constraint session_credentials_session_fk
+      foreign key (workspace_id, session_id)
+      references odyshell.agent_sessions (workspace_id, id);
+    do $migration$
+    declare expiry_constraint text;
+    begin
+      select constraint_record.conname into expiry_constraint
+      from pg_constraint constraint_record
+      join pg_class table_record on table_record.oid = constraint_record.conrelid
+      join pg_namespace schema_record on schema_record.oid = table_record.relnamespace
+      where schema_record.nspname = 'odyshell'
+        and table_record.relname = 'agent_sessions'
+        and constraint_record.contype = 'c'
+        and pg_get_constraintdef(constraint_record.oid) like '%expires_at <=%';
+      if expiry_constraint is not null then
+        execute format(
+          'alter table odyshell.agent_sessions drop constraint %I',
+          expiry_constraint
+        );
+      end if;
+    end
+    $migration$;
+    alter table odyshell.agent_sessions
+      add constraint agent_sessions_expires_at_check
+      check (
+        expires_at > created_at
+        and (
+          (ready_at is null and expires_at <= created_at + interval '24 hours')
+          or (ready_at is not null and expires_at <= ready_at + interval '24 hours')
+        )
+      );
+
+    alter table odyshell.notifications
+      add column description text not null default '';
+    alter table odyshell.notifications
+      add constraint notifications_description_check
+      check (length(description) <= 240);
+    alter table odyshell.notifications drop constraint notifications_kind_check;
+    alter table odyshell.notifications
+      add constraint notifications_kind_check
+      check (kind in (
+        'session.requested', 'session.ready', 'session.failed',
+        'session.completed', 'session.revoked', 'machine.enrolled',
+        'machine.offline', 'agent.revoked'
+      ));
+  `.execute(db);
+}
+
+async function rollbackSessionExperience(db: Kysely<DatabaseSchema>): Promise<void> {
+  await sql`
+    alter table odyshell.notifications drop constraint notifications_kind_check;
+    delete from odyshell.notifications
+    where kind not in ('session.requested', 'machine.enrolled');
+    alter table odyshell.notifications
+      add constraint notifications_kind_check
+      check (kind in ('session.requested', 'machine.enrolled'));
+    alter table odyshell.notifications drop column description;
+    alter table odyshell.agent_sessions
+      drop constraint agent_sessions_expires_at_check;
+    alter table odyshell.agent_sessions
+      add constraint agent_sessions_expires_at_check
+      check (expires_at > created_at and expires_at <= created_at + interval '24 hours');
+    alter table odyshell.session_credentials
+      drop constraint session_credentials_session_fk;
+    alter table odyshell.session_credentials
+      add constraint session_credentials_workspace_id_session_id_expires_at_fkey
+      foreign key (workspace_id, session_id, expires_at)
+      references odyshell.agent_sessions (workspace_id, id, expires_at);
+    alter table odyshell.machines drop column created_by_human_id;
+    update odyshell.agent_sessions set purpose = title where purpose is null;
+    alter table odyshell.agent_sessions alter column purpose set not null;
+    update odyshell.agent_session_requests set purpose = title where purpose is null;
+    alter table odyshell.agent_session_requests alter column purpose set not null;
+    alter table odyshell.agent_sessions drop column ready_at;
+    alter table odyshell.agent_sessions drop column title;
+    alter table odyshell.agent_session_requests drop column title;
+  `.execute(db);
+}
+
 const migrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
     return {
@@ -2645,9 +2806,141 @@ const migrationProvider: MigrationProvider = {
         up: migrateNotifications,
         down: rollbackNotifications,
       },
+      "019_session_experience": {
+        up: migrateSessionExperience,
+        down: rollbackSessionExperience,
+      },
     };
   },
 };
+
+export function canonicalSessionTargetDecision(
+  statuses: readonly string[],
+): "opening" | "ready" | "failed" {
+  if (statuses.includes("ready")) return "ready";
+  return statuses.includes("opening") ? "opening" : "failed";
+}
+
+type CanonicalSessionReconciliation =
+  | { state: "opening" }
+  | {
+      state: "ready";
+      transitioned: boolean;
+      expiresAt: number;
+      targets: Array<{ machineId: string; runtimeSessionId: string }>;
+    }
+  | {
+      state: "failed";
+      transitioned: boolean;
+      targets: Array<{ machineId: string; runtimeSessionId: string }>;
+    };
+
+async function reconcileCanonicalAgentSession(
+  transaction: Transaction<DatabaseSchema>,
+  input: { workspaceId: string; sessionId: string; now: Date },
+): Promise<CanonicalSessionReconciliation> {
+  const [request, targets] = await Promise.all([
+    transaction
+      .selectFrom("agentSessionRequests")
+      .select(["id", "requestedByHumanId", "title", "durationSeconds"])
+      .where("workspaceId", "=", input.workspaceId)
+      .where("sessionId", "=", input.sessionId)
+      .executeTakeFirstOrThrow(),
+    transaction
+      .selectFrom("agentSessionTargets")
+      .select(["machineId", "runtimeSessionId", "status"])
+      .where("workspaceId", "=", input.workspaceId)
+      .where("sessionId", "=", input.sessionId)
+      .execute(),
+  ]);
+  const state = canonicalSessionTargetDecision(targets.map((target) => target.status));
+  if (state === "opening") return { state };
+  const targetReferences = targets.map(({ machineId, runtimeSessionId }) => ({
+    machineId,
+    runtimeSessionId,
+  }));
+  if (state === "ready") {
+    const expiresAt = new Date(
+      input.now.getTime() + request.durationSeconds * 1_000,
+    );
+    const activated = await transaction
+      .updateTable("agentSessions")
+      .set({ readyAt: input.now, expiresAt, updatedAt: input.now })
+      .where("workspaceId", "=", input.workspaceId)
+      .where("id", "=", input.sessionId)
+      .where("status", "=", "active")
+      .where("readyAt", "is", null)
+      .returning("id")
+      .executeTakeFirst();
+    if (!activated) {
+      const existing = await transaction
+        .selectFrom("agentSessions")
+        .select("expiresAt")
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", input.sessionId)
+        .executeTakeFirstOrThrow();
+      return {
+        state,
+        transitioned: false,
+        expiresAt: timestamp(existing.expiresAt),
+        targets: targetReferences,
+      };
+    }
+    await transaction
+      .updateTable("sessions")
+      .set({ expiresAt, updatedAt: input.now })
+      .where("workspaceId", "=", input.workspaceId)
+      .where("id", "in", targets.map((target) => target.runtimeSessionId))
+      .execute();
+    await transaction
+      .updateTable("sessionCredentials")
+      .set({ expiresAt })
+      .where("workspaceId", "=", input.workspaceId)
+      .where("sessionId", "=", input.sessionId)
+      .where("status", "=", "active")
+      .execute();
+    await transaction
+      .insertInto("sessionTimelineEvents")
+      .values({
+        workspaceId: input.workspaceId,
+        id: randomUUID(),
+        sessionId: input.sessionId,
+        requestId: request.id,
+        operationId: null,
+        eventType: "session.ready",
+        source: "verified",
+        metadata: JSON.stringify({ expiresAt: expiresAt.toISOString() }),
+        createdAt: input.now,
+      })
+      .execute();
+    await transaction
+      .insertInto("notifications")
+      .values({
+        workspaceId: input.workspaceId,
+        id: randomUUID(),
+        userId: request.requestedByHumanId,
+        kind: "session.ready",
+        title: "Session ready",
+        description: `${request.title} is ready`,
+        href: `/dashboard/sessions/${input.sessionId}`,
+        resourceId: input.sessionId,
+        readAt: null,
+        createdAt: input.now,
+      })
+      .execute();
+    return {
+      state,
+      transitioned: true,
+      expiresAt: timestamp(expiresAt),
+      targets: targetReferences,
+    };
+  }
+
+  // A rejected or offline target is retryable until the canonical Session
+  // expires. Keep its credential/grant active so reconnecting Clients can
+  // resume the approved authority without another human approval.
+  return { state, transitioned: false, targets: targetReferences };
+}
 
 export class PostgresDatabase {
   private readonly root: Kysely<DatabaseSchema>;
@@ -2991,6 +3284,7 @@ export class PostgresDatabase {
     userId: string;
     kind: NotificationRecord["kind"];
     title: string;
+    description?: string;
     href: string;
     resourceId: string;
   }): Promise<void> {
@@ -3002,6 +3296,7 @@ export class PostgresDatabase {
         userId: input.userId,
         kind: input.kind,
         title: input.title,
+        description: input.description ?? "",
         href: input.href,
         resourceId: input.resourceId,
         readAt: null,
@@ -3014,9 +3309,21 @@ export class PostgresDatabase {
     userId: string,
     limit = 50,
   ): Promise<NotificationRecord[]> {
+    await this.db
+      .deleteFrom("notifications")
+      .where("createdAt", "<", new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000))
+      .execute();
     const notifications = await this.db
       .selectFrom("notifications")
-      .select(["id", "kind", "title", "href", "readAt", "createdAt"])
+      .select([
+        "id",
+        "kind",
+        "title",
+        "description",
+        "href",
+        "readAt",
+        "createdAt",
+      ])
       .where("workspaceId", "=", workspaceId)
       .where("userId", "=", userId)
       .orderBy("createdAt", "desc")
@@ -3026,6 +3333,7 @@ export class PostgresDatabase {
       id: notification.id,
       kind: notification.kind as NotificationRecord["kind"],
       title: notification.title,
+      description: notification.description,
       href: notification.href,
       ...(notification.readAt === null
         ? {}
@@ -3038,10 +3346,11 @@ export class PostgresDatabase {
     workspaceId: string,
     userId: string,
     notificationId: string,
+    read = true,
   ): Promise<boolean> {
     const notification = await this.db
       .updateTable("notifications")
-      .set({ readAt: new Date() })
+      .set({ readAt: read ? new Date() : null })
       .where("workspaceId", "=", workspaceId)
       .where("userId", "=", userId)
       .where("id", "=", notificationId)
@@ -3370,9 +3679,11 @@ export class PostgresDatabase {
           workspaceId: input.workspaceId,
           id: input.id,
           agentId: input.agentId,
+          title: purpose.slice(0, 96),
           purpose,
           status: "active",
           expiresAt: new Date(input.expiresAt),
+          readyAt: createdAt,
           predecessorSessionId: input.predecessorSessionId,
           autoapprovalPolicyId: null,
           autoapprovalPolicyVersion: null,
@@ -3429,6 +3740,60 @@ export class PostgresDatabase {
         .orderBy("createdAt", "desc")
         .execute()
     ).map(agentIdentityRecord);
+  }
+
+  async listRunnableAgentIds(workspaceId: string): Promise<string[]> {
+    const now = new Date();
+    const [credentials, installations] = await Promise.all([
+      this.db
+        .selectFrom("agentCredentials")
+        .select("agentId")
+        .where("workspaceId", "=", workspaceId)
+        .where("status", "in", ["active", "retiring"])
+        .where("revokedAt", "is", null)
+        .where("expiresAt", ">", now)
+        .execute(),
+      this.db
+        .selectFrom("mcpInstallations")
+        .select("agentId")
+        .where("workspaceId", "=", workspaceId)
+        .where("status", "=", "active")
+        .execute(),
+    ]);
+    return [...new Set([...credentials, ...installations].map((row) => row.agentId))];
+  }
+
+  async activeMcpInstallationForAgent(
+    workspaceId: string,
+    agentId: string,
+  ): Promise<McpInstallationRecord | null> {
+    const installation = await this.db
+      .selectFrom("mcpInstallations")
+      .innerJoin("agents", (join) =>
+        join
+          .onRef("agents.workspaceId", "=", "mcpInstallations.workspaceId")
+          .onRef("agents.id", "=", "mcpInstallations.agentId"),
+      )
+      .selectAll("mcpInstallations")
+      .select("agents.name as agentName")
+      .where("mcpInstallations.workspaceId", "=", workspaceId)
+      .where("mcpInstallations.agentId", "=", agentId)
+      .where("mcpInstallations.status", "=", "active")
+      .orderBy("mcpInstallations.updatedAt", "desc")
+      .executeTakeFirst();
+    return installation
+      ? {
+          workspaceId: installation.workspaceId,
+          id: installation.id,
+          userId: installation.userId,
+          oauthClientId: installation.oauthClientId,
+          agentId: installation.agentId,
+          agentName: installation.agentName,
+          status: "active",
+          createdAt: timestamp(installation.createdAt),
+          updatedAt: timestamp(installation.updatedAt),
+        }
+      : null;
   }
 
   async deleteWorkspaceAgent(
@@ -3942,7 +4307,7 @@ export class PostgresDatabase {
   async listWorkspaceAgentSessions(
     workspaceId: string,
     limit = 200,
-    requester?: { humanId: string; agentId?: string },
+    requester?: { humanId?: string; agentId?: string },
   ): Promise<WorkspaceAgentSessionRecord[]> {
     let sessionsQuery = this.db
       .selectFrom("agentSessions")
@@ -3969,7 +4334,7 @@ export class PostgresDatabase {
         "agentSessionRequests.scopes",
       ])
       .where("agentSessions.workspaceId", "=", workspaceId);
-    if (requester) {
+    if (requester?.humanId) {
       sessionsQuery = sessionsQuery.where(
         "agentSessionRequests.requestedByHumanId",
         "=",
@@ -4007,6 +4372,7 @@ export class PostgresDatabase {
         "agentSessionTargets.machineId",
         "agentSessionTargets.status",
         "machines.name as machineName",
+        "machines.runtime as machineRuntime",
       ])
       .where("agentSessionTargets.workspaceId", "=", workspaceId)
       .where("agentSessionTargets.sessionId", "in", sessionIds)
@@ -4022,6 +4388,9 @@ export class PostgresDatabase {
         machineId: target.machineId,
         machineName: target.machineName,
         status: target.status,
+        ...(target.machineRuntime === null
+          ? {}
+          : { machineRuntime: target.machineRuntime }),
       });
       targetsBySession.set(target.sessionId, values);
     }
@@ -4097,7 +4466,7 @@ export class PostgresDatabase {
   async listAgentSessionRequests(
     workspaceId: string,
     agentId: string,
-    humanId: string,
+    _humanId: string,
     limit = 20,
   ): Promise<AgentSessionRequestRecord[]> {
     const now = new Date();
@@ -4106,7 +4475,6 @@ export class PostgresDatabase {
       .set({ status: "expired", updatedAt: now })
       .where("workspaceId", "=", workspaceId)
       .where("agentId", "=", agentId)
-      .where("requestedByHumanId", "=", humanId)
       .where("status", "in", ["pending", "approved"])
       .where("expiresAt", "<=", now)
       .execute();
@@ -4115,7 +4483,6 @@ export class PostgresDatabase {
       .selectAll()
       .where("workspaceId", "=", workspaceId)
       .where("agentId", "=", agentId)
-      .where("requestedByHumanId", "=", humanId)
       .orderBy("createdAt", "desc")
       .limit(Math.min(Math.max(limit, 1), 100))
       .execute();
@@ -4458,11 +4825,14 @@ export class PostgresDatabase {
     requesterAgentId?: string;
     runId?: string;
     scopes: SessionMachineScope[];
-    purpose: string;
+    title: string;
+    purpose?: string;
     durationSeconds: number;
     approvalCodeHash: string;
     expiresAt: number;
     predecessorSessionId?: string;
+    allowWorkspaceAgent?: boolean;
+    notifyRequester?: boolean;
   }): Promise<AgentSessionRequestRecord | null> {
     return await this.db.transaction().execute(async (transaction) => {
       await transaction
@@ -4506,14 +4876,17 @@ export class PostgresDatabase {
           )
           .execute();
       }
-      const agent = await transaction
+      let agentQuery = transaction
         .selectFrom("agents")
         .select(["id", "name", "kind", "parentAgentId"])
         .where("workspaceId", "=", input.workspaceId)
         .where("id", "=", input.agentId)
-        .where("createdByHumanId", "=", input.humanId)
         .where("status", "=", "active")
-        .where("deletedAt", "is", null)
+        .where("deletedAt", "is", null);
+      if (!input.allowWorkspaceAgent) {
+        agentQuery = agentQuery.where("createdByHumanId", "=", input.humanId);
+      }
+      const agent = await agentQuery
         .forShare()
         .executeTakeFirst();
       if (
@@ -4624,7 +4997,8 @@ export class PostgresDatabase {
           requestedByAgentId: input.requesterAgentId ?? null,
           runId: input.runId ?? null,
           machineId: primaryScope.machineId,
-          purpose: input.purpose,
+          title: input.title.trim().slice(0, 96),
+          purpose: input.purpose?.trim() || null,
           readPath: primaryReadPath,
           scopes: JSON.stringify(input.scopes),
           durationSeconds: input.durationSeconds,
@@ -4660,8 +5034,11 @@ export class PostgresDatabase {
             durationSeconds: input.durationSeconds,
             executorAgentId: input.agentId,
             ...(input.requesterAgentId
-              ? { requesterAgentId: input.requesterAgentId }
-              : {}),
+              ? {
+                  requesterAgentId: input.requesterAgentId,
+                  actorAgentId: input.requesterAgentId,
+                }
+              : { actorHumanId: input.humanId }),
             ...(input.runId ? { runId: input.runId } : {}),
             ...(input.predecessorSessionId
               ? { predecessorSessionId: input.predecessorSessionId }
@@ -4720,7 +5097,7 @@ export class PostgresDatabase {
           })
           .execute();
       }
-      if (request.status === "pending") {
+      if (request.status === "pending" && input.notifyRequester !== false) {
         await transaction
           .insertInto("notifications")
           .values({
@@ -4729,6 +5106,7 @@ export class PostgresDatabase {
             userId: input.humanId,
             kind: "session.requested",
             title: "Session approval requested",
+            description: `${input.agentName} requested temporary access`,
             href: `/sessions/approve?request=${encodeURIComponent(input.requestId)}`,
             resourceId: input.requestId,
             readAt: null,
@@ -4779,7 +5157,7 @@ export class PostgresDatabase {
     workspaceId: string,
     requestId: string,
     agentId: string,
-    humanId: string,
+    _humanId: string,
   ): Promise<AgentSessionRequestRecord | null> {
     const request = await this.db
       .selectFrom("agentSessionRequests")
@@ -4787,7 +5165,6 @@ export class PostgresDatabase {
       .where("workspaceId", "=", workspaceId)
       .where("id", "=", requestId)
       .where("agentId", "=", agentId)
-      .where("requestedByHumanId", "=", humanId)
       .executeTakeFirst();
     if (!request) return null;
     if (request.status !== "claimed" && request.expiresAt <= new Date()) {
@@ -4811,12 +5188,12 @@ export class PostgresDatabase {
     humanId: string,
   ): Promise<{
     agentName: string;
-    purpose: string;
+    title: string;
+    purpose?: string;
     scopes: SessionMachineScope[];
     durationSeconds: number;
   } | null> {
-    return (
-      (await this.db
+    const renewal = await this.db
         .selectFrom("agentSessionRequests")
         .innerJoin("agents", (join) =>
           join
@@ -4834,6 +5211,7 @@ export class PostgresDatabase {
         )
         .select([
           "agents.name as agentName",
+          "agentSessionRequests.title",
           "agentSessionRequests.purpose",
           "agentSessionRequests.scopes",
           "agentSessionRequests.durationSeconds",
@@ -4843,8 +5221,16 @@ export class PostgresDatabase {
         .where("agentSessionRequests.agentId", "=", agentId)
         .where("agentSessionRequests.requestedByHumanId", "=", humanId)
         .where("agents.status", "=", "active")
-        .executeTakeFirst()) ?? null
-    );
+        .executeTakeFirst();
+    return renewal
+      ? {
+          agentName: renewal.agentName,
+          title: renewal.title,
+          ...(renewal.purpose === null ? {} : { purpose: renewal.purpose }),
+          scopes: renewal.scopes,
+          durationSeconds: renewal.durationSeconds,
+        }
+      : null;
   }
 
   async approveAgentSessionRequest(input: {
@@ -4925,7 +5311,7 @@ export class PostgresDatabase {
           operationId: null,
           eventType: "session.approved",
           source: "verified",
-          metadata: JSON.stringify({}),
+          metadata: JSON.stringify({ actorHumanId: input.approverHumanId }),
           createdAt: approvedAt,
         })
         .execute();
@@ -5005,7 +5391,7 @@ export class PostgresDatabase {
           operationId: null,
           eventType: "session.denied",
           source: "verified",
-          metadata: JSON.stringify({}),
+          metadata: JSON.stringify({ actorHumanId: input.denierHumanId }),
           createdAt: deniedAt,
         })
         .execute();
@@ -5036,10 +5422,7 @@ export class PostgresDatabase {
         .forUpdate()
         .executeTakeFirst();
       if (!request) return { status: "invalid" };
-      if (
-        request.agentId !== input.agentId ||
-        request.requestedByHumanId !== input.humanId
-      ) {
+      if (request.agentId !== input.agentId) {
         return { status: "agent_denied" };
       }
       if (request.expiresAt <= new Date(input.now)) {
@@ -5063,7 +5446,6 @@ export class PostgresDatabase {
         .select("id")
         .where("workspaceId", "=", input.workspaceId)
         .where("id", "=", input.agentId)
-        .where("createdByHumanId", "=", input.humanId)
         .where("status", "=", "active")
         .forShare()
         .executeTakeFirst();
@@ -5104,9 +5486,11 @@ export class PostgresDatabase {
           workspaceId: input.workspaceId,
           id: input.sessionId,
           agentId: input.agentId,
+          title: request.title,
           purpose: request.purpose,
           status: "active",
           expiresAt,
+          readyAt: null,
           predecessorSessionId: request.predecessorSessionId,
           autoapprovalPolicyId: request.autoapprovalPolicyId,
           autoapprovalPolicyVersion: request.autoapprovalPolicyVersion,
@@ -5204,7 +5588,7 @@ export class PostgresDatabase {
           sessionId: input.sessionId,
           requestId: request.id,
           operationId: null,
-          eventType: "session.started",
+          eventType: "session.opening",
           source: "verified",
           metadata: JSON.stringify({
             machineIds: requestedMachineIds,
@@ -5212,7 +5596,7 @@ export class PostgresDatabase {
               machineId: scope.machineId,
               capabilities: scope.capabilities,
             })),
-            expiresAt: expiresAt.toISOString(),
+            actorAgentId: input.agentId,
             executorAgentId: request.agentId,
             ...(request.requestedByAgentId
               ? { requesterAgentId: request.requestedByAgentId }
@@ -5421,7 +5805,6 @@ export class PostgresDatabase {
       .where("agentSessions.status", "=", "active")
       .where("agentSessions.expiresAt", ">", now)
       .where("agents.status", "=", "active")
-      .where("agentSessionTargets.status", "in", ["opening", "ready"])
       .orderBy("agentSessionTargets.machineId")
       .execute();
     const principal = principals[0];
@@ -5488,16 +5871,24 @@ export class PostgresDatabase {
         "sessions.id",
         "agentSessionTargets.runtimeSessionId",
       )
+      .innerJoin("machines", (join) =>
+        join
+          .onRef("machines.workspaceId", "=", "agentSessionTargets.workspaceId")
+          .onRef("machines.id", "=", "agentSessionTargets.machineId"),
+      )
       .select([
         "agentSessionTargets.sessionId as canonicalSessionId",
         "agentSessionTargets.runtimeSessionId",
         "agentSessionTargets.machineId",
+        "machines.name as machineName",
+        "machines.runtime as machineRuntime",
         "agentSessionTargets.profile",
         "agentSessionTargets.capabilities",
         "agentSessionTargets.restrictions",
         "sessions.status",
         "sessions.expiresAt",
         "sessions.error",
+        "agentSessions.readyAt as canonicalReadyAt",
       ])
       .where("agentSessionTargets.workspaceId", "=", workspaceId)
       .where("agentSessionTargets.sessionId", "=", canonicalSessionId)
@@ -5505,9 +5896,10 @@ export class PostgresDatabase {
       .where("agentSessions.agentId", "=", agentId)
       .executeTakeFirst();
     if (!target) return null;
-    const { error, ...record } = target;
+    const { error, canonicalReadyAt, ...record } = target;
     return {
       ...record,
+      canonicalReady: canonicalReadyAt !== null,
       expiresAt: timestamp(target.expiresAt),
       ...(error === null ? {} : { error }),
     };
@@ -5534,16 +5926,24 @@ export class PostgresDatabase {
         "sessions.id",
         "agentSessionTargets.runtimeSessionId",
       )
+      .innerJoin("machines", (join) =>
+        join
+          .onRef("machines.workspaceId", "=", "agentSessionTargets.workspaceId")
+          .onRef("machines.id", "=", "agentSessionTargets.machineId"),
+      )
       .select([
         "agentSessionTargets.sessionId as canonicalSessionId",
         "agentSessionTargets.runtimeSessionId",
         "agentSessionTargets.machineId",
+        "machines.name as machineName",
+        "machines.runtime as machineRuntime",
         "agentSessionTargets.profile",
         "agentSessionTargets.capabilities",
         "agentSessionTargets.restrictions",
         "sessions.status",
         "sessions.expiresAt",
         "sessions.error",
+        "agentSessions.readyAt as canonicalReadyAt",
       ])
       .where("agentSessionTargets.workspaceId", "=", workspaceId)
       .where("agentSessionTargets.sessionId", "=", canonicalSessionId)
@@ -5551,9 +5951,10 @@ export class PostgresDatabase {
       .orderBy("agentSessionTargets.machineId")
       .execute();
     return targets.map((target) => {
-      const { error, ...record } = target;
+      const { error, canonicalReadyAt, ...record } = target;
       return {
         ...record,
+        canonicalReady: canonicalReadyAt !== null,
         expiresAt: timestamp(target.expiresAt),
         ...(error === null ? {} : { error }),
       };
@@ -5565,6 +5966,8 @@ export class PostgresDatabase {
     sessionId: string;
     agentId: string;
     requestedByHumanId?: string;
+    actorHumanId?: string;
+    actorAgentId?: string;
     reason: "cancelled" | "revoked";
     now?: number;
   }): Promise<AgentSessionTermination | null> {
@@ -5581,7 +5984,7 @@ export class PostgresDatabase {
       if (!session) return null;
       const request = await transaction
         .selectFrom("agentSessionRequests")
-        .select(["id", "requestedByHumanId"])
+        .select(["id", "requestedByHumanId", "title"])
         .where("workspaceId", "=", input.workspaceId)
         .where("sessionId", "=", input.sessionId)
         .executeTakeFirst();
@@ -5678,7 +6081,29 @@ export class PostgresDatabase {
             operationId: null,
             eventType: `session.${input.reason}`,
             source: "verified",
-            metadata: JSON.stringify({}),
+            metadata: JSON.stringify({
+              ...(input.actorHumanId
+                ? { actorHumanId: input.actorHumanId }
+                : {}),
+              ...(input.actorAgentId
+                ? { actorAgentId: input.actorAgentId }
+                : {}),
+            }),
+            createdAt: now,
+          })
+          .execute();
+        await transaction
+          .insertInto("notifications")
+          .values({
+            workspaceId: input.workspaceId,
+            id: randomUUID(),
+            userId: request.requestedByHumanId,
+            kind: "session.revoked",
+            title: input.reason === "revoked" ? "Session revoked" : "Session cancelled",
+            description: `${request.title} was closed`,
+            href: `/dashboard/sessions/${input.sessionId}`,
+            resourceId: input.sessionId,
+            readAt: null,
             createdAt: now,
           })
           .execute();
@@ -5699,6 +6124,8 @@ export class PostgresDatabase {
     sessionId: string;
     agentId: string;
     requestedByHumanId?: string;
+    actorHumanId?: string;
+    actorAgentId?: string;
     outcome: "succeeded" | "failed";
     summary?: string;
     now?: number;
@@ -5716,7 +6143,7 @@ export class PostgresDatabase {
         if (!session) return null;
         const request = await transaction
           .selectFrom("agentSessionRequests")
-          .select(["id", "requestedByHumanId"])
+          .select(["id", "requestedByHumanId", "title"])
           .where("workspaceId", "=", input.workspaceId)
           .where("sessionId", "=", input.sessionId)
           .executeTakeFirst();
@@ -5802,7 +6229,14 @@ export class PostgresDatabase {
               operationId: null,
               eventType: "session.completed",
               source: "verified",
-              metadata: JSON.stringify({}),
+              metadata: JSON.stringify({
+                ...(input.actorHumanId
+                  ? { actorHumanId: input.actorHumanId }
+                  : {}),
+                ...(input.actorAgentId
+                  ? { actorAgentId: input.actorAgentId }
+                  : {}),
+              }),
               createdAt: now,
             },
             {
@@ -5814,12 +6248,33 @@ export class PostgresDatabase {
               eventType: "session.outcome_reported",
               source: "agent",
               metadata: JSON.stringify({
+                ...(input.actorAgentId
+                  ? { actorAgentId: input.actorAgentId }
+                  : {}),
+                ...(input.actorHumanId
+                  ? { actorHumanId: input.actorHumanId }
+                  : {}),
                 outcome: input.outcome,
                 ...(input.summary ? { summary: input.summary } : {}),
               }),
               createdAt: now,
             },
           ])
+          .execute();
+        await transaction
+          .insertInto("notifications")
+          .values({
+            workspaceId: input.workspaceId,
+            id: randomUUID(),
+            userId: request.requestedByHumanId,
+            kind: "session.completed",
+            title: "Session completed",
+            description: `${request.title} completed`,
+            href: `/dashboard/sessions/${input.sessionId}`,
+            resourceId: input.sessionId,
+            readAt: null,
+            createdAt: now,
+          })
           .execute();
         return {
           id: session.id,
@@ -6698,6 +7153,7 @@ export class PostgresDatabase {
           runtime: null,
           lastSeenAt: null,
           revokedAt: null,
+          createdByHumanId: enrollment.createdByHumanId,
           enrolledAt: now,
         })
         .execute();
@@ -6817,29 +7273,6 @@ export class PostgresDatabase {
             })
             .execute();
         }
-        const remaining = await transaction
-          .selectFrom("agentSessionTargets")
-          .select("machineId")
-          .where("workspaceId", "=", machine.workspaceId)
-          .where("sessionId", "=", target.sessionId)
-          .where("status", "in", ["opening", "ready"])
-          .executeTakeFirst();
-        if (!remaining) {
-          await transaction
-            .updateTable("agentSessions")
-            .set({ status: "cancelled", updatedAt: now })
-            .where("workspaceId", "=", machine.workspaceId)
-            .where("id", "=", target.sessionId)
-            .where("status", "=", "active")
-            .execute();
-          await transaction
-            .updateTable("sessionCredentials")
-            .set({ status: "revoked", revokedAt: now })
-            .where("workspaceId", "=", machine.workspaceId)
-            .where("sessionId", "=", target.sessionId)
-            .where("status", "=", "active")
-            .execute();
-        }
       }
       return {
         workspaceId: machine.workspaceId,
@@ -6862,6 +7295,87 @@ export class PostgresDatabase {
       .where("revokedAt", "is", null)
       .executeTakeFirst();
     return Number(result.numUpdatedRows) === 1;
+  }
+
+  async retryAgentSessionTargets(machineId: string): Promise<Array<{
+    workspaceId: string;
+    runtimeSessionId: string;
+    profile: string;
+    capabilities: Capability[];
+    restrictions: SessionMachineScope["restrictions"];
+    expiresAt: number;
+  }>> {
+    const now = new Date();
+    return await this.db.transaction().execute(async (transaction) => {
+      const targets = await transaction
+        .selectFrom("agentSessionTargets")
+        .innerJoin("agentSessions", (join) =>
+          join
+            .onRef("agentSessions.workspaceId", "=", "agentSessionTargets.workspaceId")
+            .onRef("agentSessions.id", "=", "agentSessionTargets.sessionId"),
+        )
+        .innerJoin("sessions", "sessions.id", "agentSessionTargets.runtimeSessionId")
+        .innerJoin("agentSessionRequests", (join) =>
+          join
+            .onRef("agentSessionRequests.workspaceId", "=", "agentSessionTargets.workspaceId")
+            .onRef("agentSessionRequests.sessionId", "=", "agentSessionTargets.sessionId"),
+        )
+        .select([
+          "agentSessionTargets.workspaceId",
+          "agentSessionTargets.runtimeSessionId",
+          "agentSessionTargets.profile",
+          "agentSessionTargets.capabilities",
+          "agentSessionTargets.restrictions",
+          "agentSessions.expiresAt",
+          "agentSessionRequests.id as requestId",
+          "agentSessionTargets.sessionId as canonicalSessionId",
+        ])
+        .where("agentSessionTargets.machineId", "=", machineId)
+        .where("agentSessionTargets.status", "=", "rejected")
+        .where("agentSessions.status", "=", "active")
+        .where("agentSessions.expiresAt", ">", now)
+        .where("sessions.status", "=", "failed")
+        .forUpdate()
+        .execute();
+      for (const target of targets) {
+        await transaction
+          .updateTable("sessions")
+          .set({ status: "opening", error: null, updatedAt: now })
+          .where("workspaceId", "=", target.workspaceId)
+          .where("id", "=", target.runtimeSessionId)
+          .where("status", "=", "failed")
+          .execute();
+        await transaction
+          .updateTable("agentSessionTargets")
+          .set({ status: "opening", updatedAt: now })
+          .where("workspaceId", "=", target.workspaceId)
+          .where("runtimeSessionId", "=", target.runtimeSessionId)
+          .where("status", "=", "rejected")
+          .execute();
+        await transaction
+          .insertInto("sessionTimelineEvents")
+          .values({
+            workspaceId: target.workspaceId,
+            id: randomUUID(),
+            sessionId: target.canonicalSessionId,
+            requestId: target.requestId,
+            operationId: null,
+            eventType: "target.retrying",
+            source: "verified",
+            metadata: JSON.stringify({ machineId }),
+            createdAt: now,
+          })
+          .execute();
+      }
+      return targets.map((target) => ({
+        workspaceId: target.workspaceId,
+        runtimeSessionId: target.runtimeSessionId,
+        profile: target.profile,
+        capabilities: target.capabilities,
+        restrictions: target.restrictions,
+        expiresAt: timestamp(target.expiresAt),
+      }));
+    });
   }
 
   async setMachineIncompatible(
@@ -7039,43 +7553,40 @@ export class PostgresDatabase {
   async markSessionOpened(
     machineId: string,
     sessionId: string,
-  ): Promise<{ principalId: string; workspaceId: string } | null> {
+  ): Promise<{
+    principalId: string;
+    workspaceId: string;
+    reconciliation?: CanonicalSessionReconciliation;
+  } | null> {
     return await withDatabaseDeadlockRetry(() =>
       this.db.transaction().execute(async (transaction) => {
-      const result =
-        (await transaction
-        .updateTable("sessions")
-        .set({ status: "ready", updatedAt: new Date(), error: null })
-        .where("id", "=", sessionId)
-        .where("machineId", "=", machineId)
-        .where("status", "=", "opening")
-        .returning(["principalId", "workspaceId"])
-        .executeTakeFirst()) ?? null;
-      if (!result) return null;
-      const target = await transaction
-        .selectFrom("agentSessionTargets")
-        .innerJoin("agentSessionRequests", (join) =>
-          join
-            .onRef(
-              "agentSessionRequests.workspaceId",
-              "=",
-              "agentSessionTargets.workspaceId",
-            )
-            .onRef(
-              "agentSessionRequests.sessionId",
-              "=",
-              "agentSessionTargets.sessionId",
-            ),
-        )
-        .select([
-          "agentSessionRequests.id as requestId",
-          "agentSessionTargets.sessionId as canonicalSessionId",
-        ])
-        .where("agentSessionTargets.workspaceId", "=", result.workspaceId)
-        .where("agentSessionTargets.runtimeSessionId", "=", sessionId)
-        .executeTakeFirst();
-      if (target) {
         const now = new Date();
+        const result =
+          (await transaction
+          .updateTable("sessions")
+          .set({ status: "ready", updatedAt: now, error: null })
+          .where("id", "=", sessionId)
+          .where("machineId", "=", machineId)
+          .where("status", "=", "opening")
+          .where("updatedAt", ">", new Date(now.getTime() - 60_000))
+          .returning(["principalId", "workspaceId"])
+          .executeTakeFirst()) ?? null;
+        if (!result) return null;
+        const target = await transaction
+          .selectFrom("agentSessionTargets")
+          .innerJoin("agentSessionRequests", (join) =>
+            join
+              .onRef("agentSessionRequests.workspaceId", "=", "agentSessionTargets.workspaceId")
+              .onRef("agentSessionRequests.sessionId", "=", "agentSessionTargets.sessionId"),
+          )
+          .select([
+            "agentSessionRequests.id as requestId",
+            "agentSessionTargets.sessionId as canonicalSessionId",
+          ])
+          .where("agentSessionTargets.workspaceId", "=", result.workspaceId)
+          .where("agentSessionTargets.runtimeSessionId", "=", sessionId)
+          .executeTakeFirst();
+        if (!target) return result;
         await transaction
           .updateTable("agentSessionTargets")
           .set({ status: "ready", updatedAt: now })
@@ -7096,8 +7607,12 @@ export class PostgresDatabase {
             createdAt: now,
           })
           .execute();
-      }
-        return result;
+        const reconciliation = await reconcileCanonicalAgentSession(transaction, {
+          workspaceId: result.workspaceId,
+          sessionId: target.canonicalSessionId,
+          now,
+        });
+        return { ...result, reconciliation };
       }),
     );
   }
@@ -7106,43 +7621,39 @@ export class PostgresDatabase {
     machineId: string,
     sessionId: string,
     error: string,
-  ): Promise<{ principalId: string; workspaceId: string } | null> {
+  ): Promise<{
+    principalId: string;
+    workspaceId: string;
+    reconciliation?: CanonicalSessionReconciliation;
+  } | null> {
     return await withDatabaseDeadlockRetry(() =>
       this.db.transaction().execute(async (transaction) => {
-      const result =
-        (await transaction
-        .updateTable("sessions")
-        .set({ status: "failed", updatedAt: new Date(), error })
-        .where("id", "=", sessionId)
-        .where("machineId", "=", machineId)
-        .where("status", "=", "opening")
-        .returning(["principalId", "workspaceId"])
-        .executeTakeFirst()) ?? null;
-      if (!result) return null;
-      const target = await transaction
-        .selectFrom("agentSessionTargets")
-        .innerJoin("agentSessionRequests", (join) =>
-          join
-            .onRef(
-              "agentSessionRequests.workspaceId",
-              "=",
-              "agentSessionTargets.workspaceId",
-            )
-            .onRef(
-              "agentSessionRequests.sessionId",
-              "=",
-              "agentSessionTargets.sessionId",
-            ),
-        )
-        .select([
-          "agentSessionRequests.id as requestId",
-          "agentSessionTargets.sessionId as canonicalSessionId",
-        ])
-        .where("agentSessionTargets.workspaceId", "=", result.workspaceId)
-        .where("agentSessionTargets.runtimeSessionId", "=", sessionId)
-        .executeTakeFirst();
-      if (target) {
         const now = new Date();
+        const result =
+          (await transaction
+          .updateTable("sessions")
+          .set({ status: "failed", updatedAt: now, error })
+          .where("id", "=", sessionId)
+          .where("machineId", "=", machineId)
+          .where("status", "=", "opening")
+          .returning(["principalId", "workspaceId"])
+          .executeTakeFirst()) ?? null;
+        if (!result) return null;
+        const target = await transaction
+          .selectFrom("agentSessionTargets")
+          .innerJoin("agentSessionRequests", (join) =>
+            join
+              .onRef("agentSessionRequests.workspaceId", "=", "agentSessionTargets.workspaceId")
+              .onRef("agentSessionRequests.sessionId", "=", "agentSessionTargets.sessionId"),
+          )
+          .select([
+            "agentSessionRequests.id as requestId",
+            "agentSessionTargets.sessionId as canonicalSessionId",
+          ])
+          .where("agentSessionTargets.workspaceId", "=", result.workspaceId)
+          .where("agentSessionTargets.runtimeSessionId", "=", sessionId)
+          .executeTakeFirst();
+        if (!target) return result;
         await transaction
           .updateTable("agentSessionTargets")
           .set({ status: "rejected", updatedAt: now })
@@ -7163,8 +7674,12 @@ export class PostgresDatabase {
             createdAt: now,
           })
           .execute();
-      }
-        return result;
+        const reconciliation = await reconcileCanonicalAgentSession(transaction, {
+          workspaceId: result.workspaceId,
+          sessionId: target.canonicalSessionId,
+          now,
+        });
+        return { ...result, reconciliation };
       }),
     );
   }
@@ -7395,6 +7910,7 @@ export class PostgresDatabase {
         )
         .select([
           "agentSessionRequests.id",
+          "agentSessionRequests.agentId",
           "agentSessionTargets.sessionId as canonicalSessionId",
         ])
         .where("agentSessionTargets.workspaceId", "=", operation.workspaceId)
@@ -7413,7 +7929,8 @@ export class PostgresDatabase {
           source: "verified",
           metadata: JSON.stringify({
             machineId,
-            kind: operation.action.kind,
+            actorAgentId: request.agentId,
+            ...privacyMinimalOperationMetadata(operation.action),
           }),
         })
         .execute();
@@ -7511,6 +8028,7 @@ export class PostgresDatabase {
         )
         .select([
           "agentSessionRequests.id",
+          "agentSessionRequests.agentId",
           "agentSessionTargets.sessionId as canonicalSessionId",
         ])
         .where("agentSessionTargets.workspaceId", "=", operation.workspaceId)
@@ -7529,6 +8047,7 @@ export class PostgresDatabase {
             source: "verified",
             metadata: JSON.stringify({
               machineId: input.machineId,
+              actorAgentId: request.agentId,
               kind: operation.action.kind,
               status: input.status,
               exitCode: input.exitCode,
@@ -7820,6 +8339,184 @@ export class PostgresDatabase {
         sessions: deletedSessions.length,
         auditEvents: deletedAuditEvents.length,
       };
+    });
+  }
+
+  async notifyStaleOfflineMachines(
+    offlineMilliseconds = 5 * 60_000,
+  ): Promise<string[]> {
+    const cutoff = new Date(Date.now() - offlineMilliseconds);
+    const machines = await this.db
+      .selectFrom("machines")
+      .select(["workspaceId", "id", "name", "lastSeenAt", "createdByHumanId"])
+      .where("status", "=", "offline")
+      .where("revokedAt", "is", null)
+      .where("lastSeenAt", "is not", null)
+      .where("lastSeenAt", "<=", cutoff)
+      .limit(500)
+      .execute();
+    const changedWorkspaces = new Set<string>();
+    for (const machine of machines) {
+      if (!machine.lastSeenAt) continue;
+      const previous = await this.db
+          .selectFrom("notifications")
+          .select("createdAt")
+          .where("workspaceId", "=", machine.workspaceId)
+          .where("kind", "=", "machine.offline")
+          .where("resourceId", "=", machine.id)
+          .orderBy("createdAt", "desc")
+          .executeTakeFirst();
+      if (previous && previous.createdAt >= machine.lastSeenAt) {
+        continue;
+      }
+      const activeOwner = machine.createdByHumanId
+        ? await this.db
+            .selectFrom("humans")
+            .select("id")
+            .where("workspaceId", "=", machine.workspaceId)
+            .where("id", "=", machine.createdByHumanId)
+            .where("status", "=", "active")
+            .executeTakeFirst()
+        : undefined;
+      const recipientId = activeOwner?.id ?? (
+        await this.db
+          .selectFrom("humans")
+          .select("id")
+          .where("workspaceId", "=", machine.workspaceId)
+          .where("status", "=", "active")
+          .orderBy("createdAt", "asc")
+          .executeTakeFirst()
+      )?.id;
+      if (!recipientId) continue;
+      await this.createNotification({
+        workspaceId: machine.workspaceId,
+        userId: recipientId,
+        kind: "machine.offline",
+        title: "Machine offline",
+        description: `${machine.name} has been offline for 5 minutes`,
+        href: "/dashboard/machines",
+        resourceId: machine.id,
+      });
+      changedWorkspaces.add(machine.workspaceId);
+    }
+    return [...changedWorkspaces];
+  }
+
+  async failStaleSessionOpenings(
+    timeoutMilliseconds = 60_000,
+  ): Promise<{
+    failed: Array<{ id: string; machineId: string; workspaceId: string }>;
+    ready: Array<{
+      workspaceId: string;
+      expiresAt: number;
+      targets: Array<{ machineId: string; runtimeSessionId: string }>;
+    }>;
+  }> {
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - timeoutMilliseconds);
+    return await this.db.transaction().execute(async (transaction) => {
+      const stale = await transaction
+        .selectFrom("agentSessionTargets")
+        .innerJoin("agentSessionRequests", (join) =>
+          join
+            .onRef(
+              "agentSessionRequests.workspaceId",
+              "=",
+              "agentSessionTargets.workspaceId",
+            )
+            .onRef(
+              "agentSessionRequests.sessionId",
+              "=",
+              "agentSessionTargets.sessionId",
+            ),
+        )
+        .select([
+          "agentSessionTargets.workspaceId",
+          "agentSessionTargets.sessionId",
+          "agentSessionTargets.runtimeSessionId",
+          "agentSessionTargets.machineId",
+          "agentSessionRequests.id as requestId",
+          "agentSessionRequests.requestedByHumanId",
+          "agentSessionRequests.title",
+        ])
+        .where("agentSessionTargets.status", "=", "opening")
+        .where("agentSessionTargets.updatedAt", "<=", cutoff)
+        .execute();
+
+      const failed: Array<{ id: string; machineId: string; workspaceId: string }> = [];
+      const ready: Array<{
+        workspaceId: string;
+        expiresAt: number;
+        targets: Array<{ machineId: string; runtimeSessionId: string }>;
+      }> = [];
+      const failedSessions = new Map<
+        string,
+        { workspaceId: string; sessionId: string }
+      >();
+      for (const target of stale) {
+        const runtime = await transaction
+          .updateTable("sessions")
+          .set({
+            status: "failed",
+            error: "session_open_timeout",
+            updatedAt: now,
+          })
+          .where("workspaceId", "=", target.workspaceId)
+          .where("id", "=", target.runtimeSessionId)
+          .where("status", "=", "opening")
+          .returning("id")
+          .executeTakeFirst();
+        if (!runtime) continue;
+        await transaction
+          .updateTable("agentSessionTargets")
+          .set({ status: "rejected", updatedAt: now })
+          .where("workspaceId", "=", target.workspaceId)
+          .where("runtimeSessionId", "=", target.runtimeSessionId)
+          .where("status", "=", "opening")
+          .execute();
+        await transaction
+          .insertInto("sessionTimelineEvents")
+          .values({
+            workspaceId: target.workspaceId,
+            id: randomUUID(),
+            sessionId: target.sessionId,
+            requestId: target.requestId,
+            operationId: null,
+            eventType: "target.rejected",
+            source: "verified",
+            metadata: JSON.stringify({
+              machineId: target.machineId,
+              reason: "session_open_timeout",
+            }),
+            createdAt: now,
+          })
+          .execute();
+        failed.push({
+          id: target.runtimeSessionId,
+          machineId: target.machineId,
+          workspaceId: target.workspaceId,
+        });
+        failedSessions.set(`${target.workspaceId}:${target.sessionId}`, {
+          workspaceId: target.workspaceId,
+          sessionId: target.sessionId,
+        });
+      }
+
+      for (const { workspaceId, sessionId } of failedSessions.values()) {
+        const reconciliation = await reconcileCanonicalAgentSession(transaction, {
+          workspaceId,
+          sessionId,
+          now,
+        });
+        if (reconciliation.state === "ready" && reconciliation.transitioned) {
+          ready.push({
+            workspaceId,
+            expiresAt: reconciliation.expiresAt,
+            targets: reconciliation.targets,
+          });
+        }
+      }
+      return { failed, ready };
     });
   }
 

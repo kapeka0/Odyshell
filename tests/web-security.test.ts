@@ -754,8 +754,14 @@ describe("dashboard navigation performance boundary", () => {
     expect(sanitizer).toContain('"status"');
     expect(sanitizer).toContain('"executorAgentId"');
     expect(sanitizer).toContain('"requesterAgentId"');
+    expect(sanitizer).toContain('"actorHumanId"');
+    expect(sanitizer).toContain('"actorAgentId"');
+    expect(sanitizer).toContain('"outcome"');
+    expect(sanitizer).not.toContain('"summary"');
     expect(sanitizer).toContain('"runId"');
-    for (const sensitive of ["command", "path", "stdout", "stderr", "token"]) {
+    expect(sanitizer).toContain('"command"');
+    expect(sanitizer).toContain('"exitCode"');
+    for (const sensitive of ["stdout", "stderr", "token"]) {
       expect(sanitizer).not.toContain(`"${sensitive}"`);
     }
     for (const route of [
@@ -895,6 +901,9 @@ describe("dashboard navigation performance boundary", () => {
 
     expect(sessionsPage).toContain("state.context.sessionRequests");
     expect(sessionList).toContain("<UserIdentityAvatar");
+    expect(sessionList).toContain("<AgentIdentityAvatar");
+    expect(sessionList).toContain("value.requestedByAgentId");
+    expect(sessionList).toContain('title="Machine"');
     expect(sessionList).toContain('?? "Member"');
     expect(sessionList).not.toContain("?? value.requestedByHumanId");
     expect(sessionList).not.toContain("?? value.requestedByAgentId");
@@ -952,6 +961,8 @@ describe("dashboard navigation performance boundary", () => {
 
     expect(sessionList).toContain('title="Duration"');
     expect(sessionList).toContain("formatSessionDuration(");
+    expect(sessionList).toContain("row.value.readyAt ?? row.value.createdAt");
+    expect(server).toContain("readyAt: isoTimestamp(session.readyAt)");
     expect(server).toContain("durationSeconds: sessionRequest.durationSeconds");
     expect(agentList).not.toContain("summaryLabel=");
   });

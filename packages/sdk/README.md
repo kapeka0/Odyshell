@@ -29,6 +29,7 @@ const ods = new Odyshell({
 const agent = ods.agent({ id: agentId, name: "Dependency auditor" });
 const request = await agent.requestOperationSession({
   machineId,
+  title: "Inspect repository state",
   purpose: "Inspect repository state",
   durationSeconds: 900,
   action: {
@@ -146,8 +147,9 @@ const renewal = await ods.renewAgentSession(claim.sessionId, agentId, {
 });
 ```
 
-Restricted Sessions do not accept `process.shell`. Use `process.exec` with an explicit executable
-and arguments.
+Prefer `process.exec` with an explicit executable and arguments. Request `process.shell` only for
+dependent multi-command work; it grants broad shell authority, requires manual approval, and
+remains bounded by Session expiry and the Client Local Policy.
 
 Administrative SDK calls can select an execution Workspace:
 

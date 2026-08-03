@@ -28,7 +28,7 @@ Restricted Agent Sessions fail closed:
 - filesystem operations require an exact path or an explicitly approved descendant tree;
 - `process.exec` requires an exact executable, argument array, and working-directory rule;
 - `docker.logs` requires an exact container name;
-- `process.shell` is not available in a restricted Agent Session.
+- `process.shell` is an explicit broad capability and is never autoapproved.
 
 The Server checks the selected machine scope, and the Client enforces the same restrictions again
 before executing locally.
@@ -41,10 +41,10 @@ Prefer structured execution:
 ods exec my-machine -- git status --short
 ```
 
-Free-form shell execution cannot be represented by a restricted Agent Session. `ods shell` is
-deprecated; split work into explicit `ods exec` calls. Operations run with the permissions of the
-operating-system user running the Client. Odyshell controls who may request an operation; it cannot
-make an allowed program harmless.
+Use `process.shell` only when the task genuinely needs several dependent commands, pipelines, or
+shell syntax. The Agent receives stdout and stderr live and may issue more Operations inside the
+same Session. The dashboard records sanitized commands and exit status, not output. Operations run
+with the permissions of the operating-system user running the Client.
 
 ## Docker
 

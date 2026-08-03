@@ -195,8 +195,36 @@ const minimalKeys = new Set([
   "predecessorSessionId",
   "executorAgentId",
   "requesterAgentId",
+  "actorHumanId",
+  "actorAgentId",
   "runId",
   "scopes",
+  "kind",
+  "command",
+  "program",
+  "args",
+  "exitCode",
+  "errorCode",
+  "correlationId",
+  "outcome",
+]);
+const eventSinkMinimalKeys = new Set([
+  "machineId",
+  "machineIds",
+  "status",
+  "expiresAt",
+  "predecessorSessionId",
+  "executorAgentId",
+  "requesterAgentId",
+  "actorHumanId",
+  "actorAgentId",
+  "runId",
+  "scopes",
+  "kind",
+  "exitCode",
+  "errorCode",
+  "correlationId",
+  "outcome",
 ]);
 const alwaysSensitiveKey = /(?:token|secret|password|credential|authorization|cookie|env)/iu;
 const diagnosticOnlyKey =
@@ -241,6 +269,103 @@ export function operationTimelineMetadata(
   }
 }
 
+const sensitiveFlag = /^(?:(?:--?)?(?:token|secret|password|passwd|authorization|api[-_]?key):?|-[pk])$/iu;
+const sensitiveAssignment = /^((?:(?:--?)?(?:token|secret|password|passwd|authorization|api[-_]?key)|-[pk])\s*(?:=|:)).*$/iu;
+const safeFlag = /^-{1,2}[a-z][a-z0-9-]*$/iu;
+const safeCommandWord = new Set([
+  "cat", "df", "docker", "find", "git", "grep", "head", "ls", "pwd",
+  "status", "show", "list", "logs", "tail", "version", "where", "which",
+]);
+
+function sanitizeProgram(value: string): string {
+  const basename = value.split(/[\\/]/u).at(-1) ?? "";
+  return /^[a-z0-9._+-]{1,128}$/iu.test(basename)
+    ? basename
+    : "[REDACTED]";
+}
+
+function sanitizeArgument(argument: string): string {
+  const assignment = sensitiveAssignment.exec(argument);
+  if (assignment) return `${assignment[1]}[REDACTED]`;
+  if (safeFlag.test(argument) || safeCommandWord.has(argument.toLowerCase())) {
+    return argument;
+  }
+  if (/^--?[a-z][a-z0-9-]*=/iu.test(argument)) {
+    return `${argument.slice(0, argument.indexOf("=") + 1)}[REDACTED]`;
+  }
+  return "[REDACTED]";
+}
+
+function sanitizeArgs(args: string[]): string[] {
+  let redactNext = false;
+  return args.map((argument) => {
+    if (redactNext) {
+      redactNext = false;
+      return "[REDACTED]";
+    }
+    if (sensitiveFlag.test(argument)) {
+      redactNext = true;
+      return argument;
+    }
+    return sanitizeArgument(argument);
+  });
+}
+
+function sanitizeShellCommand(command: string): string {
+  const parts = command.split(/(\s+|&&|\|\||[|;])/u);
+  let commandPosition = true;
+  let redactNext = 0;
+  return parts.map((part) => {
+    if (!part || /^\s+$/u.test(part)) return part;
+    if (/^(?:&&|\|\||[|;])$/u.test(part)) {
+      commandPosition = true;
+      redactNext = 0;
+      return part;
+    }
+    if (redactNext > 0) {
+      redactNext -= 1;
+      return "[REDACTED]";
+    }
+    const unquoted = part.replace(/^["']|["']$/gu, "");
+    if (sensitiveFlag.test(unquoted)) {
+      redactNext = unquoted.toLowerCase().startsWith("authorization") ? 2 : 1;
+      commandPosition = false;
+      return part;
+    }
+    const assignment = sensitiveAssignment.exec(unquoted);
+    if (assignment) {
+      commandPosition = false;
+      return `${assignment[1]}[REDACTED]`;
+    }
+    if (commandPosition) {
+      commandPosition = false;
+      return sanitizeProgram(unquoted);
+    }
+    return sanitizeArgument(unquoted);
+  }).join("");
+}
+
+export function privacyMinimalOperationMetadata(
+  action: OperationAction,
+): Record<string, unknown> {
+  if (action.kind === "process.exec") {
+    return {
+      kind: action.kind,
+      program: sanitizeProgram(action.program),
+      args: sanitizeArgs(action.args),
+    };
+  }
+  if (action.kind === "process.shell") {
+    return {
+      kind: action.kind,
+      command: sanitizeShellCommand(action.command),
+    };
+  }
+  // Privacy-minimal is an allowlist. Filesystem paths, search queries and
+  // Docker container names can disclose customer data even without output.
+  return { kind: action.kind };
+}
+
 const MAX_DIAGNOSTIC_STREAM_BYTES = 64 * 1024;
 
 export function diagnosticTimelineMetadata(
@@ -273,11 +398,44 @@ export function redactTimelineMetadata(
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(metadata)) {
     if (alwaysSensitiveKey.test(key)) continue;
+    if (key === "summary") continue;
     if (level === "privacy-minimal" && !minimalKeys.has(key)) continue;
     if (level === "operational" && diagnosticOnlyKey.test(key)) continue;
-    result[key] = value;
+    result[key] = sanitizedExportValue(key, value);
   }
   return result;
+}
+
+export function redactEventSinkMetadata(
+  metadata: Record<string, unknown>,
+  level: EventSinkDetailLevel,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    if (alwaysSensitiveKey.test(key)) continue;
+    if (key === "summary") continue;
+    if (level === "privacy-minimal" && !eventSinkMinimalKeys.has(key)) continue;
+    if (level === "operational" && diagnosticOnlyKey.test(key)) {
+      continue;
+    }
+    result[key] = sanitizedExportValue(key, value);
+  }
+  return result;
+}
+
+function sanitizedExportValue(key: string, value: unknown): unknown {
+  if (key === "command" && typeof value === "string") {
+    return sanitizeShellCommand(value);
+  }
+  if (key === "program" && typeof value === "string") {
+    return sanitizeProgram(value);
+  }
+  if (key === "args" && Array.isArray(value)) {
+    return sanitizeArgs(
+      value.filter((item): item is string => typeof item === "string"),
+    );
+  }
+  return value;
 }
 
 export type TimelineExport = {

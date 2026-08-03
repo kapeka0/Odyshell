@@ -216,7 +216,8 @@ export type AgentDeviceToken = DeviceToken & {
 export type AgentSessionRequestInput = {
   agentId: string;
   agentName: string;
-  purpose: string;
+  title: string;
+  purpose?: string;
   scopes: SessionMachineScope[];
   durationSeconds: number;
   runId?: string;
@@ -270,6 +271,13 @@ export type AgentSessionRequestStatus = {
   sessionId?: string;
 };
 
+export type ListedAgentSessionRequest = AgentSessionRequestStatus & {
+  title: string;
+  purpose?: string;
+  scopes: SessionMachineScope[];
+  durationSeconds: number;
+};
+
 export type ClaimedAgentSession = {
   sessionId: string;
   sessionToken: string;
@@ -282,7 +290,8 @@ export type ListedAgentSession = {
   id: string;
   agentId: string;
   agentName: string;
-  purpose: string;
+  title: string;
+  purpose?: string;
   status: "active" | "completed" | "cancelled" | "revoked" | "expired";
   expiresAt: string;
   predecessorSessionId?: string;
@@ -332,7 +341,8 @@ export type AgentIdentity = {
 
 export type OperationSessionRequestInput = {
   machineId: string;
-  purpose: string;
+  title: string;
+  purpose?: string;
   action: OperationAction;
   durationSeconds: number;
   profile?: string;
@@ -366,14 +376,9 @@ export class AgentClient {
   }
 
   requestOperationSession(input: OperationSessionRequestInput) {
-    if (input.action.kind === "process.shell") {
-      throw new ExpectedError(
-        "process.shell cannot be safely scoped. Use process.exec with an explicit program and arguments.",
-        "process_shell_unsupported",
-      );
-    }
     return this.requestSession({
-      purpose: input.purpose,
+      title: input.title,
+      ...(input.purpose ? { purpose: input.purpose } : {}),
       scopes: [
         operationSessionScope(
           input.machineId,
@@ -388,6 +393,14 @@ export class AgentClient {
 
   status(requestId: string) {
     return this.ods.agentSessionRequestStatus(requestId, this.identity.id);
+  }
+
+  requests() {
+    return this.ods.agentSessionRequests(this.identity.id);
+  }
+
+  sessions() {
+    return this.ods.agentSessions();
   }
 
   claim(requestId: string) {
@@ -803,6 +816,15 @@ export class Odyshell {
         body: { agentId },
       },
     );
+  }
+
+  async agentSessionRequests(
+    agentId: string,
+  ): Promise<ListedAgentSessionRequest[]> {
+    const response = await this.request<{ data: ListedAgentSessionRequest[] }>(
+      `/v1/agent-session-requests?agentId=${encodeURIComponent(agentId)}`,
+    );
+    return response.data;
   }
 
   async claimAgentSession(

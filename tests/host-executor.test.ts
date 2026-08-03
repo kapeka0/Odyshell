@@ -59,6 +59,78 @@ describe("HostExecutor", () => {
     );
   });
 
+  it("confirms an uncooperative process is gone before cancellation resolves", async () => {
+    let ready!: () => void;
+    const started = new Promise<void>((resolveStarted) => {
+      ready = resolveStarted;
+    });
+    const running = await executor.execute(
+      crypto.randomUUID(),
+      session,
+      {
+        kind: "process.exec",
+        program: process.execPath,
+        args: [
+          "-e",
+          "process.on('SIGTERM',()=>{});process.stdout.write('ready');setInterval(()=>{},1000)",
+        ],
+        cwd: ".",
+        env: {},
+      },
+      hooks({ stdout: () => ready() }),
+    );
+    await started;
+
+    await expect(running.cancel()).resolves.toBeUndefined();
+    expect(await running.done).toHaveProperty("exitCode");
+    expect(running.child?.signalCode ?? running.child?.exitCode).not.toBeNull();
+  }, 10_000);
+
+  it.skipIf(process.platform === "win32")(
+    "confirms descendants are gone when the process-group leader exits first",
+    async () => {
+      let grandchildPid: number | undefined;
+      let ready!: () => void;
+      const started = new Promise<void>((resolveStarted) => {
+        ready = resolveStarted;
+      });
+      const running = await executor.execute(
+        crypto.randomUUID(),
+        session,
+        {
+          kind: "process.exec",
+          program: process.execPath,
+          args: [
+            "-e",
+            [
+              "const { spawn } = require('node:child_process')",
+              "const child = spawn(process.execPath, ['-e', `process.on('SIGTERM',()=>{});process.stdout.write('grandchild:'+process.pid);setInterval(()=>{},1000)`], { stdio: ['ignore', 'inherit', 'inherit'] })",
+              "setInterval(()=>{},1000)",
+            ].join(";"),
+          ],
+          cwd: ".",
+          env: {},
+        },
+        hooks({
+          stdout: (data) => {
+            const match = data.toString().match(/grandchild:(\d+)/u);
+            if (!match) return;
+            grandchildPid = Number(match[1]);
+            ready();
+          },
+        }),
+      );
+      await started;
+
+      await expect(running.cancel()).resolves.toBeUndefined();
+      expect(grandchildPid).toBeDefined();
+      expect(() => process.kill(grandchildPid!, 0)).toThrow(
+        expect.objectContaining({ code: "ESRCH" }),
+      );
+    },
+    10_000,
+  );
+
   it("executes a scoped process from an absolute working directory", async () => {
     const absoluteCwd = await mkdtemp(join(tmpdir(), "odyshell-cwd-"));
     try {

@@ -71,8 +71,10 @@ The approval-based workflow exposes eight tools:
 1. `machines_list` finds the target machine and reports its platform, architecture, runner and
    locally allowed capabilities.
 2. `machine_ping` checks the complete connection path.
-3. `session_request` accepts one or more typed operations and returns an approval URL.
-4. `session_requests_list` recovers recent requests if an MCP response is interrupted or lost.
+3. `session_request` accepts a title, optional purpose, and one or more typed operations, then
+   returns an approval URL.
+4. `sessions_list` recovers pending requests and active Sessions if a response is interrupted, a
+   tool host restarts, or a new chat needs to continue the same Agent task. History is optional.
 5. `session_status` checks the decision and privately binds the approved Session.
 6. `operation_execute` executes only an approved operation. Its stable operation ID makes retries safe.
 7. `session_complete` closes access when no Operation is active and records the agent-reported outcome.
@@ -84,16 +86,18 @@ request. The Sessions page shows the pending request immediately, then replaces 
 Session after approval and one-time claim. Its pending row opens the same review URL shown by the
 agent. The agent calls `session_status` and continues only if
 Odyshell grants the Session and the Client reports it ready.
-If the client loses the original response, it can call `session_requests_list`, select its recent
-request and continue with `session_status` instead of asking for duplicate approval.
+If the client loses the original response, it can call `sessions_list`, select the explicit active
+Session or pending request and continue instead of asking for duplicate approval.
 
 Odyshell returns a `nextAction` after both the request and status checks. Agents should follow it
 instead of asking the member to repeat an approval. A ready status points to `operation_execute`;
 an opening status points back to `session_status` while the Client finishes opening the Session.
 
-Agents should call `machines_list` before choosing commands. For example, a Windows machine should
-not receive Linux-only commands such as `df -h`. The Server exposes only an allowlisted runtime
-summary; local paths, Node details and Client configuration remain hidden.
+Agents should inspect `machines_list` before choosing commands. Machine, Session, and status
+results expose the allowlisted platform, architecture, runner, capabilities, and default shell so
+a Windows machine does not receive Linux-only commands such as `df -h`.
+If an executable is unavailable, `operation_execute` directs the Agent back to `machines_list`
+instead of encouraging another platform guess.
 
 Each operation determines its capability and restriction automatically. Scopes for the same
 machine are combined without broadening their exact restrictions. Filesystem operations use an
@@ -108,9 +112,11 @@ Odyshell rejects the group. Request those operations in separate Sessions.
 The Server validates Session identity, machine, capability, path and expiry on every Operation.
 The Client applies its local policy independently.
 
-`process.shell` is not available through restricted Sessions. Agents can request `fs.read` for an
-exact absolute host file, such as `/etc/network/interfaces`, or use `process.exec` when the task
-requires an exact executable and argument array. The user sees the exact operation before approval.
+Agents should prefer native filesystem and Docker Operations or `process.exec`. They can request
+`process.shell` for multi-step work where the next command depends on stdout or stderr from the
+previous one. Shell authority is broad, temporary, never autoapproved, bounded by the machine's
+Local Policy, and every command is recorded after secret redaction. It does not create a persistent
+PTY; each Operation has an explicit working directory and deadline.
 
 ## Client-side blocks
 

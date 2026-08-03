@@ -4,11 +4,13 @@ import { dirname, resolve } from "node:path";
 import process from "node:process";
 import {
   MAX_CLIENT_CLOCK_SKEW_MILLISECONDS,
+  MAX_AGENT_SESSION_SECONDS,
   PROTOCOL_VERSION,
   allCapabilities,
   capabilitySchema,
   clientConfigSchema,
   parseServerMessage,
+  sessionScopeSubsetDecision,
   type Capability,
   type ClientConfig,
   type ClientRuntimeInfo,
@@ -34,7 +36,7 @@ import {
   normalizeServerUrl,
 } from "./platform.js";
 
-export const CLIENT_VERSION = "0.11.0";
+export const CLIENT_VERSION = "0.12.0";
 
 export {
   clientConfigPathForProfile,
@@ -152,7 +154,7 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
           workspaceRoot,
           image: options.image ?? "alpine:3.22",
           network: "none" as const,
-          maxSessionTtlSeconds: 1800,
+          maxSessionTtlSeconds: MAX_AGENT_SESSION_SECONDS,
           maxConcurrentSessions: 2,
           maxOutputBytes: 1024 * 1024,
           capabilities: parsedCapabilities.data,
@@ -160,7 +162,7 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
       : {
           runner,
           workspaceRoot,
-          maxSessionTtlSeconds: 1800,
+          maxSessionTtlSeconds: MAX_AGENT_SESSION_SECONDS,
           maxConcurrentSessions: 2,
           maxOutputBytes: 1024 * 1024,
           capabilities: parsedCapabilities.data,
@@ -194,6 +196,10 @@ export async function inspectClientRuntime(
   const runtime: ClientRuntimeInfo = {
     hostPlatform: hostPlatform(),
     architecture: process.arch,
+    defaultShell:
+      process.platform === "win32"
+        ? (process.env.ComSpec ?? "cmd.exe")
+        : (process.env.SHELL ?? "/bin/sh"),
     nodeVersion: process.version,
     protocolVersion: PROTOCOL_VERSION,
     clientVersion: CLIENT_VERSION,
@@ -228,6 +234,25 @@ type ActiveSession = {
   session: RunningSession;
   executor: OperationExecutor;
 };
+
+export async function terminateLocalAuthority(
+  cancelOperations: Array<() => Promise<void>>,
+  closeSessions: Array<() => Promise<void>>,
+): Promise<void> {
+  const results = [
+    ...await Promise.allSettled(cancelOperations.map(async (cancel) => cancel())),
+    ...await Promise.allSettled(closeSessions.map(async (close) => close())),
+  ];
+  const failures = results.filter(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  );
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures.map((failure) => failure.reason),
+      "Unable to prove local authority was terminated",
+    );
+  }
+}
 
 export class Client {
   private socket: WebSocket | undefined;
@@ -268,11 +293,11 @@ export class Client {
     if (this.heartbeat) clearInterval(this.heartbeat);
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.socket?.close();
-    for (const operation of this.operations.values()) await operation.cancel();
-    for (const active of this.sessions.values()) {
-      await active.executor.closeSession(active.session);
+    try {
+      await this.dropLocalAuthority();
+    } finally {
+      this.journal.close();
     }
-    this.journal.close();
   }
 
   private async connect(): Promise<void> {
@@ -290,15 +315,25 @@ export class Client {
     });
     socket.on("close", () => {
       if (this.heartbeat) clearInterval(this.heartbeat);
-      if (this.socket === socket) this.socket = undefined;
-      if (!this.stopped) {
-        console.error(`Disconnected; reconnecting in ${this.reconnectDelay}ms`);
-        this.reconnectTimer = setTimeout(() => {
-          this.reconnectTimer = undefined;
-          void this.connect();
-        }, this.reconnectDelay);
-        this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30_000);
-      }
+      if (this.socket !== socket) return;
+      this.socket = undefined;
+      void this.dropLocalAuthority()
+        .then(() => {
+          if (this.stopped) return;
+          console.error(`Disconnected; reconnecting in ${this.reconnectDelay}ms`);
+          this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = undefined;
+            void this.connect();
+          }, this.reconnectDelay);
+          this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30_000);
+        })
+        .catch((error: unknown) => {
+          this.stopped = true;
+          console.error(
+            "Local authority cleanup could not be verified; Client stopped",
+            error,
+          );
+        });
     });
     socket.on("error", (error) => console.error("Client socket error:", error.message));
   }
@@ -308,6 +343,20 @@ export class Client {
       throw new Error("Server is disconnected");
     }
     this.socket.send(JSON.stringify(message));
+  }
+
+  private async dropLocalAuthority(): Promise<void> {
+    const operations = [...this.operations.values()];
+    this.operations.clear();
+    const sessions = [...this.sessions.values()];
+    this.sessions.clear();
+    await terminateLocalAuthority(
+      operations.map((operation) => async () => operation.cancel()),
+      sessions.map(
+        (active) => async () =>
+          active.executor.closeSession(active.session),
+      ),
+    );
   }
 
   private async handle(message: ServerToClientMessage): Promise<void> {
@@ -355,6 +404,9 @@ export class Client {
       case "session.open":
         await this.openSession(message);
         break;
+      case "session.expires":
+        this.updateSessionExpiry(message);
+        break;
       case "session.close":
         await this.closeSession(message.sessionId, message.reason);
         break;
@@ -376,6 +428,44 @@ export class Client {
           type: "session.closed",
           sessionId: message.sessionId,
           reason: "already_closed",
+        });
+        return;
+      }
+      const existing = this.sessions.get(message.sessionId);
+      if (existing) {
+        const requested = {
+          machineId: this.config.machineId,
+          profile: message.profile,
+          capabilities: message.capabilities,
+          restrictions: message.restrictions ?? {},
+        };
+        const current = {
+          machineId: this.config.machineId,
+          profile: message.profile,
+          capabilities: [...existing.session.capabilities],
+          restrictions: existing.session.restrictions ?? {},
+        };
+        if (
+          existing.session.profile !== this.config.profiles[message.profile] ||
+          !sessionScopeSubsetDecision(requested, current).allowed ||
+          !sessionScopeSubsetDecision(current, requested).allowed
+        ) {
+          throw new Error("Session retry scope does not match active local authority");
+        }
+        this.updateSessionExpiry({
+          type: "session.expires",
+          sessionId: message.sessionId,
+          expiresAt: message.expiresAt,
+          ...(message.serverTime ? { serverTime: message.serverTime } : {}),
+        });
+        this.send({
+          type: "session.opened",
+          sessionId: message.sessionId,
+          runner: existing.session.runner,
+          runtimeId: existing.session.runtimeId,
+          ...(existing.session.containerId
+            ? { containerId: existing.session.containerId }
+            : {}),
         });
         return;
       }
@@ -425,6 +515,28 @@ export class Client {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  private updateSessionExpiry(
+    message: Extract<ServerToClientMessage, { type: "session.expires" }>,
+  ): void {
+    const active = this.sessions.get(message.sessionId);
+    if (!active) return;
+    const expiresAt = adjustedSessionDeadline(message.expiresAt, message.serverTime);
+    const ttlMilliseconds = expiresAt.getTime() - Date.now();
+    if (
+      ttlMilliseconds <= 0 ||
+      ttlMilliseconds > active.session.profile.maxSessionTtlSeconds * 1_000
+    ) {
+      void this.closeSession(message.sessionId, "invalid_expiry");
+      return;
+    }
+    clearTimeout(active.session.expiryTimer);
+    active.session.expiresAt = expiresAt;
+    active.session.expiryTimer = setTimeout(
+      () => void this.closeSession(message.sessionId, "expired"),
+      ttlMilliseconds,
+    );
   }
 
   private async closeSession(sessionId: string, reason: string): Promise<void> {
@@ -488,6 +600,7 @@ export class Client {
     const maximum = Math.min(message.maxOutputBytes, active.session.profile.maxOutputBytes);
     const maximumEventBytes = 256 * 1024;
     const emit = (stream: "stdout" | "stderr" | "result", data: Buffer): void => {
+      if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
       if (outputTruncated) return;
       const remaining = maximum - outputBytes;
       if (remaining <= 0) {
@@ -579,6 +692,7 @@ export class Client {
   }
 
   private sendCompletion(operationId: string, result: JournalResult): void {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
     this.send({
       type: "operation.completed",
       operationId,

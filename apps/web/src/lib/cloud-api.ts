@@ -33,15 +33,18 @@ export type CloudAgent = {
   kind: "independent" | "managed";
   status: "active" | "disabled";
   parentAgentId: string | null;
+  credentialActive: boolean;
 };
 
 export type CloudSession = {
   id: string;
   agentId: string;
   agentName?: string;
-  purpose: string;
+  title: string;
+  purpose?: string;
   status: "active" | "completed" | "cancelled" | "revoked" | "expired";
   expiresAt: string;
+  readyAt?: string | null;
   createdAt: string;
   updatedAt?: string;
   requestedByHumanId?: string;
@@ -65,7 +68,8 @@ export type CloudSessionRequest = {
   id: string;
   agentId: string;
   agentName: string;
-  purpose: string;
+  title: string;
+  purpose?: string;
   durationSeconds: number;
   status: "pending" | "approved" | "denied" | "expired";
   expiresAt: string;
@@ -153,8 +157,17 @@ export type ControlEvent = {
 
 export type CloudNotification = {
   id: string;
-  kind: "session.requested" | "machine.enrolled";
+  kind:
+    | "session.requested"
+    | "session.ready"
+    | "session.failed"
+    | "session.completed"
+    | "session.revoked"
+    | "machine.enrolled"
+    | "machine.offline"
+    | "agent.revoked";
   title: string;
+  description: string;
   href: string;
   readAt: string | null;
   createdAt: string;

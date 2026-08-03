@@ -14,6 +14,7 @@ import {
   ExpectedError,
   Odyshell,
   type ClaimedAgentSession,
+  type ListedAgentSession,
 } from "@odyshell/sdk";
 
 export type McpAgentIdentity = {
@@ -30,7 +31,7 @@ export function createApprovedOdyshellMcpServer(
   const requestSessions = new Map<string, string>();
   const recentRequests = new Map<
     string,
-    ApprovedMcpSessionRequest & { purpose: string }
+    ApprovedMcpSessionRequest & { title: string; purpose?: string }
   >();
   const runtime: ApprovedMcpRuntime = {
     machines: () => ods.machines(),
@@ -49,20 +50,14 @@ export function createApprovedOdyshellMcpServer(
       try {
         scopes = operationSessionScopes(operations);
       } catch {
-        const shellRequested = input.operations.some(
-          (operation) => operation.action.kind === "process.shell",
-        );
         throw new ExpectedError(
-          shellRequested
-            ? "Free-form shell cannot be safely scoped. Use process.exec."
-            : "Operations cannot be combined without broadening their scope.",
-          shellRequested
-            ? "process_shell_unsupported"
-            : "session_scope_conflict",
+          "Operations cannot be combined without broadening their scope.",
+          "session_scope_conflict",
         );
       }
       const requested = await ods.agent(identity).requestSession({
-        purpose: input.purpose,
+        title: input.title,
+        ...(input.purpose ? { purpose: input.purpose } : {}),
         scopes,
         durationSeconds: input.durationSeconds,
         ...(input.runId ? { runId: input.runId } : {}),
@@ -70,7 +65,8 @@ export function createApprovedOdyshellMcpServer(
       const safeRequest = {
         id: requested.id,
         status: requested.status,
-        purpose: input.purpose,
+        title: input.title,
+        ...(input.purpose ? { purpose: input.purpose } : {}),
         ...(requested.approvalUrl
           ? { approvalUrl: requested.approvalUrl }
           : {}),
@@ -79,15 +75,70 @@ export function createApprovedOdyshellMcpServer(
       recentRequests.set(requested.id, safeRequest);
       return safeRequest;
     },
-    async requests() {
-      return { data: [...recentRequests.values()].reverse().slice(0, 20) };
+    async sessions({ includeHistory = false } = {}) {
+      const agent = ods.agent(identity);
+      const [serverRequests, serverSessions] = await Promise.all([
+        agent.requests(),
+        agent.sessions(),
+      ]);
+      const canonicalRequestIds = new Set(serverRequests.map((request) => request.id));
+      const requests = [
+        ...serverRequests.map((request) => ({
+          id: request.id,
+          status: request.status,
+          title: request.title,
+          ...(request.purpose ? { purpose: request.purpose } : {}),
+          expiresAt: request.expiresAt,
+        })),
+        ...[...recentRequests.values()]
+          .reverse()
+          .filter((request) => !canonicalRequestIds.has(request.id)),
+      ].filter(
+        (request) => includeHistory || ["pending", "approved"].includes(request.status),
+      );
+      const claimedIds = new Set(claims.keys());
+      return {
+        data: [
+          ...[...claims.values()].map((claim) => ({
+            kind: "session",
+            ...safeClaim(
+              claim,
+              serverSessions.find((session) => session.id === claim.sessionId),
+            ),
+          })),
+          ...serverSessions
+            .filter((session) =>
+              !claimedIds.has(session.id) &&
+              (includeHistory || session.status === "active"),
+            )
+            .map((session) => ({
+              kind: "session",
+              sessionId: session.id,
+              title: session.title,
+              status: session.status,
+              ...(session.purpose ? { purpose: session.purpose } : {}),
+              expiresAt: session.expiresAt,
+              machines: session.targets.map((target) => ({
+                id: target.machineId,
+                name: target.machineName,
+                status: target.status,
+              })),
+            })),
+          ...requests.map((request) => ({ kind: "request", ...request })),
+        ].slice(0, 20),
+      };
     },
     async status(requestId) {
       const existingSessionId = requestSessions.get(requestId);
       const existingClaim = existingSessionId
         ? claims.get(existingSessionId)
         : undefined;
-      if (existingClaim) return safeClaim(existingClaim);
+      if (existingClaim) {
+        const canonical = (await ods.agent(identity).sessions()).find(
+          (session) => session.id === existingClaim.sessionId,
+        );
+        return safeClaim(existingClaim, canonical);
+      }
 
       const agent = ods.agent(identity);
       const status = await agent.status(requestId);
@@ -99,7 +150,10 @@ export function createApprovedOdyshellMcpServer(
         const claim = await agent.claim(requestId);
         claims.set(claim.sessionId, claim);
         requestSessions.set(requestId, claim.sessionId);
-        return safeClaim(claim);
+        const canonical = (await agent.sessions()).find(
+          (session) => session.id === claim.sessionId,
+        );
+        return safeClaim(claim, canonical);
       }
       if (status.status === "claimed") {
         throw new ExpectedError(
@@ -136,15 +190,27 @@ export function createApprovedOdyshellMcpServer(
   return createApprovedMcpServer(runtime, reportUnexpectedError);
 }
 
-function safeClaim(claim: ClaimedAgentSession): Record<string, unknown> {
+function safeClaim(
+  claim: ClaimedAgentSession,
+  canonical?: ListedAgentSession,
+): Record<string, unknown> {
+  const status = canonical
+    ? canonical.status !== "active"
+      ? canonical.status
+      : canonical.targets.some((target) => target.status === "ready")
+        ? "ready"
+        : canonical.targets.some((target) => target.status === "opening")
+          ? "opening"
+          : "failed"
+    : "opening";
   return {
-    status: "ready",
+    status,
     sessionId: claim.sessionId,
     machines: claim.scopes.map((scope) => ({
       machineId: scope.machineId,
       capabilities: scope.capabilities,
     })),
-    expiresAt: claim.expiresAt,
+    expiresAt: canonical?.expiresAt ?? claim.expiresAt,
   };
 }
 

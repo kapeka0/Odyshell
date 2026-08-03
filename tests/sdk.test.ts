@@ -106,6 +106,7 @@ describe("Odyshell SDK", () => {
       name: "Codex",
     }).requestOperationSession({
       machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
+      title: "Read configuration",
       purpose: "Read configuration",
       durationSeconds: 600,
       action: { kind: "fs.read", path: "config/app.json" },
@@ -114,6 +115,7 @@ describe("Odyshell SDK", () => {
     expect(requests[0]?.body).toMatchObject({
       agentId: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
       agentName: "Codex",
+      title: "Read configuration",
       scopes: [{
         machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
         capabilities: ["fs.read"],

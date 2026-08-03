@@ -40,6 +40,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "@/components/ui/toast";
 import type {
+  CloudAgent,
   CloudMember,
   CloudSession,
   CloudSessionRequest,
@@ -58,22 +59,22 @@ export function SessionList({
   requests: CloudSessionRequest[];
 }) {
   const { refresh, state } = useDashboard();
-  const agents = useMemo(
-    () =>
-      new Map(
-        (state.status === "ready" ? state.context.agents : []).map((agent) => [
-          agent.id,
-          agent.name,
-        ]),
-      ),
-    [state],
-  );
   const members = useMemo(
     () =>
       new Map(
         (state.status === "ready" ? state.context.members : []).map((member) => [
           member.id,
           member,
+        ]),
+      ),
+    [state],
+  );
+  const agents = useMemo(
+    () =>
+      new Map(
+        (state.status === "ready" ? state.context.agents : []).map((agent) => [
+          agent.id,
+          agent,
         ]),
       ),
     [state],
@@ -95,39 +96,39 @@ export function SessionList({
       {
         id: "search",
         accessorFn: (row) =>
-          `${row.value.purpose} ${row.value.agentName ?? "Agent"} ${requesterName(row.value, agents, members)}`,
+          `${row.value.title} ${row.value.purpose} ${row.value.agentName ?? "Agent"} ${requesterName(row.value, agents, members)} ${machineLabel(row)}`,
       },
       {
-        id: "purpose",
-        accessorFn: (row) => row.value.purpose,
+        id: "title",
+        accessorFn: (row) => row.value.title,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Purpose" />
+          <DataTableColumnHeader column={column} title="Title" />
         ),
         cell: ({ row }) => (
           <div className="w-56 max-w-56 min-w-0 xl:w-72 xl:max-w-72">
             {row.original.kind === "session" ? (
               <Link
                 href={`/dashboard/sessions/${row.original.value.id}`}
-                title={row.original.value.purpose}
+                title={row.original.value.title}
                 className="block truncate font-medium hover:underline"
               >
-                {row.original.value.purpose}
+                {row.original.value.title}
               </Link>
             ) : row.original.value.status === "pending" &&
               row.original.value.approvalUrl ? (
               <Link
                 href={row.original.value.approvalUrl}
-                title={row.original.value.purpose}
+                title={row.original.value.title}
                 className="block truncate font-medium hover:underline"
               >
-                {row.original.value.purpose}
+                {row.original.value.title}
               </Link>
             ) : (
               <span
-                title={row.original.value.purpose}
+                title={row.original.value.title}
                 className="block truncate font-medium"
               >
-                {row.original.value.purpose}
+                {row.original.value.title}
               </span>
             )}
             <CopyableValue
@@ -137,6 +138,26 @@ export function SessionList({
             />
           </div>
         ),
+      },
+      {
+        id: "machine",
+        accessorFn: machineLabel,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Machine" />
+        ),
+        cell: ({ row }) => {
+          const machines = row.original.kind === "session"
+            ? row.original.value.targets.map((target) => target.machineName)
+            : row.original.value.machines.map((machine) => machine.name);
+          return (
+            <span className="whitespace-nowrap">
+              {machines[0] ?? "Unavailable"}
+              {machines.length > 1 ? (
+                <span className="ml-1 text-muted-foreground">+{machines.length - 1}</span>
+              ) : null}
+            </span>
+          );
+        },
       },
       {
         id: "agent",
@@ -289,11 +310,14 @@ function Requester({
   members,
 }: {
   value: CloudSession | CloudSessionRequest;
-  agents: Map<string, string>;
+  agents: Map<string, CloudAgent>;
   members: Map<string, CloudMember>;
 }) {
+  const agent = value.requestedByAgentId
+    ? agents.get(value.requestedByAgentId)
+    : undefined;
   if (value.requestedByAgentId) {
-    const name = agents.get(value.requestedByAgentId) ?? "Agent";
+    const name = agent?.name ?? "Agent";
     return (
       <span className="flex items-center gap-2">
         <AgentIdentityAvatar name={name} className="size-6" />
@@ -322,22 +346,29 @@ function sessionDurationSeconds(row: SessionRow): number {
   return Math.max(
     0,
     (new Date(row.value.expiresAt).getTime() -
-      new Date(row.value.createdAt).getTime()) /
+      new Date(row.value.readyAt ?? row.value.createdAt).getTime()) /
       1_000,
   );
 }
 
 function requesterName(
   value: CloudSession | CloudSessionRequest,
-  agents: Map<string, string>,
+  agents: Map<string, CloudAgent>,
   members: Map<string, CloudMember>,
 ): string {
   if (value.requestedByAgentId) {
-    return agents.get(value.requestedByAgentId) ?? "Agent";
+    return agents.get(value.requestedByAgentId)?.name ?? "Agent";
   }
   return (value.requestedByHumanId
     ? members.get(value.requestedByHumanId)?.name
     : undefined) ?? "Member";
+}
+
+function machineLabel(row: SessionRow): string {
+  const machines = row.kind === "session"
+    ? row.value.targets.map((target) => target.machineName)
+    : row.value.machines.map((machine) => machine.name);
+  return machines.join(" ");
 }
 
 function SessionActions({

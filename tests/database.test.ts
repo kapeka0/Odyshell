@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
+  canonicalSessionTargetDecision,
   createDatabase,
   withDatabaseDeadlockRetry,
 } from "../apps/server/src/database.js";
@@ -143,6 +144,73 @@ describe("server storage boundaries", () => {
     expect(listing).toContain("async markAllNotificationsRead(");
     expect(sessionRequest).toContain('.insertInto("notifications")');
     expect(sessionRequest).toContain("userId: input.humanId");
+    expect(database).toContain("async notifyStaleOfflineMachines(");
+    expect(database).toContain('kind: "machine.offline"');
+    expect(database).toContain('selectFrom("humans")');
+    expect(database).toContain("const activeOwner = machine.createdByHumanId");
+    expect(database).toContain("const recipientId = activeOwner?.id ??");
+  });
+
+  it("fails Session openings after a bounded acknowledgement window", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const timeout = database.slice(
+      database.indexOf("async failStaleSessionOpenings("),
+      database.indexOf("async expireSessions("),
+    );
+
+    expect(timeout).toContain('status: "failed"');
+    expect(timeout).toContain('error: "session_open_timeout"');
+    expect(timeout).toContain('eventType: "target.rejected"');
+    expect(timeout).toContain("reconcileCanonicalAgentSession");
+    expect(timeout).toContain('.where("status", "=", "opening")');
+    expect(canonicalSessionTargetDecision(["rejected"])).toBe("failed");
+    expect(canonicalSessionTargetDecision(["ready", "rejected"])).toBe("ready");
+  });
+
+  it("makes a Session usable when its first target becomes ready", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const reconciliation = database.slice(
+      database.indexOf("async function reconcileCanonicalAgentSession("),
+      database.indexOf("export class PostgresDatabase"),
+    );
+
+    expect(canonicalSessionTargetDecision(["ready", "opening"])).toBe("ready");
+    expect(canonicalSessionTargetDecision(["ready", "ready"])).toBe("ready");
+    expect(reconciliation).toContain('.where("readyAt", "is", null)');
+    expect(reconciliation).toContain('kind: "session.ready"');
+    expect(reconciliation).toContain('.updateTable("sessionCredentials")');
+  });
+
+  it("keeps rejected targets retryable until their canonical Session expires", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const retry = database.slice(
+      database.indexOf("async retryAgentSessionTargets("),
+      database.indexOf("async setMachineIncompatible("),
+    );
+    const reconciliation = database.slice(
+      database.indexOf("async function reconcileCanonicalAgentSession("),
+      database.indexOf("export class PostgresDatabase"),
+    );
+
+    expect(retry).toContain('.where("agentSessionTargets.status", "=", "rejected")');
+    expect(retry).toContain('.where("agentSessions.status", "=", "active")');
+    expect(retry).toContain('.where("agentSessions.expiresAt", ">", now)');
+    expect(retry).toContain('status: "opening"');
+    expect(retry).toContain('eventType: "target.retrying"');
+    expect(reconciliation).not.toContain('kind: "session.failed"');
+    expect(reconciliation).not.toContain('.updateTable("mcpSessionGrants")');
+    expect(database).not.toContain(
+      '.where("agentSessionTargets.status", "in", ["opening", "ready"])',
+    );
   });
 
   it("expands identity and authority without making legacy sessions canonical", () => {
@@ -285,9 +353,9 @@ describe("server storage boundaries", () => {
     expect(approval).toContain('.where("workspaceId", "=", input.workspaceId)');
     expect(approval).toContain("SESSION_CLAIM_WINDOW_MILLISECONDS");
     expect(claim).toContain(".forUpdate()");
-    expect(claim).toContain(
-      "request.requestedByHumanId !== input.humanId",
-    );
+    expect(claim).toContain("request.agentId !== input.agentId");
+    expect(claim).toContain('.where("id", "=", input.authority.installationId)');
+    expect(claim).toContain('.where("userId", "=", input.humanId)');
     expect(claim).toContain('.insertInto("sessionCredentials")');
     expect(claim).not.toContain("sessionToken");
 
@@ -395,7 +463,7 @@ describe("server storage boundaries", () => {
     expect(listing).toContain('.set({ status: "expired", updatedAt: now })');
   });
 
-  it("recovers MCP requests only for their Workspace, Agent and human owner", () => {
+  it("recovers Sessions for their Workspace and durable Agent identity", () => {
     const database = readFileSync(
       resolve(process.cwd(), "apps/server/src/database.ts"),
       "utf8",
@@ -407,9 +475,7 @@ describe("server storage boundaries", () => {
 
     expect(listing).toContain('.where("workspaceId", "=", workspaceId)');
     expect(listing).toContain('.where("agentId", "=", agentId)');
-    expect(listing).toContain(
-      '.where("requestedByHumanId", "=", humanId)',
-    );
+    expect(listing).not.toContain('.where("requestedByHumanId", "=", humanId)');
     expect(listing).toContain('.limit(Math.min(Math.max(limit, 1), 100))');
   });
 

@@ -69,6 +69,7 @@ describe("remote MCP security boundary", () => {
           protocolVersion: 1,
           executionRunners: ["host"],
           supportedCapabilities: ["process.exec", "fs.read"],
+          defaultShell: "cmd.exe",
           profiles: [
             {
               name: "workspace",
@@ -95,6 +96,7 @@ describe("remote MCP security boundary", () => {
           runner: "host",
           capabilities: ["fs.read"],
           clientVersion: "0.10.2",
+          defaultShell: "cmd.exe",
           lastSeenAt: "1970-01-01T00:00:00.000Z",
         },
       ],
@@ -229,7 +231,8 @@ describe("remote MCP security boundary", () => {
     expect(toolsResponse.payload).toContain(
       "Relative paths resolve from the Client working directory",
     );
-    expect(toolsResponse.payload).not.toContain('"const":"process.shell"');
+    expect(toolsResponse.payload).toContain('"const":"process.shell"');
+    expect(toolsResponse.payload).toContain("requires manual approval");
   });
 
   it("requests exact absolute filesystem paths and exact host commands", async () => {
@@ -266,6 +269,7 @@ describe("remote MCP security boundary", () => {
                 },
               },
             ],
+            title: "Inspect network configuration",
             purpose: "Inspect network configuration",
             durationSeconds: 900,
           },
@@ -287,6 +291,7 @@ describe("remote MCP security boundary", () => {
           },
         },
       ],
+      title: "Inspect network configuration",
       purpose: "Inspect network configuration",
       durationSeconds: 900,
     });
@@ -318,6 +323,7 @@ describe("remote MCP security boundary", () => {
                 },
               },
             ],
+            title: "Inspect network configuration",
             purpose: "Inspect network configuration",
             durationSeconds: 900,
           },
@@ -342,6 +348,7 @@ describe("remote MCP security boundary", () => {
           },
         },
       ],
+      title: "Inspect network configuration",
       purpose: "Inspect network configuration",
       durationSeconds: 900,
     });
@@ -378,6 +385,7 @@ describe("remote MCP security boundary", () => {
                 action: { kind: "fs.read", path: "config/app.json" },
               },
             ],
+            title: "Inspect configuration",
             purpose: "Inspect configuration",
             durationSeconds: 900,
           },
@@ -500,7 +508,7 @@ describe("remote MCP security boundary", () => {
     expect(claimAgentSessionRequest).not.toHaveBeenCalled();
   });
 
-  it("recovers only recent requests owned by the current MCP installation", async () => {
+  it("recovers Sessions with titles and machine execution facts", async () => {
     const listAgentSessionRequests = vi.fn(async () => [
       {
         id: "7d8730ef-075c-40d5-a72d-8101abe17260",
@@ -509,11 +517,63 @@ describe("remote MCP security boundary", () => {
         expiresAt: Date.parse("2026-08-03T16:20:00.000Z"),
       },
     ]);
-    const runtime = remoteRuntime({ listAgentSessionRequests });
+    const runtime = remoteRuntime({
+      listAgentSessionRequests,
+      listWorkspaceAgentSessions: vi.fn(async () => [
+        {
+          id: "29f34f33-418c-4624-84c3-25818db42023",
+          title: "Inspect desktop storage",
+          purpose: "Check disk space",
+          status: "active",
+          expiresAt: Date.parse("2026-08-03T17:20:00.000Z"),
+          targets: [
+            {
+              machineId: "machine-id",
+              machineName: "desktop",
+              status: "ready",
+              machineRuntime: {
+                hostPlatform: "windows",
+                architecture: "x64",
+                defaultShell: "powershell.exe",
+                profiles: [
+                  {
+                    name: "default",
+                    runner: "host",
+                    capabilities: ["process.exec"],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ]),
+    });
 
-    await expect(runtime.requests()).resolves.toEqual({
+    await expect(runtime.sessions()).resolves.toEqual({
       data: [
         {
+          kind: "session",
+          sessionId: "29f34f33-418c-4624-84c3-25818db42023",
+          title: "Inspect desktop storage",
+          status: "active",
+          purpose: "Check disk space",
+          expiresAt: "2026-08-03T17:20:00.000Z",
+          machines: [
+            {
+              id: "machine-id",
+              name: "desktop",
+              status: "ready",
+              platform: "windows",
+              architecture: "x64",
+              runner: "host",
+              capabilities: ["process.exec"],
+              clientVersion: null,
+              defaultShell: "powershell.exe",
+            },
+          ],
+        },
+        {
+          kind: "request",
           id: "7d8730ef-075c-40d5-a72d-8101abe17260",
           status: "pending",
           purpose: "Check disk space",
@@ -554,6 +614,7 @@ describe("remote MCP security boundary", () => {
           action: { kind: "fs.read", path: "config/app.json" },
         },
       ],
+      title: "Inspect configuration",
       purpose: "Inspect configuration",
       durationSeconds: 900,
     });
@@ -785,7 +846,7 @@ function fakeRuntime(
     machines: vi.fn(async () => ({ data: [] })),
     ping: vi.fn(),
     request: vi.fn(),
-    requests: vi.fn(async () => ({ data: [] })),
+    sessions: vi.fn(async () => ({ data: [] })),
     status: vi.fn(),
     execute: vi.fn(),
     complete: vi.fn(),

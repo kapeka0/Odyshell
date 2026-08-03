@@ -13,7 +13,7 @@ type PackageManifest = {
   exports?: unknown;
 };
 
-const releaseVersion = "0.11.0";
+const releaseVersion = "0.12.0";
 const manifests = [
   "apps/cli/package.json",
   "apps/client/package.json",
@@ -24,7 +24,7 @@ const manifests = [
   "packages/sdk/package.json",
 ].map(readManifest);
 
-describe("0.11.0 release contract", () => {
+describe("0.12.0 release contract", () => {
   it("exposes the built Server as the root production entrypoint", () => {
     const rootPackage = JSON.parse(
       readFileSync(resolve(process.cwd(), "package.json"), "utf8"),
@@ -110,7 +110,7 @@ describe("0.11.0 release contract", () => {
       "README.md",
       "apps/cli/README.md",
       "packages/sdk/README.md",
-      "docs/releases/0.11.0.md",
+      "docs/releases/0.12.0.md",
     ]) {
       const documentation = readFileSync(resolve(process.cwd(), path), "utf8");
       for (const manager of ["pnpm", "npm", "Yarn", "Bun"]) {

@@ -68,7 +68,7 @@ const program = new Command();
 program
   .name("ods")
   .description("Agent-first access to private machines")
-  .version("0.11.0")
+  .version("0.12.0")
   .option("-j, --json", "emit stable JSON output")
   .option("--server <url>", "override the Odyshell server URL")
   .option("--workspace-id <id>", "select the administrator workspace")
@@ -223,6 +223,7 @@ async function runInTemporarySession(
   const agent = api.agent(identity);
   const request = await agent.requestOperationSession({
     machineId: machine.id,
+    title: `Run ${action.kind} on ${machine.name}`,
     purpose: `Run ${action.kind} on ${machine.name}`,
     action,
     durationSeconds: ttlSeconds,
