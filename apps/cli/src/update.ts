@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
   clientServiceStatus,
-  restartClientService,
+  installClientService,
 } from "@odyshell/client";
 import { ExpectedError } from "./errors.js";
 
@@ -347,7 +347,13 @@ const defaultDependencies: UpdateDependencies = {
   fetch: globalThis.fetch,
   install: installGlobalPackage,
   installedVersion: globalInstalledVersion,
-  restart: restartClientService,
+  restart: async (configPath) => {
+    await installClientService({
+      nodePath: process.execPath,
+      cliPath: currentCliPath,
+      configPath,
+    });
+  },
   serviceInstalled: async (configPath) =>
     (await clientServiceStatus(configPath)).installed,
 };

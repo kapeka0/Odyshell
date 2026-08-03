@@ -15,6 +15,7 @@ export type ClientServiceStatus = {
   installed: boolean;
   active: boolean;
   enabled: boolean;
+  current?: boolean;
   servicePath?: string;
 };
 
@@ -183,6 +184,22 @@ export function renderWindowsTaskAction(
       quoteWindowsArgument(windowsTaskLauncherPath(options.configPath)),
     ].join(" "),
   };
+}
+
+export function windowsTaskActionIsCurrent(
+  action: { execute: string; arguments: string },
+  configPath: string,
+  windowsDirectory = process.env.SystemRoot ?? "C:\\Windows",
+): boolean {
+  const expected = renderWindowsTaskAction(
+    { nodePath: "", cliPath: "", configPath },
+    windowsDirectory,
+  );
+  return (
+    win32.normalize(action.execute).toLowerCase() ===
+      win32.normalize(expected.execute).toLowerCase() &&
+    action.arguments === expected.arguments
+  );
 }
 
 export async function installClientService(
@@ -366,6 +383,12 @@ export async function clientServiceStatus(
       () => true,
       () => false,
     );
+    const current =
+      installed &&
+      (await windowsTaskAction(taskName).then(
+        (action) => windowsTaskActionIsCurrent(action, configPath),
+        () => false,
+      ));
     const active =
       installed &&
       (await windowsTaskState(taskName).then(
@@ -377,6 +400,7 @@ export async function clientServiceStatus(
       installed,
       active,
       enabled: installed,
+      current,
       servicePath: `Task Scheduler: ${taskName}`,
     };
   }
@@ -501,6 +525,36 @@ async function windowsTaskState(taskName: string): Promise<string> {
     },
   );
   return stdout.trim();
+}
+
+async function windowsTaskAction(
+  taskName: string,
+): Promise<{ execute: string; arguments: string }> {
+  const { stdout } = await execFileAsync(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "$action = @((Get-ScheduledTask -TaskName $env:ODYSHELL_TASK_NAME).Actions)[0]; @{ execute = $action.Execute; arguments = $action.Arguments } | ConvertTo-Json -Compress",
+    ],
+    {
+      windowsHide: true,
+      timeout: 30_000,
+      env: { ...process.env, ODYSHELL_TASK_NAME: taskName },
+    },
+  );
+  const parsed = JSON.parse(stdout) as {
+    execute?: unknown;
+    arguments?: unknown;
+  };
+  if (
+    typeof parsed.execute !== "string" ||
+    typeof parsed.arguments !== "string"
+  ) {
+    throw new Error("Windows Client task has an invalid action");
+  }
+  return { execute: parsed.execute, arguments: parsed.arguments };
 }
 
 async function userLingering(): Promise<boolean | undefined> {

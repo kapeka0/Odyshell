@@ -21,6 +21,7 @@ import {
   renderLinuxUserService,
   renderWindowsTaskAction,
   renderWindowsTaskLauncher,
+  windowsTaskActionIsCurrent,
   windowsTaskLauncherPath,
   windowsTaskNameForConfig,
 } from "../apps/client/src/service.js";
@@ -233,6 +234,20 @@ describe("client platform support", () => {
       '"C:\\Users\\Ada & team\\Odyshell\\clients\\work\\client-service.ps1"',
     );
     expect(action.arguments).not.toContain(options.nodePath);
+
+    expect(windowsTaskActionIsCurrent(action, options.configPath, "C:\\Windows")).toBe(
+      true,
+    );
+    expect(
+      windowsTaskActionIsCurrent(
+        {
+          execute: options.nodePath,
+          arguments: `"${options.cliPath}" client start --config "${options.configPath}"`,
+        },
+        options.configPath,
+        "C:\\Windows",
+      ),
+    ).toBe(false);
   });
 
   it("uses a deterministic isolated path for every named Client Profile", () => {
