@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -174,6 +174,33 @@ describe("web authentication boundaries", () => {
     expect(safeFacehashIdentity("user_2abc")).toBe("user_2abc");
     expect(safeFacehashIdentity("person@example.com")).toBeNull();
     expect(safeFacehashIdentity("x".repeat(257))).toBeNull();
+  });
+
+  it("keeps Agent brand SVGs local and free of executable content", () => {
+    const assetRoot = resolve(
+      process.cwd(),
+      "apps/web/public/agent-brands",
+    );
+    const assets = readdirSync(assetRoot)
+      .filter((file) => file.endsWith(".svg"))
+      .toSorted();
+
+    expect(assets).toEqual([
+      "chatgpt.svg",
+      "claude.svg",
+      "cursor.svg",
+      "gemini.svg",
+      "github-copilot.svg",
+      "windsurf.svg",
+    ]);
+    for (const asset of assets) {
+      const svg = readFileSync(resolve(assetRoot, asset), "utf8");
+      const content = svg.replace('xmlns="http://www.w3.org/2000/svg"', "");
+      expect(svg).toContain("viewBox=");
+      expect(content).not.toMatch(/https?:\/\//iu);
+      expect(svg).not.toMatch(/<script|<foreignObject|javascript:|\bon\w+=/iu);
+      expect(svg).not.toMatch(/\b(?:href|xlink:href)=["'](?!#)/iu);
+    }
   });
 
   it("quotes self-hosted enrollment arguments before placing them in a shell command", () => {
