@@ -164,6 +164,9 @@ export const relativePathSchema = z
   .refine(
     (value) => !value.replaceAll("\\", "/").split("/").includes(".."),
     "Parent traversal is not allowed",
+  )
+  .describe(
+    "Path relative to the enrolled machine workspace. Absolute paths and parent traversal are not allowed.",
   );
 
 export function normalizeRelativePath(value: string): string {
@@ -470,20 +473,35 @@ export const operationEnvironmentSchema = z.record(
   }
 });
 
-export const operationActionSchema = z.discriminatedUnion("kind", [
-  z.object({
+const processExecOperationActionSchema = z
+  .object({
     kind: z.literal("process.exec"),
-    program: z.string().min(1).max(1024),
-    args: z.array(z.string().max(16_384)).max(256).default([]),
+    program: z
+      .string()
+      .min(1)
+      .max(1024)
+      .describe("Exact executable to authorize and run."),
+    args: z
+      .array(z.string().max(16_384))
+      .max(256)
+      .default([])
+      .describe("Exact argument array to authorize and run."),
     cwd: relativePathSchema.default("."),
     env: operationEnvironmentSchema.default({}),
-  }),
-  z.object({
-    kind: z.literal("process.shell"),
-    command: z.string().min(1).max(65_536),
-    cwd: relativePathSchema.default("."),
-    env: operationEnvironmentSchema.default({}),
-  }),
+  })
+  .describe(
+    "Run one exact executable. Use this for an explicitly approved host path outside the enrolled workspace; do not use a shell command.",
+  );
+
+const processShellOperationActionSchema = z.object({
+  kind: z.literal("process.shell"),
+  command: z.string().min(1).max(65_536),
+  cwd: relativePathSchema.default("."),
+  env: operationEnvironmentSchema.default({}),
+});
+
+const sessionOperationActionSchemas = [
+  processExecOperationActionSchema,
   z.object({ kind: z.literal("fs.stat"), path: relativePathSchema }),
   z.object({ kind: z.literal("fs.list"), path: relativePathSchema.default(".") }),
   z.object({
@@ -511,6 +529,19 @@ export const operationActionSchema = z.discriminatedUnion("kind", [
     tail: z.number().int().min(1).max(10_000).default(200),
     timestamps: z.boolean().default(false),
   }),
+] as const;
+
+export const sessionOperationActionSchema = z.discriminatedUnion(
+  "kind",
+  sessionOperationActionSchemas,
+);
+export type SessionOperationAction = z.infer<
+  typeof sessionOperationActionSchema
+>;
+
+export const operationActionSchema = z.discriminatedUnion("kind", [
+  processShellOperationActionSchema,
+  ...sessionOperationActionSchemas,
 ]);
 export type OperationAction = z.infer<typeof operationActionSchema>;
 

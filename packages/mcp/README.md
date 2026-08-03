@@ -21,4 +21,8 @@ Requests can group several exact operations into one least-privilege scope per m
 Operation IDs make retries safe, and completion is rejected while an Operation remains active.
 Groups that would create capability-path cross products are rejected.
 
+Filesystem paths are relative to the enrolled machine workspace. Restricted Sessions do not expose
+free-form shell; an agent that needs an exact host path must request `process.exec` with the exact
+executable and arguments shown to the user for approval.
+
 [MCP documentation](https://odyshell.com/docs/mcp) · [Back to Odyshell](../../README.md)

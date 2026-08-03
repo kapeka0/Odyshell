@@ -1,5 +1,8 @@
 import { McpServer, type CallToolResult } from "@modelcontextprotocol/server";
-import { operationActionSchema, type OperationAction } from "@odyshell/protocol";
+import {
+  sessionOperationActionSchema,
+  type OperationAction,
+} from "@odyshell/protocol";
 import { z } from "zod";
 
 const machineSchema = z.string().trim().min(1).max(256);
@@ -60,7 +63,7 @@ export function createApprovedMcpServer(
     { name: "odyshell", version: "0.10.0" },
     {
       instructions:
-        "Request an explicit temporary Session for a typed operation. When session_request returns an approval URL, show it verbatim as a clickable link and wait for the user to approve or deny it. Then check session_status before executing. Credentials stay inside Odyshell.",
+        "Request an explicit temporary Session for a typed operation. Filesystem paths are relative to the enrolled machine workspace. For an exact host path outside that workspace, request process.exec with an explicit executable and argument array; process.shell is unavailable. When session_request returns an approval URL, show it verbatim as a clickable link and wait for the user to approve or deny it. Then check session_status before executing. Credentials stay inside Odyshell.",
     },
   );
 
@@ -92,13 +95,13 @@ export function createApprovedMcpServer(
     {
       title: "Request operation access",
       description:
-        "Request a temporary Session scoped to one or more typed operations. If approval is required, show the returned link to the user and wait for their decision.",
+        "Request a temporary Session scoped to one or more typed operations. Filesystem paths must be relative to the enrolled workspace. Use process.exec with an exact executable and arguments for an approved host path outside it. Free-form shell is unavailable. If approval is required, show the returned link to the user and wait for their decision.",
       inputSchema: z.object({
         operations: z
           .array(
             z.object({
               machine: machineSchema,
-              action: operationActionSchema,
+              action: sessionOperationActionSchema,
             }),
           )
           .min(1)
@@ -140,11 +143,11 @@ export function createApprovedMcpServer(
     {
       title: "Execute approved operation",
       description:
-        "Execute a typed process, filesystem or Docker operation inside an approved Session.",
+        "Execute an exact typed process, filesystem or Docker operation inside an approved Session. The action must match what the user approved.",
       inputSchema: z.object({
         sessionId: z.string().uuid(),
         machine: machineSchema,
-        action: operationActionSchema,
+        action: sessionOperationActionSchema,
         timeoutSeconds: timeoutSchema,
         operationId: z.string().uuid(),
       }),

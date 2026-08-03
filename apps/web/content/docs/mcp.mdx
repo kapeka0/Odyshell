@@ -83,9 +83,10 @@ it is only a pending Session Request. The agent then calls `session_status` and 
 Odyshell grants the Session.
 
 Each operation determines its capability and restriction automatically. Scopes for the same
-machine are combined without broadening their exact restrictions. Filesystem operations use
-an exact path, `process.exec` uses an exact executable and arguments, and `docker.logs` uses an
-exact container. Approval codes expire, are single-use and are bound to their Workspace.
+machine are combined without broadening their exact restrictions. Filesystem operations use an
+exact path relative to the enrolled machine Workspace, `process.exec` uses an exact executable and
+arguments, and `docker.logs` uses an exact container. Approval codes expire, are single-use and are
+bound to their Workspace.
 
 If combining filesystem operations would authorize a capability on a path that was not requested,
 Odyshell rejects the group. Request those operations in separate Sessions.
@@ -93,5 +94,7 @@ Odyshell rejects the group. Request those operations in separate Sessions.
 The Server validates Session identity, machine, capability, path and expiry on every Operation.
 The Client applies its local policy independently.
 
-`process.shell` is not available through restricted Sessions. Agents should request
-`process.exec` with an explicit executable and argument array.
+`process.shell` is not available through restricted Sessions. For an exact host path outside the
+enrolled Workspace, agents should request `process.exec` with an explicit executable and argument
+array, such as `cat` with `["/etc/network/interfaces"]`. The user sees that exact command before
+approval.

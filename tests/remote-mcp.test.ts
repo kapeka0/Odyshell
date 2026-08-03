@@ -157,6 +157,110 @@ describe("remote MCP security boundary", () => {
     expect(toolsResponse.statusCode).toBe(200);
     expect(toolsResponse.payload).toContain('"name":"machines_list"');
     expect(toolsResponse.payload).toContain('"name":"session_request"');
+    expect(toolsResponse.payload).toContain(
+      "Path relative to the enrolled machine workspace",
+    );
+    expect(toolsResponse.payload).not.toContain('"const":"process.shell"');
+  });
+
+  it("keeps filesystem paths inside the workspace and exposes exact host commands", async () => {
+    const request = vi.fn(async () => ({
+      id: "7d8730ef-075c-40d5-a72d-8101abe17260",
+      status: "pending",
+      approvalUrl: "https://odyshell.com/sessions/approve?code=SAFE",
+      expiresAt: "2026-08-03T11:17:26.648Z",
+    }));
+    const app = remoteMcpApp({ runtime: fakeRuntime({ request }) });
+
+    const absolutePathResponse = await app.inject({
+      method: "POST",
+      url: "/mcp/workspace-id",
+      headers: {
+        accept: "application/json, text/event-stream",
+        authorization: "Bearer safe-oauth-token",
+        "mcp-protocol-version": "2025-11-25",
+      },
+      payload: {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: {
+          name: "session_request",
+          arguments: {
+            operations: [
+              {
+                machine: "rpi5",
+                action: {
+                  kind: "fs.read",
+                  path: "/etc/network/interfaces",
+                },
+              },
+            ],
+            purpose: "Inspect network configuration",
+            durationSeconds: 900,
+          },
+        },
+      },
+    });
+
+    expect(absolutePathResponse.statusCode).toBe(200);
+    expect(absolutePathResponse.payload).toContain("Path must be relative");
+    expect(request).not.toHaveBeenCalled();
+
+    const exactCommandResponse = await app.inject({
+      method: "POST",
+      url: "/mcp/workspace-id",
+      headers: {
+        accept: "application/json, text/event-stream",
+        authorization: "Bearer safe-oauth-token",
+        "mcp-protocol-version": "2025-11-25",
+      },
+      payload: {
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: {
+          name: "session_request",
+          arguments: {
+            operations: [
+              {
+                machine: "rpi5",
+                action: {
+                  kind: "process.exec",
+                  program: "cat",
+                  args: ["/etc/network/interfaces"],
+                  cwd: ".",
+                  env: {},
+                },
+              },
+            ],
+            purpose: "Inspect network configuration",
+            durationSeconds: 900,
+          },
+        },
+      },
+    });
+
+    expect(exactCommandResponse.statusCode).toBe(200);
+    expect(exactCommandResponse.payload).toContain(
+      "Open this link to approve or deny",
+    );
+    expect(request).toHaveBeenCalledWith({
+      operations: [
+        {
+          machine: "rpi5",
+          action: {
+            kind: "process.exec",
+            program: "cat",
+            args: ["/etc/network/interfaces"],
+            cwd: ".",
+            env: {},
+          },
+        },
+      ],
+      purpose: "Inspect network configuration",
+      durationSeconds: 900,
+    });
   });
 
   it("tells the MCP client to show the Session approval link", async () => {
