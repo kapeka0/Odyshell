@@ -27,6 +27,7 @@ import Link from "next/link";
 import { useTheme } from "next-themes";
 import { useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { AgentIdentityAvatar } from "@/components/identity-avatar";
 import { StatusDot } from "@/components/status-dot";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -236,9 +237,7 @@ function AgentNode({ data }: NodeProps<AgentFlowNode>) {
         isConnectable={false}
       />
       <div className="flex items-start gap-3">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-foreground text-background">
-          <BotIcon aria-hidden="true" className="size-4" />
-        </span>
+        <AgentIdentityAvatar name={data.name} className="size-9" />
         <span className="min-w-0 flex-1">
           <Link
             href="/dashboard/agents"

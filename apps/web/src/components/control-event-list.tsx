@@ -8,6 +8,10 @@ import {
   DataTable,
   DataTableColumnHeader,
 } from "@/components/data-table";
+import {
+  AgentIdentityAvatar,
+  UserIdentityAvatar,
+} from "@/components/identity-avatar";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,11 +37,19 @@ import {
 import type {
   CloudAgent,
   CloudMachine,
+  CloudMember,
   ControlEvent,
 } from "@/lib/cloud-api";
 
+type ActivityActor = {
+  id: string;
+  kind: "agent" | "member";
+  name: string;
+  imageUrl?: string;
+};
+
 type ActivityRow = ControlEvent & {
-  actor: string;
+  actor: ActivityActor;
   target: string;
   label: string;
   result: "recorded" | "denied";
@@ -49,16 +61,18 @@ export function ControlEventList({
   events,
   machines,
   agents,
+  members,
   retentionDays,
 }: {
   events: ControlEvent[];
   machines: CloudMachine[];
   agents: CloudAgent[];
+  members: CloudMember[];
   retentionDays: number;
 }) {
   const rows = useMemo(
-    () => activityRows(events, machines, agents),
-    [agents, events, machines],
+    () => activityRows(events, machines, agents, members),
+    [agents, events, machines, members],
   );
   const columns = useMemo<ColumnDef<ActivityRow>[]>(
     () => [
@@ -80,17 +94,12 @@ export function ControlEventList({
         ),
       },
       {
-        accessorKey: "actor",
+        id: "actor",
+        accessorFn: (row) => row.actor.name,
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="Actor" />
         ),
-        cell: ({ row }) => (
-          <CopyableValue
-            value={row.original.actor}
-            label="Actor"
-            className="text-muted-foreground"
-          />
-        ),
+        cell: ({ row }) => <ActivityActorIdentity actor={row.original.actor} />,
       },
       {
         accessorKey: "target",
@@ -236,7 +245,9 @@ function ActivityActions({ event }: { event: ActivityRow }) {
             <DialogDescription>Control event details.</DialogDescription>
           </DialogHeader>
           <dl className="grid gap-4 text-sm sm:grid-cols-2">
-            <Detail label="Actor">{event.actor}</Detail>
+            <Detail label="Actor">
+              <ActivityActorIdentity actor={event.actor} />
+            </Detail>
             <Detail label="Target">{event.target}</Detail>
             <Detail label="Result">
               {event.result === "denied" ? "Denied" : "Recorded"}
@@ -274,16 +285,17 @@ function activityRows(
   events: ControlEvent[],
   machines: CloudMachine[],
   agents: CloudAgent[],
+  members: CloudMember[],
 ): ActivityRow[] {
   const machineNames = new Map(
     machines.map((machine) => [machine.id, machine.name]),
   );
-  const accessNames = new Map(
-    agents.map((agent) => [agent.id, agent.name]),
-  );
+  const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
+  const agentNames = new Map(agents.map((agent) => [agent.id, agent.name]));
+  const membersById = new Map(members.map((member) => [member.id, member]));
   return events.map((event) => {
-    const actor = actorLabel(event.principalId, accessNames);
-    const target = targetLabel(event, machineNames, accessNames);
+    const actor = actorIdentity(event.principalId, agentsById, membersById);
+    const target = targetLabel(event, machineNames, agentNames);
     const label = actionLabel(event.action);
     const type = event.action.split(".")[0] ?? "workspace";
     return {
@@ -296,17 +308,45 @@ function activityRows(
         event.action.includes("denied") || event.action.includes("failed")
           ? "denied"
           : "recorded",
-      search: `${label} ${actor} ${target} ${event.action}`,
+      search: `${label} ${actor.name} ${target} ${event.action}`,
     };
   });
 }
 
-function actorLabel(
+function actorIdentity(
   principalId: string,
-  accessNames: Map<string, string>,
-): string {
-  const accessName = accessNames.get(principalId);
-  return accessName ? `Agent ${accessName}` : `Member ${principalId}`;
+  agents: Map<string, CloudAgent>,
+  members: Map<string, CloudMember>,
+): ActivityActor {
+  const agent = agents.get(principalId);
+  if (agent) {
+    return { id: agent.id, kind: "agent", name: agent.name };
+  }
+  const member = members.get(principalId);
+  return {
+    id: principalId,
+    kind: "member",
+    name: member?.name ?? "Member",
+    ...(member?.imageUrl ? { imageUrl: member.imageUrl } : {}),
+  };
+}
+
+function ActivityActorIdentity({ actor }: { actor: ActivityActor }) {
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      {actor.kind === "agent" ? (
+        <AgentIdentityAvatar name={actor.name} className="size-6" />
+      ) : (
+        <UserIdentityAvatar
+          identity={actor.id}
+          imageUrl={actor.imageUrl}
+          name={actor.name}
+          className="size-6"
+        />
+      )}
+      <span className="truncate">{actor.name}</span>
+    </span>
+  );
 }
 
 function targetLabel(

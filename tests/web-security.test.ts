@@ -833,4 +833,57 @@ describe("dashboard navigation performance boundary", () => {
     expect(identity).toContain("user.hasImage");
     expect(identity).toContain('return [];');
   });
+
+  it("renders recognizable Agent and Activity identities", () => {
+    const componentsRoot = resolve(
+      process.cwd(),
+      "apps/web/src/components",
+    );
+    const agentList = readFileSync(
+      resolve(componentsRoot, "agent-list.tsx"),
+      "utf8",
+    );
+    const canvas = readFileSync(
+      resolve(componentsRoot, "workspace-canvas.tsx"),
+      "utf8",
+    );
+    const activity = readFileSync(
+      resolve(componentsRoot, "control-event-list.tsx"),
+      "utf8",
+    );
+    const activityPage = readFileSync(
+      resolve(
+        process.cwd(),
+        "apps/web/src/app/dashboard/activity/page.tsx",
+      ),
+      "utf8",
+    );
+
+    expect(agentList).toContain("<AgentIdentityAvatar");
+    expect(canvas).toContain("<AgentIdentityAvatar");
+    expect(activity).toContain("<UserIdentityAvatar");
+    expect(activity).toContain("<AgentIdentityAvatar");
+    expect(activityPage).toContain("members={state.context.members}");
+  });
+
+  it("shows Session duration and a single Agents result count", () => {
+    const webRoot = resolve(process.cwd(), "apps/web/src");
+    const sessionList = readFileSync(
+      resolve(webRoot, "components/session-list.tsx"),
+      "utf8",
+    );
+    const agentList = readFileSync(
+      resolve(webRoot, "components/agent-list.tsx"),
+      "utf8",
+    );
+    const server = readFileSync(
+      resolve(process.cwd(), "apps/server/src/index.ts"),
+      "utf8",
+    );
+
+    expect(sessionList).toContain('title="Duration"');
+    expect(sessionList).toContain("formatSessionDuration(");
+    expect(server).toContain("durationSeconds: sessionRequest.durationSeconds");
+    expect(agentList).not.toContain("summaryLabel=");
+  });
 });

@@ -28,6 +28,7 @@ export default function ActivityPage() {
           events={state.context.controlEvents ?? []}
           machines={state.context.machines}
           agents={state.context.agents}
+          members={state.context.members}
           retentionDays={state.context.plan.controlEventRetentionDays}
         />
       )}

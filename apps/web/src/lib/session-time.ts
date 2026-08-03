@@ -18,3 +18,14 @@ export function formatSessionRemaining(
   }
   return `${seconds}s left`;
 }
+
+export function formatSessionDuration(durationSeconds: number): string {
+  const seconds = Math.max(0, Math.round(durationSeconds));
+  if (seconds < 60) return `${seconds} sec`;
+  const totalMinutes = Math.round(seconds / 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes} min`;
+  const hourLabel = `${hours} ${hours === 1 ? "hr" : "hrs"}`;
+  return minutes === 0 ? hourLabel : `${hourLabel} ${minutes} min`;
+}

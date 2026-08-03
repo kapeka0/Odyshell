@@ -7,7 +7,10 @@ import { useMemo, useState } from "react";
 import { CopyableValue } from "@/components/copyable-value";
 import { DataTable, DataTableColumnHeader } from "@/components/data-table";
 import { useDashboard } from "@/components/dashboard-provider";
-import { UserIdentityAvatar } from "@/components/identity-avatar";
+import {
+  AgentIdentityAvatar,
+  UserIdentityAvatar,
+} from "@/components/identity-avatar";
 import { StatusBadge } from "@/components/status-badge";
 import {
   AlertDialog,
@@ -41,6 +44,7 @@ import type {
   CloudSession,
   CloudSessionRequest,
 } from "@/lib/cloud-api";
+import { formatSessionDuration } from "@/lib/session-time";
 
 type SessionRow =
   | { kind: "session"; value: CloudSession }
@@ -140,7 +144,15 @@ export function SessionList({
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="Agent" />
         ),
-        cell: ({ row }) => row.original.value.agentName ?? "Agent",
+        cell: ({ row }) => {
+          const name = row.original.value.agentName ?? "Agent";
+          return (
+            <span className="flex items-center gap-2">
+              <AgentIdentityAvatar name={name} className="size-6" />
+              <span className="truncate">{name}</span>
+            </span>
+          );
+        },
       },
       {
         id: "requester",
@@ -164,6 +176,18 @@ export function SessionList({
         ),
         cell: ({ row }) => <StatusBadge status={row.original.value.status} />,
         filterFn: "equals",
+      },
+      {
+        id: "duration",
+        accessorFn: sessionDurationSeconds,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Duration" />
+        ),
+        cell: ({ row }) => (
+          <span className="whitespace-nowrap tabular-nums text-muted-foreground">
+            {formatSessionDuration(sessionDurationSeconds(row.original))}
+          </span>
+        ),
       },
       {
         id: "expiresAt",
@@ -269,7 +293,13 @@ function Requester({
   members: Map<string, CloudMember>;
 }) {
   if (value.requestedByAgentId) {
-    return <span>{agents.get(value.requestedByAgentId) ?? "Agent"}</span>;
+    const name = agents.get(value.requestedByAgentId) ?? "Agent";
+    return (
+      <span className="flex items-center gap-2">
+        <AgentIdentityAvatar name={name} className="size-6" />
+        <span className="truncate">{name}</span>
+      </span>
+    );
   }
   const humanId = value.requestedByHumanId;
   const member = humanId ? members.get(humanId) : undefined;
@@ -284,6 +314,16 @@ function Requester({
       />
       <span className="truncate">{name}</span>
     </span>
+  );
+}
+
+function sessionDurationSeconds(row: SessionRow): number {
+  if (row.kind === "request") return row.value.durationSeconds;
+  return Math.max(
+    0,
+    (new Date(row.value.expiresAt).getTime() -
+      new Date(row.value.createdAt).getTime()) /
+      1_000,
   );
 }
 

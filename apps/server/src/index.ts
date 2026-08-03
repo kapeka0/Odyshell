@@ -1306,6 +1306,7 @@ app.post(
         agentId: sessionRequest.agentId,
         agentName: sessionRequest.agentName,
         purpose: sessionRequest.purpose,
+        durationSeconds: sessionRequest.durationSeconds,
         status: sessionRequest.status,
         expiresAt: isoTimestamp(sessionRequest.expiresAt),
         createdAt: isoTimestamp(sessionRequest.createdAt),

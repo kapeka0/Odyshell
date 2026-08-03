@@ -66,6 +66,7 @@ export type CloudSessionRequest = {
   agentId: string;
   agentName: string;
   purpose: string;
+  durationSeconds: number;
   status: "pending" | "approved" | "denied" | "expired";
   expiresAt: string;
   createdAt: string;

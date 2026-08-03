@@ -152,6 +152,8 @@ particular component, library or interaction pattern.
 - Prefer a user's identity-provider photo. When none exists, generate a
   recognizable face from an opaque identifier without displaying initials or
   sending an email address to an external service.
+- Recognized Agent providers use their bundled local brand mark wherever Agent
+  identity is shown. Unknown or custom Agents use the neutral Agent fallback.
 - Give every workspace a stable colored identity mark without displaying
   initials.
 - The workspace overview is the operational canvas itself, inspired by
@@ -183,6 +185,10 @@ particular component, library or interaction pattern.
 - Session purposes remain single-line and truncate when necessary. Human
   requesters use their recognizable name and profile image; internal identity
   IDs are never presented as names.
+- Activity actors follow the same identity rule: show a member's profile image
+  and name when available, and never present an internal user ID as their name.
+- Session collections show the originally requested duration in a concise
+  human-readable form such as `15 min`.
 - Important table identifiers are copyable from the value itself. Reveal the
   copy affordance with a restrained horizontal hover or focus animation.
 - Status tags use restrained semantic color to make operational state scannable:
