@@ -62,7 +62,7 @@ export function createApprovedMcpServer(
   reportUnexpectedError: (error: unknown) => void = () => undefined,
 ): McpServer {
   const server = new McpServer(
-    { name: "odyshell", version: "0.12.1" },
+    { name: "odyshell", version: "0.13.0" },
     {
       instructions:
         "Inspect machines before choosing platform-specific operations. Machine and Session results include platform, architecture, runner, capabilities and default shell. Prefer typed filesystem, Docker and process.exec operations. Request process.shell only for multi-step work that must use prior stdout or stderr; it grants broad shell access for a short Session, is never autoapproved and every command is audited. Show approval links verbatim, then call session_status. Use sessions_list to recover active authority after a lost response or a new chat. Always pass the explicit sessionId to operation_execute. Credentials stay inside Odyshell.",

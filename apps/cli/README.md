@@ -47,10 +47,18 @@ ods --server https://company.example up --profile company <enrollment-options>
 Use the same `--profile` with `ods down` and `ods client status`. Profiles keep independent
 machine identities, local policies, state, and background services. Omitting it selects `default`.
 
+List, inspect, or remove local Profiles:
+
+```bash
+ods profiles ls
+ods profiles status personal
+ods profiles remove personal
+```
+
 Remove one local Profile, or reset every local identity and CLI login:
 
 ```bash
-ods client remove --profile personal
+ods profiles remove personal
 ods reset --yes
 ```
 
@@ -72,7 +80,8 @@ ods --json exec raspberry -- uname -a
 - `ods exec`, `ods fs`, and `ods docker` request a narrowly scoped Session and perform one typed
   operation.
 - `ods session` inspects and operates an already approved Session.
-- `ods client` configures or removes the Client running on a private machine.
+- `ods profiles` lists, inspects, and removes local Client Profiles.
+- `ods client` diagnoses and updates the Client running on a private machine.
 - `ods audit` shows actions visible to the current agent.
 - `ods mcp` lets a signed-in agent request temporary access over MCP stdio.
 

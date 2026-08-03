@@ -124,6 +124,12 @@ ods up \
 ods exec my-machine -- uname -a
 ```
 
+Inspect the local Client Profiles and their background status:
+
+```bash
+ods profiles ls
+```
+
 Check that the complete path to a machine is working:
 
 ```bash

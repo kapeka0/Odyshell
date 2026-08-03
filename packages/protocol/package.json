@@ -1,6 +1,6 @@
 {
   "name": "@odyshell/protocol",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "description": "Shared TypeScript contracts for Odyshell Server, Client, and SDK.",
   "keywords": [
     "ai-agents",

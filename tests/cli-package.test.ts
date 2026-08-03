@@ -66,6 +66,16 @@ describe("CLI npm package", () => {
     expect(up).not.toContain("instanceConfigPath");
   });
 
+  it("provides a dedicated local Profile management command", () => {
+    const entry = readFileSync(resolve(cliRoot, "src/index.ts"), "utf8");
+
+    expect(entry).toContain('.command("profiles")');
+    expect(entry).toContain('.command("ls")');
+    expect(entry).toContain('.command("status <name>")');
+    expect(entry).toContain('.command("remove <name>")');
+    expect(entry).not.toContain('.command("remove")\n  .description("stop and delete one local Client Profile")');
+  });
+
   it("requests typed Sessions instead of accepting a repeated capability", () => {
     const entry = readFileSync(resolve(cliRoot, "src/index.ts"), "utf8");
     const temporaryFlow = entry.slice(

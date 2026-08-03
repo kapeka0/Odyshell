@@ -38,12 +38,20 @@ ods audit
   restores the previous version if activation fails.
 - `ods client enroll` creates a machine identity explicitly.
 - `ods client start` runs the Client in the foreground.
-- `ods client remove --profile <name>` stops a Profile and deletes its local identity.
+- `ods profiles ls` lists local Profiles and their service state.
+- `ods profiles status <name>` inspects one Profile.
+- `ods profiles remove <name>` stops a Profile and deletes its local identity.
 - `ods reset --yes` signs out and removes every local Profile, including legacy identities.
 
 Use `--profile <name>` with `ods up`, `ods down`, or `ods client status` when one host connects to
 several Workspaces or Servers. Profiles are isolated and can run simultaneously. The default name
 is `default`; `--profile` and `--config` cannot be combined.
+
+Profile commands also support `--json` for automation:
+
+```bash
+ods --json profiles ls
+```
 
 Local removal does not delete Cloud machine records. They remain offline until removed from the
 dashboard.

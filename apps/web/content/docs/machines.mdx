@@ -64,6 +64,7 @@ ods --server https://company.example up --profile company <enrollment-options>
 
 ods --server https://company.example client status --profile company
 ods --server https://company.example down --profile company
+ods profiles ls
 ```
 
 Omitting `--profile` selects `default`. The first use imports the previous single Client
@@ -73,6 +74,6 @@ explicit path and cannot be combined with `--profile`.
 
 Do not reuse or copy a Client configuration between machines.
 
-Remove one local identity with `ods client remove --profile <name>`. To sign out and remove every
+Remove one local identity with `ods profiles remove <name>`. To sign out and remove every
 local Profile from a host, run `ods reset --yes`. These commands leave Cloud machine records
 offline until they are removed from the dashboard.

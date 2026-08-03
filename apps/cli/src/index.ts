@@ -19,6 +19,7 @@ import {
   enrollClient,
   inspectClientRuntime,
   installClientService,
+  listClientProfiles,
   removeClientProfile,
   removeLinuxUserService,
   runClient,
@@ -49,6 +50,7 @@ import {
   operationJson,
   printAgents,
   printAudit,
+  printClientProfiles,
   printJson,
   printMachines,
   printSessions,
@@ -68,7 +70,7 @@ const program = new Command();
 program
   .name("ods")
   .description("Agent-first access to private machines")
-  .version("0.12.1")
+  .version("0.13.0")
   .option("-j, --json", "emit stable JSON output")
   .option("--server <url>", "override the Odyshell server URL")
   .option("--workspace-id <id>", "select the administrator workspace")
@@ -1272,6 +1274,62 @@ program
     else console.log(`${pc.green("✓")} Odyshell Client ${profileName} stopped`);
   });
 
+const profiles = program
+  .command("profiles")
+  .alias("profile")
+  .description("manage local Client Profiles");
+
+profiles
+  .command("ls")
+  .alias("list")
+  .description("list local Client Profiles")
+  .action(async (_options, command: Command) => {
+    const global = globals(command);
+    const listed = await listClientProfiles();
+    if (global.json) printJson({ data: listed });
+    else printClientProfiles(listed);
+  });
+
+profiles
+  .command("status <name>")
+  .description("show one local Client Profile")
+  .action(async (name: string, _options, command: Command) => {
+    const global = globals(command);
+    const listed = await listClientProfiles();
+    const profile = listed.find((candidate) => candidate.profileName === name);
+    if (!profile) {
+      throw new ExpectedError(
+        `Client Profile "${name}" does not exist`,
+        "client_profile_not_found",
+      );
+    }
+    if (global.json) printJson(profile);
+    else printClientProfiles([profile]);
+  });
+
+profiles
+  .command("remove <name>")
+  .alias("rm")
+  .description("stop and delete one local Client Profile")
+  .action(async (name: string, _options, command: Command) => {
+    const global = globals(command);
+    let result;
+    try {
+      result = await removeClientProfile({ profileName: name });
+    } catch (error) {
+      throw new ExpectedError(
+        `Could not remove Client Profile "${name}": ${error instanceof Error ? error.message : String(error)}`,
+        "client_profile_remove_failed",
+      );
+    }
+    if (global.json) {
+      printJson({ removed: true, ...result });
+      return;
+    }
+    console.log(`${pc.green("✓")} Removed Client Profile ${result.profileName}`);
+    console.log(pc.dim("  The Cloud machine remains available in the dashboard"));
+  });
+
 const client = program.command("client").description("manage the private-machine client");
 client
   .command("doctor")
@@ -1425,29 +1483,6 @@ client
       console.log(`  profile  ${profileName}`);
       if (status.servicePath) console.log(`  service  ${status.servicePath}`);
     }
-  });
-
-client
-  .command("remove")
-  .description("stop and delete one local Client Profile")
-  .requiredOption("--profile <name>", "Client Profile name")
-  .action(async (options: { profile: string }, command: Command) => {
-    const global = globals(command);
-    let result;
-    try {
-      result = await removeClientProfile({ profileName: options.profile });
-    } catch (error) {
-      throw new ExpectedError(
-        `Could not remove Client Profile "${options.profile}": ${error instanceof Error ? error.message : String(error)}`,
-        "client_profile_remove_failed",
-      );
-    }
-    if (global.json) {
-      printJson({ removed: true, ...result });
-      return;
-    }
-    console.log(`${pc.green("✓")} Removed Client Profile ${result.profileName}`);
-    console.log(pc.dim("  The Cloud machine remains available in the dashboard"));
   });
 
 client

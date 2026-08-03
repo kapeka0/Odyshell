@@ -36,7 +36,7 @@ import {
   normalizeServerUrl,
 } from "./platform.js";
 
-export const CLIENT_VERSION = "0.12.1";
+export const CLIENT_VERSION = "0.13.0";
 
 export {
   clientConfigPathForProfile,
@@ -89,8 +89,11 @@ export {
   windowsTaskNameForConfig,
 } from "./service.js";
 export {
+  listClientProfiles,
   removeAllClientProfiles,
   removeClientProfile,
+  type ListedClientProfile,
+  type ListClientProfilesOptions,
   type RemoveAllClientProfilesOptions,
   type RemoveClientProfileOptions,
 } from "./profile.js";

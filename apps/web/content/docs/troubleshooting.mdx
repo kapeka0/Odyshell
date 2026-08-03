@@ -40,6 +40,21 @@ ods client doctor
 Only patch updates inside the installed pre-1.0 minor line are automatic. Follow the release
 migration guide for a minor version change.
 
+## CLI still shows the previous version
+
+More than one package manager may have installed `ods`. Find which executable appears first:
+
+```bash
+# Windows PowerShell
+Get-Command ods -All
+
+# Linux or macOS
+type -a ods
+```
+
+Update `@odyshell/cli` with the package manager that owns the first result, then restart each
+Profile with `ods down --profile <name>` followed by `ods up --profile <name>`.
+
 ## `client_already_enrolled`
 
 The selected configuration already contains a machine identity. Start it without enrollment
@@ -66,8 +81,9 @@ The selected local identity belongs to another Server. Choose an isolated Profil
 ods up --profile company <enrollment-options>
 ```
 
-Remove a known unused Profile with `ods client remove --profile <name>`. Use `ods reset --yes` only
-when every local Profile and the CLI login on that host should be deleted.
+List local identities with `ods profiles ls`, then remove a known unused Profile with
+`ods profiles remove <name>`. Use `ods reset --yes` only when every local Profile and the CLI login
+on that host should be deleted.
 
 ## `machine_ping_timeout`
 
