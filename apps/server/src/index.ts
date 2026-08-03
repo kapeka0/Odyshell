@@ -103,6 +103,9 @@ const completeAgentSessionSchema = agentIdentityReferenceSchema
 const cloudSessionSchema = cloudIdentitySchema
   .extend({ sessionId: z.string().uuid() })
   .strict();
+const cloudNotificationSchema = cloudIdentitySchema
+  .extend({ notificationId: z.string().uuid() })
+  .strict();
 const startAgentDeviceAuthorizationSchema = z
   .object({ agentName: z.string().trim().min(1).max(80) })
   .strict();
@@ -1280,6 +1283,7 @@ app.post(
       sessionRequests,
       policies,
       controlEvents,
+      notifications,
     ] = await Promise.all([
       db.listMachines(context.workspace.id),
       db.workspacePlan(context.workspace.id),
@@ -1289,6 +1293,7 @@ app.post(
       db.listWorkspaceAgentSessionRequests(context.workspace.id),
       db.listAgentPolicies(context.workspace.id),
       db.listAudit(context.workspace.id, 50),
+      db.listNotifications(context.workspace.id, parsed.data.userId),
     ]);
     const plan = entitlementsFor(context.organization.plan);
     return {
@@ -1333,6 +1338,11 @@ app.post(
         kind: agent.kind,
         status: agent.status,
         parentAgentId: agent.parentAgentId ?? null,
+      })),
+      notifications: notifications.map((notification) => ({
+        ...notification,
+        readAt: isoTimestamp(notification.readAt),
+        createdAt: isoTimestamp(notification.createdAt),
       })),
       sessions: sessions.map((session) => ({
         id: session.id,
@@ -1398,6 +1408,52 @@ app.post(
         updatedAt: isoTimestamp(session.updatedAt),
       })),
     };
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/notifications/read",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = cloudNotificationSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request" });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const marked = await db.markNotificationRead(
+      context.workspace.id,
+      parsed.data.userId,
+      parsed.data.notificationId,
+    );
+    if (!marked) return reply.code(404).send({ error: "notification_not_found" });
+    gateway.notifyWorkspace(context.workspace.id);
+    return { read: true };
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/notifications/read-all",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = cloudIdentitySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request" });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const marked = await db.markAllNotificationsRead(
+      context.workspace.id,
+      parsed.data.userId,
+    );
+    gateway.notifyWorkspace(context.workspace.id);
+    return { read: true, marked };
   },
 );
 
@@ -2129,7 +2185,12 @@ app.post(
     }
     const token = createOpaqueToken("enroll");
     const expiresAt = Date.now() + 10 * 60 * 1_000;
-    await db.createEnrollmentToken(context.workspace.id, hashToken(token), expiresAt);
+    await db.createEnrollmentToken(
+      context.workspace.id,
+      hashToken(token),
+      expiresAt,
+      parsed.data.userId,
+    );
     await audit(
       db,
       context.workspace.id,
@@ -2391,7 +2452,12 @@ app.post(
     const expiresInSeconds = Math.min(Math.max(body.expiresInSeconds ?? 600, 60), 86_400);
     const token = createOpaqueToken("enroll");
     const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
-    await db.createEnrollmentToken(workspaceId, hashToken(token), expiresAt.getTime());
+    await db.createEnrollmentToken(
+      workspaceId,
+      hashToken(token),
+      expiresAt.getTime(),
+      adminPrincipalFor(request),
+    );
     await audit(
       db,
       workspaceId,
@@ -2683,6 +2749,16 @@ app.post("/v1/clients/enroll", async (request, reply) => {
     machineId,
     { name: body.name },
   );
+  if (enrolled.createdByHumanId) {
+    await db.createNotification({
+      workspaceId: enrolled.workspaceId,
+      userId: enrolled.createdByHumanId,
+      kind: "machine.enrolled",
+      title: "Machine added",
+      href: "/dashboard/machines",
+      resourceId: machineId,
+    });
+  }
   gateway.notifyWorkspace(enrolled.workspaceId);
   return reply.code(201).send({
     machineId: enrolled.machineId,
@@ -2824,6 +2900,16 @@ app.post(
         ...(parsed.data.runId ? { runId: parsed.data.runId } : {}),
       },
     );
+    if (created.status === "pending") {
+      await db.createNotification({
+        workspaceId: principal.workspaceId,
+        userId: principal.humanId,
+        kind: "session.requested",
+        title: "Session approval requested",
+        href: `/sessions/approve?request=${encodeURIComponent(requestId)}`,
+        resourceId: requestId,
+      });
+    }
     gateway.notifyWorkspace(principal.workspaceId);
     return reply.code(201).send({
       id: requestId,

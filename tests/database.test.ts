@@ -111,6 +111,29 @@ describe("server storage boundaries", () => {
     );
   });
 
+  it("stores privacy-minimal notifications for one responsible workspace member", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const migration = database.slice(
+      database.indexOf("async function migrateNotifications("),
+      database.indexOf("const migrationProvider"),
+    );
+    const listing = database.slice(
+      database.indexOf("async listNotifications("),
+      database.indexOf("async listWorkspaces("),
+    );
+
+    expect(migration).toContain("create table odyshell.notifications");
+    expect(migration).toContain("created_by_human_id");
+    expect(migration).not.toContain("stdout");
+    expect(migration).not.toContain("stderr");
+    expect(listing).toContain('.where("workspaceId", "=", workspaceId)');
+    expect(listing).toContain('.where("userId", "=", userId)');
+    expect(listing).toContain("async markAllNotificationsRead(");
+  });
+
   it("expands identity and authority without making legacy sessions canonical", () => {
     const database = readFileSync(
       resolve(process.cwd(), "apps/server/src/database.ts"),

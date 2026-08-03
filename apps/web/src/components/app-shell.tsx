@@ -2,6 +2,7 @@
 
 import { WifiOffIcon } from "lucide-react";
 import { QuickActions } from "@/components/quick-actions";
+import { NotificationsSheet } from "@/components/notifications-sheet";
 import { AppSidebar } from "@/components/app-sidebar";
 import { useDashboard } from "@/components/dashboard-provider";
 import { Alert, AlertTitle } from "@/components/ui/alert";
@@ -45,8 +46,9 @@ export function AppShell({
         >
           <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b bg-background/92 px-4 backdrop-blur-md md:px-6">
             <SidebarTrigger aria-label="Toggle workspace navigation" />
-            <div className="ml-auto">
+            <div className="ml-auto flex items-center gap-1">
               <QuickActions />
+              <NotificationsSheet />
             </div>
           </header>
           {children}

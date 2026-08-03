@@ -787,6 +787,21 @@ describe("dashboard navigation performance boundary", () => {
     expect(list).toContain("Credentials and active Sessions");
   });
 
+  it("renders durable member notifications in a minimal shadcn Sheet", () => {
+    const notifications = readFileSync(
+      resolve(process.cwd(), "apps/web/src/components/notifications-sheet.tsx"),
+      "utf8",
+    );
+
+    expect(notifications).toContain("<Sheet");
+    expect(notifications).toContain("BellIcon");
+    expect(notifications).toContain("animate-ping");
+    expect(notifications).toContain("Mark all");
+    expect(notifications).toContain("/api/notifications/read-all");
+    expect(notifications).not.toContain("stdout");
+    expect(notifications).not.toContain("stderr");
+  });
+
   it("keeps autoapproval policies inactive until an administrator reviews the ceiling", () => {
     const webRoot = resolve(process.cwd(), "apps/web/src");
     const route = readFileSync(

@@ -121,8 +121,21 @@ interface MachineTable {
 interface EnrollmentTokenTable {
   workspaceId: string;
   tokenHash: string;
+  createdByHumanId: string | null;
   expiresAt: Date;
   usedAt: Date | null;
+  createdAt: Generated<Date>;
+}
+
+interface NotificationTable {
+  workspaceId: string;
+  id: string;
+  userId: string;
+  kind: string;
+  title: string;
+  href: string;
+  resourceId: string;
+  readAt: Date | null;
   createdAt: Generated<Date>;
 }
 
@@ -425,6 +438,7 @@ interface DatabaseSchema {
   workspaces: WorkspaceTable;
   machines: MachineTable;
   enrollmentTokens: EnrollmentTokenTable;
+  notifications: NotificationTable;
   agentTokens: AgentTokenTable;
   cliTokens: CliTokenTable;
   deviceAuthorizations: DeviceAuthorizationTable;
@@ -468,6 +482,15 @@ export type WorkspaceRecord = {
   organizationId: string;
   slug: string;
   name: string;
+  createdAt: number;
+};
+
+export type NotificationRecord = {
+  id: string;
+  kind: "session.requested" | "machine.enrolled";
+  title: string;
+  href: string;
+  readAt?: number;
   createdAt: number;
 };
 
@@ -2519,6 +2542,39 @@ async function rollbackRemoteMcp(db: Kysely<DatabaseSchema>): Promise<void> {
   await sql`drop table odyshell.mcp_installations`.execute(db);
 }
 
+async function migrateNotifications(db: Kysely<DatabaseSchema>): Promise<void> {
+  await sql`
+    alter table odyshell.enrollment_tokens
+    add column created_by_human_id text
+  `.execute(db);
+  await sql`
+    create table odyshell.notifications (
+      workspace_id text not null references odyshell.workspaces (id),
+      id text not null,
+      user_id text not null,
+      kind text not null check (kind in ('session.requested', 'machine.enrolled')),
+      title text not null check (length(title) between 1 and 120),
+      href text not null check (href like '/%'),
+      resource_id text not null,
+      read_at timestamptz,
+      created_at timestamptz not null default now(),
+      primary key (workspace_id, id)
+    )
+  `.execute(db);
+  await sql`
+    create index notifications_member_created_idx
+    on odyshell.notifications (workspace_id, user_id, created_at desc)
+  `.execute(db);
+}
+
+async function rollbackNotifications(db: Kysely<DatabaseSchema>): Promise<void> {
+  await sql`drop table odyshell.notifications`.execute(db);
+  await sql`
+    alter table odyshell.enrollment_tokens
+    drop column created_by_human_id
+  `.execute(db);
+}
+
 const migrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
     return {
@@ -2584,6 +2640,10 @@ const migrationProvider: MigrationProvider = {
       "017_remote_mcp": {
         up: migrateRemoteMcp,
         down: rollbackRemoteMcp,
+      },
+      "018_notifications": {
+        up: migrateNotifications,
+        down: rollbackNotifications,
       },
     };
   },
@@ -2924,6 +2984,85 @@ export class PostgresDatabase {
       ).size,
       connections,
     };
+  }
+
+  async createNotification(input: {
+    workspaceId: string;
+    userId: string;
+    kind: NotificationRecord["kind"];
+    title: string;
+    href: string;
+    resourceId: string;
+  }): Promise<void> {
+    await this.db
+      .insertInto("notifications")
+      .values({
+        workspaceId: input.workspaceId,
+        id: randomUUID(),
+        userId: input.userId,
+        kind: input.kind,
+        title: input.title,
+        href: input.href,
+        resourceId: input.resourceId,
+        readAt: null,
+      })
+      .execute();
+  }
+
+  async listNotifications(
+    workspaceId: string,
+    userId: string,
+    limit = 50,
+  ): Promise<NotificationRecord[]> {
+    const notifications = await this.db
+      .selectFrom("notifications")
+      .select(["id", "kind", "title", "href", "readAt", "createdAt"])
+      .where("workspaceId", "=", workspaceId)
+      .where("userId", "=", userId)
+      .orderBy("createdAt", "desc")
+      .limit(Math.min(Math.max(limit, 1), 100))
+      .execute();
+    return notifications.map((notification) => ({
+      id: notification.id,
+      kind: notification.kind as NotificationRecord["kind"],
+      title: notification.title,
+      href: notification.href,
+      ...(notification.readAt === null
+        ? {}
+        : { readAt: timestamp(notification.readAt) }),
+      createdAt: timestamp(notification.createdAt),
+    }));
+  }
+
+  async markNotificationRead(
+    workspaceId: string,
+    userId: string,
+    notificationId: string,
+  ): Promise<boolean> {
+    const notification = await this.db
+      .updateTable("notifications")
+      .set({ readAt: new Date() })
+      .where("workspaceId", "=", workspaceId)
+      .where("userId", "=", userId)
+      .where("id", "=", notificationId)
+      .returning("id")
+      .executeTakeFirst();
+    return notification !== undefined;
+  }
+
+  async markAllNotificationsRead(
+    workspaceId: string,
+    userId: string,
+  ): Promise<number> {
+    const notifications = await this.db
+      .updateTable("notifications")
+      .set({ readAt: new Date() })
+      .where("workspaceId", "=", workspaceId)
+      .where("userId", "=", userId)
+      .where("readAt", "is", null)
+      .returning("id")
+      .execute();
+    return notifications.length;
   }
 
   async listWorkspaces(organizationId?: string): Promise<WorkspaceRecord[]> {
@@ -6251,12 +6390,14 @@ export class PostgresDatabase {
     workspaceId: string,
     tokenHash: string,
     expiresAt: number,
+    createdByHumanId?: string,
   ): Promise<void> {
     await this.db
       .insertInto("enrollmentTokens")
       .values({
         workspaceId,
         tokenHash,
+        createdByHumanId: createdByHumanId ?? null,
         expiresAt: new Date(expiresAt),
         usedAt: null,
       })
@@ -6429,7 +6570,13 @@ export class PostgresDatabase {
     publicKey: string;
     previousMachineId?: string;
   }): Promise<
-    | { status: "enrolled"; machineId: string; name: string; workspaceId: string }
+    | {
+        status: "enrolled";
+        machineId: string;
+        name: string;
+        workspaceId: string;
+        createdByHumanId?: string;
+      }
     | { status: "previous_machine_active"; workspaceId: string }
     | { status: "machine_limit_reached"; workspaceId: string; machineLimit: number }
     | null
@@ -6510,6 +6657,9 @@ export class PostgresDatabase {
         machineId: input.machineId,
         name: input.name,
         workspaceId: enrollment.workspaceId,
+        ...(enrollment.createdByHumanId
+          ? { createdByHumanId: enrollment.createdByHumanId }
+          : {}),
       };
     });
   }

@@ -216,6 +216,12 @@ particular component, library or interaction pattern.
   management routes.
 - Platform-wide degraded states use a compact warning bar above navigation,
   not a floating toast.
+- Workspace notifications use a compact Sheet beside Quick actions. Show a
+  restrained red indicator only while unread items exist, and let members mark
+  one item or all items as read.
+- Direct operational notifications go to the member responsible for the
+  initiating action. Keep notification copy privacy-minimal: never include
+  commands, paths, operation output, credentials or Session purpose.
 - Personal settings and workspace settings have separate destinations.
   Workspace security settings are visible to members and editable only by
   administrators.

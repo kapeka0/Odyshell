@@ -397,7 +397,12 @@ try {
   const machines = await waitUntil(
     () => api("/v1/machines"),
     (value) =>
-      value.data.some((machine) => machine.id === enrolled.machineId && machine.online),
+      value.data.some(
+        (machine) =>
+          machine.id === enrolled.machineId &&
+          machine.online &&
+          machine.runtime?.hostPlatform,
+      ),
     "client authentication",
   );
   const machine = machines.data.find(
@@ -934,6 +939,84 @@ try {
     afterRevoke.body.status !== "pending"
   ) {
     throw new Error("Revoked policy continued autoapproving Sessions");
+  }
+  const cloudIdentity = {
+    userId: cliUserId,
+    organization: approvalBody.organization,
+  };
+  const notificationContextResponse = await fetch(
+    new URL("/v1/internal/cloud/context", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify(cloudIdentity),
+    },
+  );
+  const notificationContext = await notificationContextResponse.json();
+  const sessionNotification = notificationContext.notifications?.find(
+    (notification) =>
+      notification.kind === "session.requested" &&
+      notification.href.includes(afterRevoke.body.id),
+  );
+  if (!sessionNotification || sessionNotification.readAt !== null) {
+    throw new Error("A pending Session did not notify its responsible member");
+  }
+  const crossMemberRead = await fetch(
+    new URL("/v1/internal/cloud/notifications/read", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        ...cloudIdentity,
+        userId: "unrelated-member",
+        notificationId: sessionNotification.id,
+      }),
+    },
+  );
+  if (crossMemberRead.status !== 404) {
+    throw new Error("A notification could be read by another Workspace member");
+  }
+  const ownNotificationRead = await fetch(
+    new URL("/v1/internal/cloud/notifications/read", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        ...cloudIdentity,
+        notificationId: sessionNotification.id,
+      }),
+    },
+  );
+  if (ownNotificationRead.status !== 200) {
+    throw new Error("The responsible member could not mark a notification read");
+  }
+  const enrollmentNotificationResponse = await fetch(
+    new URL("/v1/internal/cloud/context", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({ ...cloudIdentity, userId: "admin" }),
+    },
+  );
+  const enrollmentNotificationContext = await enrollmentNotificationResponse.json();
+  if (
+    !enrollmentNotificationContext.notifications?.some(
+      (notification) => notification.kind === "machine.enrolled",
+    )
+  ) {
+    throw new Error("Machine enrollment did not notify the token creator");
   }
   const independentRequestResponse = await fetch(
     new URL("/v1/agent-session-requests", apiUrl),
@@ -3233,6 +3316,7 @@ try {
           authorityCutover: true,
           agentIdentityListed: true,
           agentIdentityDeletion: true,
+          targetedNotifications: true,
           legacyAgentAccessRejected: true,
           sessionBoundedByCredential: true,
           capabilityScopeDenied: true,

@@ -151,6 +151,15 @@ export type ControlEvent = {
   createdAt: string | null;
 };
 
+export type CloudNotification = {
+  id: string;
+  kind: "session.requested" | "machine.enrolled";
+  title: string;
+  href: string;
+  readAt: string | null;
+  createdAt: string;
+};
+
 export type CloudContext = {
   currentMemberRole: "admin" | "member";
   organization: {
@@ -195,6 +204,7 @@ export type CloudContext = {
   members: CloudMember[];
   policies: CloudAgentPolicy[];
   controlEvents: ControlEvent[];
+  notifications: CloudNotification[];
 };
 
 export class CloudApiError extends Error {
