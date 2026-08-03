@@ -8,7 +8,10 @@ import {
   hostPlatform,
 } from "../apps/client/src/platform.js";
 import { parseDockerRuntime } from "../apps/client/src/docker-runner.js";
-import { adjustedSessionDeadline } from "../apps/client/src/index.js";
+import {
+  adjustedSessionDeadline,
+  inspectClientRuntime,
+} from "../apps/client/src/index.js";
 import { clientCompatibility } from "../apps/server/src/compatibility.js";
 import {
   activateMacLaunchAgent,
@@ -55,6 +58,29 @@ describe("client platform support", () => {
     expect(hostPlatform("darwin")).toBe("macos");
     expect(hostPlatform("win32")).toBe("windows");
     expect(() => hostPlatform("freebsd")).toThrow("Unsupported host platform");
+  });
+
+  it("reports profile capabilities without exposing local paths", async () => {
+    const runtime = await inspectClientRuntime(["host"], {
+      workspace: {
+        runner: "host",
+        workspaceRoot: "C:\\Users\\ada\\private",
+        maxSessionTtlSeconds: 900,
+        maxConcurrentSessions: 2,
+        maxOutputBytes: 1024 * 1024,
+        capabilities: ["fs.read"],
+      },
+    });
+
+    expect(runtime.profiles).toEqual([
+      {
+        name: "workspace",
+        runner: "host",
+        capabilities: ["fs.read"],
+      },
+    ]);
+    expect(JSON.stringify(runtime)).not.toContain("private");
+    expect(JSON.stringify(runtime)).not.toContain("workspaceRoot");
   });
 
   it("uses the native application configuration directory", () => {

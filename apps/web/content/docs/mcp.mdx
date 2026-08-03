@@ -66,15 +66,17 @@ Session Credential stays in MCP memory and is never returned in a tool result.
 
 ## Request an operation
 
-The approval-based workflow exposes seven tools:
+The approval-based workflow exposes eight tools:
 
-1. `machines_list` finds the target machine.
+1. `machines_list` finds the target machine and reports its platform, architecture, runner and
+   locally allowed capabilities.
 2. `machine_ping` checks the complete connection path.
 3. `session_request` accepts one or more typed operations and returns an approval URL.
-4. `session_status` checks the decision and privately binds the approved Session.
-5. `operation_execute` executes only an approved operation. Its stable operation ID makes retries safe.
-6. `session_complete` closes access when no Operation is active and records the agent-reported outcome.
-7. `timeline_list` reads the verified Session timeline.
+4. `session_requests_list` recovers recent requests if an MCP response is interrupted or lost.
+5. `session_status` checks the decision and privately binds the approved Session.
+6. `operation_execute` executes only an approved operation. Its stable operation ID makes retries safe.
+7. `session_complete` closes access when no Operation is active and records the agent-reported outcome.
+8. `timeline_list` reads the verified Session timeline.
 
 When approval is required, the agent shows the URL returned by `session_request` as a clickable
 link and waits. Open it to review the exact machines and Operations, then approve or deny the
@@ -82,6 +84,12 @@ request. The Sessions page shows the pending request immediately, then replaces 
 Session after approval and one-time claim. Its pending row opens the same review URL shown by the
 agent. The agent calls `session_status` and continues only if
 Odyshell grants the Session and the Client reports it ready.
+If the client loses the original response, it can call `session_requests_list`, select its recent
+request and continue with `session_status` instead of asking for duplicate approval.
+
+Agents should call `machines_list` before choosing commands. For example, a Windows machine should
+not receive Linux-only commands such as `df -h`. The Server exposes only an allowlisted runtime
+summary; local paths, Node details and Client configuration remain hidden.
 
 Each operation determines its capability and restriction automatically. Scopes for the same
 machine are combined without broadening their exact restrictions. Filesystem operations use an

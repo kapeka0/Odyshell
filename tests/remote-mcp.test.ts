@@ -58,6 +58,51 @@ describe("remote MCP security boundary", () => {
     expect(remoteMcpAgentName(undefined, undefined)).toBe("MCP");
   });
 
+  it("exposes only the execution facts an Agent needs to choose safe operations", async () => {
+    const runtime = remoteRuntime({
+      listMachines: vi.fn(async () => [
+        machineRecord({
+          hostPlatform: "windows",
+          architecture: "x64",
+          nodeVersion: "v24.6.0",
+          clientVersion: "0.10.2",
+          protocolVersion: 1,
+          executionRunners: ["host"],
+          supportedCapabilities: ["process.exec", "fs.read"],
+          profiles: [
+            {
+              name: "workspace",
+              runner: "host",
+              capabilities: ["fs.read"],
+              workspaceRoot: "C:\\Users\\karim",
+            },
+          ],
+        }),
+      ]),
+    });
+
+    const result = await runtime.machines();
+
+    expect(result).toEqual({
+      data: [
+        {
+          id: "machine-id",
+          name: "rpi5",
+          online: true,
+          status: "online",
+          platform: "windows",
+          architecture: "x64",
+          runner: "host",
+          capabilities: ["fs.read"],
+          clientVersion: "0.10.2",
+          lastSeenAt: "1970-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    expect(JSON.stringify(result)).not.toContain("workspaceRoot");
+    expect(JSON.stringify(result)).not.toContain("nodeVersion");
+  });
+
   it("accepts only an OAuth-selected Organization from a scoped JWT", () => {
     const token = unsignedJwt({ org_id: "org_member" });
 
@@ -443,6 +488,37 @@ describe("remote MCP security boundary", () => {
     expect(claimAgentSessionRequest).not.toHaveBeenCalled();
   });
 
+  it("recovers only recent requests owned by the current MCP installation", async () => {
+    const listAgentSessionRequests = vi.fn(async () => [
+      {
+        id: "7d8730ef-075c-40d5-a72d-8101abe17260",
+        status: "pending",
+        purpose: "Check disk space",
+        expiresAt: Date.parse("2026-08-03T16:20:00.000Z"),
+      },
+    ]);
+    const runtime = remoteRuntime({ listAgentSessionRequests });
+
+    await expect(runtime.requests()).resolves.toEqual({
+      data: [
+        {
+          id: "7d8730ef-075c-40d5-a72d-8101abe17260",
+          status: "pending",
+          purpose: "Check disk space",
+          approvalUrl:
+            "https://odyshell.com/sessions/approve?request=7d8730ef-075c-40d5-a72d-8101abe17260",
+          expiresAt: "2026-08-03T16:20:00.000Z",
+        },
+      ],
+    });
+    expect(listAgentSessionRequests).toHaveBeenCalledWith(
+      "workspace-id",
+      "7e5e118e-07ce-430a-a20a-b89562acae61",
+      "user-id",
+      20,
+    );
+  });
+
   it("waits for the Client to acknowledge a newly opened Session", async () => {
     const listAgentSessionTargetRuntimes = vi
       .fn()
@@ -662,6 +738,7 @@ function fakeRuntime(
     machines: vi.fn(async () => ({ data: [] })),
     ping: vi.fn(),
     request: vi.fn(),
+    requests: vi.fn(async () => ({ data: [] })),
     status: vi.fn(),
     execute: vi.fn(),
     complete: vi.fn(),
@@ -743,7 +820,7 @@ function sessionPrincipal() {
   };
 }
 
-function machineRecord() {
+function machineRecord(runtime?: unknown) {
   return {
     id: "machine-id",
     workspaceId: "workspace-id",
@@ -754,5 +831,6 @@ function machineRecord() {
     lastSeenAt: 0,
     createdAt: 0,
     updatedAt: 0,
+    ...(runtime === undefined ? {} : { runtime }),
   };
 }

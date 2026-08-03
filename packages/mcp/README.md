@@ -10,12 +10,15 @@ This private workspace package defines the MCP tools shared by `ods mcp` and the
 Transport and credentials stay in their adapters; this package only translates tool calls into a
 trusted runtime interface.
 
-The surface includes machine discovery and ping, Session request/status/completion, typed Operation
-execution, and Session timelines. It contains no enrollment, member, billing, or administrator
-tools.
+The surface includes machine discovery and ping, Session request recovery/status/completion, typed
+Operation execution, and Session timelines. It contains no enrollment, member, billing, or
+administrator tools. Machine discovery reports an allowlisted platform and local capability
+summary without exposing workspace paths or Client configuration.
 
 When a Session needs human approval, the tool result tells the agent to show the approval link and
 wait for the user's decision before checking the request status.
+If the MCP client loses a tool response, it can list its own recent requests and resume the same
+approval flow.
 
 The same pending request and review link are available from the Odyshell Sessions dashboard.
 

@@ -37,6 +37,7 @@ describe("Odyshell MCP server", () => {
       "machines_list",
       "machine_ping",
       "session_request",
+      "session_requests_list",
       "session_status",
       "operation_execute",
       "session_complete",
@@ -49,6 +50,52 @@ describe("Odyshell MCP server", () => {
     expect(
       tools.find((tool) => tool.name === "session_status")?.annotations,
     ).toMatchObject({ readOnlyHint: false, idempotentHint: false });
+  });
+
+  it("recovers a Session request when the original tool response is lost", async () => {
+    const ods = fakeApprovedOdyshell();
+    vi.spyOn(ods, "resolveMachine").mockResolvedValue({
+      id: "29f34f33-418c-4624-84c3-25818db42023",
+      name: "rpi5",
+      status: "online",
+      online: true,
+      lastSeenAt: null,
+      enrolledAt: "2026-08-03T16:00:00.000Z",
+      compatible: true,
+      upgradeRequired: false,
+      clientVersion: "0.10.2",
+      protocolVersion: 1,
+    });
+    const server = createApprovedOdyshellMcpServer(ods, {
+      id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+      name: "Codex",
+    });
+    const { client } = await connectServer(server);
+    const requested = await client.callTool({
+      name: "session_request",
+      arguments: {
+        operations: [
+          {
+            machine: "rpi5",
+            action: { kind: "fs.read", path: "config/app.json" },
+          },
+        ],
+        purpose: "Inspect configuration",
+        durationSeconds: 900,
+      },
+    });
+    expect(textOf(requested)).toContain("Approval required");
+
+    const recovered = await client.callTool({
+      name: "session_requests_list",
+      arguments: {},
+    });
+
+    expect(recovered.isError).not.toBe(true);
+    expect(textOf(recovered)).toContain(
+      "7d8730ef-075c-40d5-a72d-8101abe17260",
+    );
+    expect(textOf(recovered)).toContain("Inspect configuration");
   });
 
   it("claims an approved request without exposing the session credential", async () => {

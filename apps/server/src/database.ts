@@ -3859,6 +3859,34 @@ export class PostgresDatabase {
     }));
   }
 
+  async listAgentSessionRequests(
+    workspaceId: string,
+    agentId: string,
+    humanId: string,
+    limit = 20,
+  ): Promise<AgentSessionRequestRecord[]> {
+    const now = new Date();
+    await this.db
+      .updateTable("agentSessionRequests")
+      .set({ status: "expired", updatedAt: now })
+      .where("workspaceId", "=", workspaceId)
+      .where("agentId", "=", agentId)
+      .where("requestedByHumanId", "=", humanId)
+      .where("status", "in", ["pending", "approved"])
+      .where("expiresAt", "<=", now)
+      .execute();
+    const requests = await this.db
+      .selectFrom("agentSessionRequests")
+      .selectAll()
+      .where("workspaceId", "=", workspaceId)
+      .where("agentId", "=", agentId)
+      .where("requestedByHumanId", "=", humanId)
+      .orderBy("createdAt", "desc")
+      .limit(Math.min(Math.max(limit, 1), 100))
+      .execute();
+    return requests.map(agentSessionRequestRecord);
+  }
+
   async workspaceAgentSession(
     workspaceId: string,
     sessionId: string,

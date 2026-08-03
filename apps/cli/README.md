@@ -108,10 +108,12 @@ Run `ods login`, then configure your agent to launch Odyshell:
 }
 ```
 
-The signed-in flow exposes machine discovery and ping, Session request/status/completion, typed
-operation execution, and the verified Session timeline.
+The signed-in flow exposes machine discovery and ping, Session request recovery/status/completion,
+typed operation execution, and the verified Session timeline. Machine discovery lets the agent
+choose operations for the actual platform and locally allowed capabilities.
 The agent receives an approval URL; after a member approves it, MCP claims the Session Credential
-once and keeps it out of model-visible tool results.
+If a response is interrupted, the MCP can recover its recent request instead of asking for another
+approval.
 
 A request is derived from one or more typed operations: exact paths for filesystem work, exact
 executables and arguments for `process.exec`, or exact containers for `docker.logs`. The MCP process cannot enroll

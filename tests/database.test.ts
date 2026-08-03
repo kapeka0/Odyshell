@@ -339,6 +339,24 @@ describe("server storage boundaries", () => {
     expect(listing).toContain('.set({ status: "expired", updatedAt: now })');
   });
 
+  it("recovers MCP requests only for their Workspace, Agent and human owner", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const listing = database.slice(
+      database.indexOf("async listAgentSessionRequests("),
+      database.indexOf("async workspaceAgentSession("),
+    );
+
+    expect(listing).toContain('.where("workspaceId", "=", workspaceId)');
+    expect(listing).toContain('.where("agentId", "=", agentId)');
+    expect(listing).toContain(
+      '.where("requestedByHumanId", "=", humanId)',
+    );
+    expect(listing).toContain('.limit(Math.min(Math.max(limit, 1), 100))');
+  });
+
   it("stores headless Agent authorization codes and credentials as hashes", () => {
     const database = readFileSync(
       resolve(process.cwd(), "apps/server/src/database.ts"),

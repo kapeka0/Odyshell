@@ -6,6 +6,7 @@ import {
 } from "@modelcontextprotocol/server/stdio";
 import {
   createApprovedMcpServer,
+  type ApprovedMcpSessionRequest,
   type ApprovedMcpRuntime,
 } from "@odyshell/mcp";
 import {
@@ -37,6 +38,10 @@ export function createApprovedOdyshellMcpServer(
 ): McpServer {
   const claims = new Map<string, ClaimedAgentSession>();
   const requestSessions = new Map<string, string>();
+  const recentRequests = new Map<
+    string,
+    ApprovedMcpSessionRequest & { purpose: string }
+  >();
   const runtime: ApprovedMcpRuntime = {
     machines: () => ods.machines(),
     async ping(machine) {
@@ -66,35 +71,53 @@ export function createApprovedOdyshellMcpServer(
             : "session_scope_conflict",
         );
       }
-      return ods.agent(identity).requestSession({
+      const requested = await ods.agent(identity).requestSession({
         purpose: input.purpose,
         scopes,
         durationSeconds: input.durationSeconds,
         ...(input.runId ? { runId: input.runId } : {}),
       });
+      const safeRequest = {
+        id: requested.id,
+        status: requested.status,
+        purpose: input.purpose,
+        ...(requested.approvalUrl
+          ? { approvalUrl: requested.approvalUrl }
+          : {}),
+        expiresAt: requested.expiresAt,
+      };
+      recentRequests.set(requested.id, safeRequest);
+      return safeRequest;
+    },
+    async requests() {
+      return { data: [...recentRequests.values()].reverse().slice(0, 20) };
     },
     async status(requestId) {
-        const existingSessionId = requestSessions.get(requestId);
-        const existingClaim = existingSessionId
-          ? claims.get(existingSessionId)
-          : undefined;
-        if (existingClaim) return safeClaim(existingClaim);
+      const existingSessionId = requestSessions.get(requestId);
+      const existingClaim = existingSessionId
+        ? claims.get(existingSessionId)
+        : undefined;
+      if (existingClaim) return safeClaim(existingClaim);
 
-        const agent = ods.agent(identity);
-        const status = await agent.status(requestId);
-        if (status.status === "approved") {
-          const claim = await agent.claim(requestId);
-          claims.set(claim.sessionId, claim);
-          requestSessions.set(requestId, claim.sessionId);
-          return safeClaim(claim);
-        }
-        if (status.status === "claimed") {
-          throw new ExpectedError(
-            "This request was already claimed by another MCP process.",
-            "session_claim_unavailable",
-          );
-        }
-        return status;
+      const agent = ods.agent(identity);
+      const status = await agent.status(requestId);
+      const recent = recentRequests.get(requestId);
+      if (recent) {
+        recentRequests.set(requestId, { ...recent, status: status.status });
+      }
+      if (status.status === "approved") {
+        const claim = await agent.claim(requestId);
+        claims.set(claim.sessionId, claim);
+        requestSessions.set(requestId, claim.sessionId);
+        return safeClaim(claim);
+      }
+      if (status.status === "claimed") {
+        throw new ExpectedError(
+          "This request was already claimed by another MCP process.",
+          "session_claim_unavailable",
+        );
+      }
+      return status;
     },
     async execute(input) {
       const claim = claims.get(input.sessionId);
@@ -140,7 +163,7 @@ export function createOdyshellMcpServer(
   reportUnexpectedError: (error: unknown) => void = () => undefined,
 ): McpServer {
   const server = new McpServer(
-    { name: "odyshell", version: "0.10.1" },
+    { name: "odyshell", version: "0.10.2" },
     {
       instructions:
         "Use typed filesystem and process tools on machines already allowed by the current Odyshell agent token. Prefer process_exec over process_shell. All paths are relative to the machine workspace.",

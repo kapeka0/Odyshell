@@ -4,7 +4,9 @@ import type {
   ApprovedMcpRuntime,
 } from "@odyshell/mcp";
 import {
+  capabilitySchema,
   operationSessionScopes,
+  type Capability,
 } from "@odyshell/protocol";
 import { sessionApprovalUrl, type ScopedRateLimiter } from "./cloud.js";
 import {
@@ -39,7 +41,7 @@ export function createRemoteMcpRuntime(
           name: machine.name,
           online: gateway.isOnline(machine.id),
           status: gateway.isOnline(machine.id) ? "online" : "offline",
-          runtime: machine.runtime,
+          ...mcpMachineExecutionFacts(machine.runtime),
           lastSeenAt: isoTimestamp(machine.lastSeenAt),
         })),
       };
@@ -145,6 +147,25 @@ export function createRemoteMcpRuntime(
             }
           : {}),
         expiresAt: isoTimestamp(created.expiresAt),
+      };
+    },
+    async requests() {
+      const requests = await db.listAgentSessionRequests(
+        installation.workspaceId,
+        installation.agentId,
+        installation.userId,
+        20,
+      );
+      return {
+        data: requests.map((request) => ({
+          id: request.id,
+          status: request.status,
+          purpose: request.purpose,
+          ...(request.status === "pending" && webUrl
+            ? { approvalUrl: sessionApprovalUrl(webUrl, request.id) }
+            : {}),
+          expiresAt: isoTimestamp(request.expiresAt),
+        })),
       };
     },
     async status(requestId) {
@@ -459,6 +480,68 @@ export function createRemoteMcpRuntime(
       };
     },
   };
+}
+
+function mcpMachineExecutionFacts(runtime: unknown): {
+  platform: "linux" | "macos" | "windows" | null;
+  architecture: string | null;
+  runner: "host" | "docker" | null;
+  capabilities: Capability[] | null;
+  clientVersion: string | null;
+} {
+  if (!isRecord(runtime)) {
+    return {
+      platform: null,
+      architecture: null,
+      runner: null,
+      capabilities: null,
+      clientVersion: null,
+    };
+  }
+  const platform =
+    runtime.hostPlatform === "linux" ||
+    runtime.hostPlatform === "macos" ||
+    runtime.hostPlatform === "windows"
+      ? runtime.hostPlatform
+      : null;
+  const profiles = Array.isArray(runtime.profiles) ? runtime.profiles : [];
+  const workspace = profiles.find(
+    (profile) => isRecord(profile) && profile.name === "workspace",
+  );
+  const runner =
+    isRecord(workspace) &&
+    (workspace.runner === "host" || workspace.runner === "docker")
+      ? workspace.runner
+      : null;
+  const capabilities = isRecord(workspace)
+    ? safeCapabilities(workspace.capabilities)
+    : null;
+  return {
+    platform,
+    architecture: safeRuntimeString(runtime.architecture),
+    runner,
+    capabilities,
+    clientVersion: safeRuntimeString(runtime.clientVersion),
+  };
+}
+
+function safeCapabilities(value: unknown): Capability[] | null {
+  if (!Array.isArray(value)) return null;
+  const capabilities = value.flatMap((candidate) => {
+    const parsed = capabilitySchema.safeParse(candidate);
+    return parsed.success ? [parsed.data] : [];
+  });
+  return [...new Set(capabilities)];
+}
+
+function safeRuntimeString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 && value.length <= 128
+    ? value
+    : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 async function resolveMcpMachine(

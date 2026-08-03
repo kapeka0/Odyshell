@@ -17,6 +17,7 @@ export type ApprovedMcpRuntime = {
     durationSeconds: number;
     runId?: string;
   }): Promise<ApprovedMcpSessionRequest>;
+  requests(): Promise<unknown>;
   status(requestId: string): Promise<unknown>;
   execute(input: {
     sessionId: string;
@@ -60,10 +61,10 @@ export function createApprovedMcpServer(
   reportUnexpectedError: (error: unknown) => void = () => undefined,
 ): McpServer {
   const server = new McpServer(
-    { name: "odyshell", version: "0.10.1" },
+    { name: "odyshell", version: "0.10.2" },
     {
       instructions:
-        "Request an explicit temporary Session for a typed operation. Filesystem paths may be relative to the enrolled workspace or exact absolute host paths. Absolute paths require an exact approved scope and a host execution profile. Use process.exec for exact executable and argument rules; process.shell is unavailable. When session_request returns an approval URL, show it verbatim as a clickable link and wait for the user to approve or deny it. Then check session_status before executing. Credentials stay inside Odyshell.",
+        "List machines before choosing platform-specific operations. Request an explicit temporary Session for a typed operation. Filesystem paths may be relative to the enrolled workspace or exact absolute host paths. Absolute paths require an exact approved scope and a host execution profile. Use process.exec for exact executable and argument rules; process.shell is unavailable. When session_request returns an approval URL, show it verbatim as a clickable link and wait for the user to approve or deny it. Then check session_status before executing. If a tool response is lost, use session_requests_list to recover the request. Credentials stay inside Odyshell.",
     },
   );
 
@@ -71,7 +72,8 @@ export function createApprovedMcpServer(
     "machines_list",
     {
       title: "List Odyshell machines",
-      description: "List machines available for a Session request.",
+      description:
+        "List machines and inspect their platform, runner and locally allowed capabilities before requesting platform-specific operations.",
       inputSchema: z.object({}),
       annotations: readOnlyAnnotations,
     },
@@ -123,6 +125,18 @@ export function createApprovedMcpServer(
           }),
         reportUnexpectedError,
       ),
+  );
+
+  server.registerTool(
+    "session_requests_list",
+    {
+      title: "List recent access requests",
+      description:
+        "Recover recent Session requests owned by this MCP installation, for example after a previous tool response was lost.",
+      inputSchema: z.object({}),
+      annotations: readOnlyAnnotations,
+    },
+    async () => runTool(() => runtime.requests(), reportUnexpectedError),
   );
 
   server.registerTool(

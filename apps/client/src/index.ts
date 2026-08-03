@@ -34,7 +34,7 @@ import {
   normalizeServerUrl,
 } from "./platform.js";
 
-export const CLIENT_VERSION = "0.10.1";
+export const CLIENT_VERSION = "0.10.2";
 
 export {
   clientConfigPathForProfile,
@@ -175,6 +175,7 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
 
 export async function inspectClientRuntime(
   runners: Array<"host" | "docker"> = ["host"],
+  profiles?: ClientConfig["profiles"],
 ): Promise<ClientRuntimeInfo> {
   const uniqueRunners = [...new Set(runners)];
   const runtime: ClientRuntimeInfo = {
@@ -187,6 +188,15 @@ export async function inspectClientRuntime(
       ? allCapabilities
       : allCapabilities.filter((capability) => capability !== "docker.logs"),
     executionRunners: uniqueRunners,
+    ...(profiles
+      ? {
+          profiles: Object.entries(profiles).map(([name, profile]) => ({
+            name,
+            runner: profile.runner,
+            capabilities: profile.capabilities,
+          })),
+        }
+      : {}),
   };
   if (uniqueRunners.includes("docker")) {
     const docker = await inspectDockerRuntime();
@@ -232,7 +242,10 @@ export class Client {
   }
 
   async start(): Promise<void> {
-    this.runtime = await inspectClientRuntime([...this.executors.keys()]);
+    this.runtime = await inspectClientRuntime(
+      [...this.executors.keys()],
+      this.config.profiles,
+    );
     await Promise.all([...this.executors.values()].map((executor) => executor.cleanupOrphans()));
     await this.connect();
   }

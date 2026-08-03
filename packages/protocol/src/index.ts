@@ -627,6 +627,11 @@ export type ClientRuntimeInfo = {
   clientVersion?: string;
   supportedCapabilities?: Capability[];
   executionRunners?: Array<"host" | "docker">;
+  profiles?: Array<{
+    name: string;
+    runner: "host" | "docker";
+    capabilities: Capability[];
+  }>;
   containerEngine?: "docker";
   containerOs?: "linux";
   containerArchitecture?: string;
