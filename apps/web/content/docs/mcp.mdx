@@ -78,7 +78,10 @@ The approval-based workflow exposes eight tools:
    reuses a compatible ready Session bound to the same MCP installation, or returns an approval URL
    when new authority is required.
 5. `session_status` checks the decision and privately binds the approved Session.
-6. `operation_execute` executes only an approved operation. Its stable operation ID makes retries safe.
+6. `operation_execute` executes only an approved operation. Odyshell derives its idempotency key
+   from the MCP request, so agents never manage or reuse internal Operation IDs. If the requested
+   timeout exceeds the Session lifetime remaining, Odyshell safely reduces it instead of requiring
+   another tool call.
 7. `session_complete` closes access when no Operation is active and records the agent-reported outcome.
 8. `timeline_list` reads the verified Session timeline.
 

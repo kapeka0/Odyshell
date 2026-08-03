@@ -328,12 +328,22 @@ export function createRemoteMcpRuntime(
         scopes: principal.scopes,
         expiresAt: principal.expiresAt,
       };
+      const decisionTime = Date.now();
+      const remainingTimeoutSeconds = Math.max(
+        0,
+        Math.floor((principal.expiresAt - decisionTime) / 1_000) - 1,
+      );
+      const timeoutSeconds =
+        remainingTimeoutSeconds > 0
+          ? Math.min(input.timeoutSeconds, remainingTimeoutSeconds)
+          : input.timeoutSeconds;
       const decision = sessionOperationDecision(
         sessionPrincipal,
         input.sessionId,
         machine.id,
         input.action,
-        input.timeoutSeconds,
+        timeoutSeconds,
+        decisionTime,
       );
       if (!decision.allowed) {
         await audit(
@@ -377,7 +387,7 @@ export function createRemoteMcpRuntime(
           principal.agentId,
           input.sessionId,
           existing.id,
-          input.timeoutSeconds,
+          timeoutSeconds,
         );
       }
       if (target.status !== "ready") {
@@ -397,7 +407,7 @@ export function createRemoteMcpRuntime(
         sessionId: target.runtimeSessionId,
         principalId: principal.agentId,
         action: input.action,
-        timeoutSeconds: input.timeoutSeconds,
+        timeoutSeconds,
         maxOutputBytes: 1024 * 1024,
         idempotencyKey: input.operationId,
       });
@@ -421,7 +431,7 @@ export function createRemoteMcpRuntime(
           principal.agentId,
           input.sessionId,
           replay.id,
-          input.timeoutSeconds,
+          timeoutSeconds,
         );
       }
       const sent = gateway.send(machine.id, {
@@ -429,7 +439,7 @@ export function createRemoteMcpRuntime(
         operationId,
         sessionId: target.runtimeSessionId,
         action: input.action,
-        timeoutSeconds: input.timeoutSeconds,
+        timeoutSeconds,
         maxOutputBytes: 1024 * 1024,
       });
       if (!sent) {
@@ -456,7 +466,7 @@ export function createRemoteMcpRuntime(
         principal.agentId,
         input.sessionId,
         operationId,
-        input.timeoutSeconds,
+        timeoutSeconds,
       );
     },
     async complete(input) {

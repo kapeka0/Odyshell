@@ -1,4 +1,5 @@
 import { McpServer, type CallToolResult } from "@modelcontextprotocol/server";
+import { createHash, randomUUID } from "node:crypto";
 import {
   sessionOperationActionSchema,
   type OperationAction,
@@ -63,6 +64,7 @@ export function createApprovedMcpServer(
   runtime: ApprovedMcpRuntime,
   reportUnexpectedError: (error: unknown) => void = () => undefined,
 ): McpServer {
+  const operationNamespace = randomUUID();
   const server = new McpServer(
     { name: "odyshell", version: "0.13.1" },
     {
@@ -167,18 +169,27 @@ export function createApprovedMcpServer(
     {
       title: "Execute approved operation",
       description:
-        "Execute an exact typed process, filesystem or Docker operation inside an approved Session. The action must match what the user approved.",
+        "Execute an exact typed process, filesystem or Docker operation inside an approved Session. The action must match what the user approved. Odyshell owns the idempotency key and safely reduces a requested timeout to the Session lifetime remaining.",
       inputSchema: z.object({
         sessionId: z.string().uuid(),
         machine: machineSchema,
         action: sessionOperationActionSchema,
         timeoutSeconds: timeoutSchema,
-        operationId: z.string().uuid(),
       }),
       annotations: destructiveAnnotations,
     },
-    async (input) =>
-      runOperation(() => runtime.execute(input), reportUnexpectedError),
+    async (input, context) =>
+      runOperation(
+        () =>
+          runtime.execute({
+            ...input,
+            operationId: operationIdForRequest(
+              operationNamespace,
+              context.mcpReq.id,
+            ),
+          }),
+        reportUnexpectedError,
+      ),
   );
 
   server.registerTool(
@@ -219,6 +230,20 @@ export function createApprovedMcpServer(
   );
 
   return server;
+}
+
+function operationIdForRequest(
+  namespace: string,
+  requestId: string | number,
+): string {
+  const bytes = createHash("sha256")
+    .update(`${namespace}:${typeof requestId}:${String(requestId)}`)
+    .digest()
+    .subarray(0, 16);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 const readOnlyAnnotations = {

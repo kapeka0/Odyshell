@@ -299,7 +299,6 @@ describe("Odyshell MCP server", () => {
         sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
         machine: "machine-id",
         action: { kind: "fs.read", path: "config/app.json" },
-        operationId: "f87d486b-928d-4df9-b19e-f843855867dc",
       },
     });
 
@@ -309,10 +308,62 @@ describe("Odyshell MCP server", () => {
       { kind: "fs.read", path: "config/app.json" },
       {
         timeoutSeconds: 120,
-        idempotencyKey: "f87d486b-928d-4df9-b19e-f843855867dc",
+        idempotencyKey: expect.stringMatching(/^[0-9a-f-]{36}$/u),
       },
     );
     expect(textOf(result)).not.toContain("ods_session_secret");
+  });
+
+  it("owns Operation idempotency keys instead of asking the Agent to reuse them", async () => {
+    const execute = vi.fn(
+      async (_machineId: string, _action: unknown, _options: unknown) =>
+        successfulOperation("ok"),
+    );
+    const server = createApprovedOdyshellMcpServer(
+      fakeApprovedOdyshell({ execute }),
+      {
+        id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+        name: "Claude",
+      },
+    );
+    const { client } = await connectServer(server);
+    const { tools } = await client.listTools();
+    const operationTool = tools.find((tool) => tool.name === "operation_execute");
+    expect(JSON.stringify(operationTool?.inputSchema)).not.toContain(
+      "operationId",
+    );
+    await client.callTool({
+      name: "session_status",
+      arguments: { requestId: "7d8730ef-075c-40d5-a72d-8101abe17260" },
+    });
+
+    const first = await client.callTool({
+      name: "operation_execute",
+      arguments: {
+        sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
+        machine: "machine-id",
+        action: { kind: "process.shell", command: "node -v" },
+        timeoutSeconds: 120,
+      },
+    });
+    const second = await client.callTool({
+      name: "operation_execute",
+      arguments: {
+        sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
+        machine: "machine-id",
+        action: { kind: "process.shell", command: "npm -v" },
+        timeoutSeconds: 120,
+      },
+    });
+
+    expect(first.isError).not.toBe(true);
+    expect(second.isError).not.toBe(true);
+    expect(execute).toHaveBeenCalledTimes(2);
+    const firstKey = execute.mock.calls[0]?.[2] as { idempotencyKey?: string };
+    const secondKey = execute.mock.calls[1]?.[2] as { idempotencyKey?: string };
+    expect(firstKey.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(secondKey.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(secondKey.idempotencyKey).not.toBe(firstKey.idempotencyKey);
   });
 
   it("rejects an operation outside the claimed scope without leaking it", async () => {
@@ -338,7 +389,6 @@ describe("Odyshell MCP server", () => {
         sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
         machine: "machine-id",
         action: { kind: "fs.read", path: "secrets.env" },
-        operationId: "2fc42fa3-b4d8-46e2-9384-76477aa8979f",
       },
     });
 
@@ -371,7 +421,6 @@ describe("Odyshell MCP server", () => {
         sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
         machine: "desktop",
         action: { kind: "process.exec", program: "df", args: ["-h"] },
-        operationId: "f87d486b-928d-4df9-b19e-f843855867dc",
       },
     });
 

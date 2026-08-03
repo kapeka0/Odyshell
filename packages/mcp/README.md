@@ -24,9 +24,11 @@ approval without asking for a duplicate Session.
 
 The same pending request and review link are available from the Odyshell Sessions dashboard.
 
-Requests can group several exact operations into one least-privilege scope per machine. Stable
-Operation IDs make retries safe, and completion is rejected while an Operation remains active.
-Groups that would create capability-path cross products are rejected.
+Requests can group several exact operations into one least-privilege scope per machine. The MCP
+server derives stable Operation IDs from MCP request identity instead of exposing them to the
+agent. It also bounds execution time to the Session lifetime remaining. Completion is rejected
+while an Operation remains active, and groups that would create capability-path cross products
+are rejected.
 
 Filesystem paths may be relative to the Client working directory or exact absolute paths on a host
 profile. An absolute path is presented and approved as an exact filesystem scope. Docker

@@ -772,6 +772,72 @@ describe("remote MCP security boundary", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("bounds an MCP Operation timeout to the remaining Session lifetime", async () => {
+    const principal = {
+      ...sessionPrincipal(),
+      scopes: [{
+        machineId: "machine-id",
+        profile: "workspace",
+        capabilities: ["process.shell" as const],
+        restrictions: {},
+      }],
+      expiresAt: Date.now() + 5 * 60_000,
+    };
+    const createOperation = vi.fn(async (_input: unknown) => true);
+    const send = vi.fn(() => true);
+    const runtime = remoteRuntime(
+      {
+        findMcpSessionPrincipal: vi.fn(async () => principal),
+        listMachines: vi.fn(async () => [machineRecord()]),
+        getAgentSessionTargetRuntime: vi.fn(async () => ({
+          status: "ready",
+          runtimeSessionId: "runtime-session-id",
+        })),
+        findOperationByIdempotency: vi.fn(async () => null),
+        createOperation,
+        markOperationDelivered: vi.fn(async () => undefined),
+        getOperation: vi.fn(async () => ({
+          id: "created-operation-id",
+          sessionId: "runtime-session-id",
+          principalId: principal.agentId,
+          action: { kind: "process.shell", command: "npm -v" },
+          status: "succeeded",
+          timeoutSeconds: 299,
+          maxOutputBytes: 1024,
+          exitCode: 0,
+          outputTruncated: false,
+          events: [],
+          createdAt: 0,
+          updatedAt: 0,
+        })),
+        audit: vi.fn(async () => undefined),
+      },
+      { send, isOnline: vi.fn(() => true) },
+    );
+
+    await expect(runtime.execute({
+      sessionId: principal.sessionId,
+      machine: "rpi5",
+      action: {
+        kind: "process.shell",
+        command: "npm -v",
+        cwd: ".",
+        env: {},
+      },
+      timeoutSeconds: 600,
+      operationId: "a6e9dd35-5882-4167-a30b-9aa0382d2630",
+    })).resolves.toMatchObject({ operation: { status: "succeeded" } });
+    const created = createOperation.mock.calls[0]?.[0] as {
+      timeoutSeconds: number;
+    };
+    expect(created.timeoutSeconds).toBeGreaterThanOrEqual(295);
+    expect(created.timeoutSeconds).toBeLessThanOrEqual(299);
+    expect(send).toHaveBeenCalledWith(
+      "machine-id",
+      expect.objectContaining({ timeoutSeconds: created.timeoutSeconds }),
+    );
+  });
+
   it("returns the original operation for an idempotent replay", async () => {
     const send = vi.fn();
     const createOperation = vi.fn();
