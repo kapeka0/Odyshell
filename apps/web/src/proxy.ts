@@ -15,6 +15,7 @@ export const config = {
     "/sessions/:path*",
     "/sign-in/:path*",
     "/sign-up/:path*",
+    "/sso-callback/:path*",
     "/api/:path*",
     "/__clerk/:path*",
   ],

@@ -2,6 +2,7 @@
 
 import { useAuth, useSignIn, useSignUp } from "@clerk/nextjs";
 import { ArrowLeftIcon, MailIcon } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
@@ -9,7 +10,9 @@ import { z } from "zod";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
+import { googleSsoRedirects } from "@/lib/auth-redirect";
 import { cn } from "@/lib/utils";
 
 const emailSchema = z.string().trim().email("Enter a valid email address");
@@ -42,6 +45,7 @@ function SignInForm({ destination }: { destination: string }) {
   const [emailAddress, setEmailAddress] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [googlePending, setGooglePending] = useState(false);
   const pending = fetchStatus === "fetching";
 
   useEffect(() => {
@@ -65,6 +69,24 @@ function SignInForm({ destination }: { destination: string }) {
     }
     setEmailAddress(parsed.data);
     setStep("code");
+  }
+
+  async function continueWithGoogle() {
+    setError(null);
+    setGooglePending(true);
+    try {
+      const result = await signIn.sso({
+        strategy: "oauth_google",
+        ...googleSsoRedirects(destination),
+      });
+      if (result.error) {
+        setError(clerkErrorMessage(result.error));
+        setGooglePending(false);
+      }
+    } catch {
+      setError("Google sign-in could not start. Try again.");
+      setGooglePending(false);
+    }
   }
 
   async function verifyCode(event: FormEvent<HTMLFormElement>) {
@@ -138,6 +160,12 @@ function SignInForm({ destination }: { destination: string }) {
   return (
     <form onSubmit={sendCode}>
       <FieldGroup>
+        <GoogleButton
+          pending={googlePending}
+          disabled={pending}
+          onClick={continueWithGoogle}
+        />
+        <AuthDivider />
         <Field data-invalid={Boolean(error)}>
           <FieldLabel htmlFor="sign-in-email">Email address</FieldLabel>
           <Input
@@ -153,7 +181,7 @@ function SignInForm({ destination }: { destination: string }) {
           {error ? <FieldError>{error}</FieldError> : null}
         </Field>
         <Button type="submit" disabled={pending}>
-          {pending ? (
+          {pending && !googlePending ? (
             <Spinner data-icon="inline-start" />
           ) : (
             <MailIcon data-icon="inline-start" />
@@ -169,12 +197,15 @@ function SignInForm({ destination }: { destination: string }) {
 function SignUpForm({ destination }: { destination: string }) {
   const router = useRouter();
   const { isSignedIn } = useAuth();
-  const { signUp, fetchStatus } = useSignUp();
+  const { signIn, fetchStatus: signInFetchStatus } = useSignIn();
+  const { signUp, fetchStatus: signUpFetchStatus } = useSignUp();
   const [step, setStep] = useState<"email" | "code">("email");
   const [emailAddress, setEmailAddress] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const pending = fetchStatus === "fetching";
+  const [googlePending, setGooglePending] = useState(false);
+  const pending =
+    signInFetchStatus === "fetching" || signUpFetchStatus === "fetching";
 
   useEffect(() => {
     if (isSignedIn) router.replace(destination);
@@ -200,6 +231,24 @@ function SignUpForm({ destination }: { destination: string }) {
     }
     setEmailAddress(parsed.data);
     setStep("code");
+  }
+
+  async function continueWithGoogle() {
+    setError(null);
+    setGooglePending(true);
+    try {
+      const result = await signIn.sso({
+        strategy: "oauth_google",
+        ...googleSsoRedirects(destination),
+      });
+      if (result.error) {
+        setError(clerkErrorMessage(result.error));
+        setGooglePending(false);
+      }
+    } catch {
+      setError("Google sign-in could not start. Try again.");
+      setGooglePending(false);
+    }
   }
 
   async function verifyCode(event: FormEvent<HTMLFormElement>) {
@@ -276,6 +325,12 @@ function SignUpForm({ destination }: { destination: string }) {
   return (
     <form onSubmit={sendCode}>
       <FieldGroup>
+        <GoogleButton
+          pending={googlePending}
+          disabled={pending}
+          onClick={continueWithGoogle}
+        />
+        <AuthDivider />
         <Field data-invalid={Boolean(error)}>
           <FieldLabel htmlFor="sign-up-email">Work email</FieldLabel>
           <Input
@@ -291,7 +346,7 @@ function SignUpForm({ destination }: { destination: string }) {
           {error ? <FieldError>{error}</FieldError> : null}
         </Field>
         <Button type="submit" disabled={pending}>
-          {pending ? (
+          {pending && !googlePending ? (
             <Spinner data-icon="inline-start" />
           ) : (
             <MailIcon data-icon="inline-start" />
@@ -302,6 +357,48 @@ function SignUpForm({ destination }: { destination: string }) {
         <div id="clerk-captcha" />
       </FieldGroup>
     </form>
+  );
+}
+
+function GoogleButton({
+  pending,
+  disabled,
+  onClick,
+}: {
+  pending: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      disabled={disabled || pending}
+      onClick={onClick}
+    >
+      {pending ? (
+        <Spinner data-icon="inline-start" />
+      ) : (
+        <Image
+          src="/brand/google.svg"
+          alt=""
+          width={16}
+          height={16}
+          aria-hidden="true"
+        />
+      )}
+      Continue with Google
+    </Button>
+  );
+}
+
+function AuthDivider() {
+  return (
+    <div className="flex items-center gap-3" aria-hidden="true">
+      <Separator className="flex-1" />
+      <span className="text-xs text-muted-foreground">Or</span>
+      <Separator className="flex-1" />
+    </div>
   );
 }
 

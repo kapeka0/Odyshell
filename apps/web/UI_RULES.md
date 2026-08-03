@@ -134,6 +134,8 @@ particular component, library or interaction pattern.
   spacing scale. Compact variants use the same smaller scale.
 - Pending state stays visually attached to the initiating action. Completion
   feedback announces success or failure once without duplicating progress.
+- Identity-provider actions use the provider's recognizable mark beside a clear
+  text label while preserving the form's primary hierarchy.
 - Transient feedback remains visible above blocking overlays.
 - Prefer the shortest label that remains clear in context. Avoid redundant
   qualifiers, repeated explanations and descriptive copy that does not help

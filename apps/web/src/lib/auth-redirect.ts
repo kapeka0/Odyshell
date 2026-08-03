@@ -17,3 +17,14 @@ export function safeAuthRedirect(
     return fallback;
   }
 }
+
+export function googleSsoRedirects(destination: string): {
+  redirectUrl: string;
+  redirectCallbackUrl: string;
+} {
+  const safeDestination = safeAuthRedirect(destination);
+  return {
+    redirectUrl: safeDestination,
+    redirectCallbackUrl: `/sso-callback?redirect_url=${encodeURIComponent(safeDestination)}`,
+  };
+}

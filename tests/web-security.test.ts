@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { safeAuthRedirect } from "../apps/web/src/lib/auth-redirect.js";
+import {
+  googleSsoRedirects,
+  safeAuthRedirect,
+} from "../apps/web/src/lib/auth-redirect.js";
 import {
   facehashAvatarPath,
   safeFacehashIdentity,
@@ -44,6 +47,7 @@ describe("web authentication boundaries", () => {
     );
     expect(proxy).toContain('"/sessions/:path*"');
     expect(proxy).toContain('"/policies/:path*"');
+    expect(proxy).toContain('"/sso-callback/:path*"');
     expect(proxy).toContain('"/api/:path*"');
   });
 
@@ -75,6 +79,18 @@ describe("web authentication boundaries", () => {
     "/dashboard\u0000https://attacker.example",
   ])("rejects unsafe auth redirect %s", (redirect) => {
     expect(safeAuthRedirect(redirect, "/dashboard")).toBe("/dashboard");
+  });
+
+  it("keeps Google SSO completion on local Odyshell routes", () => {
+    expect(googleSsoRedirects("/activate?code=ABCD-EFGH")).toEqual({
+      redirectUrl: "/activate?code=ABCD-EFGH",
+      redirectCallbackUrl:
+        "/sso-callback?redirect_url=%2Factivate%3Fcode%3DABCD-EFGH",
+    });
+    expect(googleSsoRedirects("https://attacker.example/steal")).toEqual({
+      redirectUrl: "/dashboard",
+      redirectCallbackUrl: "/sso-callback?redirect_url=%2Fdashboard",
+    });
   });
 
   it("normalizes valid device codes without accepting ambiguous characters", () => {
