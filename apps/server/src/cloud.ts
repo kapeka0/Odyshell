@@ -5,8 +5,10 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import {
+  agentSessionRequestInputSchema,
   agentTokenRequestSchema,
   capabilitySchema,
+  manualSessionCapabilities,
 } from "@odyshell/protocol";
 import { z } from "zod";
 
@@ -45,6 +47,45 @@ export const cloudIdentitySchema = z.object({
     name: z.string().trim().min(1).max(200),
   }).strict(),
 }).strict();
+
+export const cloudManualSessionSchema = cloudIdentitySchema
+  .extend({
+    title: z.string().trim().min(1).max(96),
+    purpose: z.string().trim().max(280).optional(),
+    agentId: z.string().uuid(),
+    scopes: agentSessionRequestInputSchema.shape.scopes,
+    durationSeconds: z.number().int().min(15 * 60).max(24 * 60 * 60),
+  })
+  .strict()
+  .superRefine((request, context) => {
+    if (request.scopes.length !== 1) {
+      context.addIssue({
+        code: "custom",
+        message: "Manual Sessions require exactly one machine",
+        path: ["scopes"],
+      });
+    }
+    request.scopes.forEach((scope, index) => {
+      if (
+        scope.capabilities.some(
+          (capability) => !manualSessionCapabilities.includes(capability),
+        )
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "Capability is unavailable in manual Sessions",
+          path: ["scopes", index, "capabilities"],
+        });
+      }
+      if (Object.keys(scope.restrictions).length > 0) {
+        context.addIssue({
+          code: "custom",
+          message: "Manual Sessions do not accept typed restrictions",
+          path: ["scopes", index, "restrictions"],
+        });
+      }
+    });
+  });
 
 export const approveDeviceSchema = cloudIdentitySchema.extend({
   userCode: z.string().min(8).max(16),

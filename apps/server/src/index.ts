@@ -26,6 +26,7 @@ import {
   cloudLiveOriginDecision,
   createCloudLiveToken,
   cloudIdentitySchema,
+  cloudManualSessionSchema,
   cloudConnectionView,
   cloudWebRequestDecision,
   cloudWebKey,
@@ -104,15 +105,6 @@ const completeAgentSessionSchema = agentIdentityReferenceSchema
   .strict();
 const cloudSessionSchema = cloudIdentitySchema
   .extend({ sessionId: z.string().uuid() })
-  .strict();
-const cloudManualSessionSchema = cloudIdentitySchema
-  .extend({
-    title: z.string().trim().min(1).max(96),
-    purpose: z.string().trim().max(280).optional(),
-    agentId: z.string().uuid(),
-    scopes: agentSessionRequestInputSchema.shape.scopes,
-    durationSeconds: z.number().int().min(15 * 60).max(24 * 60 * 60),
-  })
   .strict();
 const cloudNotificationSchema = cloudIdentitySchema
   .extend({
@@ -1465,7 +1457,7 @@ app.post(
   { preHandler: requireWeb },
   async (request, reply) => {
     const parsed = cloudManualSessionSchema.safeParse(request.body);
-    if (!parsed.success || parsed.data.scopes.length !== 1) {
+    if (!parsed.success) {
       return reply.code(400).send({ error: "invalid_request" });
     }
     const context = await db.ensureCloudContext({

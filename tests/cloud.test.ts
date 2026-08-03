@@ -6,6 +6,7 @@ import {
   deleteCloudAgentAccessSchema,
   cloudLiveOriginDecision,
   cloudIdentitySchema,
+  cloudManualSessionSchema,
   cloudConnectionView,
   cloudWebRequestDecision,
   cloudWebKey,
@@ -101,6 +102,72 @@ describe("cloud identity and device authorization boundaries", () => {
         ...identity,
         machineId: "2dc24de7-ec0e-45b3-88c1-acbb900e51f8",
         workspaceId: "attacker-workspace",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("allows only intent-level capabilities through manual Session creation", () => {
+    const identity = {
+      userId: "user_123",
+      organization: {
+        externalId: "org_123",
+        slug: "acme",
+        name: "Acme",
+      },
+    };
+    const machineId = "2dc24de7-ec0e-45b3-88c1-acbb900e51f8";
+    const agentId = "21a970a0-d42a-44ab-bf3f-f0a5f2ada248";
+    const request = {
+      ...identity,
+      title: "Maintain machine",
+      agentId,
+      durationSeconds: 3_600,
+      scopes: [{
+        machineId,
+        profile: "default",
+        capabilities: ["process.shell", "fs.read", "fs.write"],
+        restrictions: {},
+      }],
+    };
+
+    expect(cloudManualSessionSchema.safeParse(request).success).toBe(true);
+    expect(
+      cloudManualSessionSchema.safeParse({
+        ...request,
+        scopes: [{
+          machineId,
+          profile: "default",
+          capabilities: ["process.exec"],
+          restrictions: {
+            process: {
+              programs: [{
+                program: "git",
+                args: ["status"],
+                cwd: { path: ".", includeDescendants: false },
+              }],
+            },
+          },
+        }],
+      }).success,
+    ).toBe(false);
+    expect(
+      cloudManualSessionSchema.safeParse({
+        ...request,
+        scopes: [{
+          machineId,
+          profile: "default",
+          capabilities: ["docker.logs"],
+          restrictions: { docker: { containers: ["api"] } },
+        }],
+      }).success,
+    ).toBe(false);
+    expect(
+      cloudManualSessionSchema.safeParse({
+        ...request,
+        scopes: [
+          request.scopes[0],
+          { ...request.scopes[0], machineId: agentId },
+        ],
       }).success,
     ).toBe(false);
   });

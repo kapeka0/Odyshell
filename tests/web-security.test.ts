@@ -24,7 +24,6 @@ import {
   nextUserTheme,
 } from "../apps/web/src/lib/theme-cycle.js";
 import {
-  capabilitiesForManualPreset,
   isReadOnlyPreset,
   readOnlyCapabilities,
   fullAccessCapabilities,
@@ -32,6 +31,10 @@ import {
   toggleReadOnlyPreset,
   toggleFullAccessPreset,
 } from "../apps/web/src/lib/agent-access-options.js";
+import {
+  capabilitiesForManualPreset,
+  manualSessionSelectionIsValid,
+} from "../apps/web/src/lib/manual-session-access.js";
 import {
   deviceApprovalErrorPath,
   deviceApprovalReason,
@@ -312,6 +315,15 @@ describe("web authentication boundaries", () => {
     expect(
       capabilitiesForManualPreset("full", ["fs.read", "fs.write"]),
     ).toEqual(["fs.read", "fs.write"]);
+    expect(
+      manualSessionSelectionIsValid(
+        ["process.shell", "fs.read"],
+        ["fs.read"],
+      ),
+    ).toBe(false);
+    expect(
+      manualSessionSelectionIsValid(["fs.read"], ["fs.read"]),
+    ).toBe(true);
   });
 });
 
@@ -453,6 +465,9 @@ describe("dashboard navigation performance boundary", () => {
     expect(sessionForm).not.toContain("splitArguments");
     expect(sessionForm).toContain('value="shell"');
     expect(sessionForm).toContain("Shell access");
+    expect(sessionForm).toContain("agent?.credentialActive");
+    expect(sessionForm).toContain("machine?.online");
+    expect(sessionForm).toContain("selectionIsValid");
     expect(sessionList).toContain("toolbarAction={<CreateSessionSheet />}");
     expect(sessionsPage).not.toContain("action={<CreateSessionSheet />}");
     expect(sessionsLoading).toContain("toolbarAction");

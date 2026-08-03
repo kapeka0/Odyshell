@@ -31,12 +31,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
-  capabilitiesForManualPreset,
   capabilityGroups,
+} from "@/lib/agent-access-options";
+import {
+  capabilitiesForManualPreset,
   manualReadOnlyCapabilities,
   manualSessionCapabilities,
+  manualSessionSelectionIsValid,
   type ManualAccessPreset,
-} from "@/lib/agent-access-options";
+} from "@/lib/manual-session-access";
 
 const durations = [
   { value: "900", label: "15 minutes" },
@@ -72,6 +75,7 @@ export function CreateSessionSheet() {
   ]);
 
   const machine = context?.machines.find((candidate) => candidate.id === machineId);
+  const agent = context?.agents.find((candidate) => candidate.id === agentId);
   const locallyAllowed = useMemo<Capability[]>(
     () =>
       machineCapabilities(machine?.runtime).filter((value) =>
@@ -86,6 +90,16 @@ export function CreateSessionSheet() {
       full: capabilitiesForManualPreset("full", locallyAllowed),
     }),
     [locallyAllowed],
+  );
+  const selectionIsValid = manualSessionSelectionIsValid(
+    capabilities,
+    locallyAllowed,
+  );
+  const canSubmit = Boolean(
+    title.trim() &&
+      agent?.credentialActive &&
+      machine?.online &&
+      selectionIsValid,
   );
   const agents = context?.agents;
   const machines = context?.machines;
@@ -128,18 +142,18 @@ export function CreateSessionSheet() {
   }
 
   function toggleCapability(capability: Capability) {
+    setAccessPreset(null);
     setCapabilities((current) => {
       const next = current.includes(capability)
         ? current.filter((value) => value !== capability)
         : [...current, capability];
-      setAccessPreset(null);
       return next;
     });
   }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (!context || !machine || capabilities.length === 0) return;
+    if (!context || !agent?.credentialActive || !machine?.online || !selectionIsValid) return;
     setPending(true);
     try {
       const response = await fetch("/api/sessions", {
@@ -256,7 +270,7 @@ export function CreateSessionSheet() {
           </div>
           <SheetFooter className="border-t">
             <Button type="button" variant="outline" disabled={pending} onClick={() => setOpen(false)}>Cancel</Button>
-            <Button type="submit" disabled={pending || !title.trim() || !agentId || !machineId || capabilities.length === 0}>{pending ? <Spinner /> : null}Create</Button>
+            <Button type="submit" disabled={pending || !canSubmit}>{pending ? <Spinner /> : null}Create</Button>
           </SheetFooter>
         </form>
       </SheetContent>

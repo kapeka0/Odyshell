@@ -123,6 +123,32 @@ export const allCapabilities: Capability[] = [
   "docker.logs",
 ];
 
+export const manualSessionReadOnlyCapabilities: readonly Capability[] = [
+  "fs.stat",
+  "fs.list",
+  "fs.search",
+  "fs.read",
+];
+
+export const manualSessionShellCapabilities: readonly Capability[] = [
+  "process.shell",
+];
+
+export const manualSessionFullAccessCapabilities: readonly Capability[] = [
+  "process.shell",
+  "fs.stat",
+  "fs.list",
+  "fs.search",
+  "fs.read",
+  "fs.write",
+  "fs.mkdir",
+  "fs.remove",
+];
+
+export const manualSessionCapabilities: readonly Capability[] = [
+  ...manualSessionFullAccessCapabilities,
+];
+
 export const resourceSlugSchema = z
   .string()
   .trim()

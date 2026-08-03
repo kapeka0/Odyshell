@@ -1961,6 +1961,57 @@ try {
     userId: cliUserId,
     organization: approvalBody.organization,
   };
+  const manualSessionRequest = {
+    ...cloudIdentityBody,
+    title: "Manual security boundary",
+    agentId: approvedAgentId,
+    durationSeconds: 3_600,
+  };
+  const [manualExecResponse, manualDockerResponse] = await Promise.all([
+    fetch(new URL("/v1/internal/cloud/sessions/create", apiUrl), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        ...manualSessionRequest,
+        scopes: [{
+          machineId: machine.id,
+          profile: "default",
+          capabilities: ["process.exec"],
+          restrictions: {
+            process: {
+              programs: [{
+                program: "node",
+                args: ["--version"],
+                cwd: { path: ".", includeDescendants: false },
+              }],
+            },
+          },
+        }],
+      }),
+    }),
+    fetch(new URL("/v1/internal/cloud/sessions/create", apiUrl), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        ...manualSessionRequest,
+        scopes: [{
+          machineId: machine.id,
+          profile: "default",
+          capabilities: ["docker.logs"],
+          restrictions: { docker: { containers: ["postgres"] } },
+        }],
+      }),
+    }),
+  ]);
+  if (manualExecResponse.status !== 400 || manualDockerResponse.status !== 400) {
+    throw new Error("Manual Session creation accepted a low-level capability");
+  }
   const cloudSessionsResponse = await fetch(
     new URL("/v1/internal/cloud/sessions/list", apiUrl),
     {
@@ -3304,6 +3355,8 @@ try {
           sessionIdScopeDenied: true,
           crossSessionIdempotencyIsolated: true,
           sessionCredentialCannotMintSessions: true,
+          manualSessionExecDenied: true,
+          manualSessionDockerDenied: true,
           sessionTimeline: true,
           timelineExport: true,
           eventSinkSsrfDenied: true,
