@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import {
   capabilityForAction,
   sessionScopeDecision,
@@ -237,10 +237,14 @@ export class DockerRunner implements OperationExecutor {
     }
 
     if (isFilesystemAction(action)) {
+      if (isAbsolute(action.path)) {
+        throw new Error("Absolute filesystem paths require a host execution profile");
+      }
       const done = executeFilesystemOperation(
         session.profile.workspaceRoot,
         action,
         hooks,
+        session.restrictions?.filesystem?.paths,
       ).then(() => ({ exitCode: 0 }));
       return { cancel: async () => {}, done };
     }

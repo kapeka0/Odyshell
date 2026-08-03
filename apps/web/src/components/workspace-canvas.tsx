@@ -26,11 +26,12 @@ import {
 import Link from "next/link";
 import { useTheme } from "next-themes";
 import { useReducedMotion } from "motion/react";
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { StatusDot } from "@/components/status-dot";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import type { CloudContext } from "@/lib/cloud-api";
+import { formatSessionRemaining } from "@/lib/session-time";
 import { cn } from "@/lib/utils";
 
 type MachineNodeData = {
@@ -283,15 +284,31 @@ function SessionNode({ data }: NodeProps<SessionFlowNode>) {
           >
             {data.purpose}
           </Link>
-          <span className="mt-0.5 block text-xs text-muted-foreground">
-            Expires {formatCanvasExpiry(data.expiresAt)}
-          </span>
+          <SessionCountdown expiresAt={data.expiresAt} />
         </span>
       </div>
       <div className="mt-4 border-t pt-3 text-xs text-muted-foreground">
         {data.targets} {data.targets === 1 ? "target" : "targets"}
       </div>
     </div>
+  );
+}
+
+function SessionCountdown({ expiresAt }: { expiresAt: string }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  return (
+    <span
+      aria-live="off"
+      className="mt-0.5 block text-xs tabular-nums text-muted-foreground"
+    >
+      {formatSessionRemaining(expiresAt, now)}
+    </span>
   );
 }
 
@@ -407,11 +424,4 @@ const emptyConnections: CloudContext["connections"] = {
 
 function emptySubscribe() {
   return () => {};
-}
-
-function formatCanvasExpiry(value: string): string {
-  return new Intl.DateTimeFormat("en", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
 }

@@ -172,6 +172,82 @@ describe("HostExecutor", () => {
     }
   });
 
+  it("reads an exact absolute path only when the local Session grants it", async () => {
+    const outside = await mkdtemp(join(tmpdir(), "odyshell-absolute-"));
+    try {
+      const approvedPath = join(outside, "interfaces");
+      const deniedPath = join(outside, "shadow");
+      await writeFile(approvedPath, "network config");
+      await writeFile(deniedPath, "denied");
+      await executor.closeSession(session);
+      session = await executor.openSession(
+        crypto.randomUUID(),
+        profile(workspace),
+        ["fs.read"],
+        {
+          filesystem: {
+            paths: [{ path: approvedPath, includeDescendants: false }],
+          },
+        },
+        new Date(Date.now() + 60_000),
+        () => {},
+      );
+
+      await expect(
+        execute({ kind: "fs.read", path: approvedPath }),
+      ).resolves.toBe("network config");
+      await expect(
+        executor.execute(
+          crypto.randomUUID(),
+          session,
+          { kind: "fs.read", path: deniedPath },
+          hooks(),
+        ),
+      ).rejects.toThrow("path_scope_denied");
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects writes that escape an absolute descendant scope through a symlink", async () => {
+    const approved = await mkdtemp(join(tmpdir(), "odyshell-approved-"));
+    const outside = await mkdtemp(join(tmpdir(), "odyshell-outside-"));
+    try {
+      await symlink(outside, join(approved, "linked"), "junction");
+      await executor.closeSession(session);
+      session = await executor.openSession(
+        crypto.randomUUID(),
+        profile(workspace),
+        ["fs.write"],
+        {
+          filesystem: {
+            paths: [{ path: approved, includeDescendants: true }],
+          },
+        },
+        new Date(Date.now() + 60_000),
+        () => {},
+      );
+
+      const running = await executor.execute(
+        crypto.randomUUID(),
+        session,
+        {
+          kind: "fs.write",
+          path: join(approved, "linked", "secret.txt"),
+          contentBase64: Buffer.from("secret").toString("base64"),
+          createParents: true,
+        },
+        hooks(),
+      );
+      await expect(running.done).rejects.toThrow(
+        "Resolved path escapes the approved absolute scope",
+      );
+    } finally {
+      await rm(approved, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
   it("waits for active process cleanup when a Session closes", async () => {
     const running = await executor.execute(
       crypto.randomUUID(),

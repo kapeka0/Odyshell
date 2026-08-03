@@ -21,8 +21,9 @@ Requests can group several exact operations into one least-privilege scope per m
 Operation IDs make retries safe, and completion is rejected while an Operation remains active.
 Groups that would create capability-path cross products are rejected.
 
-Filesystem paths are relative to the enrolled machine workspace. Restricted Sessions do not expose
-free-form shell; an agent that needs an exact host path must request `process.exec` with the exact
-executable and arguments shown to the user for approval.
+Filesystem paths may be relative to the enrolled machine workspace or exact absolute paths on a
+host profile. An absolute path is presented and approved as an exact filesystem scope. Docker
+profiles reject absolute host paths. Restricted Sessions do not expose free-form shell;
+`process.exec` remains available for an exact executable and argument array.
 
 [MCP documentation](https://odyshell.com/docs/mcp) · [Back to Odyshell](../../README.md)

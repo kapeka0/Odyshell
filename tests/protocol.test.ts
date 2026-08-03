@@ -11,6 +11,7 @@ import {
   clientConfigSchema,
   humanIdentitySchema,
   operationRequestSchema,
+  normalizeOperationPath,
   normalizeRelativePath,
   operationSessionScope,
   operationSessionScopes,
@@ -103,15 +104,19 @@ describe("protocol validation", () => {
     ).toThrow(/different filesystem capabilities/i);
   });
 
-  it("rejects absolute and parent-traversing filesystem paths at the workspace boundary", () => {
+  it("accepts local absolute paths but rejects traversal and network paths", () => {
     expect(
       operationRequestSchema.safeParse({ action: { kind: "fs.read", path: "/etc/passwd" } }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       operationRequestSchema.safeParse({ action: { kind: "fs.read", path: "C:\\Windows" } }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       operationRequestSchema.safeParse({ action: { kind: "fs.read", path: "../../etc/passwd" } })
+        .success,
+    ).toBe(false);
+    expect(
+      operationRequestSchema.safeParse({ action: { kind: "fs.read", path: "//server/share" } })
         .success,
     ).toBe(false);
   });
@@ -334,6 +339,29 @@ describe("protocol validation", () => {
     expect(normalizeRelativePath("config//./app.json")).toBe(
       "config/app.json",
     );
+    expect(normalizeOperationPath("/etc//network/./interfaces")).toBe(
+      "/etc/network/interfaces",
+    );
+    expect(
+      agentSessionRequestInputSchema.safeParse({
+        ...request,
+        scopes: [
+          {
+            ...request.scopes[0],
+            restrictions: {
+              filesystem: {
+                paths: [
+                  {
+                    path: "/etc/network/interfaces",
+                    includeDescendants: false,
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      }).success,
+    ).toBe(true);
     expect(
       agentSessionRequestInputSchema.safeParse({
         ...request,

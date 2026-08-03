@@ -716,6 +716,11 @@ export type WorkspaceAgentSessionRecord = AgentSessionRecord & {
   }>;
 };
 
+export type WorkspaceAgentSessionRequestRecord = AgentSessionRequestRecord & {
+  agentName: string;
+  machines: Array<{ id: string; name: string }>;
+};
+
 export type SessionRecord = Timestamped & {
   id: string;
   machineId: string;
@@ -3079,13 +3084,23 @@ export class PostgresDatabase {
         .executeTakeFirst();
       if (existing) {
         if (existing.status !== "active") return null;
+        const genericName = /^(MCP Agent|MCP)$/i.test(existing.agentName);
+        const agentName = genericName ? input.agentName : existing.agentName;
+        if (agentName !== existing.agentName) {
+          await transaction
+            .updateTable("agents")
+            .set({ name: agentName, updatedAt: new Date() })
+            .where("workspaceId", "=", input.workspaceId)
+            .where("id", "=", existing.agentId)
+            .execute();
+        }
         return {
           workspaceId: existing.workspaceId,
           id: existing.id,
           userId: existing.userId,
           oauthClientId: existing.oauthClientId,
           agentId: existing.agentId,
-          agentName: existing.agentName,
+          agentName,
           status: "active",
           createdAt: timestamp(existing.createdAt),
           updatedAt: timestamp(existing.updatedAt),
@@ -3785,6 +3800,62 @@ export class PostgresDatabase {
       ...(session.runId === null ? {} : { runId: session.runId }),
       scopes: session.scopes,
       targets: targetsBySession.get(session.id) ?? [],
+    }));
+  }
+
+  async listWorkspaceAgentSessionRequests(
+    workspaceId: string,
+    limit = 200,
+  ): Promise<WorkspaceAgentSessionRequestRecord[]> {
+    const now = new Date();
+    await this.db
+      .updateTable("agentSessionRequests")
+      .set({ status: "expired", updatedAt: now })
+      .where("workspaceId", "=", workspaceId)
+      .where("status", "in", ["pending", "approved"])
+      .where("expiresAt", "<=", now)
+      .execute();
+
+    const requests = await this.db
+      .selectFrom("agentSessionRequests")
+      .innerJoin("agents", (join) =>
+        join
+          .onRef("agents.workspaceId", "=", "agentSessionRequests.workspaceId")
+          .onRef("agents.id", "=", "agentSessionRequests.agentId"),
+      )
+      .selectAll("agentSessionRequests")
+      .select("agents.name as agentName")
+      .where("agentSessionRequests.workspaceId", "=", workspaceId)
+      .where("agentSessionRequests.status", "!=", "claimed")
+      .orderBy("agentSessionRequests.createdAt", "desc")
+      .limit(Math.min(Math.max(limit, 1), 500))
+      .execute();
+    if (requests.length === 0) return [];
+
+    const machineIds = [
+      ...new Set(
+        requests.flatMap((request) =>
+          request.scopes.map((scope) => scope.machineId),
+        ),
+      ),
+    ];
+    const machines = await this.db
+      .selectFrom("machines")
+      .select(["id", "name"])
+      .where("workspaceId", "=", workspaceId)
+      .where("id", "in", machineIds)
+      .execute();
+    const machineNames = new Map(
+      machines.map((machine) => [machine.id, machine.name]),
+    );
+
+    return requests.map((request) => ({
+      ...agentSessionRequestRecord(request),
+      agentName: request.agentName,
+      machines: request.scopes.map((scope) => ({
+        id: scope.machineId,
+        name: machineNames.get(scope.machineId) ?? "Unavailable machine",
+      })),
     }));
   }
 

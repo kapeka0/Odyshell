@@ -156,14 +156,29 @@ export const agentTokenRequestSchema = z.object({
 });
 export type AgentTokenRequest = z.infer<typeof agentTokenRequestSchema>;
 
-export const relativePathSchema = z
+const scopedPathSchema = z
   .string()
   .max(4096)
   .refine((value) => !value.includes("\0"), "Path cannot contain NUL bytes")
-  .refine((value) => !value.startsWith("/") && !/^[A-Za-z]:[\\/]/.test(value), "Path must be relative")
   .refine(
     (value) => !value.replaceAll("\\", "/").split("/").includes(".."),
     "Parent traversal is not allowed",
+  );
+
+export const filesystemPathSchema = scopedPathSchema
+  .refine(
+    (value) => !value.replaceAll("\\", "/").startsWith("//"),
+    "Network paths are not allowed",
+  )
+  .describe(
+    "Exact filesystem path. Relative paths resolve inside the enrolled workspace; local absolute paths require an exact approved Session scope.",
+  );
+
+export const relativePathSchema = scopedPathSchema
+  .refine(
+    (value) =>
+      !value.startsWith("/") && !/^[A-Za-z]:[\\/]/.test(value),
+    "Path must be relative",
   )
   .describe(
     "Path relative to the enrolled machine workspace. Absolute paths and parent traversal are not allowed.",
@@ -177,9 +192,34 @@ export function normalizeRelativePath(value: string): string {
   return segments.join("/") || ".";
 }
 
+export function normalizeOperationPath(value: string): string {
+  const normalized = value.replaceAll("\\", "/");
+  const drive = normalized.match(/^([A-Za-z]):\/(.*)$/);
+  if (drive) {
+    const path = normalizeRelativePath(drive[2] ?? "");
+    return `${drive[1]!.toUpperCase()}:/${path === "." ? "" : path}`;
+  }
+  if (normalized.startsWith("/")) {
+    const path = normalizeRelativePath(normalized.slice(1));
+    return `/${path === "." ? "" : path}`;
+  }
+  return normalizeRelativePath(normalized);
+}
+
+function isAbsoluteOperationPath(value: string): boolean {
+  return value.startsWith("/") || /^[A-Za-z]:\//.test(value);
+}
+
+function pathIsInside(root: string, value: string): boolean {
+  if (root === "/" || /^[A-Za-z]:\/$/.test(root)) {
+    return value.startsWith(root);
+  }
+  return value.startsWith(`${root}/`);
+}
+
 export const sessionPathRestrictionSchema = z
   .object({
-    path: relativePathSchema.transform(normalizeRelativePath),
+    path: filesystemPathSchema.transform(normalizeOperationPath),
     includeDescendants: z.boolean().default(false),
   })
   .strict();
@@ -191,7 +231,12 @@ export const sessionProcessRuleSchema = z
   .object({
     program: z.string().trim().min(1).max(1024),
     args: z.array(z.string().max(16_384)).max(256),
-    cwd: sessionPathRestrictionSchema,
+    cwd: z
+      .object({
+        path: relativePathSchema.transform(normalizeRelativePath),
+        includeDescendants: z.boolean().default(false),
+      })
+      .strict(),
   })
   .strict();
 export type SessionProcessRule = z.infer<typeof sessionProcessRuleSchema>;
@@ -344,12 +389,15 @@ function pathMatchesRestriction(
   value: string,
   restriction: SessionPathRestriction,
 ): boolean {
-  const normalized = normalizeRelativePath(value);
-  const root = normalizeRelativePath(restriction.path);
+  const normalized = normalizeOperationPath(value);
+  const root = normalizeOperationPath(restriction.path);
   if (normalized === root) return true;
+  if (isAbsoluteOperationPath(normalized) !== isAbsoluteOperationPath(root)) {
+    return false;
+  }
   return (
     restriction.includeDescendants &&
-    (root === "." || normalized.startsWith(`${root}/`))
+    (root === "." || pathIsInside(root, normalized))
   );
 }
 
@@ -357,14 +405,20 @@ function pathRestrictionIsSubset(
   requested: SessionPathRestriction,
   ceiling: SessionPathRestriction,
 ): boolean {
-  const requestedPath = normalizeRelativePath(requested.path);
-  const ceilingPath = normalizeRelativePath(ceiling.path);
+  const requestedPath = normalizeOperationPath(requested.path);
+  const ceilingPath = normalizeOperationPath(ceiling.path);
   if (requestedPath === ceilingPath) {
     return !requested.includeDescendants || ceiling.includeDescendants;
   }
+  if (
+    isAbsoluteOperationPath(requestedPath) !==
+    isAbsoluteOperationPath(ceilingPath)
+  ) {
+    return false;
+  }
   return (
     ceiling.includeDescendants &&
-    (ceilingPath === "." || requestedPath.startsWith(`${ceilingPath}/`))
+    (ceilingPath === "." || pathIsInside(ceilingPath, requestedPath))
   );
 }
 
@@ -502,23 +556,23 @@ const processShellOperationActionSchema = z.object({
 
 const sessionOperationActionSchemas = [
   processExecOperationActionSchema,
-  z.object({ kind: z.literal("fs.stat"), path: relativePathSchema }),
-  z.object({ kind: z.literal("fs.list"), path: relativePathSchema.default(".") }),
+  z.object({ kind: z.literal("fs.stat"), path: filesystemPathSchema }),
+  z.object({ kind: z.literal("fs.list"), path: filesystemPathSchema.default(".") }),
   z.object({
     kind: z.literal("fs.search"),
-    path: relativePathSchema.default("."),
+    path: filesystemPathSchema.default("."),
     query: z.string().min(1).max(256),
     maxResults: z.number().int().min(1).max(1_000).default(100),
   }),
-  z.object({ kind: z.literal("fs.read"), path: relativePathSchema }),
+  z.object({ kind: z.literal("fs.read"), path: filesystemPathSchema }),
   z.object({
     kind: z.literal("fs.write"),
-    path: relativePathSchema,
+    path: filesystemPathSchema,
     contentBase64: z.string(),
     createParents: z.boolean().default(false),
   }),
-  z.object({ kind: z.literal("fs.mkdir"), path: relativePathSchema, recursive: z.boolean().default(true) }),
-  z.object({ kind: z.literal("fs.remove"), path: relativePathSchema, recursive: z.boolean().default(false) }),
+  z.object({ kind: z.literal("fs.mkdir"), path: filesystemPathSchema, recursive: z.boolean().default(true) }),
+  z.object({ kind: z.literal("fs.remove"), path: filesystemPathSchema, recursive: z.boolean().default(false) }),
   z.object({
     kind: z.literal("docker.logs"),
     container: z
@@ -743,7 +797,7 @@ export function operationSessionScope(
         restrictions: {
           filesystem: {
             paths: [{
-              path: normalizeRelativePath(action.path),
+              path: normalizeOperationPath(action.path),
               includeDescendants: false,
             }],
           },

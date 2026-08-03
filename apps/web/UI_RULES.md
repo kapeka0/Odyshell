@@ -162,6 +162,7 @@ particular component, library or interaction pattern.
 - Persistent Agents remain visible without a machine link. Active Sessions are
   temporary nodes between Agents and their target machines and link to their
   Timeline.
+- Active Session nodes show a live, non-negative remaining-time countdown.
 - Agent identity, runtime presence and Session authority are separate states.
   Never use an active Session as a proxy for whether an Agent is online.
   Until the product has a dedicated Agent heartbeat, show only identity status
@@ -174,6 +175,12 @@ particular component, library or interaction pattern.
 - Operational collections support search, relevant filters, sorting and
   pagination. Row details and secondary actions stay behind a consistent
   actions menu.
+- Session requests appear in the Sessions collection as soon as access is
+  requested, before the Agent claims an approved Session. Claimed requests are
+  replaced by their canonical Session instead of duplicated.
+- Session purposes remain single-line and truncate when necessary. Human
+  requesters use their recognizable name and profile image; internal identity
+  IDs are never presented as names.
 - Important table identifiers are copyable from the value itself. Reveal the
   copy affordance with a restrained horizontal hover or focus animation.
 - Status tags use restrained semantic color to make operational state scannable:

@@ -14,7 +14,10 @@ export default function SessionsPage() {
     <DashboardPage>
       <DashboardPageHeader title="Sessions" />
       {state.status === "ready" ? (
-        <SessionList sessions={state.context.sessions ?? []} />
+        <SessionList
+          sessions={state.context.sessions ?? []}
+          requests={state.context.sessionRequests ?? []}
+        />
       ) : (
         <DashboardStateNotice state={state} />
       )}

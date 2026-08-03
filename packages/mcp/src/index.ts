@@ -63,7 +63,7 @@ export function createApprovedMcpServer(
     { name: "odyshell", version: "0.10.0" },
     {
       instructions:
-        "Request an explicit temporary Session for a typed operation. Filesystem paths are relative to the enrolled machine workspace. For an exact host path outside that workspace, request process.exec with an explicit executable and argument array; process.shell is unavailable. When session_request returns an approval URL, show it verbatim as a clickable link and wait for the user to approve or deny it. Then check session_status before executing. Credentials stay inside Odyshell.",
+        "Request an explicit temporary Session for a typed operation. Filesystem paths may be relative to the enrolled workspace or exact absolute host paths. Absolute paths require an exact approved scope and a host execution profile. Use process.exec for exact executable and argument rules; process.shell is unavailable. When session_request returns an approval URL, show it verbatim as a clickable link and wait for the user to approve or deny it. Then check session_status before executing. Credentials stay inside Odyshell.",
     },
   );
 
@@ -95,7 +95,7 @@ export function createApprovedMcpServer(
     {
       title: "Request operation access",
       description:
-        "Request a temporary Session scoped to one or more typed operations. Filesystem paths must be relative to the enrolled workspace. Use process.exec with an exact executable and arguments for an approved host path outside it. Free-form shell is unavailable. If approval is required, show the returned link to the user and wait for their decision.",
+        "Request a temporary Session scoped to one or more typed operations. Filesystem paths may be workspace-relative or exact absolute host paths. Absolute paths require a host profile and are approved as exact filesystem scopes. Use process.exec for an exact executable and arguments. Free-form shell is unavailable. If approval is required, show the returned link to the user and wait for their decision.",
       inputSchema: z.object({
         operations: z
           .array(

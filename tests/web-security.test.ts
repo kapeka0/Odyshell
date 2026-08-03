@@ -477,7 +477,9 @@ describe("dashboard navigation performance boundary", () => {
   it("keeps operational status colors semantic and fail-safe", () => {
     expect(statusTone("active")).toBe("success");
     expect(statusTone("recorded")).toBe("info");
+    expect(statusTone("approved")).toBe("info");
     expect(statusTone("paused")).toBe("warning");
+    expect(statusTone("pending")).toBe("warning");
     expect(statusTone("denied")).toBe("danger");
     expect(statusTone("revoked")).toBe("danger");
     expect(statusTone("disabled")).toBe("neutral");
@@ -764,5 +766,28 @@ describe("dashboard navigation performance boundary", () => {
     expect(database).toContain("delegationPolicyVersion");
     expect(database).toContain("requestedByAgentId");
     expect(sessionList).toContain('title="Requester"');
+  });
+
+  it("shows Session requests early without presenting identity IDs as names", () => {
+    const sessionList = readFileSync(
+      resolve(process.cwd(), "apps/web/src/components/session-list.tsx"),
+      "utf8",
+    );
+    const sessionsPage = readFileSync(
+      resolve(process.cwd(), "apps/web/src/app/dashboard/sessions/page.tsx"),
+      "utf8",
+    );
+    const identity = readFileSync(
+      resolve(process.cwd(), "apps/web/src/lib/clerk-identity.ts"),
+      "utf8",
+    );
+
+    expect(sessionsPage).toContain("state.context.sessionRequests");
+    expect(sessionList).toContain("<UserIdentityAvatar");
+    expect(sessionList).toContain('?? "Member"');
+    expect(sessionList).not.toContain("?? value.requestedByHumanId");
+    expect(sessionList).not.toContain("?? value.requestedByAgentId");
+    expect(identity).toContain("getOrganizationMembershipList");
+    expect(identity).toContain("user.hasImage");
   });
 });

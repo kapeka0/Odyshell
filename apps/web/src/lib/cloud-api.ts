@@ -61,6 +61,26 @@ export type CloudSession = {
   }>;
 };
 
+export type CloudSessionRequest = {
+  id: string;
+  agentId: string;
+  agentName: string;
+  purpose: string;
+  status: "pending" | "approved" | "denied" | "expired";
+  expiresAt: string;
+  createdAt: string;
+  requestedByHumanId: string;
+  requestedByAgentId?: string | null;
+  runId?: string | null;
+  machines: Array<{ id: string; name: string }>;
+};
+
+export type CloudMember = {
+  id: string;
+  name: string;
+  imageUrl?: string;
+};
+
 export type CloudAgentPolicy = {
   id: string;
   agentId: string;
@@ -168,6 +188,8 @@ export type CloudContext = {
   machines: CloudMachine[];
   agents: CloudAgent[];
   sessions: CloudSession[];
+  sessionRequests: CloudSessionRequest[];
+  members: CloudMember[];
   policies: CloudAgentPolicy[];
   controlEvents: ControlEvent[];
 };

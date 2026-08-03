@@ -1,12 +1,13 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { EllipsisIcon, EyeIcon, XIcon } from "lucide-react";
+import { EllipsisIcon, EyeIcon, TimerIcon, XIcon } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { CopyableValue } from "@/components/copyable-value";
 import { DataTable, DataTableColumnHeader } from "@/components/data-table";
 import { useDashboard } from "@/components/dashboard-provider";
+import { UserIdentityAvatar } from "@/components/identity-avatar";
 import { StatusBadge } from "@/components/status-badge";
 import {
   AlertDialog,
@@ -35,12 +36,25 @@ import {
 } from "@/components/ui/empty";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "@/components/ui/toast";
-import type { CloudSession } from "@/lib/cloud-api";
-import { TimerIcon } from "lucide-react";
+import type {
+  CloudMember,
+  CloudSession,
+  CloudSessionRequest,
+} from "@/lib/cloud-api";
 
-export function SessionList({ sessions }: { sessions: CloudSession[] }) {
+type SessionRow =
+  | { kind: "session"; value: CloudSession }
+  | { kind: "request"; value: CloudSessionRequest };
+
+export function SessionList({
+  sessions,
+  requests,
+}: {
+  sessions: CloudSession[];
+  requests: CloudSessionRequest[];
+}) {
   const { refresh, state } = useDashboard();
-  const agentNames = useMemo(
+  const agents = useMemo(
     () =>
       new Map(
         (state.status === "ready" ? state.context.agents : []).map((agent) => [
@@ -50,29 +64,62 @@ export function SessionList({ sessions }: { sessions: CloudSession[] }) {
       ),
     [state],
   );
-  const columns = useMemo<ColumnDef<CloudSession>[]>(
+  const members = useMemo(
+    () =>
+      new Map(
+        (state.status === "ready" ? state.context.members : []).map((member) => [
+          member.id,
+          member,
+        ]),
+      ),
+    [state],
+  );
+  const rows = useMemo<SessionRow[]>(
+    () =>
+      [
+        ...requests.map((value) => ({ kind: "request" as const, value })),
+        ...sessions.map((value) => ({ kind: "session" as const, value })),
+      ].sort(
+        (left, right) =>
+          new Date(right.value.createdAt).getTime() -
+          new Date(left.value.createdAt).getTime(),
+      ),
+    [requests, sessions],
+  );
+  const columns = useMemo<ColumnDef<SessionRow>[]>(
     () => [
       {
         id: "search",
-        accessorFn: (session) =>
-          `${session.purpose} ${session.id} ${session.agentName ?? session.agentId}`,
+        accessorFn: (row) =>
+          `${row.value.purpose} ${row.value.agentName ?? "Agent"} ${requesterName(row.value, agents, members)}`,
       },
       {
-        accessorKey: "purpose",
+        id: "purpose",
+        accessorFn: (row) => row.value.purpose,
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="Purpose" />
         ),
         cell: ({ row }) => (
-          <div className="min-w-0">
-            <Link
-              href={`/dashboard/sessions/${row.original.id}`}
-              className="block truncate font-medium hover:underline"
-            >
-              {row.original.purpose}
-            </Link>
+          <div className="w-56 max-w-56 min-w-0 xl:w-72 xl:max-w-72">
+            {row.original.kind === "session" ? (
+              <Link
+                href={`/dashboard/sessions/${row.original.value.id}`}
+                title={row.original.value.purpose}
+                className="block truncate font-medium hover:underline"
+              >
+                {row.original.value.purpose}
+              </Link>
+            ) : (
+              <span
+                title={row.original.value.purpose}
+                className="block truncate font-medium"
+              >
+                {row.original.value.purpose}
+              </span>
+            )}
             <CopyableValue
-              value={row.original.id}
-              label="Session ID"
+              value={row.original.value.id}
+              label={row.original.kind === "session" ? "Session ID" : "Request ID"}
               className="font-mono text-xs text-muted-foreground"
             />
           </div>
@@ -80,59 +127,60 @@ export function SessionList({ sessions }: { sessions: CloudSession[] }) {
       },
       {
         id: "agent",
-        accessorFn: (session) => session.agentName ?? session.agentId,
+        accessorFn: (row) => row.value.agentName ?? "Agent",
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="Agent" />
         ),
-        cell: ({ row }) => row.original.agentName ?? row.original.agentId,
+        cell: ({ row }) => row.original.value.agentName ?? "Agent",
       },
       {
         id: "requester",
-        accessorFn: (session) =>
-          session.requestedByAgentId
-            ? (agentNames.get(session.requestedByAgentId) ??
-              session.requestedByAgentId)
-            : "Workspace member",
+        accessorFn: (row) => requesterName(row.value, agents, members),
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="Requester" />
         ),
-        cell: ({ row }) =>
-          row.original.requestedByAgentId
-            ? (agentNames.get(row.original.requestedByAgentId) ??
-              row.original.requestedByAgentId)
-            : "Workspace member",
+        cell: ({ row }) => (
+          <Requester
+            value={row.original.value}
+            agents={agents}
+            members={members}
+          />
+        ),
       },
       {
-        accessorKey: "status",
+        id: "status",
+        accessorFn: (row) => row.value.status,
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="Status" />
         ),
-        cell: ({ row }) => <StatusBadge status={row.original.status} />,
+        cell: ({ row }) => <StatusBadge status={row.original.value.status} />,
         filterFn: "equals",
       },
       {
-        accessorKey: "expiresAt",
+        id: "expiresAt",
+        accessorFn: (row) => row.value.expiresAt,
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="Expires" />
         ),
         cell: ({ row }) => (
           <span className="text-muted-foreground">
-            {formatTimestamp(row.original.expiresAt)}
+            {formatTimestamp(row.original.value.expiresAt)}
           </span>
         ),
       },
       {
         id: "actions",
         header: () => <span className="sr-only">Actions</span>,
-        cell: ({ row }) => (
-          <SessionActions session={row.original} refresh={refresh} />
-        ),
+        cell: ({ row }) =>
+          row.original.kind === "session" ? (
+            <SessionActions session={row.original.value} refresh={refresh} />
+          ) : null,
       },
     ],
-    [agentNames, refresh],
+    [agents, members, refresh],
   );
 
-  if (sessions.length === 0) {
+  if (rows.length === 0) {
     return (
       <Empty className="min-h-64 rounded-lg border">
         <EmptyHeader>
@@ -141,7 +189,7 @@ export function SessionList({ sessions }: { sessions: CloudSession[] }) {
           </EmptyMedia>
           <EmptyTitle>No sessions yet</EmptyTitle>
           <EmptyDescription>
-            Sessions appear after an Agent claims approved access.
+            Requests appear here as soon as an Agent asks for access.
           </EmptyDescription>
         </EmptyHeader>
       </Empty>
@@ -151,23 +199,67 @@ export function SessionList({ sessions }: { sessions: CloudSession[] }) {
   return (
     <DataTable
       columns={columns}
-      data={sessions}
+      data={rows}
       searchColumn="search"
       searchPlaceholder="Search sessions…"
       filter={{
         columnId: "status",
         label: "Status",
         options: [
+          { label: "Pending", value: "pending" },
+          { label: "Approved", value: "approved" },
           { label: "Active", value: "active" },
           { label: "Completed", value: "completed" },
           { label: "Cancelled", value: "cancelled" },
           { label: "Revoked", value: "revoked" },
+          { label: "Denied", value: "denied" },
           { label: "Expired", value: "expired" },
         ],
       }}
       emptyMessage="No sessions match these filters."
     />
   );
+}
+
+function Requester({
+  value,
+  agents,
+  members,
+}: {
+  value: CloudSession | CloudSessionRequest;
+  agents: Map<string, string>;
+  members: Map<string, CloudMember>;
+}) {
+  if (value.requestedByAgentId) {
+    return <span>{agents.get(value.requestedByAgentId) ?? "Agent"}</span>;
+  }
+  const humanId = value.requestedByHumanId;
+  const member = humanId ? members.get(humanId) : undefined;
+  const name = member?.name ?? "Member";
+  return (
+    <span className="flex items-center gap-2">
+      <UserIdentityAvatar
+        identity={humanId ?? "member"}
+        imageUrl={member?.imageUrl}
+        name={name}
+        className="size-6"
+      />
+      <span className="truncate">{name}</span>
+    </span>
+  );
+}
+
+function requesterName(
+  value: CloudSession | CloudSessionRequest,
+  agents: Map<string, string>,
+  members: Map<string, CloudMember>,
+): string {
+  if (value.requestedByAgentId) {
+    return agents.get(value.requestedByAgentId) ?? "Agent";
+  }
+  return (value.requestedByHumanId
+    ? members.get(value.requestedByHumanId)?.name
+    : undefined) ?? "Member";
 }
 
 function SessionActions({

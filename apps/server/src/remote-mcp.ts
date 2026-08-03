@@ -98,6 +98,20 @@ export function remoteMcpOriginAllowed(
   }
 }
 
+export function remoteMcpAgentName(
+  applicationName: string | undefined,
+  userAgent: string | undefined,
+): string {
+  const source = `${applicationName ?? ""} ${userAgent ?? ""}`.toLowerCase();
+  if (source.includes("chatgpt") || source.includes("openai")) return "ChatGPT";
+  if (source.includes("claude") || source.includes("anthropic")) return "Claude";
+  const candidate = applicationName?.trim();
+  if (candidate && !/^(mcp agent|mcp client|mcp)$/i.test(candidate)) {
+    return candidate;
+  }
+  return "MCP";
+}
+
 export function registerRemoteMcp(
   app: FastifyInstance,
   environment: NodeJS.ProcessEnv,
@@ -208,8 +222,10 @@ export function registerRemoteMcp(
         if (!workspace) {
           return reply.code(403).send({ error: "workspace_access_denied" });
         }
-        const agentName =
-          (await oauth.applicationName(identity.clientId)) ?? "MCP Agent";
+        const agentName = remoteMcpAgentName(
+          await oauth.applicationName(identity.clientId),
+          request.headers["user-agent"],
+        );
         const installation = await dependencies.database.ensureMcpInstallation({
           workspaceId: workspace.workspaceId,
           userId: identity.userId,

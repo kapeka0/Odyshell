@@ -35,7 +35,9 @@ require administrator privileges.
 
 ## Local policy
 
-The `--workspace` directory is the filesystem boundary for typed filesystem operations.
+The `--workspace` directory is the default filesystem boundary for typed filesystem operations.
+Restricted Sessions may request an exact absolute path on a host profile, which is shown explicitly
+for approval. Docker profiles cannot use absolute host paths.
 Capabilities are default-deny and comma-separated:
 
 ```bash

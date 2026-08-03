@@ -10,7 +10,11 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { OperationAction } from "@odyshell/protocol";
+import {
+  normalizeOperationPath,
+  type OperationAction,
+  type SessionPathRestriction,
+} from "@odyshell/protocol";
 import type { OperationHooks } from "./executor.js";
 
 export type FilesystemAction = Extract<
@@ -67,19 +71,116 @@ export async function resolveWorkspacePath(
   return candidate;
 }
 
+export async function resolveFilesystemPath(
+  workspaceRoot: string,
+  requestedPath: string,
+  restrictions: SessionPathRestriction[] | undefined,
+  allowMissing = false,
+): Promise<string> {
+  if (!isAbsolute(requestedPath)) {
+    return resolveWorkspacePath(workspaceRoot, requestedPath, allowMissing);
+  }
+  const normalized = normalizeOperationPath(requestedPath);
+  const restriction = restrictions?.find((candidate) => {
+    const root = normalizeOperationPath(candidate.path);
+    if (!isAbsolute(candidate.path)) return false;
+    return (
+      normalized === root ||
+      (candidate.includeDescendants &&
+        (root === "/" || /^[A-Za-z]:\/$/.test(root)
+          ? normalized.startsWith(root)
+          : normalized.startsWith(`${root}/`)))
+    );
+  });
+  if (!restriction) {
+    throw new Error("Absolute path is not granted by the local Session scope");
+  }
+
+  const boundary = resolve(restriction.path);
+  const candidate = resolve(requestedPath);
+  const lexicalRelative = relative(boundary, candidate);
+  if (lexicalRelative !== "" && (
+    !restriction.includeDescendants ||
+    lexicalRelative.startsWith("..") ||
+    isAbsolute(lexicalRelative)
+  )) {
+    throw new Error("Path escapes the approved absolute scope");
+  }
+
+  if (!allowMissing) {
+    const [actualBoundary, actual] = await Promise.all([
+      realpath(boundary),
+      realpath(candidate),
+    ]);
+    const actualRelative = relative(actualBoundary, actual);
+    if (actualRelative !== "" && (
+      !restriction.includeDescendants ||
+      actualRelative.startsWith("..") ||
+      isAbsolute(actualRelative)
+    )) {
+      throw new Error("Resolved path escapes the approved absolute scope");
+    }
+    return actual;
+  }
+
+  let ancestor = candidate;
+  let actualAncestor: string;
+  while (true) {
+    try {
+      actualAncestor = await realpath(ancestor);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const parent = dirname(ancestor);
+      if (parent === ancestor) throw error;
+      ancestor = parent;
+    }
+  }
+  if (restriction.includeDescendants && candidate !== boundary) {
+    let actualBoundary: string;
+    try {
+      actualBoundary = await realpath(boundary);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new Error(
+          "The approved absolute root must exist before creating descendants",
+        );
+      }
+      throw error;
+    }
+    const actualRelative = relative(actualBoundary, actualAncestor!);
+    if (
+      actualRelative !== "" &&
+      (actualRelative.startsWith("..") || isAbsolute(actualRelative))
+    ) {
+      throw new Error("Resolved path escapes the approved absolute scope");
+    }
+  }
+  return candidate;
+}
+
 export async function executeFilesystemOperation(
   workspaceRoot: string,
   action: FilesystemAction,
   hooks: OperationHooks,
+  restrictions?: SessionPathRestriction[],
 ): Promise<void> {
   switch (action.kind) {
     case "fs.read": {
-      const path = await resolveWorkspacePath(workspaceRoot, action.path);
+      const path = await resolveFilesystemPath(
+        workspaceRoot,
+        action.path,
+        restrictions,
+      );
       hooks.result(await readFile(path));
       break;
     }
     case "fs.list": {
-      const path = await resolveWorkspacePath(workspaceRoot, action.path);
+      const path = await resolveFilesystemPath(
+        workspaceRoot,
+        action.path,
+        restrictions,
+      );
       const entries = await readdir(path, { withFileTypes: true });
       const result = await Promise.all(
         entries.map(async (entry) => {
@@ -99,22 +200,34 @@ export async function executeFilesystemOperation(
       break;
     }
     case "fs.search": {
-      const root = await resolveWorkspacePath(workspaceRoot, action.path);
-      const workspace = await realpath(workspaceRoot);
+      const root = await resolveFilesystemPath(
+        workspaceRoot,
+        action.path,
+        restrictions,
+      );
+      const resultRoot = isAbsolute(action.path)
+        ? dirname(root)
+        : await realpath(workspaceRoot);
       const query = action.query.toLocaleLowerCase();
       const results: Array<{ path: string; type: "directory" | "file" | "symlink"; size: number }> =
         [];
-      await searchDirectory(workspace, root, query, action.maxResults, results);
+      await searchDirectory(resultRoot, root, query, action.maxResults, results);
       hooks.result(Buffer.from(JSON.stringify(results)));
       break;
     }
     case "fs.stat": {
-      const path = await resolveWorkspacePath(workspaceRoot, action.path);
+      const path = await resolveFilesystemPath(
+        workspaceRoot,
+        action.path,
+        restrictions,
+      );
       const info = await lstat(path);
       hooks.result(
         Buffer.from(
           JSON.stringify({
-            path: relative(await realpath(workspaceRoot), path),
+            path: isAbsolute(action.path)
+              ? path.replaceAll("\\", "/")
+              : relative(await realpath(workspaceRoot), path),
             type: info.isDirectory()
               ? "directory"
               : info.isSymbolicLink()
@@ -128,7 +241,12 @@ export async function executeFilesystemOperation(
       break;
     }
     case "fs.write": {
-      const path = await resolveWorkspacePath(workspaceRoot, action.path, true);
+      const path = await resolveFilesystemPath(
+        workspaceRoot,
+        action.path,
+        restrictions,
+        true,
+      );
       try {
         const existing = await lstat(path);
         if (existing.isSymbolicLink()) throw new Error("Writing through symlinks is denied");
@@ -148,16 +266,35 @@ export async function executeFilesystemOperation(
       break;
     }
     case "fs.mkdir": {
-      const path = await resolveWorkspacePath(workspaceRoot, action.path, true);
+      const path = await resolveFilesystemPath(
+        workspaceRoot,
+        action.path,
+        restrictions,
+        true,
+      );
       await mkdir(path, { recursive: action.recursive });
       hooks.result(Buffer.from(JSON.stringify({ created: action.path })));
       break;
     }
     case "fs.remove": {
-      if (action.path === "." || action.path === "") {
+      if (
+        action.path === "." ||
+        action.path === "" ||
+        dirname(resolve(action.path)) === resolve(action.path)
+      ) {
         throw new Error("Removing the configured workspace is denied");
       }
-      const path = await resolveWorkspacePath(workspaceRoot, action.path);
+      const lexicalPath = isAbsolute(action.path)
+        ? resolve(action.path)
+        : resolve(await realpath(workspaceRoot), action.path);
+      if ((await lstat(lexicalPath)).isSymbolicLink()) {
+        throw new Error("Removing symbolic links is denied");
+      }
+      const path = await resolveFilesystemPath(
+        workspaceRoot,
+        action.path,
+        restrictions,
+      );
       await rm(path, { recursive: action.recursive, force: false });
       hooks.result(Buffer.from(JSON.stringify({ removed: action.path })));
       break;

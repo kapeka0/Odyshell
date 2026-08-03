@@ -18,8 +18,10 @@ description: The typed process, filesystem, and Docker operations supported by O
 | `fs.remove` | Remove a file or directory |
 | `docker.logs` | Read logs from a Docker container |
 
-Filesystem paths are relative to the machine's configured workspace. The Client rejects parent
-traversal and paths that escape through symbolic links.
+Filesystem paths can be relative to the machine's configured workspace or absolute on a host
+profile. An absolute path becomes an exact Session restriction; approving one file does not grant
+its parent directory. The Client rejects parent traversal and symbolic-link escapes. Docker
+profiles do not expose absolute host paths.
 
 Restricted Agent Sessions fail closed:
 

@@ -1,5 +1,6 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import type { CloudIdentity } from "@/lib/cloud-api";
+import { unstable_cache } from "next/cache";
+import type { CloudIdentity, CloudMember } from "@/lib/cloud-api";
 
 export async function currentCloudIdentity(): Promise<CloudIdentity | null> {
   const { userId, orgId } = await auth();
@@ -26,3 +27,25 @@ export async function cloudIdentityFor(
     },
   };
 }
+
+export const organizationMembers = unstable_cache(
+  async (organizationId: string): Promise<CloudMember[]> => {
+    const clerk = await clerkClient();
+    const memberships = await clerk.organizations.getOrganizationMembershipList({
+      organizationId,
+      limit: 100,
+    });
+    return memberships.data.flatMap((membership) => {
+      const user = membership.publicUserData;
+      if (!user) return [];
+      const fullName = [user.firstName, user.lastName].filter(Boolean).join(" ");
+      return [{
+        id: user.userId,
+        name: fullName || user.identifier || "Member",
+        ...(user.hasImage ? { imageUrl: user.imageUrl } : {}),
+      }];
+    });
+  },
+  ["clerk-organization-members"],
+  { revalidate: 60 },
+);

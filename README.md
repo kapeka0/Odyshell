@@ -42,7 +42,8 @@ Odyshell treats every remote task as untrusted:
 
 - Security is enforced by the Client and operating system, not by prompts.
 - Agent permissions and local machine policy must both allow an operation.
-- Filesystem operations stay inside the configured workspace.
+- Filesystem operations default to the configured workspace; exact absolute host paths require
+  explicit Session approval and a host profile.
 - Process execution, shell access, filesystem writes, and Docker access are separate capabilities.
 - Every session and operation is identified and bounded.
 - Durable control events contain lifecycle metadata, not command or output recordings.

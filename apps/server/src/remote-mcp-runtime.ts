@@ -486,23 +486,38 @@ async function remoteMcpSessionStatus(
   db: Database,
   principal: AgentSessionCredentialPrincipal,
 ): Promise<Record<string, unknown>> {
-  const targets = await db.listAgentSessionTargetRuntimes(
-    principal.workspaceId,
-    principal.sessionId,
-    principal.agentId,
-  );
-  return {
-    status: targets.every((target) => target.status === "ready")
+  const deadline = Date.now() + 3_000;
+  while (true) {
+    const targets = await db.listAgentSessionTargetRuntimes(
+      principal.workspaceId,
+      principal.sessionId,
+      principal.agentId,
+    );
+    const status = targets.every((target) => target.status === "ready")
       ? "ready"
-      : "opening",
-    sessionId: principal.sessionId,
-    machines: targets.map((target) => ({
-      machineId: target.machineId,
-      capabilities: target.capabilities,
-      status: target.status,
-    })),
-    expiresAt: isoTimestamp(principal.expiresAt),
-  };
+      : "opening";
+    const result = {
+      status,
+      sessionId: principal.sessionId,
+      machines: targets.map((target) => ({
+        machineId: target.machineId,
+        capabilities: target.capabilities,
+        status: target.status,
+      })),
+      expiresAt: isoTimestamp(principal.expiresAt),
+    };
+    if (
+      status === "ready" ||
+      targets.some(
+        (target) =>
+          target.status !== "opening" && target.status !== "ready",
+      ) ||
+      Date.now() >= deadline
+    ) {
+      return result;
+    }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+  }
 }
 
 async function waitForRemoteMcpOperation(

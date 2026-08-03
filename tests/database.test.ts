@@ -319,6 +319,26 @@ describe("server storage boundaries", () => {
     );
   });
 
+  it("lists unclaimed Session requests only inside their Workspace", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const listing = database.slice(
+      database.indexOf("async listWorkspaceAgentSessionRequests("),
+      database.indexOf("async workspaceAgentSession("),
+    );
+
+    expect(listing).toContain(
+      '.where("agentSessionRequests.workspaceId", "=", workspaceId)',
+    );
+    expect(listing).toContain(
+      '.where("agentSessionRequests.status", "!=", "claimed")',
+    );
+    expect(listing).toContain('.where("status", "in", ["pending", "approved"])');
+    expect(listing).toContain('.set({ status: "expired", updatedAt: now })');
+  });
+
   it("stores headless Agent authorization codes and credentials as hashes", () => {
     const database = readFileSync(
       resolve(process.cwd(), "apps/server/src/database.ts"),

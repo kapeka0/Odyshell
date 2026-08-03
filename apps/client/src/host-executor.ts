@@ -95,6 +95,7 @@ export class HostExecutor implements OperationExecutor {
         session.profile.workspaceRoot,
         action,
         hooks,
+        session.restrictions?.filesystem?.paths,
       ).then(() => ({ exitCode: 0 }));
       return { cancel: async () => {}, done };
     }

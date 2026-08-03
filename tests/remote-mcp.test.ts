@@ -8,6 +8,7 @@ import { ScopedRateLimiter } from "../apps/server/src/cloud.js";
 import { createRemoteMcpRuntime } from "../apps/server/src/remote-mcp-runtime.js";
 import {
   registerRemoteMcp,
+  remoteMcpAgentName,
   remoteMcpConfiguration,
   remoteMcpOrganizationId,
   remoteMcpOriginAllowed,
@@ -44,6 +45,17 @@ describe("remote MCP security boundary", () => {
     expect(remoteMcpOriginAllowed("https://evil.odyshell.com", allowed)).toBe(false);
     expect(remoteMcpOriginAllowed("https://odyshell.com.evil.test", allowed)).toBe(false);
     expect(remoteMcpOriginAllowed("not a url", allowed)).toBe(false);
+  });
+
+  it("uses a recognizable MCP Agent display name without trusting it for access", () => {
+    expect(remoteMcpAgentName(undefined, "ChatGPT/1.0")).toBe("ChatGPT");
+    expect(remoteMcpAgentName("MCP Client", "Claude-Connectors/1.0")).toBe(
+      "Claude",
+    );
+    expect(remoteMcpAgentName("Internal Operator", undefined)).toBe(
+      "Internal Operator",
+    );
+    expect(remoteMcpAgentName(undefined, undefined)).toBe("MCP");
   });
 
   it("accepts only an OAuth-selected Organization from a scoped JWT", () => {
@@ -158,12 +170,12 @@ describe("remote MCP security boundary", () => {
     expect(toolsResponse.payload).toContain('"name":"machines_list"');
     expect(toolsResponse.payload).toContain('"name":"session_request"');
     expect(toolsResponse.payload).toContain(
-      "Path relative to the enrolled machine workspace",
+      "Relative paths resolve inside the enrolled workspace",
     );
     expect(toolsResponse.payload).not.toContain('"const":"process.shell"');
   });
 
-  it("keeps filesystem paths inside the workspace and exposes exact host commands", async () => {
+  it("requests exact absolute filesystem paths and exact host commands", async () => {
     const request = vi.fn(async () => ({
       id: "7d8730ef-075c-40d5-a72d-8101abe17260",
       status: "pending",
@@ -204,8 +216,22 @@ describe("remote MCP security boundary", () => {
     });
 
     expect(absolutePathResponse.statusCode).toBe(200);
-    expect(absolutePathResponse.payload).toContain("Path must be relative");
-    expect(request).not.toHaveBeenCalled();
+    expect(absolutePathResponse.payload).toContain(
+      "Open this link to approve or deny",
+    );
+    expect(request).toHaveBeenNthCalledWith(1, {
+      operations: [
+        {
+          machine: "rpi5",
+          action: {
+            kind: "fs.read",
+            path: "/etc/network/interfaces",
+          },
+        },
+      ],
+      purpose: "Inspect network configuration",
+      durationSeconds: 900,
+    });
 
     const exactCommandResponse = await app.inject({
       method: "POST",
@@ -245,7 +271,7 @@ describe("remote MCP security boundary", () => {
     expect(exactCommandResponse.payload).toContain(
       "Open this link to approve or deny",
     );
-    expect(request).toHaveBeenCalledWith({
+    expect(request).toHaveBeenNthCalledWith(2, {
       operations: [
         {
           machine: "rpi5",
@@ -413,6 +439,35 @@ describe("remote MCP security boundary", () => {
     await runtime.status("7d8730ef-075c-40d5-a72d-8101abe17260");
 
     expect(claimAgentSessionRequest).not.toHaveBeenCalled();
+  });
+
+  it("waits for the Client to acknowledge a newly opened Session", async () => {
+    const listAgentSessionTargetRuntimes = vi
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          machineId: "machine-id",
+          capabilities: ["fs.read"],
+          status: "opening",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          machineId: "machine-id",
+          capabilities: ["fs.read"],
+          status: "ready",
+        },
+      ]);
+    const runtime = remoteRuntime({
+      mcpSessionForRequest: vi.fn(async () => null),
+      mcpGrantedSessionForRequest: vi.fn(async () => sessionPrincipal()),
+      listAgentSessionTargetRuntimes,
+    });
+
+    await expect(
+      runtime.status("7d8730ef-075c-40d5-a72d-8101abe17260"),
+    ).resolves.toMatchObject({ status: "ready" });
+    expect(listAgentSessionTargetRuntimes).toHaveBeenCalledTimes(2);
   });
 
   it("denies an operation outside the granted path before dispatch", async () => {
