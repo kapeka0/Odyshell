@@ -795,7 +795,7 @@ describe("dashboard navigation performance boundary", () => {
 
     expect(notifications).toContain("<Sheet");
     expect(notifications).toContain("BellIcon");
-    expect(notifications).toContain("animate-ping");
+    expect(notifications).toContain("motion-safe:animate-ping");
     expect(notifications).toContain("Mark all");
     expect(notifications).toContain("/api/notifications/read-all");
     expect(notifications).not.toContain("stdout");

@@ -104,9 +104,14 @@ describe("server storage boundaries", () => {
     expect(deletion).toContain('.where("parentAgentId", "=", agentId)');
     expect(deletion).toContain('.updateTable("agentCredentials")');
     expect(deletion).toContain('.updateTable("agentPolicies")');
+    expect(deletion).toContain('.updateTable("mcpSessionGrants")');
+    expect(deletion).toContain('.updateTable("mcpInstallations")');
     expect(deletion).toContain('deletedAt: now');
     expect(deletion).not.toContain('.deleteFrom("agents")');
     expect(deletion.indexOf('.updateTable("agentCredentials")')).toBeLessThan(
+      deletion.indexOf('.updateTable("agents")'),
+    );
+    expect(deletion.indexOf('.updateTable("mcpInstallations")')).toBeLessThan(
       deletion.indexOf('.updateTable("agents")'),
     );
   });
@@ -124,6 +129,10 @@ describe("server storage boundaries", () => {
       database.indexOf("async listNotifications("),
       database.indexOf("async listWorkspaces("),
     );
+    const sessionRequest = database.slice(
+      database.indexOf("async createAgentSessionRequest("),
+      database.indexOf("async sessionRequestForApproval("),
+    );
 
     expect(migration).toContain("create table odyshell.notifications");
     expect(migration).toContain("created_by_human_id");
@@ -132,6 +141,8 @@ describe("server storage boundaries", () => {
     expect(listing).toContain('.where("workspaceId", "=", workspaceId)');
     expect(listing).toContain('.where("userId", "=", userId)');
     expect(listing).toContain("async markAllNotificationsRead(");
+    expect(sessionRequest).toContain('.insertInto("notifications")');
+    expect(sessionRequest).toContain("userId: input.humanId");
   });
 
   it("expands identity and authority without making legacy sessions canonical", () => {

@@ -77,7 +77,7 @@ export function NotificationsSheet() {
         <BellIcon aria-hidden="true" />
         {unread.length > 0 ? (
           <span className="absolute right-1.5 top-1.5 size-2" aria-hidden="true">
-            <span className="absolute inset-0 animate-ping rounded-full bg-destructive/70" />
+            <span className="absolute inset-0 rounded-full bg-destructive/70 motion-safe:animate-ping" />
             <span className="relative block size-2 rounded-full bg-destructive" />
           </span>
         ) : null}

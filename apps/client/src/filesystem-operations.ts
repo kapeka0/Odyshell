@@ -75,9 +75,15 @@ export async function resolveProcessWorkingDirectory(
   workingDirectory: string,
   requestedPath: string,
 ): Promise<string> {
-  return isAbsolute(requestedPath)
-    ? realpath(resolve(requestedPath))
-    : resolveWorkspacePath(workingDirectory, requestedPath);
+  if (!isAbsolute(requestedPath)) {
+    return resolveWorkspacePath(workingDirectory, requestedPath);
+  }
+  const approved = resolve(requestedPath);
+  const actual = await realpath(approved);
+  if (relative(approved, actual) !== "") {
+    throw new Error("Resolved working directory differs from the approved path");
+  }
+  return actual;
 }
 
 export async function resolveFilesystemPath(
@@ -144,6 +150,9 @@ export async function resolveFilesystemPath(
       if (parent === ancestor) throw error;
       ancestor = parent;
     }
+  }
+  if (!restriction.includeDescendants && relative(ancestor, actualAncestor!) !== "") {
+    throw new Error("Resolved path differs from the approved absolute path");
   }
   if (restriction.includeDescendants && candidate !== boundary) {
     let actualBoundary: string;

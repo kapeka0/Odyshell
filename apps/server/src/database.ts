@@ -3215,14 +3215,24 @@ export class PostgresDatabase {
             .onRef("agents.id", "=", "mcpInstallations.agentId"),
         )
         .selectAll("mcpInstallations")
-        .select("agents.name as agentName")
+        .select([
+          "agents.name as agentName",
+          "agents.status as agentStatus",
+          "agents.deletedAt as agentDeletedAt",
+        ])
         .where("mcpInstallations.workspaceId", "=", input.workspaceId)
         .where("mcpInstallations.provider", "=", "clerk")
         .where("mcpInstallations.userId", "=", input.userId)
         .where("mcpInstallations.oauthClientId", "=", input.oauthClientId)
         .executeTakeFirst();
       if (existing) {
-        if (existing.status !== "active") return null;
+        if (
+          existing.status !== "active" ||
+          existing.agentStatus !== "active" ||
+          existing.agentDeletedAt !== null
+        ) {
+          return null;
+        }
         const genericName = /^(MCP Agent|MCP)$/i.test(existing.agentName);
         const agentName = genericName ? input.agentName : existing.agentName;
         if (agentName !== existing.agentName) {
@@ -3466,6 +3476,30 @@ export class PostgresDatabase {
         .where("agentId", "in", agentIds)
         .where("status", "in", ["active", "paused", "proposed"])
         .execute();
+      const installations = await transaction
+        .selectFrom("mcpInstallations")
+        .select("id")
+        .where("workspaceId", "=", workspaceId)
+        .where("agentId", "in", agentIds)
+        .forUpdate()
+        .execute();
+      const installationIds = installations.map((installation) => installation.id);
+      if (installationIds.length > 0) {
+        await transaction
+          .updateTable("mcpSessionGrants")
+          .set({ status: "revoked", revokedAt: now })
+          .where("workspaceId", "=", workspaceId)
+          .where("installationId", "in", installationIds)
+          .where("status", "=", "active")
+          .execute();
+        await transaction
+          .updateTable("mcpInstallations")
+          .set({ status: "revoked", updatedAt: now })
+          .where("workspaceId", "=", workspaceId)
+          .where("id", "in", installationIds)
+          .where("status", "=", "active")
+          .execute();
+      }
       await transaction
         .updateTable("agents")
         .set({ status: "disabled", deletedAt: now, updatedAt: now })
@@ -4683,6 +4717,21 @@ export class PostgresDatabase {
               policyVersion: policy.version,
             }),
             createdAt: now,
+          })
+          .execute();
+      }
+      if (request.status === "pending") {
+        await transaction
+          .insertInto("notifications")
+          .values({
+            workspaceId: input.workspaceId,
+            id: randomUUID(),
+            userId: input.humanId,
+            kind: "session.requested",
+            title: "Session approval requested",
+            href: `/sessions/approve?request=${encodeURIComponent(input.requestId)}`,
+            resourceId: input.requestId,
+            readAt: null,
           })
           .execute();
       }

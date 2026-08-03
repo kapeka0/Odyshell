@@ -2900,16 +2900,6 @@ app.post(
         ...(parsed.data.runId ? { runId: parsed.data.runId } : {}),
       },
     );
-    if (created.status === "pending") {
-      await db.createNotification({
-        workspaceId: principal.workspaceId,
-        userId: principal.humanId,
-        kind: "session.requested",
-        title: "Session approval requested",
-        href: `/sessions/approve?request=${encodeURIComponent(requestId)}`,
-        resourceId: requestId,
-      });
-    }
     gateway.notifyWorkspace(principal.workspaceId);
     return reply.code(201).send({
       id: requestId,

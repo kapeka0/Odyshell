@@ -139,6 +139,18 @@ describe("remote MCP security boundary", () => {
     expect(cancellation).toContain('status: "revoked"');
   });
 
+  it("rejects an MCP installation whose persistent Agent was deleted", async () => {
+    const database = await readFile("apps/server/src/database.ts", "utf8");
+    const installation = database.slice(
+      database.indexOf("async ensureMcpInstallation("),
+      database.indexOf("async getAgentIdentity("),
+    );
+    expect(installation).toContain('"agents.status as agentStatus"');
+    expect(installation).toContain('"agents.deletedAt as agentDeletedAt"');
+    expect(installation).toContain('existing.agentStatus !== "active"');
+    expect(installation).toContain("existing.agentDeletedAt !== null");
+  });
+
   it("rejects hostile browser origins before OAuth runs", async () => {
     const authenticate = vi.fn();
     const app = remoteMcpApp({ authenticate });
@@ -517,6 +529,41 @@ describe("remote MCP security boundary", () => {
       "user-id",
       20,
     );
+  });
+
+  it("notifies the responsible member when remote MCP requests approval", async () => {
+    const createAgentSessionRequest = vi.fn(async () => ({
+      status: "pending",
+      expiresAt: Date.parse("2026-08-03T18:20:00.000Z"),
+    }));
+    const runtime = remoteRuntime({
+      listMachines: vi.fn(async () => [
+        {
+          ...machineRecord(),
+          id: "29f34f33-418c-4624-84c3-25818db42023",
+        },
+      ]),
+      createAgentSessionRequest,
+      audit: vi.fn(async () => undefined),
+    });
+
+    const request = await runtime.request({
+      operations: [
+        {
+          machine: "rpi5",
+          action: { kind: "fs.read", path: "config/app.json" },
+        },
+      ],
+      purpose: "Inspect configuration",
+      durationSeconds: 900,
+    });
+
+    expect(request.status).toBe("pending");
+    expect(createAgentSessionRequest).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: "workspace-id",
+      humanId: "user-id",
+      requestId: request.id,
+    }));
   });
 
   it("waits for the Client to acknowledge a newly opened Session", async () => {

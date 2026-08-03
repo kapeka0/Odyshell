@@ -102,6 +102,50 @@ describe("HostExecutor", () => {
     }
   });
 
+  it("rejects an absolute process cwd that resolves through a symlink", async () => {
+    const approved = await mkdtemp(join(tmpdir(), "odyshell-cwd-approved-"));
+    const outside = await mkdtemp(join(tmpdir(), "odyshell-cwd-outside-"));
+    const linkedCwd = join(approved, "linked");
+    try {
+      await symlink(outside, linkedCwd, "junction");
+      await executor.closeSession(session);
+      session = await executor.openSession(
+        crypto.randomUUID(),
+        profile(workspace),
+        ["process.exec"],
+        {
+          process: {
+            programs: [{
+              program: process.execPath,
+              args: ["-e", "process.stdout.write(process.cwd())"],
+              cwd: { path: linkedCwd, includeDescendants: false },
+            }],
+          },
+        },
+        new Date(Date.now() + 60_000),
+        () => {},
+      );
+
+      await expect(
+        executor.execute(
+          crypto.randomUUID(),
+          session,
+          {
+            kind: "process.exec",
+            program: process.execPath,
+            args: ["-e", "process.stdout.write(process.cwd())"],
+            cwd: linkedCwd,
+            env: {},
+          },
+          hooks(),
+        ),
+      ).rejects.toThrow("Resolved working directory differs from the approved path");
+    } finally {
+      await rm(approved, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
   it("delegates typed filesystem write, read, and search operations", async () => {
     await execute({
       kind: "fs.write",
@@ -284,6 +328,47 @@ describe("HostExecutor", () => {
       );
       await expect(running.done).rejects.toThrow(
         "Resolved path escapes the approved absolute scope",
+      );
+    } finally {
+      await rm(approved, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an exact absolute write whose parent resolves through a symlink", async () => {
+    const approved = await mkdtemp(join(tmpdir(), "odyshell-exact-approved-"));
+    const outside = await mkdtemp(join(tmpdir(), "odyshell-exact-outside-"));
+    const linked = join(approved, "linked");
+    const requestedPath = join(linked, "secret.txt");
+    try {
+      await symlink(outside, linked, "junction");
+      await executor.closeSession(session);
+      session = await executor.openSession(
+        crypto.randomUUID(),
+        profile(workspace),
+        ["fs.write"],
+        {
+          filesystem: {
+            paths: [{ path: requestedPath, includeDescendants: false }],
+          },
+        },
+        new Date(Date.now() + 60_000),
+        () => {},
+      );
+
+      const running = await executor.execute(
+        crypto.randomUUID(),
+        session,
+        {
+          kind: "fs.write",
+          path: requestedPath,
+          contentBase64: Buffer.from("secret").toString("base64"),
+          createParents: true,
+        },
+        hooks(),
+      );
+      await expect(running.done).rejects.toThrow(
+        "Resolved path differs from the approved absolute path",
       );
     } finally {
       await rm(approved, { recursive: true, force: true });
