@@ -95,6 +95,23 @@ export async function resolveFilesystemPath(
   if (!isAbsolute(requestedPath)) {
     return resolveWorkspacePath(workspaceRoot, requestedPath, allowMissing);
   }
+  const candidate = resolve(requestedPath);
+  if (restrictions === undefined) {
+    if (!allowMissing) return realpath(candidate);
+
+    let ancestor = candidate;
+    while (true) {
+      try {
+        await realpath(ancestor);
+        return candidate;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        const parent = dirname(ancestor);
+        if (parent === ancestor) throw error;
+        ancestor = parent;
+      }
+    }
+  }
   const normalized = normalizeOperationPath(requestedPath);
   const restriction = restrictions?.find((candidate) => {
     const root = normalizeOperationPath(candidate.path);
@@ -112,7 +129,6 @@ export async function resolveFilesystemPath(
   }
 
   const boundary = resolve(restriction.path);
-  const candidate = resolve(requestedPath);
   const lexicalRelative = relative(boundary, candidate);
   if (lexicalRelative !== "" && (
     !restriction.includeDescendants ||

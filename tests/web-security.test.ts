@@ -348,6 +348,68 @@ describe("dashboard navigation performance boundary", () => {
     expect(dataTable).not.toContain("<SelectValue />");
   });
 
+  it("maps Select values to user-facing labels instead of internal identifiers", () => {
+    const componentsRoot = resolve(
+      process.cwd(),
+      "apps/web/src/components",
+    );
+    const sessionForm = readFileSync(
+      resolve(componentsRoot, "create-session-sheet.tsx"),
+      "utf8",
+    );
+    const eventSink = readFileSync(
+      resolve(componentsRoot, "event-sink-settings.tsx"),
+      "utf8",
+    );
+    const dataTable = readFileSync(
+      resolve(componentsRoot, "data-table.tsx"),
+      "utf8",
+    );
+
+    for (const items of ["agentOptions", "machineOptions", "durations"]) {
+      expect(sessionForm).toContain(`items={${items}}`);
+    }
+    expect(eventSink).toContain("items={detailLevels}");
+    expect(dataTable).toContain("items={filterOptions}");
+  });
+
+  it("keeps manual Session creation capability-based and in the table toolbar", () => {
+    const componentsRoot = resolve(
+      process.cwd(),
+      "apps/web/src/components",
+    );
+    const sessionForm = readFileSync(
+      resolve(componentsRoot, "create-session-sheet.tsx"),
+      "utf8",
+    );
+    const sessionList = readFileSync(
+      resolve(componentsRoot, "session-list.tsx"),
+      "utf8",
+    );
+    const sessionsPage = readFileSync(
+      resolve(
+        process.cwd(),
+        "apps/web/src/app/dashboard/sessions/page.tsx",
+      ),
+      "utf8",
+    );
+    const sessionsLoading = readFileSync(
+      resolve(
+        process.cwd(),
+        "apps/web/src/app/dashboard/sessions/loading.tsx",
+      ),
+      "utf8",
+    );
+
+    expect(sessionForm).not.toContain("session-path");
+    expect(sessionForm).not.toContain("session-container");
+    expect(sessionForm).not.toContain("restrictions.filesystem");
+    expect(sessionForm).not.toContain("restrictions.docker");
+    expect(sessionList).toContain("toolbarAction={<CreateSessionSheet />}");
+    expect(sessionsPage).not.toContain("action={<CreateSessionSheet />}");
+    expect(sessionsLoading).toContain("toolbarAction");
+  });
+
   it("uses one default geometry for form controls", () => {
     const uiRoot = resolve(
       process.cwd(),

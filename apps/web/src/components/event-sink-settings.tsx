@@ -46,6 +46,12 @@ import type {
 
 type DetailLevel = CloudEventSink["detailLevel"];
 
+const detailLevels: Array<{ value: DetailLevel; label: string }> = [
+  { value: "privacy-minimal", label: "Privacy-minimal" },
+  { value: "operational", label: "Operational" },
+  { value: "diagnostic", label: "Diagnostic" },
+];
+
 export function EventSinkSettings() {
   const [sink, setSink] = useState<CloudEventSink | null>(null);
   const [open, setOpen] = useState(false);
@@ -136,6 +142,7 @@ export function EventSinkSettings() {
                 <Field>
                   <FieldLabel htmlFor="sink-detail">Detail</FieldLabel>
                   <Select
+                    items={detailLevels}
                     value={detailLevel}
                     onValueChange={(value) =>
                       setDetailLevel(value as DetailLevel)
@@ -146,15 +153,11 @@ export function EventSinkSettings() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectGroup>
-                        <SelectItem value="privacy-minimal">
-                          Privacy-minimal
-                        </SelectItem>
-                        <SelectItem value="operational">
-                          Operational
-                        </SelectItem>
-                        <SelectItem value="diagnostic">
-                          Diagnostic
-                        </SelectItem>
+                        {detailLevels.map((level) => (
+                          <SelectItem key={level.value} value={level.value}>
+                            {level.label}
+                          </SelectItem>
+                        ))}
                       </SelectGroup>
                     </SelectContent>
                   </Select>

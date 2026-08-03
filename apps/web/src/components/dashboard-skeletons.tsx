@@ -14,11 +14,13 @@ export function OverviewSkeleton() {
 
 export function TablePageSkeleton({
   action = false,
+  toolbarAction = false,
   filters = 1,
   columns = 4,
   summary = false,
 }: {
   action?: boolean;
+  toolbarAction?: boolean;
   filters?: number;
   columns?: number;
   summary?: boolean;
@@ -37,11 +39,14 @@ export function TablePageSkeleton({
         {action ? <Skeleton className="h-8 w-28" /> : null}
       </div>
       <div className="flex flex-col gap-4">
-        <div className="flex gap-2">
-          <Skeleton className="h-8 w-full max-w-xs" />
-          {Array.from({ length: filters }, (_, index) => (
-            <Skeleton key={index} className="hidden h-8 w-40 sm:block" />
-          ))}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-1 gap-2">
+            <Skeleton className="h-10 w-full max-w-xs" />
+            {Array.from({ length: filters }, (_, index) => (
+              <Skeleton key={index} className="hidden h-10 w-40 sm:block" />
+            ))}
+          </div>
+          {toolbarAction ? <Skeleton className="h-10 w-20" /> : null}
         </div>
         <div
           className="flex items-center justify-between gap-4"

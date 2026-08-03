@@ -17,7 +17,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -74,6 +74,7 @@ export function DataTable<TData>({
   hiddenColumns = [searchColumn],
   emptyMessage,
   summaryLabel,
+  toolbarAction,
 }: {
   columns: ColumnDef<TData>[];
   data: TData[];
@@ -84,6 +85,7 @@ export function DataTable<TData>({
   hiddenColumns?: string[];
   emptyMessage: string;
   summaryLabel?: string;
+  toolbarAction?: ReactNode;
 }) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
@@ -114,61 +116,73 @@ export function DataTable<TData>({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <Input
-          name={`${searchColumn}-search`}
-          value={searchValue}
-          onChange={(event) =>
-            table.getColumn(searchColumn)?.setFilterValue(event.target.value)
-          }
-          placeholder={searchPlaceholder}
-          autoComplete="off"
-          className="w-full sm:max-w-xs"
-        />
-        {activeFilters.map((currentFilter) => {
-          const value =
-            (table.getColumn(currentFilter.columnId)?.getFilterValue() as
-              | string
-              | undefined) ?? "all";
-          return (
-            <Select
-              key={currentFilter.columnId}
-              value={value}
-              onValueChange={(nextValue) =>
-                table
-                  .getColumn(currentFilter.columnId)
-                  ?.setFilterValue(
-                    nextValue === "all" ? undefined : nextValue,
-                  )
-              }
-            >
-              <SelectTrigger
-                aria-label={currentFilter.label}
-                className="w-full sm:w-44"
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-1 flex-col gap-2 sm:flex-row sm:items-center">
+          <Input
+            name={`${searchColumn}-search`}
+            value={searchValue}
+            onChange={(event) =>
+              table.getColumn(searchColumn)?.setFilterValue(event.target.value)
+            }
+            placeholder={searchPlaceholder}
+            autoComplete="off"
+            className="w-full sm:max-w-xs"
+          />
+          {activeFilters.map((currentFilter) => {
+            const value =
+              (table.getColumn(currentFilter.columnId)?.getFilterValue() as
+                | string
+                | undefined) ?? "all";
+            const filterOptions = [
+              {
+                label: selectDisplayLabel(currentFilter.label, [], "all"),
+                value: "all",
+              },
+              ...currentFilter.options,
+            ];
+            return (
+              <Select
+                key={currentFilter.columnId}
+                items={filterOptions}
+                value={value}
+                onValueChange={(nextValue) =>
+                  table
+                    .getColumn(currentFilter.columnId)
+                    ?.setFilterValue(
+                      nextValue === "all" ? undefined : nextValue,
+                    )
+                }
               >
-                <span className="flex-1 truncate text-left">
-                  {selectDisplayLabel(
-                    currentFilter.label,
-                    currentFilter.options,
-                    value,
-                  )}
-                </span>
-              </SelectTrigger>
-              <SelectContent align="start">
-                <SelectGroup>
-                  <SelectItem value="all">
-                    All {currentFilter.label.toLowerCase()}
-                  </SelectItem>
-                  {currentFilter.options.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          );
-        })}
+                <SelectTrigger
+                  aria-label={currentFilter.label}
+                  className="w-full sm:w-44"
+                >
+                  <span className="flex-1 truncate text-left">
+                    {selectDisplayLabel(
+                      currentFilter.label,
+                      currentFilter.options,
+                      value,
+                    )}
+                  </span>
+                </SelectTrigger>
+                <SelectContent align="start">
+                  <SelectGroup>
+                    {filterOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            );
+          })}
+        </div>
+        {toolbarAction ? (
+          <div className="flex shrink-0 justify-end">
+            {toolbarAction}
+          </div>
+        ) : null}
       </div>
       <div
         className={`flex items-center gap-4 text-sm text-muted-foreground ${

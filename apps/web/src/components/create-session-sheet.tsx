@@ -2,7 +2,7 @@
 
 import type { Capability, SessionRestrictions } from "@odyshell/protocol";
 import { PlusIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useDashboard } from "@/components/dashboard-provider";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -42,6 +42,15 @@ const durations = [
   { value: "86400", label: "24 hours" },
 ];
 
+const manualCapabilityGroups = capabilityGroups
+  .map((group) => ({
+    ...group,
+    capabilities: group.capabilities.filter(
+      (capability) => capability.value !== "docker.logs",
+    ),
+  }))
+  .filter((group) => group.capabilities.length > 0);
+
 export function CreateSessionSheet() {
   const { state, refresh } = useDashboard();
   const context = state.status === "ready" ? state.context : null;
@@ -53,18 +62,46 @@ export function CreateSessionSheet() {
   const [machineId, setMachineId] = useState("");
   const [duration, setDuration] = useState("3600");
   const [capabilities, setCapabilities] = useState<Capability[]>([...readOnlyCapabilities]);
-  const [path, setPath] = useState(".");
   const [program, setProgram] = useState("");
   const [args, setArgs] = useState("");
-  const [container, setContainer] = useState("");
 
   const machine = context?.machines.find((candidate) => candidate.id === machineId);
-  const locallyAllowed = useMemo(() => machineCapabilities(machine?.runtime), [machine?.runtime]);
+  const locallyAllowed = useMemo<Capability[]>(
+    () => machineCapabilities(machine?.runtime).filter((value) => value !== "docker.logs"),
+    [machine?.runtime],
+  );
+  const agents = context?.agents;
+  const machines = context?.machines;
+  const agentOptions = useMemo(
+    () => (agents ?? []).map((agent) => ({
+      value: agent.id,
+      label: `${agent.name}${agent.credentialActive ? "" : " · Credential unavailable"}`,
+    })),
+    [agents],
+  );
+  const machineOptions = useMemo(
+    () => (machines ?? []).map((item) => ({
+      value: item.id,
+      label: `${item.name}${item.online ? "" : " · Offline"}`,
+    })),
+    [machines],
+  );
 
-  useEffect(() => {
-    if (!machineId) return;
-    setCapabilities(readOnlyCapabilities.filter((value) => locallyAllowed.includes(value)));
-  }, [machineId, locallyAllowed]);
+  function selectMachine(value: string | null) {
+    const nextMachineId = value ?? "";
+    const nextMachine = context?.machines.find(
+      (candidate) => candidate.id === nextMachineId,
+    );
+    const nextAllowed: Capability[] = machineCapabilities(
+      nextMachine?.runtime,
+    ).filter((capability) => capability !== "docker.logs");
+    setMachineId(nextMachineId);
+    setCapabilities(
+      readOnlyCapabilities.filter((capability) =>
+        nextAllowed.includes(capability),
+      ),
+    );
+  }
 
   function toggleCapability(capability: Capability) {
     setCapabilities((current) =>
@@ -78,9 +115,6 @@ export function CreateSessionSheet() {
     event.preventDefault();
     if (!context || !machine || capabilities.length === 0) return;
     const restrictions: SessionRestrictions = {};
-    if (capabilities.some((capability) => capability.startsWith("fs."))) {
-      restrictions.filesystem = { paths: [{ path, includeDescendants: true }] };
-    }
     if (capabilities.includes("process.exec")) {
       if (!program.trim()) {
         toast.add({ title: "Program required", type: "error" });
@@ -90,16 +124,9 @@ export function CreateSessionSheet() {
         programs: [{
           program: program.trim(),
           args: splitArguments(args),
-          cwd: { path, includeDescendants: false },
+          cwd: { path: ".", includeDescendants: false },
         }],
       };
-    }
-    if (capabilities.includes("docker.logs")) {
-      if (!container.trim()) {
-        toast.add({ title: "Container required", type: "error" });
-        return;
-      }
-      restrictions.docker = { containers: [container.trim()] };
     }
     setPending(true);
     try {
@@ -146,10 +173,8 @@ export function CreateSessionSheet() {
     setMachineId("");
     setDuration("3600");
     setCapabilities([...readOnlyCapabilities]);
-    setPath(".");
     setProgram("");
     setArgs("");
-    setContainer("");
   }
 
   return (
@@ -169,19 +194,19 @@ export function CreateSessionSheet() {
               <Field><FieldLabel htmlFor="session-title">Title</FieldLabel><Input id="session-title" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={96} required /></Field>
               <Field><FieldLabel htmlFor="session-purpose">Purpose</FieldLabel><Textarea id="session-purpose" value={purpose} onChange={(event) => setPurpose(event.target.value)} maxLength={280} /></Field>
               <Field><FieldLabel htmlFor="session-agent">Agent</FieldLabel>
-                <Select value={agentId} onValueChange={(value) => setAgentId(value ?? "")} required>
+                <Select items={agentOptions} value={agentId} onValueChange={(value) => setAgentId(value ?? "")} required>
                   <SelectTrigger id="session-agent" className="w-full"><SelectValue placeholder="Select Agent" /></SelectTrigger>
                   <SelectContent><SelectGroup>{context?.agents.map((agent) => <SelectItem key={agent.id} value={agent.id} disabled={!agent.credentialActive}>{agent.name}{agent.credentialActive ? "" : " · Credential unavailable"}</SelectItem>)}</SelectGroup></SelectContent>
                 </Select>
               </Field>
               <Field><FieldLabel htmlFor="session-machine">Machine</FieldLabel>
-                <Select value={machineId} onValueChange={(value) => setMachineId(value ?? "")} required>
+                <Select items={machineOptions} value={machineId} onValueChange={selectMachine} required>
                   <SelectTrigger id="session-machine" className="w-full"><SelectValue placeholder="Select machine" /></SelectTrigger>
                   <SelectContent><SelectGroup>{context?.machines.map((item) => <SelectItem key={item.id} value={item.id} disabled={!item.online}>{item.name}{item.online ? "" : " · Offline"}</SelectItem>)}</SelectGroup></SelectContent>
                 </Select>
               </Field>
               <Field><FieldLabel htmlFor="session-duration">Duration</FieldLabel>
-                <Select value={duration} onValueChange={(value) => setDuration(value ?? "3600")}>
+                <Select items={durations} value={duration} onValueChange={(value) => setDuration(value ?? "3600")}>
                   <SelectTrigger id="session-duration" className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent><SelectGroup>{durations.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
                 </Select>
@@ -189,7 +214,7 @@ export function CreateSessionSheet() {
               <Field>
                 <div className="flex items-center justify-between gap-3"><FieldLabel>Capabilities</FieldLabel><div className="flex gap-2"><Button type="button" size="sm" variant="outline" onClick={() => setCapabilities([...readOnlyCapabilities].filter((value) => locallyAllowed.includes(value)))}>Read only</Button><Button type="button" size="sm" variant="outline" onClick={() => setCapabilities([...fullAccessCapabilities].filter((value) => locallyAllowed.includes(value)))}>Full access</Button></div></div>
                 <div className="rounded-lg border p-3">
-                  {capabilityGroups.flatMap((group) => group.capabilities).map((capability) => (
+                  {manualCapabilityGroups.flatMap((group) => group.capabilities).map((capability) => (
                     <label key={capability.value} className="flex items-center gap-2 py-1.5 text-sm">
                       <Checkbox checked={capabilities.includes(capability.value)} disabled={!locallyAllowed.includes(capability.value)} onCheckedChange={() => toggleCapability(capability.value)} />
                       {capability.label}
@@ -197,10 +222,8 @@ export function CreateSessionSheet() {
                   ))}
                 </div>
               </Field>
-              {capabilities.some((capability) => capability.startsWith("fs.")) || capabilities.includes("process.exec") ? <Field><FieldLabel htmlFor="session-path">Path</FieldLabel><Input id="session-path" value={path} onChange={(event) => setPath(event.target.value)} required /></Field> : null}
               {capabilities.includes("process.exec") ? <><Field><FieldLabel htmlFor="session-program">Program</FieldLabel><Input id="session-program" value={program} onChange={(event) => setProgram(event.target.value)} required /></Field><Field><FieldLabel htmlFor="session-args">Arguments</FieldLabel><Input id="session-args" value={args} onChange={(event) => setArgs(event.target.value)} /></Field></> : null}
               {capabilities.includes("process.shell") ? <p className="text-sm text-amber-700 dark:text-amber-400">Shell access can run arbitrary commands as the local OS user and always requires explicit approval.</p> : null}
-              {capabilities.includes("docker.logs") ? <Field><FieldLabel htmlFor="session-container">Container</FieldLabel><Input id="session-container" value={container} onChange={(event) => setContainer(event.target.value)} required /></Field> : null}
             </FieldGroup>
           </div>
           <SheetFooter className="border-t">

@@ -15,6 +15,8 @@ import {
   normalizeRelativePath,
   operationSessionScope,
   operationSessionScopes,
+  sessionMachineScopeSchema,
+  sessionScopeDecision,
   sessionScopeSubsetDecision,
   organizationRequestSchema,
   sessionRequestSchema,
@@ -59,6 +61,30 @@ describe("protocol validation", () => {
       capabilities: ["process.shell"],
       restrictions: {},
     });
+  });
+
+  it("models an unrestricted filesystem capability without a path selector", () => {
+    const machineId = "7a354999-6a6c-42db-9467-e1416da255f1";
+    const scope = sessionMachineScopeSchema.parse({
+      machineId,
+      profile: "default",
+      capabilities: ["fs.read"],
+      restrictions: {},
+    });
+
+    expect(
+      sessionScopeDecision(scope, machineId, {
+        kind: "fs.read",
+        path: process.platform === "win32" ? "C:/Windows/win.ini" : "/etc/hosts",
+      }),
+    ).toEqual({ allowed: true });
+    expect(
+      sessionScopeDecision(
+        { ...scope, capabilities: ["fs.stat"] },
+        machineId,
+        { kind: "fs.read", path: "README.md" },
+      ),
+    ).toEqual({ allowed: false, code: "capability_denied" });
   });
 
   it("accepts an absolute working directory for an exact process operation", () => {
@@ -456,7 +482,7 @@ describe("protocol validation", () => {
           },
         ],
       }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       agentSessionRequestInputSchema.safeParse({
         ...request,
@@ -529,6 +555,16 @@ describe("protocol validation", () => {
               paths: [{ path: ".", includeDescendants: true }],
             },
           },
+        },
+        ceiling,
+      ),
+    ).toEqual({ allowed: false, code: "restriction_widening" });
+    expect(
+      sessionScopeSubsetDecision(
+        {
+          ...ceiling,
+          capabilities: ["fs.read"],
+          restrictions: {},
         },
         ceiling,
       ),

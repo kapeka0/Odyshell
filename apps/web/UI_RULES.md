@@ -241,11 +241,14 @@ particular component, library or interaction pattern.
   Operation events with their human, Agent or Odyshell actor. Keep verified
   command text sanitized, show exit status, and never render retained stdout or
   stderr. Auto-scroll only while the viewer remains at the bottom.
-- Manual Session creation uses a right-side Sheet with title, optional purpose,
-  Agent, machine, duration, capabilities and capability-specific scope. Offline
-  machines and Agents without an active credential remain visible but disabled.
-  Read only and Full access are shortcuts; shell access includes an explicit
-  warning and is never autoapproved.
+- Manual Session creation starts from the Sessions table toolbar and uses a
+  right-side Sheet with title, optional purpose, Agent, machine, duration and
+  capabilities. Do not ask for a filesystem path or Docker container there.
+  Filesystem capabilities apply across the machine subject to its local policy;
+  Docker log access remains outside this manual flow. Offline machines and
+  Agents without an active credential remain visible but disabled. Read only
+  and Full access are shortcuts; shell access includes an explicit warning and
+  is never autoapproved.
 - Session nodes on the canvas show the requesting Agent first, otherwise the
   responsible human, in a quiet footer. Use System when no actor exists.
 - Personal settings and workspace settings have separate destinations.

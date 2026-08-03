@@ -18,14 +18,16 @@ description: The typed process, filesystem, and Docker operations supported by O
 | `fs.remove` | Remove a file or directory |
 | `docker.logs` | Read logs from a Docker container |
 
-Filesystem paths can be relative to the machine's configured workspace or absolute on a host
-profile. An absolute path becomes an exact Session restriction; approving one file does not grant
-its parent directory. The Client rejects parent traversal and symbolic-link escapes. Docker
-profiles do not expose absolute host paths.
+Filesystem paths can be relative to the machine's configured root or absolute on a host profile.
+An Agent can request an exact path restriction so that approving one file does not grant its
+parent directory. A Session without filesystem path restrictions grants its selected filesystem
+capabilities across the host as the Client's operating-system user. Docker profiles do not expose
+absolute host paths.
 
 Restricted Agent Sessions fail closed:
 
-- filesystem operations require an exact path or an explicitly approved descendant tree;
+- filesystem path restrictions, when present, allow only the exact path or approved descendant
+  tree;
 - `process.exec` requires an exact executable, argument array, and working-directory rule;
 - `docker.logs` requires an exact container name;
 - `process.shell` is an explicit broad capability and is never autoapproved.

@@ -13,14 +13,17 @@ An operation is accepted only when:
 
 1. the Session Credential is valid, unexpired, and stored only as a hash;
 2. the Session belongs to the authenticated Agent and workspace;
-3. the target machine, capability and typed restriction match the immutable Session scope;
+3. the target machine and capability match the immutable Session scope, including any typed
+   restriction it contains;
 4. the Session is active;
 5. the machine is online;
 6. the Client's local policy allows the capability;
 7. operation-specific validation succeeds.
 
 The model cannot override these checks with a prompt. A Session Credential cannot request another
-Session, read another Agent's Operations, or access a different machine or path.
+Session, read another Agent's Operations, or access a different machine. A typed restriction
+cannot be bypassed; without one, the selected capability applies across the machine subject to its
+local policy.
 
 Approval codes expire, can be used once, and are looked up only inside the authenticated
 workspace. The credential produced by a claim is returned once to the trusted runtime. MCP keeps

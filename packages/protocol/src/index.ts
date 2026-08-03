@@ -302,18 +302,6 @@ export const sessionMachineScopeSchema = z
   .strict()
   .superRefine((scope, context) => {
     if (
-      scope.capabilities.some((capability) =>
-        filesystemCapabilities.has(capability),
-      ) &&
-      scope.restrictions.filesystem === undefined
-    ) {
-      context.addIssue({
-        code: "custom",
-        message: "Filesystem capabilities require path restrictions",
-        path: ["restrictions", "filesystem"],
-      });
-    }
-    if (
       scope.capabilities.includes("process.exec") &&
       scope.restrictions.process === undefined
     ) {
@@ -432,33 +420,68 @@ export function sessionScopeSubsetDecision(
   ) {
     return { allowed: false, code: "capability_widening" };
   }
-  for (const path of requested.restrictions.filesystem?.paths ?? []) {
-    if (
-      !ceiling.restrictions.filesystem?.paths.some((allowed) =>
-        pathRestrictionIsSubset(path, allowed),
-      )
-    ) {
-      return { allowed: false, code: "restriction_widening" };
+  const requestedFilesystem = requested.restrictions.filesystem;
+  const ceilingFilesystem = ceiling.restrictions.filesystem;
+  if (
+    requested.capabilities.some((capability) =>
+      filesystemCapabilities.has(capability),
+    ) &&
+    requestedFilesystem === undefined &&
+    ceilingFilesystem !== undefined
+  ) {
+    return { allowed: false, code: "restriction_widening" };
+  }
+  if (requestedFilesystem && ceilingFilesystem) {
+    for (const path of requestedFilesystem.paths) {
+      if (
+        !ceilingFilesystem.paths.some((allowed) =>
+          pathRestrictionIsSubset(path, allowed),
+        )
+      ) {
+        return { allowed: false, code: "restriction_widening" };
+      }
     }
   }
-  for (const rule of requested.restrictions.process?.programs ?? []) {
-    if (
-      !ceiling.restrictions.process?.programs.some(
-        (allowed) =>
-          allowed.program === rule.program &&
-          allowed.args.length === rule.args.length &&
-          allowed.args.every(
-            (argument, index) => argument === rule.args[index],
-          ) &&
-          pathRestrictionIsSubset(rule.cwd, allowed.cwd),
-      )
-    ) {
-      return { allowed: false, code: "restriction_widening" };
+  const requestedProcess = requested.restrictions.process;
+  const ceilingProcess = ceiling.restrictions.process;
+  if (
+    requested.capabilities.includes("process.exec") &&
+    requestedProcess === undefined &&
+    ceilingProcess !== undefined
+  ) {
+    return { allowed: false, code: "restriction_widening" };
+  }
+  if (requestedProcess && ceilingProcess) {
+    for (const rule of requestedProcess.programs) {
+      if (
+        !ceilingProcess.programs.some(
+          (allowed) =>
+            allowed.program === rule.program &&
+            allowed.args.length === rule.args.length &&
+            allowed.args.every(
+              (argument, index) => argument === rule.args[index],
+            ) &&
+            pathRestrictionIsSubset(rule.cwd, allowed.cwd),
+        )
+      ) {
+        return { allowed: false, code: "restriction_widening" };
+      }
     }
   }
-  for (const container of requested.restrictions.docker?.containers ?? []) {
-    if (!ceiling.restrictions.docker?.containers.includes(container)) {
-      return { allowed: false, code: "restriction_widening" };
+  const requestedDocker = requested.restrictions.docker;
+  const ceilingDocker = ceiling.restrictions.docker;
+  if (
+    requested.capabilities.includes("docker.logs") &&
+    requestedDocker === undefined &&
+    ceilingDocker !== undefined
+  ) {
+    return { allowed: false, code: "restriction_widening" };
+  }
+  if (requestedDocker && ceilingDocker) {
+    for (const container of requestedDocker.containers) {
+      if (!ceilingDocker.containers.includes(container)) {
+        return { allowed: false, code: "restriction_widening" };
+      }
     }
   }
   return { allowed: true };
@@ -476,7 +499,10 @@ export function sessionScopeDecision(
     return { allowed: false, code: "capability_denied" };
   }
   if ("path" in action && action.kind.startsWith("fs.")) {
-    const allowed = scope.restrictions.filesystem?.paths.some((restriction) =>
+    if (scope.restrictions.filesystem === undefined) {
+      return { allowed: true };
+    }
+    const allowed = scope.restrictions.filesystem.paths.some((restriction) =>
       pathMatchesRestriction(action.path, restriction),
     );
     return allowed

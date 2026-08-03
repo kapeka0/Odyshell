@@ -18,9 +18,11 @@ Every request has a short title used in tables, notifications and the canvas. A 
 optional.
 
 Workspace members can also select **New** on the Sessions page. Choose an Agent with an active
-credential, an online machine, a duration, capabilities, and their exact restrictions. A manual
-Session is approved by its creator and opens immediately when that Agent has an active MCP
-installation. Otherwise, the Agent claims the approved request when it next connects.
+credential, an online machine, a duration, and capabilities. Manual filesystem capabilities apply
+across that machine subject to its local Client policy; Docker log access is requested through an
+Agent flow with an exact container. A manual Session is approved by its creator and opens
+immediately when that Agent has an active MCP installation. Otherwise, the Agent claims the
+approved request when it next connects.
 
 Durations are 15 minutes, 1 hour, 4 hours, 8 hours, or 24 hours. Sessions cannot be widened,
 extended, or made permanent. Create a new Session when authority must change.

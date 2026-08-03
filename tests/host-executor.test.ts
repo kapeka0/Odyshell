@@ -331,6 +331,48 @@ describe("HostExecutor", () => {
     }
   });
 
+  it("reads an absolute path when the Session grants unrestricted filesystem access", async () => {
+    const outside = await mkdtemp(join(tmpdir(), "odyshell-unrestricted-"));
+    try {
+      const approvedPath = join(outside, "interfaces");
+      await writeFile(approvedPath, "network config");
+
+      const result: Buffer[] = [];
+      const running = await executor.execute(
+        crypto.randomUUID(),
+        session,
+        { kind: "fs.read", path: approvedPath },
+        hooks({ result: (data) => result.push(data) }),
+      );
+
+      expect((await running.done).exitCode).toBe(0);
+      expect(Buffer.concat(result).toString()).toBe("network config");
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects unrestricted filesystem access when local policy narrows paths", async () => {
+    await executor.closeSession(session);
+    await expect(
+      executor.openSession(
+        crypto.randomUUID(),
+        {
+          ...profile(workspace),
+          restrictions: {
+            filesystem: {
+              paths: [{ path: "config", includeDescendants: true }],
+            },
+          },
+        },
+        ["fs.read"],
+        {},
+        new Date(Date.now() + 60_000),
+        () => {},
+      ),
+    ).rejects.toThrow("restriction_widening");
+  });
+
   it("reads an exact absolute path only when the local Session grants it", async () => {
     const outside = await mkdtemp(join(tmpdir(), "odyshell-absolute-"));
     try {

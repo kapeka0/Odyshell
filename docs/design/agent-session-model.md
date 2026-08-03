@@ -171,9 +171,10 @@ type Session = {
 };
 ```
 
-Typed restrictions are required whenever their corresponding capability is present:
+Typed restrictions narrow capability grants:
 
-- filesystem capabilities accept exact normalized paths or explicit descendant trees;
+- filesystem capabilities may apply across the machine or be narrowed to exact normalized paths
+  and explicit descendant trees;
 - `process.exec` accepts an exact program, argument array, and working-directory restriction;
 - `docker.logs` accepts exact container names;
 - initial policy does not use regular expressions;

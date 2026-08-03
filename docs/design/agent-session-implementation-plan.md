@@ -59,7 +59,7 @@ The Server must reject an Operation unless all conditions hold:
 2. the Session is active and belongs to the same Workspace as its Agent and target;
 3. the explicit machine appears in a Session Target;
 4. the Operation kind maps to a Capability granted by that target;
-5. typed restrictions allow its path, program, or container;
+5. every typed restriction present in the Session allows its path, program, or container;
 6. the machine Client Profile is online or can accept the request before timeout;
 7. the Client independently accepts the same scope under its Local Policy;
 8. the Operation timeout does not exceed the remaining Session lifetime;
@@ -120,7 +120,7 @@ Exit criteria:
 Deliver:
 
 - multi-machine Sessions with independent target readiness;
-- filesystem path-prefix constraints;
+- optional filesystem path-prefix constraints and explicit capability-wide grants;
 - exact `process.exec` program constraints;
 - exact Docker container constraints;
 - Client-side Local Policy intersection;

@@ -1,10 +1,11 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { EllipsisIcon, EyeIcon, TimerIcon, XIcon } from "lucide-react";
+import { EllipsisIcon, EyeIcon, XIcon } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { CopyableValue } from "@/components/copyable-value";
+import { CreateSessionSheet } from "@/components/create-session-sheet";
 import { DataTable, DataTableColumnHeader } from "@/components/data-table";
 import { useDashboard } from "@/components/dashboard-provider";
 import {
@@ -30,13 +31,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "@/components/ui/toast";
 import type {
@@ -236,22 +230,6 @@ export function SessionList({
     [agents, members, refresh],
   );
 
-  if (rows.length === 0) {
-    return (
-      <Empty className="min-h-64 rounded-lg border">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <TimerIcon aria-hidden="true" />
-          </EmptyMedia>
-          <EmptyTitle>No sessions yet</EmptyTitle>
-          <EmptyDescription>
-            Requests appear here as soon as an Agent asks for access.
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    );
-  }
-
   return (
     <DataTable
       columns={columns}
@@ -272,7 +250,8 @@ export function SessionList({
           { label: "Expired", value: "expired" },
         ],
       }}
-      emptyMessage="No sessions match these filters."
+      emptyMessage={rows.length === 0 ? "No sessions yet." : "No sessions match these filters."}
+      toolbarAction={<CreateSessionSheet />}
     />
   );
 }
