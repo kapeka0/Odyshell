@@ -8,6 +8,7 @@ import open from "open";
 import pc from "picocolors";
 import {
   PROTOCOL_VERSION,
+  clientConfigSchema,
   type OperationAction,
 } from "@odyshell/protocol";
 import {
@@ -1115,7 +1116,11 @@ program
       let enrollment:
         | { machineId: string; configPath: string }
         | undefined;
-      if (!configFound) {
+      const replaceEnrollment = configFound && options.token !== undefined;
+      if (!configFound || replaceEnrollment) {
+        const previousMachineId = replaceEnrollment
+          ? await machineIdFromClientConfig(configPath)
+          : undefined;
         enrollment = await enrollClient({
           serverUrl: apiConfig.serverUrl,
           token: requiredValue(options.token, "--token"),
@@ -1126,6 +1131,8 @@ program
           image: options.image,
           configPath,
           profileName,
+          ...(previousMachineId ? { previousMachineId } : {}),
+          replaceConfig: replaceEnrollment,
         });
       }
       if (
@@ -1149,7 +1156,11 @@ program
         ? await clientServiceStatus(configPath)
         : undefined;
       let service;
-      if (previousStatus?.active && previousStatus.current !== false) {
+      if (
+        !enrollment &&
+        previousStatus?.active &&
+        previousStatus.current !== false
+      ) {
         service = {
           servicePath: previousStatus.servicePath,
           lingering: undefined,
@@ -1172,9 +1183,10 @@ program
         running: true,
         profile: profileName,
         enrolled: Boolean(enrollment),
+        reenrolled: Boolean(enrollment && configFound),
         alreadyRunning: previousStatus?.active ?? false,
         enrollmentOptionsIgnored:
-          configFound &&
+          configFound && !enrollment &&
           [options.token, options.name, options.allow].some(
             (value) => value !== undefined,
           ),
@@ -1186,7 +1198,9 @@ program
       if (global.json) printJson(result);
       else {
         console.log(
-          previousStatus?.active
+          result.reenrolled
+            ? `${pc.green("✓")} Odyshell Client identity replaced`
+            : previousStatus?.active
             ? `${pc.green("✓")} Odyshell Client Profile is already running`
             : `${pc.green("✓")} Odyshell Client is running`,
         );
@@ -1211,6 +1225,19 @@ program
       }
     },
   );
+
+async function machineIdFromClientConfig(configPath: string): Promise<string> {
+  const parsed = clientConfigSchema.safeParse(
+    JSON.parse(await readFile(configPath, "utf8")),
+  );
+  if (!parsed.success) {
+    throw new ExpectedError(
+      `Client configuration at ${configPath} is invalid`,
+      "client_config_invalid",
+    );
+  }
+  return parsed.data.machineId;
+}
 
 program
   .command("down")

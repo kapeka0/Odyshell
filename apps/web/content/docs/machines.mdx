@@ -32,6 +32,11 @@ Linux uses a systemd user service, macOS uses a LaunchAgent, and Windows uses a 
 Scheduler task with a native no-console launcher. The terminal can be closed after `ods up`; none
 require administrator privileges.
 
+If a machine was removed in Cloud but its local Profile still exists, create a new machine command
+and run it with the same `--profile`. Odyshell replaces the revoked identity and restarts the
+background Client. It refuses to replace an identity that is still active, and the new token is not
+consumed by that refusal.
+
 ## Local policy
 
 Relative paths resolve from the directory where the Client Profile was first enrolled. Restricted

@@ -6365,8 +6365,10 @@ export class PostgresDatabase {
     machineId: string;
     name: string;
     publicKey: string;
+    previousMachineId?: string;
   }): Promise<
     | { status: "enrolled"; machineId: string; name: string; workspaceId: string }
+    | { status: "previous_machine_active"; workspaceId: string }
     | { status: "machine_limit_reached"; workspaceId: string; machineLimit: number }
     | null
   > {
@@ -6384,6 +6386,20 @@ export class PostgresDatabase {
         enrollment.expiresAt <= now
       ) {
         return null;
+      }
+      if (input.previousMachineId) {
+        const previous = await transaction
+          .selectFrom("machines")
+          .select("revokedAt")
+          .where("workspaceId", "=", enrollment.workspaceId)
+          .where("id", "=", input.previousMachineId)
+          .executeTakeFirst();
+        if (previous && previous.revokedAt === null) {
+          return {
+            status: "previous_machine_active",
+            workspaceId: enrollment.workspaceId,
+          };
+        }
       }
       const organization = await transaction
         .selectFrom("workspaces")

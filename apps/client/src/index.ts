@@ -103,6 +103,8 @@ export type EnrollClientOptions = {
   allowedCapabilities: Capability[];
   runner?: "host" | "docker";
   image?: string;
+  previousMachineId?: string;
+  replaceConfig?: boolean;
 };
 
 export async function enrollClient(options: EnrollClientOptions): Promise<{
@@ -126,7 +128,14 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
   const response = await fetch(new URL("/v1/clients/enroll", serverUrl), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ token: options.token, name: options.machineName, publicKey }),
+    body: JSON.stringify({
+      token: options.token,
+      name: options.machineName,
+      publicKey,
+      ...(options.previousMachineId
+        ? { previousMachineId: options.previousMachineId }
+        : {}),
+    }),
   });
   const body = (await response.json()) as {
     machineId?: string;
@@ -169,7 +178,11 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
     },
   };
   await mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
-  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, {
+    mode: 0o600,
+    flag: options.replaceConfig ? "w" : "wx",
+    flush: true,
+  });
   return { machineId: body.machineId, configPath };
 }
 

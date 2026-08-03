@@ -268,6 +268,57 @@ try {
     throw new Error("Concurrent enrollment replay was not rejected atomically");
   }
 
+  const replacementEnrollment = await api("/v1/admin/enrollment-tokens", {
+    method: "POST",
+    headers: {
+      "x-odyshell-admin-key": adminKey,
+      "x-odyshell-workspace-id": isolatedWorkspace.id,
+    },
+    body: JSON.stringify({ expiresInSeconds: 600 }),
+  });
+  const replacementKey = generateKeyPairSync("ed25519").publicKey
+    .export({ type: "spki", format: "pem" })
+    .toString();
+  const activeReplacement = await fetch(new URL("/v1/clients/enroll", apiUrl), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      token: replacementEnrollment.token,
+      name: "replacement-denied",
+      publicKey: replacementKey,
+      previousMachineId: isolatedMachine.machineId,
+    }),
+  });
+  const activeReplacementBody = await activeReplacement.json();
+  if (
+    activeReplacement.status !== 409 ||
+    activeReplacementBody.error !== "previous_machine_still_active"
+  ) {
+    throw new Error("An active Client identity could be replaced without revocation");
+  }
+  await api(`/v1/admin/machines/${isolatedMachine.machineId}`, {
+    method: "DELETE",
+    headers: {
+      "x-odyshell-admin-key": adminKey,
+      "x-odyshell-workspace-id": isolatedWorkspace.id,
+    },
+  });
+  const replacedMachine = await api("/v1/clients/enroll", {
+    method: "POST",
+    body: JSON.stringify({
+      token: replacementEnrollment.token,
+      name: "isolated-machine",
+      publicKey: replacementKey,
+      previousMachineId: isolatedMachine.machineId,
+    }),
+  });
+  if (
+    replacedMachine.workspaceId !== isolatedWorkspace.id ||
+    replacedMachine.machineId === isolatedMachine.machineId
+  ) {
+    throw new Error("A revoked Client identity was not safely re-enrolled");
+  }
+
   const tsxCli = resolve(root, "node_modules/tsx/dist/cli.mjs");
   const odsEntry = resolve(root, "apps/cli/src/index.ts");
   const selectedWorkspaceMachines = JSON.parse(
@@ -286,8 +337,12 @@ try {
     ]),
   );
   if (
-    selectedWorkspaceMachines.data.length !== 1 ||
-    selectedWorkspaceMachines.data[0]?.id !== isolatedMachine.machineId
+    !selectedWorkspaceMachines.data.some(
+      (item) => item.id === replacedMachine.machineId && item.status !== "revoked",
+    ) ||
+    !selectedWorkspaceMachines.data.some(
+      (item) => item.id === isolatedMachine.machineId && item.revokedAt,
+    )
   ) {
     throw new Error("CLI administrator commands ignored the explicit workspace");
   }

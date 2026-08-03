@@ -45,9 +45,10 @@ local policy. Relative paths start from the enrollment directory; exact absolute
 be approved per Session. The Server and remote agents
 cannot grant themselves capabilities that the Client has not explicitly allowed.
 
-Running the generated `ods up` command again is safe: if the selected Profile is already running,
-Odyshell keeps its existing identity and local policy. Use a distinct name when one host connects
-to another Workspace or Server:
+Running `ods up` without enrollment options restarts the selected Profile safely. If its Cloud
+machine was revoked, run a newly generated enrollment command with the same Profile; Odyshell
+replaces the local identity only after the Server authorizes it. An active identity cannot be
+replaced. Use a distinct name when one host connects to another Workspace or Server:
 
 ```bash
 ods --server https://personal.example up --profile personal <enrollment-options>

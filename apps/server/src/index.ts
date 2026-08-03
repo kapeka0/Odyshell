@@ -2540,7 +2540,12 @@ app.delete<{ Params: { tokenId: string } }>(
 );
 
 app.post("/v1/clients/enroll", async (request, reply) => {
-  const body = request.body as { token?: string; name?: string; publicKey?: string };
+  const body = request.body as {
+    token?: string;
+    name?: string;
+    publicKey?: string;
+    previousMachineId?: string;
+  };
   if (!body?.token || !body.name || !body.publicKey) {
     return reply.code(400).send({ error: "token_name_and_public_key_required" });
   }
@@ -2552,6 +2557,12 @@ app.post("/v1/clients/enroll", async (request, reply) => {
   } catch {
     return reply.code(400).send({ error: "invalid_client_public_key" });
   }
+  if (
+    body.previousMachineId !== undefined &&
+    !z.string().uuid().safeParse(body.previousMachineId).success
+  ) {
+    return reply.code(400).send({ error: "invalid_previous_machine_id" });
+  }
 
   const machineId = randomUUID();
   const enrolled = await db.enrollMachine({
@@ -2559,6 +2570,9 @@ app.post("/v1/clients/enroll", async (request, reply) => {
     machineId,
     name: body.name,
     publicKey: body.publicKey,
+    ...(body.previousMachineId
+      ? { previousMachineId: body.previousMachineId }
+      : {}),
   });
   if (!enrolled) {
     return reply.code(401).send({ error: "invalid_or_expired_enrollment_token" });
@@ -2568,6 +2582,9 @@ app.post("/v1/clients/enroll", async (request, reply) => {
       error: "machine_limit_reached",
       details: { machineLimit: enrolled.machineLimit },
     });
+  }
+  if (enrolled.status === "previous_machine_active") {
+    return reply.code(409).send({ error: "previous_machine_still_active" });
   }
   await audit(
     db,
