@@ -43,10 +43,15 @@ Prefer structured execution:
 ods exec my-machine -- git status --short
 ```
 
+Agents can request exact `process.exec` operations through MCP or the API. The dashboard's manual
+Session form stays intent-based and does not ask members to encode exact program arguments.
+
 Use `process.shell` only when the task genuinely needs several dependent commands, pipelines, or
-shell syntax. The Agent receives stdout and stderr live and may issue more Operations inside the
-same Session. The dashboard records sanitized commands and exit status, not output. Operations run
-with the permissions of the operating-system user running the Client.
+shell syntax. Shell access permits multiple independent Operations for the Session duration; it
+does not create a persistent terminal or preserve `cd` and environment changes between commands.
+The Agent receives stdout and stderr live and may issue more Operations inside the same Session.
+The dashboard records sanitized commands and exit status, not output. Operations run with the
+permissions of the operating-system user running the Client.
 
 ## Docker
 

@@ -1,9 +1,10 @@
 "use client";
 
-import type { Capability, SessionRestrictions } from "@odyshell/protocol";
+import type { Capability } from "@odyshell/protocol";
 import { PlusIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useDashboard } from "@/components/dashboard-provider";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
@@ -28,10 +29,13 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
+  capabilitiesForManualPreset,
   capabilityGroups,
-  fullAccessCapabilities,
-  readOnlyCapabilities,
+  manualReadOnlyCapabilities,
+  manualSessionCapabilities,
+  type ManualAccessPreset,
 } from "@/lib/agent-access-options";
 
 const durations = [
@@ -46,7 +50,7 @@ const manualCapabilityGroups = capabilityGroups
   .map((group) => ({
     ...group,
     capabilities: group.capabilities.filter(
-      (capability) => capability.value !== "docker.logs",
+      (capability) => manualSessionCapabilities.includes(capability.value),
     ),
   }))
   .filter((group) => group.capabilities.length > 0);
@@ -61,14 +65,27 @@ export function CreateSessionSheet() {
   const [agentId, setAgentId] = useState("");
   const [machineId, setMachineId] = useState("");
   const [duration, setDuration] = useState("3600");
-  const [capabilities, setCapabilities] = useState<Capability[]>([...readOnlyCapabilities]);
-  const [program, setProgram] = useState("");
-  const [args, setArgs] = useState("");
+  const [accessPreset, setAccessPreset] =
+    useState<ManualAccessPreset | null>("read-only");
+  const [capabilities, setCapabilities] = useState<Capability[]>([
+    ...manualReadOnlyCapabilities,
+  ]);
 
   const machine = context?.machines.find((candidate) => candidate.id === machineId);
   const locallyAllowed = useMemo<Capability[]>(
-    () => machineCapabilities(machine?.runtime).filter((value) => value !== "docker.logs"),
+    () =>
+      machineCapabilities(machine?.runtime).filter((value) =>
+        manualSessionCapabilities.includes(value),
+      ),
     [machine?.runtime],
+  );
+  const availablePresets = useMemo(
+    () => ({
+      "read-only": capabilitiesForManualPreset("read-only", locallyAllowed),
+      shell: capabilitiesForManualPreset("shell", locallyAllowed),
+      full: capabilitiesForManualPreset("full", locallyAllowed),
+    }),
+    [locallyAllowed],
   );
   const agents = context?.agents;
   const machines = context?.machines;
@@ -94,40 +111,35 @@ export function CreateSessionSheet() {
     );
     const nextAllowed: Capability[] = machineCapabilities(
       nextMachine?.runtime,
-    ).filter((capability) => capability !== "docker.logs");
+    ).filter((capability) => manualSessionCapabilities.includes(capability));
     setMachineId(nextMachineId);
-    setCapabilities(
-      readOnlyCapabilities.filter((capability) =>
-        nextAllowed.includes(capability),
-      ),
+    const nextCapabilities = capabilitiesForManualPreset(
+      "read-only",
+      nextAllowed,
     );
+    setAccessPreset(nextCapabilities.length > 0 ? "read-only" : null);
+    setCapabilities(nextCapabilities);
+  }
+
+  function selectAccessPreset(values: string[]) {
+    const preset = values[0] as ManualAccessPreset | undefined;
+    setAccessPreset(preset ?? null);
+    setCapabilities(preset ? availablePresets[preset] : []);
   }
 
   function toggleCapability(capability: Capability) {
-    setCapabilities((current) =>
-      current.includes(capability)
+    setCapabilities((current) => {
+      const next = current.includes(capability)
         ? current.filter((value) => value !== capability)
-        : [...current, capability],
-    );
+        : [...current, capability];
+      setAccessPreset(null);
+      return next;
+    });
   }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (!context || !machine || capabilities.length === 0) return;
-    const restrictions: SessionRestrictions = {};
-    if (capabilities.includes("process.exec")) {
-      if (!program.trim()) {
-        toast.add({ title: "Program required", type: "error" });
-        return;
-      }
-      restrictions.process = {
-        programs: [{
-          program: program.trim(),
-          args: splitArguments(args),
-          cwd: { path: ".", includeDescendants: false },
-        }],
-      };
-    }
     setPending(true);
     try {
       const response = await fetch("/api/sessions", {
@@ -142,7 +154,7 @@ export function CreateSessionSheet() {
             machineId: machine.id,
             profile: machineProfile(machine.runtime),
             capabilities,
-            restrictions,
+            restrictions: {},
           }],
         }),
       });
@@ -172,9 +184,8 @@ export function CreateSessionSheet() {
     setAgentId("");
     setMachineId("");
     setDuration("3600");
-    setCapabilities([...readOnlyCapabilities]);
-    setProgram("");
-    setArgs("");
+    setAccessPreset("read-only");
+    setCapabilities([...manualReadOnlyCapabilities]);
   }
 
   return (
@@ -212,7 +223,20 @@ export function CreateSessionSheet() {
                 </Select>
               </Field>
               <Field>
-                <div className="flex items-center justify-between gap-3"><FieldLabel>Capabilities</FieldLabel><div className="flex gap-2"><Button type="button" size="sm" variant="outline" onClick={() => setCapabilities([...readOnlyCapabilities].filter((value) => locallyAllowed.includes(value)))}>Read only</Button><Button type="button" size="sm" variant="outline" onClick={() => setCapabilities([...fullAccessCapabilities].filter((value) => locallyAllowed.includes(value)))}>Full access</Button></div></div>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <FieldLabel>Access</FieldLabel>
+                  <ToggleGroup
+                    aria-label="Access preset"
+                    value={accessPreset ? [accessPreset] : []}
+                    onValueChange={selectAccessPreset}
+                    variant="outline"
+                    size="sm"
+                  >
+                    <ToggleGroupItem type="button" value="read-only" disabled={availablePresets["read-only"].length === 0}>Read only</ToggleGroupItem>
+                    <ToggleGroupItem type="button" value="shell" disabled={availablePresets.shell.length === 0}>Shell access</ToggleGroupItem>
+                    <ToggleGroupItem type="button" value="full" disabled={availablePresets.full.length === 0}>Full access</ToggleGroupItem>
+                  </ToggleGroup>
+                </div>
                 <div className="rounded-lg border p-3">
                   {manualCapabilityGroups.flatMap((group) => group.capabilities).map((capability) => (
                     <label key={capability.value} className="flex items-center gap-2 py-1.5 text-sm">
@@ -222,8 +246,12 @@ export function CreateSessionSheet() {
                   ))}
                 </div>
               </Field>
-              {capabilities.includes("process.exec") ? <><Field><FieldLabel htmlFor="session-program">Program</FieldLabel><Input id="session-program" value={program} onChange={(event) => setProgram(event.target.value)} required /></Field><Field><FieldLabel htmlFor="session-args">Arguments</FieldLabel><Input id="session-args" value={args} onChange={(event) => setArgs(event.target.value)} /></Field></> : null}
-              {capabilities.includes("process.shell") ? <p className="text-sm text-amber-700 dark:text-amber-400">Shell access can run arbitrary commands as the local OS user and always requires explicit approval.</p> : null}
+              {capabilities.includes("process.shell") ? (
+                <Alert>
+                  <AlertTitle>Shell access</AlertTitle>
+                  <AlertDescription>Commands run as the local Client user until this Session expires.</AlertDescription>
+                </Alert>
+              ) : null}
             </FieldGroup>
           </div>
           <SheetFooter className="border-t">
@@ -250,8 +278,4 @@ function machineProfile(runtime: unknown): string {
   if (!runtime || typeof runtime !== "object") return "default";
   const profiles = (runtime as { profiles?: Array<{ name?: string }> }).profiles;
   return profiles?.find((profile) => profile.name === "default")?.name ?? profiles?.[0]?.name ?? "default";
-}
-
-function splitArguments(value: string): string[] {
-  return value.trim() ? value.trim().split(/\s+/u) : [];
 }

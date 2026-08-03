@@ -24,6 +24,7 @@ import {
   nextUserTheme,
 } from "../apps/web/src/lib/theme-cycle.js";
 import {
+  capabilitiesForManualPreset,
   isReadOnlyPreset,
   readOnlyCapabilities,
   fullAccessCapabilities,
@@ -270,6 +271,48 @@ describe("web authentication boundaries", () => {
     expect(isFullAccessPreset(enabled)).toBe(true);
     expect(toggleFullAccessPreset(enabled)).toEqual([]);
   });
+
+  it("maps manual Session presets to intent-level capabilities", () => {
+    const locallyAllowed = [
+      "process.exec",
+      "process.shell",
+      "fs.stat",
+      "fs.list",
+      "fs.search",
+      "fs.read",
+      "fs.write",
+      "fs.mkdir",
+      "fs.remove",
+      "docker.logs",
+    ] as const;
+
+    expect(capabilitiesForManualPreset("read-only", locallyAllowed)).toEqual([
+      "fs.stat",
+      "fs.list",
+      "fs.search",
+      "fs.read",
+    ]);
+    expect(capabilitiesForManualPreset("shell", locallyAllowed)).toEqual([
+      "process.shell",
+    ]);
+    expect(capabilitiesForManualPreset("full", locallyAllowed)).toEqual([
+      "process.shell",
+      "fs.stat",
+      "fs.list",
+      "fs.search",
+      "fs.read",
+      "fs.write",
+      "fs.mkdir",
+      "fs.remove",
+    ]);
+  });
+
+  it("cannot grant shell access beyond the machine Local Policy", () => {
+    expect(capabilitiesForManualPreset("shell", ["fs.read"])).toEqual([]);
+    expect(
+      capabilitiesForManualPreset("full", ["fs.read", "fs.write"]),
+    ).toEqual(["fs.read", "fs.write"]);
+  });
 });
 
 describe("dashboard navigation performance boundary", () => {
@@ -405,6 +448,11 @@ describe("dashboard navigation performance boundary", () => {
     expect(sessionForm).not.toContain("session-container");
     expect(sessionForm).not.toContain("restrictions.filesystem");
     expect(sessionForm).not.toContain("restrictions.docker");
+    expect(sessionForm).not.toContain("session-program");
+    expect(sessionForm).not.toContain("session-args");
+    expect(sessionForm).not.toContain("splitArguments");
+    expect(sessionForm).toContain('value="shell"');
+    expect(sessionForm).toContain("Shell access");
     expect(sessionList).toContain("toolbarAction={<CreateSessionSheet />}");
     expect(sessionsPage).not.toContain("action={<CreateSessionSheet />}");
     expect(sessionsLoading).toContain("toolbarAction");

@@ -70,6 +70,11 @@ grant it only the workspace, executables, Docker access, and services an agent a
 Prefer typed filesystem operations and `process.exec`. Grant `process.shell`, filesystem writes,
 removal, or Docker access only when the task requires them.
 
+Dashboard access presets are convenience mappings, not new authority. **Shell access** grants only
+`process.shell`; **Full access** adds the structured filesystem capabilities available in the
+Client Local Policy. Neither preset bypasses that policy, changes the operating-system user, or
+grants `sudo`, administrator, or root privileges.
+
 ## Privacy
 
 Privacy-minimal Session Timeline events contain verified lifecycle metadata, sanitized command

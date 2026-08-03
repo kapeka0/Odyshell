@@ -186,6 +186,12 @@ command and status in the Timeline after secret redaction. It is appropriate for
 where the Agent must inspect one result before choosing the next command. It does not create a
 persistent terminal or PTY: every Operation has an explicit working directory and deadline.
 
+Manual dashboard creation uses intent-level presets rather than process restrictions. `Read only`
+maps to structured filesystem reads, `Shell access` maps only to `process.shell`, and `Full access`
+maps to `process.shell` plus structured filesystem reads and writes. Every mapping is intersected
+with the Client Local Policy and runs without privilege elevation. Exact `process.exec` program and
+argument restrictions remain an Agent, MCP, API, SDK, and CLI concern.
+
 ### Duration and renewal
 
 Session presets are 15 minutes, 1 hour, 4 hours, 8 hours, and 24 hours. The default is one hour,

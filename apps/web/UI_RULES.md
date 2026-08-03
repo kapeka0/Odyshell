@@ -246,9 +246,12 @@ particular component, library or interaction pattern.
   capabilities. Do not ask for a filesystem path or Docker container there.
   Filesystem capabilities apply across the machine subject to its local policy;
   Docker log access remains outside this manual flow. Offline machines and
-  Agents without an active credential remain visible but disabled. Read only
-  and Full access are shortcuts; shell access includes an explicit warning and
-  is never autoapproved.
+  Agents without an active credential remain visible but disabled. Use the
+  intent-level Read only, Shell access and Full access presets. Shell access
+  selects only `process.shell`; Full access combines it with every manual
+  filesystem capability allowed locally. Do not expose exact process programs
+  or arguments in this form. Keep `process.exec` for Agent, MCP and API flows.
+  Shell access includes an explicit warning and is never autoapproved.
 - Session nodes on the canvas show the requesting Agent first, otherwise the
   responsible human, in a quiet footer. Use System when no actor exists.
 - Personal settings and workspace settings have separate destinations.

@@ -18,9 +18,19 @@ Every request has a short title used in tables, notifications and the canvas. A 
 optional.
 
 Workspace members can also select **New** on the Sessions page. Choose an Agent with an active
-credential, an online machine, a duration, and capabilities. Manual filesystem capabilities apply
-across that machine subject to its local Client policy; Docker log access is requested through an
-Agent flow with an exact container. A manual Session is approved by its creator and opens
+credential, an online machine, a duration, and an access preset:
+
+- **Read only** grants structured filesystem inspection and reading.
+- **Shell access** lets the Agent run successive shell commands and use each result to decide the
+  next command.
+- **Full access** combines shell access with structured filesystem reading, writing, directory
+  creation, and removal.
+
+The capability list can narrow a preset further. These presets never elevate privileges: they are
+intersected with the machine's Client policy and run as its operating-system user. Manual
+filesystem capabilities apply across that machine. Exact `process.exec` and Docker requests remain
+available through Agent, MCP, and API flows instead of exposing low-level program arguments or
+container restrictions in this form. A manual Session is approved by its creator and opens
 immediately when that Agent has an active MCP installation. Otherwise, the Agent claims the
 approved request when it next connects.
 

@@ -29,6 +29,44 @@ export const fullAccessCapabilities: Capability[] = [
   "docker.logs",
 ];
 
+export type ManualAccessPreset = "read-only" | "shell" | "full";
+
+export const manualReadOnlyCapabilities = readOnlyCapabilities.filter(
+  (capability) => capability !== "docker.logs",
+);
+
+export const shellAccessCapabilities: Capability[] = ["process.shell"];
+
+export const manualFullAccessCapabilities = fullAccessCapabilities.filter(
+  (capability) =>
+    capability !== "process.exec" && capability !== "docker.logs",
+);
+
+export const manualSessionCapabilities: Capability[] = [
+  ...new Set([
+    ...manualReadOnlyCapabilities,
+    ...manualFullAccessCapabilities,
+  ]),
+];
+
+const manualPresetCapabilities: Record<
+  ManualAccessPreset,
+  readonly Capability[]
+> = {
+  "read-only": manualReadOnlyCapabilities,
+  shell: shellAccessCapabilities,
+  full: manualFullAccessCapabilities,
+};
+
+export function capabilitiesForManualPreset(
+  preset: ManualAccessPreset,
+  locallyAllowed: readonly Capability[],
+): Capability[] {
+  return manualPresetCapabilities[preset].filter((capability) =>
+    locallyAllowed.includes(capability),
+  );
+}
+
 export function isReadOnlyPreset(capabilities: Capability[]): boolean {
   return (
     capabilities.length === readOnlyCapabilities.length &&
