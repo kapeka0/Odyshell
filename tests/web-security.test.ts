@@ -767,6 +767,26 @@ describe("dashboard navigation performance boundary", () => {
     expect(server).toContain("agent_identity_mismatch");
   });
 
+  it("keeps persistent Agent deletion behind the organization administrator boundary", () => {
+    const route = readFileSync(
+      resolve(
+        process.cwd(),
+        "apps/web/src/app/api/agents/[agentId]/route.ts",
+      ),
+      "utf8",
+    );
+    const list = readFileSync(
+      resolve(process.cwd(), "apps/web/src/components/agent-list.tsx"),
+      "utf8",
+    );
+
+    expect(route).toContain("requireCloudAdminRouteIdentity");
+    expect(route).toContain("agentIdSchema.safeParse");
+    expect(list).not.toContain("currentMemberRole");
+    expect(list).toContain("canDelete");
+    expect(list).toContain("Credentials and active Sessions");
+  });
+
   it("keeps autoapproval policies inactive until an administrator reviews the ceiling", () => {
     const webRoot = resolve(process.cwd(), "apps/web/src");
     const route = readFileSync(

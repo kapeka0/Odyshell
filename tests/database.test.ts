@@ -89,6 +89,28 @@ describe("server storage boundaries", () => {
     expect(creation).toContain(".forShare()");
   });
 
+  it("deletes persistent Agent hierarchies without erasing their audit identity", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const deletion = database.slice(
+      database.indexOf("async deleteWorkspaceAgent("),
+      database.indexOf("async proposeAgentPolicy("),
+    );
+
+    expect(deletion).toContain("this.db.transaction()");
+    expect(deletion).toContain('.where("workspaceId", "=", workspaceId)');
+    expect(deletion).toContain('.where("parentAgentId", "=", agentId)');
+    expect(deletion).toContain('.updateTable("agentCredentials")');
+    expect(deletion).toContain('.updateTable("agentPolicies")');
+    expect(deletion).toContain('deletedAt: now');
+    expect(deletion).not.toContain('.deleteFrom("agents")');
+    expect(deletion.indexOf('.updateTable("agentCredentials")')).toBeLessThan(
+      deletion.indexOf('.updateTable("agents")'),
+    );
+  });
+
   it("expands identity and authority without making legacy sessions canonical", () => {
     const database = readFileSync(
       resolve(process.cwd(), "apps/server/src/database.ts"),

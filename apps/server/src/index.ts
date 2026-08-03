@@ -30,6 +30,7 @@ import {
   cloudWebKey,
   cloudWebUrl,
   createDeviceUserCode,
+  deleteCloudAgentSchema,
   entitlementsFor,
   exchangeDeviceAuthorizationSchema,
   FixedWindowRateLimiter,
@@ -679,6 +680,51 @@ async function revokeWorkspaceMachine(
     cancelledOperations: machine.operationIds.length,
     closedSessions: machine.sessionIds.length,
     disconnected,
+  };
+}
+
+async function deleteWorkspaceAgent(
+  workspaceId: string,
+  principalId: string,
+  agentId: string,
+): Promise<{
+  deletedAgents: number;
+  terminatedSessions: number;
+} | null> {
+  const hierarchy = await db.deleteWorkspaceAgent(workspaceId, agentId);
+  if (!hierarchy) return null;
+  let terminatedSessions = 0;
+  for (const session of hierarchy.sessionIds) {
+    const termination = await db.cancelAgentSession({
+      workspaceId,
+      sessionId: session.id,
+      agentId: session.agentId,
+      reason: "revoked",
+    });
+    if (!termination?.transitioned) continue;
+    terminatedSessions += 1;
+    for (const operation of termination.operations) {
+      gateway.send(operation.machineId, {
+        type: "operation.cancel",
+        operationId: operation.id,
+      });
+    }
+    for (const target of termination.targets) {
+      gateway.send(target.machineId, {
+        type: "session.close",
+        sessionId: target.runtimeSessionId,
+        reason: "agent_deleted",
+      });
+    }
+  }
+  await audit(db, workspaceId, principalId, "agent.deleted", "agent", agentId, {
+    deletedAgents: hierarchy.agentIds.length,
+    terminatedSessions,
+  });
+  gateway.notifyWorkspace(workspaceId);
+  return {
+    deletedAgents: hierarchy.agentIds.length,
+    terminatedSessions,
   };
 }
 
@@ -2151,6 +2197,29 @@ app.post(
 );
 
 app.post(
+  "/v1/internal/cloud/agents/delete",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = deleteCloudAgentSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request", details: parsed.error.issues });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const result = await deleteWorkspaceAgent(
+      context.workspace.id,
+      parsed.data.userId,
+      parsed.data.agentId,
+    );
+    if (!result) return reply.code(404).send({ error: "agent_not_found" });
+    return { deleted: true, ...result };
+  },
+);
+
+app.post(
   "/v1/internal/cloud/machines/ping",
   { preHandler: requireWeb },
   async (request, reply) => {
@@ -2517,6 +2586,25 @@ app.delete<{ Params: { machineId: string } }>(
     );
     if (!result) return reply.code(404).send({ error: "active_machine_not_found" });
     return result;
+  },
+);
+
+app.delete<{ Params: { agentId: string } }>(
+  "/v1/admin/agents/:agentId",
+  { preHandler: [requireAdmin, requireAdminWorkspace] },
+  async (request, reply) => {
+    const parsed = z.string().uuid().safeParse(request.params.agentId);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_agent_id" });
+    }
+    const workspaceId = adminWorkspaceFor(request);
+    const result = await deleteWorkspaceAgent(
+      workspaceId,
+      adminPrincipalFor(request),
+      parsed.data,
+    );
+    if (!result) return reply.code(404).send({ error: "agent_not_found" });
+    return { deleted: true, ...result };
   },
 );
 

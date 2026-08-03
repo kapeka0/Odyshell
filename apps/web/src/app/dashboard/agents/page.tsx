@@ -16,7 +16,10 @@ export default function AgentsPage() {
       {state.status !== "ready" ? (
         <DashboardStateNotice state={state} />
       ) : (
-        <AgentList agents={state.context.agents} />
+        <AgentList
+          agents={state.context.agents}
+          canDelete={state.context.currentMemberRole === "admin"}
+        />
       )}
     </DashboardPage>
   );

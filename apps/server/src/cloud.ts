@@ -74,6 +74,10 @@ export const revokeCloudMachineSchema = cloudIdentitySchema.extend({
   machineId: z.string().uuid(),
 });
 
+export const deleteCloudAgentSchema = cloudIdentitySchema.extend({
+  agentId: z.string().uuid(),
+});
+
 const cloudLiveClaimsSchema = z.object({
   workspaceId: z.string().min(1).max(128),
   userId: z.string().min(1).max(256),

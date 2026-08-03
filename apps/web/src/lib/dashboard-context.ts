@@ -17,7 +17,7 @@ export type DashboardState =
   | { status: "unavailable"; message: string };
 
 export const dashboardState = cache(async (): Promise<DashboardState> => {
-  const { userId } = await auth();
+  const { userId, orgRole } = await auth();
   if (!userId) redirect("/sign-in?redirect_url=%2Fdashboard");
 
   const identity = await currentCloudIdentity();
@@ -25,13 +25,20 @@ export const dashboardState = cache(async (): Promise<DashboardState> => {
 
   try {
     const [context, members] = await Promise.all([
-      cloudRequest<Omit<CloudContext, "members">>(
+      cloudRequest<Omit<CloudContext, "members" | "currentMemberRole">>(
         "/v1/internal/cloud/context",
         identity,
       ),
       organizationMembers(identity.organization.externalId),
     ]);
-    return { status: "ready", context: { ...context, members } };
+    return {
+      status: "ready",
+      context: {
+        ...context,
+        members,
+        currentMemberRole: orgRole === "org:admin" ? "admin" : "member",
+      },
+    };
   } catch (reason) {
     return {
       status: "unavailable",

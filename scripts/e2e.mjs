@@ -3112,6 +3112,41 @@ try {
     const serverLogs = await compose(["logs", "--no-color", "--tail", "100", "server"]);
     throw new Error(`${error.message}\n${serverLogs}`);
   }
+  const deletedAgentResponse = await fetch(
+    new URL(`/v1/admin/agents/${agentCredential.agentId}`, apiUrl),
+    {
+      method: "DELETE",
+      headers: { "x-odyshell-admin-key": adminKey },
+    },
+  );
+  const deletedAgent = await deletedAgentResponse.json();
+  if (
+    deletedAgentResponse.status !== 200 ||
+    deletedAgent.deleted !== true ||
+    deletedAgent.deletedAgents < 1
+  ) {
+    throw new Error("An administrator could not delete an Agent hierarchy");
+  }
+  const agentsAfterDelete = await api("/v1/admin/agents", {
+    headers: { "x-odyshell-admin-key": adminKey },
+  });
+  if (agentsAfterDelete.data.some((agent) => agent.id === agentCredential.agentId)) {
+    throw new Error("A deleted Agent remained in the active Workspace list");
+  }
+  const deletedCredentialResponse = await fetch(
+    new URL("/v1/agent-session-requests", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${rotatedAgentCredential.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({}),
+    },
+  );
+  if (deletedCredentialResponse.status !== 401) {
+    throw new Error("Deleting an Agent did not revoke its active Credential");
+  }
   const retainedRows = (
     await compose([
       "exec",
@@ -3197,6 +3232,7 @@ try {
           odsPing: true,
           authorityCutover: true,
           agentIdentityListed: true,
+          agentIdentityDeletion: true,
           legacyAgentAccessRejected: true,
           sessionBoundedByCredential: true,
           capabilityScopeDenied: true,

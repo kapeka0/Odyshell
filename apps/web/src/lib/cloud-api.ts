@@ -152,6 +152,7 @@ export type ControlEvent = {
 };
 
 export type CloudContext = {
+  currentMemberRole: "admin" | "member";
   organization: {
     id: string;
     slug: string;

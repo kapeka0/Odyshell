@@ -3282,6 +3282,68 @@ export class PostgresDatabase {
     ).map(agentIdentityRecord);
   }
 
+  async deleteWorkspaceAgent(
+    workspaceId: string,
+    agentId: string,
+  ): Promise<{
+    agentIds: string[];
+    sessionIds: Array<{ id: string; agentId: string }>;
+  } | null> {
+    return await this.db.transaction().execute(async (transaction) => {
+      const now = new Date();
+      const agent = await transaction
+        .selectFrom("agents")
+        .select(["id", "kind"])
+        .where("workspaceId", "=", workspaceId)
+        .where("id", "=", agentId)
+        .where("deletedAt", "is", null)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!agent) return null;
+
+      const descendants = agent.kind === "independent"
+        ? await transaction
+            .selectFrom("agents")
+            .select("id")
+            .where("workspaceId", "=", workspaceId)
+            .where("parentAgentId", "=", agentId)
+            .where("kind", "=", "managed")
+            .where("deletedAt", "is", null)
+            .forUpdate()
+            .execute()
+        : [];
+      const agentIds = [agent.id, ...descendants.map((value) => value.id)];
+      await transaction
+        .updateTable("agentCredentials")
+        .set({ status: "revoked", revokedAt: now, retiringAt: null })
+        .where("workspaceId", "=", workspaceId)
+        .where("agentId", "in", agentIds)
+        .where("revokedAt", "is", null)
+        .execute();
+      await transaction
+        .updateTable("agentPolicies")
+        .set({ status: "revoked", updatedAt: now })
+        .where("workspaceId", "=", workspaceId)
+        .where("agentId", "in", agentIds)
+        .where("status", "in", ["active", "paused", "proposed"])
+        .execute();
+      await transaction
+        .updateTable("agents")
+        .set({ status: "disabled", deletedAt: now, updatedAt: now })
+        .where("workspaceId", "=", workspaceId)
+        .where("id", "in", agentIds)
+        .execute();
+      const sessions = await transaction
+        .selectFrom("agentSessions")
+        .select(["id", "agentId"])
+        .where("workspaceId", "=", workspaceId)
+        .where("agentId", "in", agentIds)
+        .where("status", "=", "active")
+        .execute();
+      return { agentIds, sessionIds: sessions };
+    });
+  }
+
   async proposeAgentPolicy(input: {
     workspaceId: string;
     id: string;
