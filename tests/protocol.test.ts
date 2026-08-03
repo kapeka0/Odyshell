@@ -58,6 +58,24 @@ describe("protocol validation", () => {
     ).toThrowError(/process\.exec/);
   });
 
+  it("accepts an absolute working directory for an exact process operation", () => {
+    const cwd = process.platform === "win32" ? "C:\\Windows" : "/tmp";
+    const parsed = operationRequestSchema.parse({
+      action: {
+        kind: "process.exec",
+        program: process.execPath,
+        args: ["--version"],
+        cwd,
+        env: {},
+      },
+    });
+
+    expect(parsed.action).toMatchObject({
+      kind: "process.exec",
+      cwd: cwd.replaceAll("\\", "/"),
+    });
+  });
+
   it("merges several exact operations into one scope per machine", () => {
     const scopes = operationSessionScopes([
       {

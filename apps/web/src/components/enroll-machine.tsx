@@ -32,7 +32,9 @@ import { Spinner } from "@/components/ui/spinner";
 import { toast } from "@/components/ui/toast";
 import {
   capabilityGroups,
+  isFullAccessPreset,
   isReadOnlyPreset,
+  toggleFullAccessPreset,
   toggleReadOnlyPreset,
 } from "@/lib/agent-access-options";
 import { machineEnrollmentCommand } from "@/lib/enrollment-command";
@@ -69,6 +71,7 @@ export function EnrollMachine({
   );
   const [pending, setPending] = useState(false);
   const readOnlyEnabled = isReadOnlyPreset(capabilities);
+  const fullAccessEnabled = isFullAccessPreset(capabilities);
 
   const command = enrollment
     ? machineEnrollmentCommand({
@@ -213,18 +216,32 @@ export function EnrollMachine({
                     The Client enforces this maximum policy on the machine.
                   </FieldDescription>
                 </div>
-                <Button
-                  type="button"
-                  variant={readOnlyEnabled ? "default" : "outline"}
-                  size="sm"
-                  aria-pressed={readOnlyEnabled}
-                  onClick={() => {
-                    setCapabilities(toggleReadOnlyPreset(capabilities));
-                    setCapabilitiesError(null);
-                  }}
-                >
-                  Read-only
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant={readOnlyEnabled ? "default" : "outline"}
+                    size="sm"
+                    aria-pressed={readOnlyEnabled}
+                    onClick={() => {
+                      setCapabilities(toggleReadOnlyPreset(capabilities));
+                      setCapabilitiesError(null);
+                    }}
+                  >
+                    Read only
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={fullAccessEnabled ? "default" : "outline"}
+                    size="sm"
+                    aria-pressed={fullAccessEnabled}
+                    onClick={() => {
+                      setCapabilities(toggleFullAccessPreset(capabilities));
+                      setCapabilitiesError(null);
+                    }}
+                  >
+                    Full access
+                  </Button>
+                </div>
               </div>
               <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
                 {capabilityGroups.map((group) => (

@@ -108,14 +108,13 @@ Create a one-time enrollment token:
 ods token create
 ```
 
-On a Linux, macOS, or Windows machine, connect a workspace and start the persistent outbound Client:
+On a Linux, macOS, or Windows machine, connect it and start the persistent outbound Client:
 
 ```bash
 ods up \
   --server http://127.0.0.1:4100 \
   --token <token> \
   --name my-machine \
-  --workspace /srv/my-app \
   --allow 'process.exec,fs.stat,fs.list,fs.search,fs.read,fs.write'
 ```
 

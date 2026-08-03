@@ -233,7 +233,7 @@ export const sessionProcessRuleSchema = z
     args: z.array(z.string().max(16_384)).max(256),
     cwd: z
       .object({
-        path: relativePathSchema.transform(normalizeRelativePath),
+        path: filesystemPathSchema.transform(normalizeOperationPath),
         includeDescendants: z.boolean().default(false),
       })
       .strict(),
@@ -540,7 +540,7 @@ const processExecOperationActionSchema = z
       .max(256)
       .default([])
       .describe("Exact argument array to authorize and run."),
-    cwd: relativePathSchema.default("."),
+    cwd: filesystemPathSchema.transform(normalizeOperationPath).default("."),
     env: operationEnvironmentSchema.default({}),
   })
   .describe(
@@ -550,7 +550,7 @@ const processExecOperationActionSchema = z
 const processShellOperationActionSchema = z.object({
   kind: z.literal("process.shell"),
   command: z.string().min(1).max(65_536),
-  cwd: relativePathSchema.default("."),
+  cwd: filesystemPathSchema.transform(normalizeOperationPath).default("."),
   env: operationEnvironmentSchema.default({}),
 });
 
@@ -777,7 +777,7 @@ export function operationSessionScope(
               program: action.program,
               args: action.args,
               cwd: {
-                path: normalizeRelativePath(action.cwd),
+                path: normalizeOperationPath(action.cwd),
                 includeDescendants: false,
               },
             }],

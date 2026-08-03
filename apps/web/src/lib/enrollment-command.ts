@@ -19,8 +19,6 @@ export function machineEnrollmentCommand(options: {
     options.token,
     "--name",
     options.machineName,
-    "--workspace",
-    ".",
     "--allow",
     options.capabilities.join(","),
   );

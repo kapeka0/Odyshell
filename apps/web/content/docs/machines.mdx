@@ -1,6 +1,6 @@
 ---
 title: Machines
-description: Enroll a machine, choose its local boundary, and keep its Client connected.
+description: Enroll a machine, choose its local capabilities, and keep its Client connected.
 ---
 
 Install the CLI on the target machine with Node.js 24 or newer:
@@ -17,8 +17,7 @@ Open **Machines**, select **Add**, and configure:
 - the capabilities the machine will accept.
 
 Odyshell generates an `ods up` command containing a single-use enrollment token. Run it on the
-target machine from the directory the Client should make available. The generated command uses
-`--workspace .`. The token expires after ten minutes and cannot be replayed.
+target machine. The token expires after ten minutes and cannot be replayed.
 
 `ods up` installs and starts a restartable user service on Linux, macOS, and Windows. After
 enrollment, use:
@@ -35,9 +34,10 @@ require administrator privileges.
 
 ## Local policy
 
-The `--workspace` directory is the default filesystem boundary for typed filesystem operations.
-Restricted Sessions may request an exact absolute path on a host profile, which is shown explicitly
-for approval. Docker profiles cannot use absolute host paths.
+Relative paths resolve from the directory where the Client Profile was first enrolled. Restricted
+Sessions may also request an exact absolute path or process working directory on a host profile;
+that path is shown explicitly for approval. Docker profiles remain limited to their mounted
+directory and cannot use absolute host paths.
 Capabilities are default-deny and comma-separated:
 
 ```bash
@@ -49,7 +49,7 @@ An agent can only use the intersection of its credential policy and the machine'
 ## Client Profiles
 
 A host can run several named Client Profiles at the same time. Each Profile keeps an independent
-Server, Workspace, machine identity, local root, capabilities, state directory, and background
+Server, Workspace, machine identity, relative-path base, capabilities, state directory, and background
 service:
 
 ```bash

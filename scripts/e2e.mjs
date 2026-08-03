@@ -307,7 +307,7 @@ try {
         enrollment.token,
         "--name",
         "e2e-docker",
-        "--workspace",
+        "--cwd",
         workspace,
         "--allow",
         clientCapabilities.join(","),

@@ -16,6 +16,19 @@ export const readOnlyCapabilities: Capability[] = [
   "docker.logs",
 ];
 
+export const fullAccessCapabilities: Capability[] = [
+  "process.exec",
+  "process.shell",
+  "fs.stat",
+  "fs.list",
+  "fs.search",
+  "fs.read",
+  "fs.write",
+  "fs.mkdir",
+  "fs.remove",
+  "docker.logs",
+];
+
 export function isReadOnlyPreset(capabilities: Capability[]): boolean {
   return (
     capabilities.length === readOnlyCapabilities.length &&
@@ -29,6 +42,19 @@ export function toggleReadOnlyPreset(
   capabilities: Capability[],
 ): Capability[] {
   return isReadOnlyPreset(capabilities) ? [] : [...readOnlyCapabilities];
+}
+
+export function isFullAccessPreset(capabilities: Capability[]): boolean {
+  return (
+    capabilities.length === fullAccessCapabilities.length &&
+    fullAccessCapabilities.every((capability) =>
+      capabilities.includes(capability),
+    )
+  );
+}
+
+export function toggleFullAccessPreset(capabilities: Capability[]): Capability[] {
+  return isFullAccessPreset(capabilities) ? [] : [...fullAccessCapabilities];
 }
 
 export const capabilityGroups: Array<{
@@ -65,12 +91,12 @@ export const capabilityGroups: Array<{
       {
         value: "fs.list",
         label: "List directories",
-        description: "List entries inside the machine workspace.",
+        description: "List entries on the machine.",
       },
       {
         value: "fs.search",
         label: "Search files",
-        description: "Search names inside the machine workspace.",
+        description: "Search names on the machine.",
       },
       {
         value: "fs.read",
@@ -85,7 +111,7 @@ export const capabilityGroups: Array<{
       {
         value: "fs.mkdir",
         label: "Create directories",
-        description: "Create directories inside the workspace.",
+        description: "Create directories on the machine.",
       },
       {
         value: "fs.remove",

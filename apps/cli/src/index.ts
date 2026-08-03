@@ -1083,7 +1083,7 @@ program
   .description("enroll this machine if needed and start its background Client")
   .option("--token <token>", "one-time enrollment token")
   .option("--name <name>", "machine name")
-  .option("--workspace <path>", "workspace available to operations")
+  .option("--cwd <path>", "base directory for relative paths", ".")
   .option("--allow <capabilities>", "comma-separated local capabilities")
   .option("--runner <runner>", "host or docker", "host")
   .option("--image <image>", "Docker profile image", "alpine:3.22")
@@ -1094,7 +1094,7 @@ program
       options: {
         token?: string;
         name?: string;
-        workspace?: string;
+        cwd: string;
         allow?: string;
         runner: string;
         image: string;
@@ -1120,7 +1120,7 @@ program
           serverUrl: apiConfig.serverUrl,
           token: requiredValue(options.token, "--token"),
           machineName: requiredValue(options.name, "--name"),
-          workspaceRoot: requiredValue(options.workspace, "--workspace"),
+          workspaceRoot: resolve(options.cwd),
           allowedCapabilities: parseCapabilities(requiredValue(options.allow, "--allow")),
           runner: parseRunner(options.runner),
           image: options.image,
@@ -1175,7 +1175,7 @@ program
         alreadyRunning: previousStatus?.active ?? false,
         enrollmentOptionsIgnored:
           configFound &&
-          [options.token, options.name, options.workspace, options.allow].some(
+          [options.token, options.name, options.allow].some(
             (value) => value !== undefined,
           ),
         ...(enrollment ?? {}),
@@ -1326,7 +1326,7 @@ client
   .description("enroll this machine with an Odyshell server")
   .requiredOption("--token <token>", "one-time enrollment token")
   .requiredOption("--name <name>", "machine name")
-  .requiredOption("--workspace <path>", "workspace exposed to sessions")
+  .option("--cwd <path>", "base directory for relative paths", ".")
   .requiredOption("--allow <capabilities>", "comma-separated capabilities allowed by this machine")
   .option("--runner <runner>", "host or docker", "host")
   .option("--image <image>", "sandbox image", "alpine:3.22")
@@ -1336,7 +1336,7 @@ client
       options: {
         token: string;
         name: string;
-        workspace: string;
+        cwd: string;
         allow: string;
         runner: string;
         image: string;
@@ -1350,7 +1350,7 @@ client
         serverUrl: config.serverUrl,
         token: options.token,
         machineName: options.name,
-        workspaceRoot: options.workspace,
+        workspaceRoot: resolve(options.cwd),
         allowedCapabilities: parseCapabilities(options.allow),
         runner: parseRunner(options.runner),
         image: options.image,

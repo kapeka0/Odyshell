@@ -111,7 +111,6 @@ ods up \
   --server https://ods.example.com \
   --token <enrollment-token> \
   --name my-machine \
-  --workspace /srv/my-app \
   --allow 'process.exec,fs.stat,fs.list,fs.search,fs.read'
 ```
 

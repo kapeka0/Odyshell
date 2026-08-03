@@ -34,15 +34,15 @@ ods up \
   --profile default \
   --token <token> \
   --name raspberry \
-  --workspace /srv/my-app \
   --allow 'process.exec,fs.stat,fs.list,fs.search,fs.read,fs.write'
 ```
 
 `ods up` enrolls the machine and starts a restartable user service: systemd on Linux, a LaunchAgent
 on macOS, or a per-user Task Scheduler task with a native no-console launcher on Windows. The command returns after
 the background Client starts, and closing the terminal does not disconnect the machine. No
-administrator privileges are required. The workspace,
-operating-system user, and `--allow` list form the local policy. The Server and remote agents
+administrator privileges are required. The operating-system user and `--allow` list form the
+local policy. Relative paths start from the enrollment directory; exact absolute host paths can
+be approved per Session. The Server and remote agents
 cannot grant themselves capabilities that the Client has not explicitly allowed.
 
 Running the generated `ods up` command again is safe: if the selected Profile is already running,

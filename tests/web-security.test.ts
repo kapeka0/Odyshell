@@ -26,7 +26,10 @@ import {
 import {
   isReadOnlyPreset,
   readOnlyCapabilities,
+  fullAccessCapabilities,
+  isFullAccessPreset,
   toggleReadOnlyPreset,
+  toggleFullAccessPreset,
 } from "../apps/web/src/lib/agent-access-options.js";
 import {
   deviceApprovalErrorPath,
@@ -216,6 +219,7 @@ describe("web authentication boundaries", () => {
       "--server 'https://self-hosted.example/api?mode=one&next=ignored'",
     );
     expect(command).toContain("--allow 'fs.read,docker.logs'");
+    expect(command).not.toContain("--workspace");
     expect(posixShellArgument("value'with-quote")).toBe(
       "'value'\"'\"'with-quote'",
     );
@@ -258,6 +262,13 @@ describe("web authentication boundaries", () => {
     expect(isReadOnlyPreset(enabled)).toBe(true);
     expect(toggleReadOnlyPreset(enabled)).toEqual([]);
     expect(isReadOnlyPreset(["fs.read"])).toBe(false);
+  });
+
+  it("selects every local capability with the full-access preset", () => {
+    const enabled = toggleFullAccessPreset(["fs.read"]);
+    expect(enabled).toEqual(fullAccessCapabilities);
+    expect(isFullAccessPreset(enabled)).toBe(true);
+    expect(toggleFullAccessPreset(enabled)).toEqual([]);
   });
 });
 

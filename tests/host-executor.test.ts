@@ -59,6 +59,49 @@ describe("HostExecutor", () => {
     );
   });
 
+  it("executes a scoped process from an absolute working directory", async () => {
+    const absoluteCwd = await mkdtemp(join(tmpdir(), "odyshell-cwd-"));
+    try {
+      await executor.closeSession(session);
+      session = await executor.openSession(
+        crypto.randomUUID(),
+        profile(workspace),
+        ["process.exec"],
+        {
+          process: {
+            programs: [{
+              program: process.execPath,
+              args: ["-e", "process.stdout.write(process.cwd())"],
+              cwd: { path: absoluteCwd, includeDescendants: false },
+            }],
+          },
+        },
+        new Date(Date.now() + 60_000),
+        () => {},
+      );
+      const output: Buffer[] = [];
+      const running = await executor.execute(
+        crypto.randomUUID(),
+        session,
+        {
+          kind: "process.exec",
+          program: process.execPath,
+          args: ["-e", "process.stdout.write(process.cwd())"],
+          cwd: absoluteCwd,
+          env: {},
+        },
+        hooks({ stdout: (data) => output.push(data) }),
+      );
+
+      expect((await running.done).exitCode).toBe(0);
+      expect(await realpath(Buffer.concat(output).toString())).toBe(
+        await realpath(absoluteCwd),
+      );
+    } finally {
+      await rm(absoluteCwd, { recursive: true, force: true });
+    }
+  });
+
   it("delegates typed filesystem write, read, and search operations", async () => {
     await execute({
       kind: "fs.write",

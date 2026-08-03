@@ -20,7 +20,7 @@ import {
 import {
   executeFilesystemOperation,
   isFilesystemAction,
-  resolveWorkspacePath,
+  resolveProcessWorkingDirectory,
 } from "./filesystem-operations.js";
 
 export class HostExecutor implements OperationExecutor {
@@ -121,7 +121,10 @@ export class HostExecutor implements OperationExecutor {
     hooks: OperationHooks,
   ): Promise<RunningOperation> {
     validateEnvironment(action.env);
-    const cwd = await resolveWorkspacePath(session.profile.workspaceRoot, action.cwd);
+    const cwd = await resolveProcessWorkingDirectory(
+      session.profile.workspaceRoot,
+      action.cwd,
+    );
     const command =
       action.kind === "process.exec"
         ? { program: action.program, args: action.args }

@@ -71,6 +71,15 @@ export async function resolveWorkspacePath(
   return candidate;
 }
 
+export async function resolveProcessWorkingDirectory(
+  workingDirectory: string,
+  requestedPath: string,
+): Promise<string> {
+  return isAbsolute(requestedPath)
+    ? realpath(resolve(requestedPath))
+    : resolveWorkspacePath(workingDirectory, requestedPath);
+}
+
 export async function resolveFilesystemPath(
   workspaceRoot: string,
   requestedPath: string,
