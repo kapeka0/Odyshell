@@ -37,6 +37,7 @@ export type CloudAgent = {
   status: "active" | "disabled";
   parentAgentId: string | null;
   credentialActive: boolean;
+  createdAt: string;
 };
 
 export type CloudSession = {

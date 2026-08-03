@@ -102,6 +102,20 @@ export function AgentList({
             <span className="text-muted-foreground">—</span>
           ),
       },
+      {
+        accessorKey: "createdAt",
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Created" />
+        ),
+        cell: ({ row }) => (
+          <time
+            className="whitespace-nowrap text-muted-foreground"
+            dateTime={row.original.createdAt}
+          >
+            {formatTimestamp(row.original.createdAt)}
+          </time>
+        ),
+      },
       ...(canDelete
         ? [{
             id: "actions",
@@ -143,6 +157,13 @@ export function AgentList({
       ]}
     />
   );
+}
+
+function formatTimestamp(value: string): string {
+  return new Intl.DateTimeFormat("en", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
 }
 
 function AgentActions({

@@ -223,6 +223,7 @@ particular component, library or interaction pattern.
 - Machine and Session collection rows omit internal IDs. Reveal copyable IDs
   only in their detail views, and show a Session's truncated purpose beneath
   its title in the collection.
+- Agent rows show when the identity was created in the viewer's local timezone.
 - Users can permanently delete any Agent from its actions. Deletion closes
   active sessions, requires confirmation and retains Control Events according
   to the workspace retention policy.

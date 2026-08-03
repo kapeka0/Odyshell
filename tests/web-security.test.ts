@@ -1182,4 +1182,29 @@ describe("dashboard navigation performance boundary", () => {
     expect(server).toContain("durationSeconds: sessionRequest.durationSeconds");
     expect(agentList).not.toContain("summaryLabel=");
   });
+
+  it("shows when each Agent was created", () => {
+    const webRoot = resolve(process.cwd(), "apps/web/src");
+    const agentList = readFileSync(
+      resolve(webRoot, "components/agent-list.tsx"),
+      "utf8",
+    );
+    const agentLoading = readFileSync(
+      resolve(webRoot, "app/dashboard/agents/loading.tsx"),
+      "utf8",
+    );
+    const cloudApi = readFileSync(resolve(webRoot, "lib/cloud-api.ts"), "utf8");
+    const server = readFileSync(
+      resolve(process.cwd(), "apps/server/src/index.ts"),
+      "utf8",
+    );
+
+    expect(agentList).toContain('accessorKey: "createdAt"');
+    expect(agentList).toContain('title="Created"');
+    expect(agentList).toContain('dateTime={row.original.createdAt}');
+    expect(agentLoading).toContain("columns={6}");
+    expect(cloudApi).toContain("export type CloudAgent = {");
+    expect(cloudApi).toContain("createdAt: string;");
+    expect(server).toContain("createdAt: isoTimestamp(agent.createdAt)");
+  });
 });

@@ -1378,6 +1378,7 @@ app.post(
         status: agent.status,
         parentAgentId: agent.parentAgentId ?? null,
         credentialActive: runnableAgentIds.includes(agent.id),
+        createdAt: isoTimestamp(agent.createdAt),
       })),
       notifications: notifications.map((notification) => ({
         ...notification,
