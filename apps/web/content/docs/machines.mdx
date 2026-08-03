@@ -64,3 +64,7 @@ resolve the conflict instead of choosing or overwriting one. `--config` remains 
 explicit path and cannot be combined with `--profile`.
 
 Do not reuse or copy a Client configuration between machines.
+
+Remove one local identity with `ods client remove --profile <name>`. To sign out and remove every
+local Profile from a host, run `ods reset --yes`. These commands leave Cloud machine records
+offline until they are removed from the dashboard.

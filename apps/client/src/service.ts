@@ -523,6 +523,15 @@ export async function stopClientService(
   throw new Error(`Background service management does not support ${process.platform}`);
 }
 
+export async function removeClientService(
+  configPath = defaultClientConfigPath(),
+): Promise<void> {
+  if (process.platform === "linux") {
+    return removeLinuxUserService(configPath);
+  }
+  return stopClientService(configPath);
+}
+
 export async function restartClientService(
   configPath = defaultClientConfigPath(),
 ): Promise<void> {

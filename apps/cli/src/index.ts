@@ -18,6 +18,7 @@ import {
   enrollClient,
   inspectClientRuntime,
   installClientService,
+  removeClientProfile,
   removeLinuxUserService,
   runClient,
   stopClientService,
@@ -60,12 +61,13 @@ import {
   serveApprovedOdyshellMcp,
 } from "./mcp.js";
 import { deviceLoginUrl } from "./login.js";
+import { resetLocalOdyshell } from "./reset.js";
 
 const program = new Command();
 program
   .name("ods")
   .description("Agent-first access to private machines")
-  .version("0.9.2")
+  .version("0.10.0")
   .option("-j, --json", "emit stable JSON output")
   .option("--server <url>", "override the Odyshell server URL")
   .option("--workspace-id <id>", "select the administrator workspace")
@@ -429,6 +431,53 @@ program
         );
       }
     }
+  });
+
+program
+  .command("reset")
+  .description("sign out and remove every local Client Profile")
+  .option("--yes", "confirm removal of all local Odyshell identities")
+  .action(async (options: { yes?: boolean }, command: Command) => {
+    if (!options.yes) {
+      throw new ExpectedError(
+        'Reset removes every local Client Profile. Re-run with "ods reset --yes" to confirm.',
+        "reset_confirmation_required",
+      );
+    }
+    const global = globals(command);
+    const configPath = global.configFile
+      ? resolve(global.configFile)
+      : defaultConfigPath();
+    let result;
+    try {
+      result = await resetLocalOdyshell({
+        configPath,
+        revokeCli: async (stored) =>
+          new OdyshellApi({
+            serverUrl: stored.serverUrl,
+            cliToken: stored.cliToken,
+          }).logoutCli().then(() => true),
+      });
+    } catch (error) {
+      throw new ExpectedError(
+        `Could not reset Odyshell: ${error instanceof Error ? error.message : String(error)}`,
+        "reset_failed",
+      );
+    }
+    if (global.json) {
+      printJson({ ...result, configPath });
+      return;
+    }
+    console.log(`${pc.green("✓")} Reset local Odyshell state`);
+    console.log(`  profiles  ${result.removedProfiles.length}`);
+    if (result.revocationAttempted && !result.revoked) {
+      console.error(
+        pc.yellow(
+          "  warning   The Server could not revoke this CLI token. It remains valid until expiry.",
+        ),
+      );
+    }
+    console.log(pc.dim("  Cloud machine records remain available in the dashboard"));
   });
 
 program
@@ -1348,6 +1397,29 @@ client
       console.log(`  profile  ${profileName}`);
       if (status.servicePath) console.log(`  service  ${status.servicePath}`);
     }
+  });
+
+client
+  .command("remove")
+  .description("stop and delete one local Client Profile")
+  .requiredOption("--profile <name>", "Client Profile name")
+  .action(async (options: { profile: string }, command: Command) => {
+    const global = globals(command);
+    let result;
+    try {
+      result = await removeClientProfile({ profileName: options.profile });
+    } catch (error) {
+      throw new ExpectedError(
+        `Could not remove Client Profile "${options.profile}": ${error instanceof Error ? error.message : String(error)}`,
+        "client_profile_remove_failed",
+      );
+    }
+    if (global.json) {
+      printJson({ removed: true, ...result });
+      return;
+    }
+    console.log(`${pc.green("✓")} Removed Client Profile ${result.profileName}`);
+    console.log(pc.dim("  The Cloud machine remains available in the dashboard"));
   });
 
 client

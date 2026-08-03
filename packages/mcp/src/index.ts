@@ -50,7 +50,7 @@ export function createApprovedMcpServer(
   reportUnexpectedError: (error: unknown) => void = () => undefined,
 ): McpServer {
   const server = new McpServer(
-    { name: "odyshell", version: "0.9.2" },
+    { name: "odyshell", version: "0.10.0" },
     {
       instructions:
         "Request an explicit temporary Session for a typed operation. Ask the user to approve the URL, check session_status, then execute. Credentials stay inside Odyshell.",

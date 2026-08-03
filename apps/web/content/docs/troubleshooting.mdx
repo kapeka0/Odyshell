@@ -58,6 +58,17 @@ ods up --profile company <enrollment-options>
 Do not overwrite or copy an existing machine identity. If migration reports two default
 identities, verify which machine is active and remove the unused configuration before retrying.
 
+## `client_config_server_mismatch`
+
+The selected local identity belongs to another Server. Choose an isolated Profile:
+
+```bash
+ods up --profile company <enrollment-options>
+```
+
+Remove a known unused Profile with `ods client remove --profile <name>`. Use `ods reset --yes` only
+when every local Profile and the CLI login on that host should be deleted.
+
 ## `machine_ping_timeout`
 
 The Server knows the machine connection but did not receive the end-to-end pong in time. Check

@@ -354,7 +354,7 @@ try {
     !machine.runtime?.architecture ||
     machine.runtime?.containerOs !== "linux" ||
     machine.runtime?.protocolVersion !== 1 ||
-    machine.runtime?.clientVersion !== "0.9.2" ||
+    machine.runtime?.clientVersion !== "0.10.0" ||
     !machine.runtime?.supportedCapabilities?.includes("fs.read") ||
     machine.compatible !== true ||
     machine.upgradeRequired !== false

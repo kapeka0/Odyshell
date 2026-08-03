@@ -59,6 +59,9 @@ service. Omitting `--profile` selects `default` and imports the previous single 
 configuration on first use. Migration conflicts fail closed. `--config` remains available for an
 explicit path and cannot be combined with `--profile`.
 
+Remove one local Profile with `ods client remove --profile <name>`. Use `ods reset --yes` to sign
+out and remove every local Profile on the host. Cloud machine records remain in the dashboard.
+
 ## Security baseline
 
 - Client configuration is validated locally and fails closed.

@@ -34,7 +34,7 @@ import {
   normalizeServerUrl,
 } from "./platform.js";
 
-export const CLIENT_VERSION = "0.9.2";
+export const CLIENT_VERSION = "0.10.0";
 
 export {
   clientConfigPathForProfile,
@@ -74,6 +74,7 @@ export {
   macLaunchAgentLabelForConfig,
   macLaunchAgentPath,
   removeLinuxUserService,
+  removeClientService,
   renderMacLaunchAgent,
   renderLinuxUserService,
   renderWindowsTaskAction,
@@ -85,6 +86,12 @@ export {
   windowsTaskActionIsCurrent,
   windowsTaskNameForConfig,
 } from "./service.js";
+export {
+  removeAllClientProfiles,
+  removeClientProfile,
+  type RemoveAllClientProfilesOptions,
+  type RemoveClientProfileOptions,
+} from "./profile.js";
 
 export type EnrollClientOptions = {
   serverUrl: string;
