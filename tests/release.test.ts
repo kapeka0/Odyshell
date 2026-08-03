@@ -13,7 +13,7 @@ type PackageManifest = {
   exports?: unknown;
 };
 
-const releaseVersion = "0.10.2";
+const releaseVersion = "0.11.0";
 const manifests = [
   "apps/cli/package.json",
   "apps/client/package.json",
@@ -24,7 +24,7 @@ const manifests = [
   "packages/sdk/package.json",
 ].map(readManifest);
 
-describe("0.10.2 release contract", () => {
+describe("0.11.0 release contract", () => {
   it("exposes the built Server as the root production entrypoint", () => {
     const rootPackage = JSON.parse(
       readFileSync(resolve(process.cwd(), "package.json"), "utf8"),
@@ -88,10 +88,6 @@ describe("0.10.2 release contract", () => {
       resolve(process.cwd(), "apps/cli/src/index.ts"),
       "utf8",
     );
-    const mcp = readFileSync(
-      resolve(process.cwd(), "apps/cli/src/mcp.ts"),
-      "utf8",
-    );
     const approvedMcp = readFileSync(
       resolve(process.cwd(), "packages/mcp/src/index.ts"),
       "utf8",
@@ -103,10 +99,10 @@ describe("0.10.2 release contract", () => {
     expect(cli).toContain(`.version("${releaseVersion}")`);
     expect(client).toContain(`CLIENT_VERSION = "${releaseVersion}"`);
     expect(
-      `${mcp}\n${approvedMcp}`.match(
+      approvedMcp.match(
         new RegExp(`version: "${releaseVersion}"`, "g"),
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 
   it("documents every supported package manager", () => {
@@ -114,7 +110,7 @@ describe("0.10.2 release contract", () => {
       "README.md",
       "apps/cli/README.md",
       "packages/sdk/README.md",
-      "docs/releases/0.10.2.md",
+      "docs/releases/0.11.0.md",
     ]) {
       const documentation = readFileSync(resolve(process.cwd(), path), "utf8");
       for (const manager of ["pnpm", "npm", "Yarn", "Bun"]) {

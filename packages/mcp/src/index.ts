@@ -61,7 +61,7 @@ export function createApprovedMcpServer(
   reportUnexpectedError: (error: unknown) => void = () => undefined,
 ): McpServer {
   const server = new McpServer(
-    { name: "odyshell", version: "0.10.2" },
+    { name: "odyshell", version: "0.11.0" },
     {
       instructions:
         "List machines before choosing platform-specific operations. Request an explicit temporary Session for a typed operation. Relative filesystem paths resolve from the Client working directory; exact absolute host paths are also supported. Absolute paths require an exact approved scope and a host execution profile. Use process.exec for exact executable and argument rules; process.shell is unavailable. When session_request returns an approval URL, show it verbatim as a clickable link and wait for the user to approve or deny it. Then follow nextAction and check session_status before executing. If a tool response is lost, use session_requests_list to recover the request. Credentials stay inside Odyshell.",
