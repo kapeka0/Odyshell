@@ -516,6 +516,29 @@ describe("dashboard navigation performance boundary", () => {
     );
     expect(canvas).toContain('color="var(--color-rule-strong)"');
     expect(canvas).not.toContain('color="var(--muted-foreground)"');
+    const tokens = readFileSync(
+      resolve(process.cwd(), "apps/web/tokens.css"),
+      "utf8",
+    );
+    expect(tokens).toContain("--color-rule-strong: oklch(0.78 0 0)");
+    expect(tokens).toContain("--color-rule-strong: oklch(0.38 0 0)");
+  });
+
+  it("makes the selected sidebar link distinct from hover", () => {
+    const webRoot = resolve(process.cwd(), "apps/web");
+    const sidebarNav = readFileSync(
+      resolve(webRoot, "src/components/sidebar-nav.tsx"),
+      "utf8",
+    );
+    const styles = readFileSync(
+      resolve(webRoot, "src/app/globals.css"),
+      "utf8",
+    );
+
+    expect(sidebarNav).toContain("--sidebar-active");
+    expect(sidebarNav).toContain("--sidebar-active-border");
+    expect(styles).toContain("--sidebar-active: oklch(0.945 0 0)");
+    expect(styles).toContain("--sidebar-active: oklch(0.22 0 0)");
   });
 
   it("keeps operational status colors semantic and fail-safe", () => {

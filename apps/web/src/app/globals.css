@@ -106,6 +106,8 @@
   --sidebar-primary-foreground: var(--color-accent-ink);
   --sidebar-accent: var(--color-paper-soft);
   --sidebar-accent-foreground: var(--color-ink);
+  --sidebar-active: oklch(0.945 0 0);
+  --sidebar-active-border: oklch(0.88 0 0);
   --sidebar-border: var(--color-rule);
   --sidebar-ring: var(--color-focus);
   --chart-1: var(--color-chart-1);
@@ -128,6 +130,8 @@
 
 .dark {
   color-scheme: dark;
+  --sidebar-active: oklch(0.22 0 0);
+  --sidebar-active-border: oklch(0.34 0 0);
 }
 
 @layer base {

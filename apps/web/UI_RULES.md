@@ -149,6 +149,10 @@ particular component, library or interaction pattern.
   Settings action, with comfortable inner padding between actions. Theme
   changes do not need success toasts.
 - Browser icons follow the active system color scheme.
+- Canvas background dots remain quiet but visibly distinct from light-mode
+  borders. Dark mode keeps its existing lower-contrast treatment.
+- The selected sidebar link is one restrained tonal step stronger than hover,
+  with a subtle inset border rather than a high-contrast block.
 - Prefer a user's identity-provider photo. When none exists, generate a
   recognizable face from an opaque identifier without displaying initials or
   sending an email address to an external service.

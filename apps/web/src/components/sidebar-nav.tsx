@@ -50,6 +50,7 @@ export function SidebarNav({
                   />
                 }
                 isActive={active}
+                className="data-active:bg-[var(--sidebar-active)] data-active:shadow-[inset_0_0_0_1px_var(--sidebar-active-border)]"
                 tooltip={item.label}
               >
                 <item.icon aria-hidden="true" />
