@@ -188,6 +188,7 @@ describe("web authentication boundaries", () => {
     expect(assets).toEqual([
       "chatgpt.svg",
       "claude.svg",
+      "codex.svg",
       "cursor.svg",
       "gemini.svg",
       "github-copilot.svg",
