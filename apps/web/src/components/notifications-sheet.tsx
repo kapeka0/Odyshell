@@ -18,16 +18,30 @@ import type { CloudNotification } from "@/lib/cloud-api";
 import { cn } from "@/lib/utils";
 
 export function NotificationsSheet() {
-  const { state, refresh } = useDashboard();
+  const { state, refresh, optimisticallyUpdate } = useDashboard();
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
   const notifications = state.status === "ready" ? state.context.notifications : [];
   const unread = notifications.filter((notification) => !notification.readAt);
 
+  function updateReadState(changes: ReadonlyMap<string, string | null>) {
+    optimisticallyUpdate((context) => ({
+      ...context,
+      notifications: context.notifications.map((notification) =>
+        changes.has(notification.id)
+          ? { ...notification, readAt: changes.get(notification.id) ?? null }
+          : notification,
+      ),
+    }));
+  }
+
   async function setRead(notification: CloudNotification, read: boolean) {
     if (Boolean(notification.readAt) === read || pending) return;
+    const previousReadAt = notification.readAt;
+    const nextReadAt = read ? new Date().toISOString() : null;
     setPending(notification.id);
+    updateReadState(new Map([[notification.id, nextReadAt]]));
     try {
       const response = await fetch(`/api/notifications/${notification.id}/read`, {
         method: "POST",
@@ -35,28 +49,39 @@ export function NotificationsSheet() {
         body: JSON.stringify({ read }),
       });
       if (!response.ok) throw new Error("notification_read_failed");
-      await refresh();
+      void refresh();
     } catch {
+      updateReadState(new Map([[notification.id, previousReadAt]]));
+      void refresh();
       toast.add({ title: "Notification could not be updated", type: "error" });
     } finally {
       setPending(null);
     }
   }
 
-  async function openNotification(notification: CloudNotification) {
-    await setRead(notification, true);
+  function openNotification(notification: CloudNotification) {
+    if (!notification.readAt) void setRead(notification, true);
     setOpen(false);
     router.push(notification.href);
   }
 
   async function markAll() {
     if (unread.length === 0 || pending) return;
+    const previousReadAt = new Map(
+      unread.map((notification) => [notification.id, notification.readAt]),
+    );
+    const readAt = new Date().toISOString();
     setPending("all");
+    updateReadState(
+      new Map(unread.map((notification) => [notification.id, readAt])),
+    );
     try {
       const response = await fetch("/api/notifications/read-all", { method: "POST" });
       if (!response.ok) throw new Error("notification_read_failed");
-      await refresh();
+      void refresh();
     } catch {
+      updateReadState(previousReadAt);
+      void refresh();
       toast.add({ title: "Notifications could not be updated", type: "error" });
     } finally {
       setPending(null);

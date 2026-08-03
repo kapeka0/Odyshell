@@ -25,6 +25,10 @@
   types.
 - Make architectural decisions for the long term. Do not accept a stopgap that only works for now
   and is meant to be replaced later.
+- Use optimistic UI for every safe, reversible frontend mutation. Apply the intended state before
+  waiting for the network, reconcile it with the server in the background, and roll it back with
+  clear feedback on failure. Never present an irreversible or security-sensitive outcome as
+  successful before the server confirms it.
 
 # Security by design
 

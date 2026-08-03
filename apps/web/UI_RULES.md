@@ -113,6 +113,9 @@ particular component, library or interaction pattern.
 - Avoid visual resets, duplicate loading states and unexpected layout shifts.
 - Keep the last trustworthy state visible when refreshing data, while clearly
   indicating that an update is in progress.
+- Every safe, reversible frontend mutation uses optimistic UI: reflect the
+  intended result immediately, reconcile it in the background and restore the
+  previous state with clear feedback if the request fails.
 - Fail safely and make unavailable actions visibly unavailable.
 
 ## Current product decisions

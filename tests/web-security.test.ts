@@ -827,6 +827,18 @@ describe("dashboard navigation performance boundary", () => {
     expect(notifications).toContain("motion-safe:animate-ping");
     expect(notifications).toContain("Mark all");
     expect(notifications).toContain("/api/notifications/read-all");
+    expect(notifications).toContain("optimisticallyUpdate");
+    expect(notifications).toContain("previousReadAt");
+    expect(notifications).not.toContain("await setRead(notification, true)");
+    expect(
+      notifications.indexOf(
+        "updateReadState(new Map([[notification.id, nextReadAt]]))",
+      ),
+    ).toBeLessThan(
+      notifications.indexOf(
+        "await fetch(`/api/notifications/${notification.id}/read`",
+      ),
+    );
     expect(notifications).not.toContain("stdout");
     expect(notifications).not.toContain("stderr");
   });
