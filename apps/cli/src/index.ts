@@ -52,7 +52,10 @@ import {
   printSessions,
   streamEvent,
 } from "./output.js";
-import { resolveClientUpConfiguration } from "./up.js";
+import {
+  assertClientServerReachable,
+  resolveClientUpConfiguration,
+} from "./up.js";
 import {
   serveApprovedOdyshellMcp,
 } from "./mcp.js";
@@ -62,7 +65,7 @@ const program = new Command();
 program
   .name("ods")
   .description("Agent-first access to private machines")
-  .version("0.9.1")
+  .version("0.9.2")
   .option("-j, --json", "emit stable JSON output")
   .option("--server <url>", "override the Odyshell server URL")
   .option("--workspace-id <id>", "select the administrator workspace")
@@ -1092,6 +1095,7 @@ program
           );
         }
       }
+      await assertClientServerReachable(apiConfig.serverUrl);
       const previousStatus = configFound
         ? await clientServiceStatus(configPath)
         : undefined;

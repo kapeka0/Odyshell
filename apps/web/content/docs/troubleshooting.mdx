@@ -13,6 +13,9 @@ curl --fail https://server.example.com/health
 ods client doctor
 ```
 
+`ods up` checks this endpoint before reporting that the background Client is running. A local
+service can be active while DNS or outbound Internet access is unavailable.
+
 ## Machine is offline
 
 The machine record exists but its Client connection is not active:

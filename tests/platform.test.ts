@@ -207,7 +207,7 @@ describe("client platform support", () => {
     ).toThrow("control characters");
   });
 
-  it("starts the Windows Client through a hidden per-Profile launcher", () => {
+  it("starts the Windows Client through a console-free per-Profile launcher", () => {
     const options = {
       nodePath: "C:\\Program Files\\nodejs\\node.exe",
       cliPath: "C:\\Program Files\\Odyshell\\ods.js",
@@ -215,29 +215,35 @@ describe("client platform support", () => {
     };
 
     expect(windowsTaskLauncherPath(options.configPath)).toBe(
-      "C:\\Users\\Ada & team\\Odyshell\\clients\\work\\client-service.ps1",
+      "C:\\Users\\Ada & team\\Odyshell\\clients\\work\\client-launcher-v1.exe",
     );
     expect(renderWindowsTaskLauncher(options)).toContain(
-      "& 'C:\\Program Files\\nodejs\\node.exe'",
+      "CreateNoWindow = true",
     );
     expect(renderWindowsTaskLauncher(options)).toContain(
-      "'C:\\Users\\Ada & team\\Odyshell\\clients\\work\\client.json'",
+      "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE",
     );
+    expect(renderWindowsTaskLauncher(options)).not.toContain("WScript.Shell");
     expect(renderWindowsTaskLauncher(options)).not.toContain("ods_enroll_");
 
     const action = renderWindowsTaskAction(options, "C:\\Windows");
     expect(action.execute).toBe(
-      "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "C:\\Users\\Ada & team\\Odyshell\\clients\\work\\client-launcher-v1.exe",
     );
-    expect(action.arguments).toContain("-WindowStyle Hidden");
     expect(action.arguments).toContain(
-      '"C:\\Users\\Ada & team\\Odyshell\\clients\\work\\client-service.ps1"',
+      '"C:\\Program Files\\nodejs\\node.exe"',
     );
-    expect(action.arguments).not.toContain(options.nodePath);
+    expect(action.arguments).toContain(
+      '"C:\\Users\\Ada & team\\Odyshell\\clients\\work\\client.json"',
+    );
+    expect(action.arguments).not.toContain("ods_enroll_");
 
-    expect(windowsTaskActionIsCurrent(action, options.configPath, "C:\\Windows")).toBe(
-      true,
-    );
+    expect(
+      windowsTaskActionIsCurrent(action, options.configPath, {
+        nodePath: options.nodePath,
+        cliPath: options.cliPath,
+      }),
+    ).toBe(true);
     expect(
       windowsTaskActionIsCurrent(
         {
@@ -245,7 +251,14 @@ describe("client platform support", () => {
           arguments: `"${options.cliPath}" client start --config "${options.configPath}"`,
         },
         options.configPath,
-        "C:\\Windows",
+        { nodePath: options.nodePath, cliPath: options.cliPath },
+      ),
+    ).toBe(false);
+    expect(
+      windowsTaskActionIsCurrent(
+        { ...action, arguments: `"C:\\malware.exe" ${action.arguments}` },
+        options.configPath,
+        { nodePath: options.nodePath, cliPath: options.cliPath },
       ),
     ).toBe(false);
   });

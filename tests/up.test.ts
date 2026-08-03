@@ -4,10 +4,43 @@ import { tmpdir } from "node:os";
 import { mkdtemp } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
+  assertClientServerReachable,
   resolveClientUpConfiguration,
 } from "../apps/cli/src/up.js";
 
 describe("ods up configuration safety", () => {
+  it("fails before claiming the Client is running when its Server is unreachable", async () => {
+    const networkError = new Error(
+      "getaddrinfo EAI_AGAIN server-production.example",
+    );
+
+    await expect(
+      assertClientServerReachable(
+        "https://server-production.example",
+        async () => Promise.reject(networkError),
+      ),
+    ).rejects.toMatchObject({
+      code: "client_server_unreachable",
+      expected: true,
+    });
+  });
+
+  it("accepts only a healthy Odyshell Server", async () => {
+    await expect(
+      assertClientServerReachable(
+        "https://server.example",
+        async () => new Response('{"status":"ok"}', { status: 200 }),
+      ),
+    ).resolves.toBeUndefined();
+
+    await expect(
+      assertClientServerReachable(
+        "https://server.example",
+        async () => new Response("unavailable", { status: 503 }),
+      ),
+    ).rejects.toMatchObject({ code: "client_server_unavailable" });
+  });
+
   it("imports the legacy identity into the explicit default profile", async () => {
     const root = await mkdtemp(join(tmpdir(), "odyshell-up-"));
     const legacyConfigPath = join(root, "client.json");

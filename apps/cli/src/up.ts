@@ -16,6 +16,33 @@ export type ClientUpConfiguration = {
   migratedFrom?: string;
 };
 
+export async function assertClientServerReachable(
+  serverUrl: string,
+  fetcher: typeof globalThis.fetch = globalThis.fetch,
+): Promise<void> {
+  const healthUrl = new URL("/health", normalizeServerUrl(serverUrl));
+  let response: Response;
+  try {
+    response = await fetcher(healthUrl, {
+      headers: { accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (error) {
+    throw new ExpectedError(
+      `Could not reach Odyshell Server at ${healthUrl.origin}: ${
+        error instanceof Error ? error.message : String(error)
+      }. Check this machine's Internet connection and DNS, then retry.`,
+      "client_server_unreachable",
+    );
+  }
+  if (!response.ok) {
+    throw new ExpectedError(
+      `Odyshell Server at ${healthUrl.origin} is unavailable (HTTP ${response.status}). Retry when the Server is healthy.`,
+      "client_server_unavailable",
+    );
+  }
+}
+
 export async function resolveClientUpConfiguration(options: {
   serverUrl: string;
   explicitConfigPath?: string;

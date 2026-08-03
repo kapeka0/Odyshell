@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, posix, resolve, win32 } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import process from "node:process";
 import { defaultClientConfigPath } from "./platform.js";
@@ -24,6 +25,196 @@ export type InstallClientServiceOptions = {
   cliPath: string;
   configPath: string;
 };
+
+const windowsLauncherSource = String.raw`using System;
+using System.Diagnostics;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
+
+internal static class OdyshellClientLauncher
+{
+    private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+    private const int JobObjectExtendedLimitInformation = 9;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IO_COUNTERS
+    {
+        public ulong ReadOperationCount;
+        public ulong WriteOperationCount;
+        public ulong OtherOperationCount;
+        public ulong ReadTransferCount;
+        public ulong WriteTransferCount;
+        public ulong OtherTransferCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JOBOBJECT_BASIC_LIMIT_INFORMATION
+    {
+        public long PerProcessUserTimeLimit;
+        public long PerJobUserTimeLimit;
+        public uint LimitFlags;
+        public UIntPtr MinimumWorkingSetSize;
+        public UIntPtr MaximumWorkingSetSize;
+        public uint ActiveProcessLimit;
+        public UIntPtr Affinity;
+        public uint PriorityClass;
+        public uint SchedulingClass;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+    {
+        public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+        public IO_COUNTERS IoInfo;
+        public UIntPtr ProcessMemoryLimit;
+        public UIntPtr JobMemoryLimit;
+        public UIntPtr PeakProcessMemoryUsed;
+        public UIntPtr PeakJobMemoryUsed;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr CreateJobObject(IntPtr securityAttributes, string name);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetInformationJobObject(
+        IntPtr job,
+        int informationClass,
+        IntPtr information,
+        uint informationLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    [STAThread]
+    private static int Main(string[] args)
+    {
+        if (args.Length < 2 || !Path.IsPathRooted(args[0]) || !File.Exists(args[0]))
+        {
+            return 2;
+        }
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = Path.GetFullPath(args[0]),
+            Arguments = BuildArguments(args, 1),
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            WorkingDirectory = Path.GetDirectoryName(Path.GetFullPath(args[0]))
+        };
+
+        using (var process = new Process { StartInfo = startInfo })
+        {
+            process.OutputDataReceived += delegate { };
+            process.ErrorDataReceived += delegate { };
+            if (!process.Start())
+            {
+                return 3;
+            }
+            process.StandardInput.Close();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            IntPtr job = CreateKillOnCloseJob();
+            if (job == IntPtr.Zero || !AssignProcessToJobObject(job, process.Handle))
+            {
+                try { process.Kill(); } catch { }
+                if (job != IntPtr.Zero) CloseHandle(job);
+                return 4;
+            }
+
+            try
+            {
+                process.WaitForExit();
+                return process.ExitCode;
+            }
+            finally
+            {
+                CloseHandle(job);
+            }
+        }
+    }
+
+    private static IntPtr CreateKillOnCloseJob()
+    {
+        IntPtr job = CreateJobObject(IntPtr.Zero, null);
+        if (job == IntPtr.Zero) return IntPtr.Zero;
+
+        var limits = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        int size = Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
+        IntPtr pointer = Marshal.AllocHGlobal(size);
+        try
+        {
+            Marshal.StructureToPtr(limits, pointer, false);
+            if (!SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                pointer,
+                (uint)size))
+            {
+                CloseHandle(job);
+                return IntPtr.Zero;
+            }
+            return job;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(pointer);
+        }
+    }
+
+    private static string BuildArguments(string[] args, int start)
+    {
+        var result = new StringBuilder();
+        for (int index = start; index < args.Length; index++)
+        {
+            if (result.Length > 0) result.Append(' ');
+            result.Append(QuoteArgument(args[index]));
+        }
+        return result.ToString();
+    }
+
+    private static string QuoteArgument(string value)
+    {
+        if (value.Length > 0 && value.IndexOfAny(new[] { ' ', '\t', '\n', '\v', '"' }) < 0)
+        {
+            return value;
+        }
+
+        var result = new StringBuilder("\"");
+        int backslashes = 0;
+        foreach (char character in value)
+        {
+            if (character == '\\')
+            {
+                backslashes++;
+                continue;
+            }
+            if (character == '"')
+            {
+                result.Append('\\', backslashes * 2 + 1);
+                result.Append('"');
+                backslashes = 0;
+                continue;
+            }
+            result.Append('\\', backslashes);
+            backslashes = 0;
+            result.Append(character);
+        }
+        result.Append('\\', backslashes * 2);
+        result.Append('"');
+        return result.ToString();
+    }
+}
+`;
 
 export function linuxUserServicePath(
   home = homedir(),
@@ -81,7 +272,18 @@ export function windowsTaskNameForConfig(
 }
 
 export function windowsTaskLauncherPath(configPath: string): string {
-  return win32.join(win32.dirname(win32.resolve(configPath)), "client-service.ps1");
+  return win32.join(
+    win32.dirname(win32.resolve(configPath)),
+    "client-launcher-v1.exe",
+  );
+}
+
+function legacyWindowsTaskLauncherPaths(configPath: string): string[] {
+  const directory = win32.dirname(win32.resolve(configPath));
+  return [
+    win32.join(directory, "client-service.ps1"),
+    win32.join(directory, "client-service.js"),
+  ];
 }
 
 export function renderLinuxUserService(options: {
@@ -143,57 +345,42 @@ ${argumentsList.map((argument) => `    <string>${xmlEscape(argument)}</string>`)
 export function renderWindowsTaskLauncher(
   options: InstallClientServiceOptions,
 ): string {
-  const invocation = [
-    options.nodePath,
-    options.cliPath,
-    "client",
-    "start",
-    "--config",
-    win32.resolve(options.configPath),
-  ]
-    .map(quotePowerShellLiteral)
-    .join(" ");
-  return `Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-& ${invocation}
-exit $LASTEXITCODE
-`;
+  for (const value of [options.nodePath, options.cliPath, options.configPath]) {
+    quoteWindowsArgument(value);
+  }
+  return windowsLauncherSource;
 }
 
 export function renderWindowsTaskAction(
   options: InstallClientServiceOptions,
-  windowsDirectory = process.env.SystemRoot ?? "C:\\Windows",
+  _windowsDirectory = process.env.SystemRoot ?? "C:\\Windows",
 ): { execute: string; arguments: string } {
   return {
-    execute: win32.join(
-      windowsDirectory,
-      "System32",
-      "WindowsPowerShell",
-      "v1.0",
-      "powershell.exe",
-    ),
+    execute: windowsTaskLauncherPath(options.configPath),
     arguments: [
-      "-NoLogo",
-      "-NoProfile",
-      "-NonInteractive",
-      "-WindowStyle",
-      "Hidden",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-File",
-      quoteWindowsArgument(windowsTaskLauncherPath(options.configPath)),
-    ].join(" "),
+      options.nodePath,
+      options.cliPath,
+      "client",
+      "start",
+      "--config",
+      win32.resolve(options.configPath),
+    ]
+      .map(quoteWindowsArgument)
+      .join(" "),
   };
 }
 
 export function windowsTaskActionIsCurrent(
   action: { execute: string; arguments: string },
   configPath: string,
-  windowsDirectory = process.env.SystemRoot ?? "C:\\Windows",
+  runtime: { nodePath?: string; cliPath?: string } = {},
 ): boolean {
   const expected = renderWindowsTaskAction(
-    { nodePath: "", cliPath: "", configPath },
-    windowsDirectory,
+    {
+      nodePath: runtime.nodePath ?? process.execPath,
+      cliPath: runtime.cliPath ?? process.argv[1] ?? "",
+      configPath,
+    },
   );
   return (
     win32.normalize(action.execute).toLowerCase() ===
@@ -268,10 +455,13 @@ export async function installWindowsTask(
   const taskName = windowsTaskNameForConfig(options.configPath);
   const launcherPath = windowsTaskLauncherPath(options.configPath);
   await mkdir(dirname(launcherPath), { recursive: true });
-  await writeFile(launcherPath, renderWindowsTaskLauncher(options), {
-    encoding: "utf8",
-    mode: 0o600,
-  });
+  await stopWindowsTask(taskName).catch(() => {});
+  await compileWindowsTaskLauncher(options, launcherPath);
+  await Promise.all(
+    legacyWindowsTaskLauncherPaths(options.configPath).map((path) =>
+      rm(path, { force: true }),
+    ),
+  );
   await registerWindowsTask(taskName, options);
   await startWindowsTask(taskName);
   await getWindowsTask(taskName);
@@ -320,7 +510,14 @@ export async function stopClientService(
     const taskName = windowsTaskNameForConfig(configPath);
     await stopWindowsTask(taskName).catch(() => {});
     await unregisterWindowsTask(taskName);
-    await rm(windowsTaskLauncherPath(configPath), { force: true });
+    await removeWindowsLauncherWhenUnlocked(
+      windowsTaskLauncherPath(configPath),
+    );
+    await Promise.all(
+      legacyWindowsTaskLauncherPaths(configPath).map((path) =>
+        rm(path, { force: true }),
+      ),
+    );
     return;
   }
   throw new Error(`Background service management does not support ${process.platform}`);
@@ -459,6 +656,36 @@ async function windowsTaskPowerShell(
   });
 }
 
+async function compileWindowsTaskLauncher(
+  options: InstallClientServiceOptions,
+  launcherPath: string,
+): Promise<void> {
+  const nonce = `${process.pid}-${randomUUID()}`;
+  const sourcePath = `${launcherPath}.${nonce}.cs`;
+  const outputPath = `${launcherPath}.${nonce}.exe`;
+  try {
+    await writeFile(sourcePath, renderWindowsTaskLauncher(options), {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx",
+    });
+    await windowsTaskPowerShell(
+      "Add-Type -Path $env:ODYSHELL_LAUNCHER_SOURCE -OutputAssembly $env:ODYSHELL_LAUNCHER_OUTPUT -OutputType WindowsApplication",
+      {
+        ODYSHELL_LAUNCHER_SOURCE: sourcePath,
+        ODYSHELL_LAUNCHER_OUTPUT: outputPath,
+      },
+    );
+    await removeWindowsLauncherWhenUnlocked(launcherPath);
+    await rename(outputPath, launcherPath);
+  } finally {
+    await Promise.all([
+      rm(sourcePath, { force: true }),
+      rm(outputPath, { force: true }),
+    ]);
+  }
+}
+
 async function registerWindowsTask(
   taskName: string,
   options: InstallClientServiceOptions,
@@ -490,9 +717,30 @@ async function startWindowsTask(taskName: string): Promise<void> {
 
 async function stopWindowsTask(taskName: string): Promise<void> {
   await windowsTaskPowerShell(
-    "Stop-ScheduledTask -TaskName $env:ODYSHELL_TASK_NAME",
+    [
+      "Stop-ScheduledTask -TaskName $env:ODYSHELL_TASK_NAME",
+      "$deadline = [DateTime]::UtcNow.AddSeconds(10)",
+      "do { $state = (Get-ScheduledTask -TaskName $env:ODYSHELL_TASK_NAME).State; if ($state -ne 'Running') { exit 0 }; Start-Sleep -Milliseconds 100 } while ([DateTime]::UtcNow -lt $deadline)",
+      "throw 'Timed out waiting for the Odyshell Client task to stop'",
+    ].join("; "),
     { ODYSHELL_TASK_NAME: taskName },
   );
+}
+
+async function removeWindowsLauncherWhenUnlocked(path: string): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (true) {
+    try {
+      await rm(path, { force: true });
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if ((code !== "EPERM" && code !== "EBUSY") || Date.now() >= deadline) {
+        throw error;
+      }
+      await delay(100);
+    }
+  }
 }
 
 async function unregisterWindowsTask(taskName: string): Promise<void> {
@@ -628,11 +876,4 @@ function quoteWindowsArgument(value: string): string {
   return `"${value
     .replace(/(\\*)"/g, "$1$1\\\"")
     .replace(/(\\+)$/g, "$1$1")}"`;
-}
-
-function quotePowerShellLiteral(value: string): string {
-  if (/[\r\n\0]/.test(value)) {
-    throw new Error("Windows service arguments cannot contain control characters");
-  }
-  return `'${value.replaceAll("'", "''")}'`;
 }

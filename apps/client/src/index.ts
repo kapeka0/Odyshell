@@ -34,7 +34,7 @@ import {
   normalizeServerUrl,
 } from "./platform.js";
 
-export const CLIENT_VERSION = "0.9.1";
+export const CLIENT_VERSION = "0.9.2";
 
 export {
   clientConfigPathForProfile,
