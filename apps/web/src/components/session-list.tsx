@@ -4,7 +4,6 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { EllipsisIcon, EyeIcon, XIcon } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { CopyableValue } from "@/components/copyable-value";
 import { CreateSessionSheet } from "@/components/create-session-sheet";
 import { DataTable, DataTableColumnHeader } from "@/components/data-table";
 import { useDashboard } from "@/components/dashboard-provider";
@@ -125,11 +124,14 @@ export function SessionList({
                 {row.original.value.title}
               </span>
             )}
-            <CopyableValue
-              value={row.original.value.id}
-              label={row.original.kind === "session" ? "Session ID" : "Request ID"}
-              className="font-mono text-xs text-muted-foreground"
-            />
+            {row.original.value.purpose ? (
+              <p
+                title={row.original.value.purpose}
+                className="truncate text-xs text-muted-foreground"
+              >
+                {row.original.value.purpose}
+              </p>
+            ) : null}
           </div>
         ),
       },

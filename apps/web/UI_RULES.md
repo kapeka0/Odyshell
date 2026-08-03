@@ -220,6 +220,9 @@ particular component, library or interaction pattern.
 - Machine rows show a concise, truncated description beneath the name when one
   exists. Machine editing may change Server metadata and reduce effective
   capabilities, but it can never grant beyond the Client Local Policy.
+- Machine and Session collection rows omit internal IDs. Reveal copyable IDs
+  only in their detail views, and show a Session's truncated purpose beneath
+  its title in the collection.
 - Users can permanently delete any Agent from its actions. Deletion closes
   active sessions, requires confirmation and retains Control Events according
   to the workspace retention policy.

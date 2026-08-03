@@ -17,11 +17,13 @@ export function TablePageSkeleton({
   filters = 1,
   columns = 4,
   summary = false,
+  rowSubtitle = false,
 }: {
   toolbarAction?: boolean;
   filters?: number;
   columns?: number;
   summary?: boolean;
+  rowSubtitle?: boolean;
 }) {
   return (
     <div
@@ -67,12 +69,19 @@ export function TablePageSkeleton({
                 gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
               }}
             >
-              {Array.from({ length: columns }, (_, column) => (
-                <Skeleton
-                  key={column}
-                  className={column === 0 ? "h-5 w-28" : "h-5 w-20"}
-                />
-              ))}
+              {Array.from({ length: columns }, (_, column) =>
+                column === 0 && rowSubtitle ? (
+                  <div key={column} className="flex flex-col gap-1.5">
+                    <Skeleton className="h-5 w-28" />
+                    <Skeleton className="h-3 w-36 max-w-full" />
+                  </div>
+                ) : (
+                  <Skeleton
+                    key={column}
+                    className={column === 0 ? "h-5 w-28" : "h-5 w-20"}
+                  />
+                ),
+              )}
             </div>
           ))}
         </div>

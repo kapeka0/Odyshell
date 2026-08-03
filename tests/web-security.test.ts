@@ -777,6 +777,45 @@ describe("dashboard navigation performance boundary", () => {
     }
   });
 
+  it("keeps machine and Session IDs in details instead of collection rows", () => {
+    const componentsRoot = resolve(
+      process.cwd(),
+      "apps/web/src/components",
+    );
+    const machineList = readFileSync(
+      resolve(componentsRoot, "machine-list.tsx"),
+      "utf8",
+    );
+    const sessionList = readFileSync(
+      resolve(componentsRoot, "session-list.tsx"),
+      "utf8",
+    );
+    const sessionDetail = readFileSync(
+      resolve(componentsRoot, "session-detail.tsx"),
+      "utf8",
+    );
+    const machineRow = machineList.slice(
+      machineList.indexOf('accessorKey: "name"'),
+      machineList.indexOf('id: "platform"'),
+    );
+    const machineDetails = machineList.slice(
+      machineList.indexOf("<Dialog open={detailsOpen}"),
+      machineList.indexOf("<Dialog open={editOpen}"),
+    );
+    const sessionRow = sessionList.slice(
+      sessionList.indexOf('id: "title"'),
+      sessionList.indexOf('id: "machine"'),
+    );
+
+    expect(machineRow).not.toContain("<CopyableValue");
+    expect(machineDetails).toContain('label="Machine ID"');
+    expect(sessionRow).not.toContain("<CopyableValue");
+    expect(sessionRow).toContain("row.original.value.purpose");
+    expect(sessionRow).toContain("truncate text-xs text-muted-foreground");
+    expect(sessionDetail).toContain('label="Session ID"');
+    expect(sessionDetail).toContain("initial.session.id");
+  });
+
   it("uses dedicated, bounded creation routes with concise form actions", () => {
     const webRoot = resolve(process.cwd(), "apps/web/src");
     const componentsRoot = resolve(webRoot, "components");

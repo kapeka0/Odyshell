@@ -91,11 +91,6 @@ export function MachineList({
                 {row.original.description}
               </p>
             ) : null}
-            <CopyableValue
-              value={row.original.id}
-              label={`${row.original.name} ID`}
-              className="font-mono text-xs text-muted-foreground"
-            />
           </div>
         ),
       },
@@ -416,7 +411,11 @@ function MachineActions({
               {formatTimestamp(machine.enrolledAt)}
             </Detail>
             <Detail label="Machine ID">
-              <span className="break-all font-mono text-xs">{machine.id}</span>
+              <CopyableValue
+                value={machine.id}
+                label="Machine ID"
+                className="break-all font-mono text-xs"
+              />
             </Detail>
           </dl>
         </DialogContent>

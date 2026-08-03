@@ -13,6 +13,7 @@ import {
   AgentIdentityAvatar,
   UserIdentityAvatar,
 } from "@/components/identity-avatar";
+import { CopyableValue } from "@/components/copyable-value";
 import { StatusBadge } from "@/components/status-badge";
 import { useDashboard } from "@/components/dashboard-provider";
 import { Badge } from "@/components/ui/badge";
@@ -121,6 +122,13 @@ export function SessionDetail({ initial }: { initial: SessionTimelineDetail }) {
           <CardHeader><CardTitle>Session</CardTitle></CardHeader>
           <CardContent>
             <dl className="flex flex-col gap-4 text-sm">
+              <Detail label="Session ID">
+                <CopyableValue
+                  value={initial.session.id}
+                  label="Session ID"
+                  className="break-all font-mono text-xs"
+                />
+              </Detail>
               <Detail label="Status"><StatusBadge status={detail.session.status} /></Detail>
               <Detail label="Agent">
                 <span className="flex items-center gap-2">
