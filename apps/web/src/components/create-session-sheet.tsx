@@ -42,6 +42,7 @@ import {
 } from "@/lib/manual-session-access";
 
 const durations = [
+  { value: "300", label: "5 minutes" },
   { value: "900", label: "15 minutes" },
   { value: "3600", label: "1 hour" },
   { value: "14400", label: "4 hours" },
@@ -78,10 +79,10 @@ export function CreateSessionSheet() {
   const agent = context?.agents.find((candidate) => candidate.id === agentId);
   const locallyAllowed = useMemo<Capability[]>(
     () =>
-      machineCapabilities(machine?.runtime).filter((value) =>
+      (machine?.capabilities ?? []).filter((value) =>
         manualSessionCapabilities.includes(value),
       ),
-    [machine?.runtime],
+    [machine?.capabilities],
   );
   const availablePresets = useMemo(
     () => ({
@@ -123,9 +124,9 @@ export function CreateSessionSheet() {
     const nextMachine = context?.machines.find(
       (candidate) => candidate.id === nextMachineId,
     );
-    const nextAllowed: Capability[] = machineCapabilities(
-      nextMachine?.runtime,
-    ).filter((capability) => manualSessionCapabilities.includes(capability));
+    const nextAllowed: Capability[] = (nextMachine?.capabilities ?? []).filter(
+      (capability) => manualSessionCapabilities.includes(capability),
+    );
     setMachineId(nextMachineId);
     const nextCapabilities = capabilitiesForManualPreset(
       "read-only",
@@ -276,16 +277,6 @@ export function CreateSessionSheet() {
       </SheetContent>
     </Sheet>
   );
-}
-
-function machineCapabilities(runtime: unknown): Capability[] {
-  if (!runtime || typeof runtime !== "object") return [];
-  const profiles = Array.isArray((runtime as { profiles?: unknown }).profiles)
-    ? (runtime as { profiles: Array<{ name?: string; capabilities?: unknown }> }).profiles
-    : [];
-  const profile = profiles.find((candidate) => candidate.name === "default") ?? profiles[0];
-  const values = Array.isArray(profile?.capabilities) ? profile.capabilities : [];
-  return [...new Set(values.filter((value): value is Capability => typeof value === "string"))];
 }
 
 function machineProfile(runtime: unknown): string {

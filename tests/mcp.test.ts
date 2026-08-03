@@ -49,6 +49,9 @@ describe("Odyshell MCP server", () => {
     expect(
       tools.find((tool) => tool.name === "session_status")?.annotations,
     ).toMatchObject({ readOnlyHint: false, idempotentHint: false });
+    expect(
+      tools.find((tool) => tool.name === "session_request")?.description,
+    ).toContain("Call sessions_list first");
   });
 
   it("recovers a Session request when the original tool response is lost", async () => {

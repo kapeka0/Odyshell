@@ -296,25 +296,24 @@ export function EnrollMachine({
               </Alert>
             ) : null}
 
-            <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-6">
+            <div className="flex flex-wrap items-start justify-end gap-2 border-t pt-6">
               <Link
                 href="/dashboard/machines"
                 className={buttonVariants({ variant: "outline" })}
               >
                 Cancel
               </Link>
-              <Button type="submit" disabled={pending || atLimit}>
-                {pending ? (
-                  <>
-                    <Spinner />
-                    Adding…
-                  </>
-                ) : atLimit ? (
-                  "Unavailable"
-                ) : (
-                  "Add"
-                )}
-              </Button>
+              <div className="flex flex-col items-end gap-1">
+                <Button type="submit" disabled={pending || atLimit}>
+                  {pending ? <Spinner /> : null}
+                  Add
+                </Button>
+                {atLimit ? (
+                  <p className="text-xs text-destructive">
+                    Machine limit reached
+                  </p>
+                ) : null}
+              </div>
             </div>
           </FieldGroup>
         </form>

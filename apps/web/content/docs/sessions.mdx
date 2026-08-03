@@ -14,6 +14,11 @@ An Agent normally calls `session_request`. Odyshell returns a browser link when 
 approve the request. The Agent checks `session_status` after the decision and uses the explicit
 `sessionId` for every Operation.
 
+Before creating a request, the Agent checks `sessions_list`. If the same MCP installation already
+has a ready, unexpired Session covering every requested machine and Operation, Odyshell returns
+that Session directly instead of asking for duplicate approval. The Server repeats this check even
+if the model skips it.
+
 Every request has a short title used in tables, notifications and the canvas. A longer purpose is
 optional.
 
@@ -34,7 +39,7 @@ container restrictions in this form. A manual Session is approved by its creator
 immediately when that Agent has an active MCP installation. Otherwise, the Agent claims the
 approved request when it next connects.
 
-Durations are 15 minutes, 1 hour, 4 hours, 8 hours, or 24 hours. Sessions cannot be widened,
+Durations are 5 minutes, 15 minutes, 1 hour, 4 hours, 8 hours, or 24 hours. Sessions cannot be widened,
 extended, or made permanent. Create a new Session when authority must change.
 If the Client does not acknowledge a target within 60 seconds, Odyshell fails that target closed.
 Other ready targets remain usable. A disconnected target can retry the same approved authority if

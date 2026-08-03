@@ -29,9 +29,11 @@ flowchart LR
     O -->|"Result"| A
 ```
 
-The machine decides which workspace and capabilities are available. Anything not explicitly
-allowed is denied by the Client. Operations run as the operating-system user running the Client
-and results return through its existing outbound connection.
+The machine decides which capabilities are available. The web can add a concise description to
+help agents identify it and can reduce the effective capability set, but cannot expand the Client
+Local Policy. Anything not allowed by both boundaries is denied. Operations run as the
+operating-system user running the Client and results return through its existing outbound
+connection.
 
 Odyshell is not an SSH client, VPN, or full coding agent. It is the infrastructure layer between
 agents and private machines.

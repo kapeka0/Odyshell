@@ -173,14 +173,15 @@ export function WorkspaceCanvas({ context }: { context: CloudContext }) {
         </Panel>
         <Panel position="top-right" className="m-3">
           {machineLimitReached ? (
-            <Button
-              size="sm"
-              disabled
-              title="Machine limit reached for this plan"
-            >
-              <PlusIcon data-icon="inline-start" />
-              Add machine
-            </Button>
+            <div className="flex flex-col items-end gap-1">
+              <Button size="sm" disabled>
+                <PlusIcon data-icon="inline-start" />
+                Add machine
+              </Button>
+              <p className="text-xs text-destructive">
+                Machine limit reached
+              </p>
+            </div>
           ) : (
             <Link
               href="/dashboard/machines/add"

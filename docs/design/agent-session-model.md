@@ -195,8 +195,8 @@ manual allowlist independently; the dashboard is not an authorization boundary.
 
 ### Duration and renewal
 
-Session presets are 15 minutes, 1 hour, 4 hours, 8 hours, and 24 hours. The default is one hour,
-the maximum is 24 hours, and no Session can be permanent.
+Session presets are 5 minutes, 15 minutes, 1 hour, 4 hours, 8 hours, and 24 hours. The default is
+one hour, the maximum is 24 hours, and no Session can be permanent.
 
 An active Session is never extended or widened. `renew` creates a successor Session with a new
 identifier, approval decision, and credential. It can preserve or reduce scope; expanding
@@ -349,11 +349,13 @@ The MCP surface includes:
 - typed process, filesystem, and Docker Operations;
 - Session Timeline tools.
 
-`machines_list` exposes machine name, platform, architecture, runner, Local Policy capabilities,
-and default shell. Session and execution tools repeat the relevant machine context so an Agent can
-recover correctly after a lost tool result or a new chat. `sessions_list` returns active requests
+`machines_list` exposes machine name, description, platform, architecture, runner, effective
+capabilities, and default shell. Session and execution tools repeat the relevant machine context
+so an Agent can recover correctly after a lost tool result or a new chat. `sessions_list` returns active requests
 and Sessions by default; history is an explicit option. Agents always select the Session identifier
-they intend to use.
+they intend to use. Before creating a request, the MCP runtime reuses a ready, unexpired Session
+only when it belongs to the same installation and every requested Operation fits its immutable
+scope.
 
 Human membership, billing, and unrestricted Workspace administration are not MCP tools.
 

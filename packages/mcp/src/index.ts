@@ -37,7 +37,9 @@ export type ApprovedMcpRuntime = {
 
 export type ApprovedMcpSessionRequest = {
   id: string;
+  sessionId?: string;
   status: string;
+  reused?: boolean;
   approvalUrl?: string;
   expiresAt: string | null;
 };
@@ -65,7 +67,7 @@ export function createApprovedMcpServer(
     { name: "odyshell", version: "0.13.1" },
     {
       instructions:
-        "Inspect machines before choosing platform-specific operations. Machine and Session results include platform, architecture, runner, capabilities and default shell. Prefer typed filesystem, Docker and process.exec operations. Request process.shell only for multi-step work that must use prior stdout or stderr; it grants broad shell access for a short Session, is never autoapproved and every command is audited. Show approval links verbatim, then call session_status. Use sessions_list to recover active authority after a lost response or a new chat. Always pass the explicit sessionId to operation_execute. Credentials stay inside Odyshell.",
+        "Inspect machines before choosing platform-specific operations. Before requesting authority, call sessions_list and reuse a ready Session that already covers the machine and action. session_request also reuses compatible authority server-side. Machine and Session results include platform, architecture, runner, capabilities and default shell. Prefer typed filesystem, Docker and process.exec operations. Request process.shell only for multi-step work that must use prior stdout or stderr; it grants broad shell access for a short Session, is never autoapproved and every command is audited. Show approval links verbatim, then call session_status. Always pass the explicit sessionId to operation_execute. Credentials stay inside Odyshell.",
     },
   );
 
@@ -74,7 +76,7 @@ export function createApprovedMcpServer(
     {
       title: "List Odyshell machines",
       description:
-        "List machines and inspect their platform, runner and locally allowed capabilities before requesting platform-specific operations.",
+        "List machines and inspect their description, platform, runner and effective capabilities before requesting platform-specific operations.",
       inputSchema: z.object({}),
       annotations: readOnlyAnnotations,
     },
@@ -98,7 +100,7 @@ export function createApprovedMcpServer(
     {
       title: "Request operation access",
       description:
-        "Request a temporary Session scoped to one or more operations. Prefer structured operations. Use process.shell only when a multi-step task must inspect output before choosing the next command; it grants broad shell access, requires manual approval and remains temporary. Use machine platform and defaultShell metadata before composing OS-specific commands. If approval is required, show the returned link and follow nextAction.",
+        "Call sessions_list first and reuse compatible ready authority. Otherwise request a temporary Session scoped to one or more operations; the Server performs a final reuse check before creating approval. Prefer structured operations. Use process.shell only when a multi-step task must inspect output before choosing the next command; it grants broad shell access, requires manual approval and remains temporary. Use machine platform and defaultShell metadata before composing OS-specific commands. If approval is required, show the returned link and follow nextAction.",
       inputSchema: z.object({
         operations: z
           .array(
@@ -294,7 +296,17 @@ async function runSessionRequest(
   try {
     const result = await action();
     if (result.status !== "pending" || !result.approvalUrl) {
-      return textResult(result);
+      return textResult({
+        ...result,
+        ...(result.status === "ready" && result.sessionId
+          ? {
+              nextAction: {
+                tool: "operation_execute",
+                sessionId: result.sessionId,
+              },
+            }
+          : {}),
+      });
     }
     return {
       content: [

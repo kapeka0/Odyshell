@@ -20,6 +20,10 @@ Odyshell generates an `ods up` command containing a single-use enrollment token.
 target machine. The token expires after ten minutes and cannot be replayed.
 The member who created the command receives a dashboard notification when that machine enrolls.
 
+After it connects, open its actions and select **Edit** to change its name, add a short description,
+or reduce its effective capabilities. Descriptions help agents identify the correct machine through
+`machines_list` and appear beneath the machine name in the dashboard.
+
 `ods up` installs and starts a restartable user service on Linux, macOS, and Windows. After
 enrollment, use:
 
@@ -50,7 +54,10 @@ Capabilities are default-deny and comma-separated:
 --allow 'process.exec,fs.stat,fs.list,fs.search,fs.read'
 ```
 
-An agent can only use the intersection of its credential policy and the machine's local policy.
+The capabilities selected during enrollment remain the Client Local Policy and cannot be expanded
+from the web. Machine editing can only choose a Server-side subset of that local maximum. New
+Sessions must pass both boundaries; an existing immutable Session keeps its approved scope until
+it expires or is revoked.
 
 ## Client Profiles
 

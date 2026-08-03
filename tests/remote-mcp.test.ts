@@ -591,6 +591,66 @@ describe("remote MCP security boundary", () => {
     );
   });
 
+  it("reuses a compatible ready Session before requesting approval", async () => {
+    const machineId = "9d0cb00d-8665-4a33-bd3f-308c42d6070d";
+    const principal = sessionPrincipal(machineId);
+    const createAgentSessionRequest = vi.fn();
+    const runtime = remoteRuntime({
+      listMachines: vi.fn(async () => [{ ...machineRecord(), id: machineId }]),
+      listWorkspaceAgentSessions: vi.fn(async () => [
+        reusableSessionRecord(principal),
+      ]),
+      findMcpSessionPrincipal: vi.fn(async () => principal),
+      createAgentSessionRequest,
+    });
+
+    await expect(
+      runtime.request({
+        operations: [{
+          machine: "rpi5",
+          action: { kind: "fs.read", path: "config/app.json" },
+        }],
+        title: "Inspect configuration",
+        durationSeconds: 900,
+      }),
+    ).resolves.toMatchObject({
+      status: "ready",
+      reused: true,
+      sessionId: principal.sessionId,
+    });
+    expect(createAgentSessionRequest).not.toHaveBeenCalled();
+  });
+
+  it("does not reuse a Session whose scope misses the requested operation", async () => {
+    const machineId = "9d0cb00d-8665-4a33-bd3f-308c42d6070d";
+    const principal = sessionPrincipal(machineId);
+    const createAgentSessionRequest = vi.fn(async () => ({
+      status: "pending",
+      expiresAt: Date.now() + 10 * 60_000,
+    }));
+    const runtime = remoteRuntime({
+      listMachines: vi.fn(async () => [{ ...machineRecord(), id: machineId }]),
+      listWorkspaceAgentSessions: vi.fn(async () => [
+        reusableSessionRecord(principal),
+      ]),
+      findMcpSessionPrincipal: vi.fn(async () => principal),
+      createAgentSessionRequest,
+      audit: vi.fn(async () => undefined),
+    });
+
+    const result = await runtime.request({
+      operations: [{
+        machine: "rpi5",
+        action: { kind: "fs.read", path: "secrets.env" },
+      }],
+      title: "Inspect secrets",
+      durationSeconds: 900,
+    });
+
+    expect(result.status).toBe("pending");
+    expect(createAgentSessionRequest).toHaveBeenCalledOnce();
+  });
+
   it("notifies the responsible member when remote MCP requests approval", async () => {
     const createAgentSessionRequest = vi.fn(async () => ({
       status: "pending",
@@ -891,7 +951,10 @@ function remoteRuntime(
       updatedAt: 0,
     },
     {
-      database: database as unknown as Database,
+      database: {
+        listWorkspaceAgentSessions: vi.fn(async () => []),
+        ...database,
+      } as unknown as Database,
       gateway: {
         isOnline: vi.fn(() => true),
         send: vi.fn(() => true),
@@ -904,7 +967,29 @@ function remoteRuntime(
   );
 }
 
-function sessionPrincipal() {
+function reusableSessionRecord(principal: ReturnType<typeof sessionPrincipal>) {
+  return {
+    id: principal.sessionId,
+    agentId: principal.agentId,
+    agentName: principal.agentName,
+    title: "Inspect configuration",
+    purpose: "Inspect configuration",
+    status: "active",
+    expiresAt: principal.expiresAt,
+    readyAt: Date.now(),
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    requestedByHumanId: "user-id",
+    scopes: principal.scopes,
+    targets: [{
+      machineId: principal.scopes[0]!.machineId,
+      machineName: "rpi5",
+      status: "ready",
+    }],
+  };
+}
+
+function sessionPrincipal(machineId = "machine-id") {
   return {
     workspaceId: "workspace-id",
     agentId: "7e5e118e-07ce-430a-a20a-b89562acae61",
@@ -912,7 +997,7 @@ function sessionPrincipal() {
     sessionId: "29f34f33-418c-4624-84c3-25818db42023",
     scopes: [
       {
-        machineId: "machine-id",
+        machineId,
         profile: "workspace",
         capabilities: ["fs.read" as const],
         restrictions: {

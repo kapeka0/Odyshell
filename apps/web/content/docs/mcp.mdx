@@ -68,13 +68,15 @@ Session Credential stays in MCP memory and is never returned in a tool result.
 
 The approval-based workflow exposes eight tools:
 
-1. `machines_list` finds the target machine and reports its platform, architecture, runner and
-   locally allowed capabilities.
+1. `machines_list` finds the target machine and reports its description, platform, architecture,
+   runner and effective capabilities.
 2. `machine_ping` checks the complete connection path.
-3. `session_request` accepts a title, optional purpose, and one or more typed operations, then
-   returns an approval URL.
-4. `sessions_list` recovers pending requests and active Sessions if a response is interrupted, a
-   tool host restarts, or a new chat needs to continue the same Agent task. History is optional.
+3. `sessions_list` returns pending requests and active Sessions. Call it before requesting access
+   so existing ready authority can be reused after an interrupted response, tool-host restart, new
+   chat, or another step in the same Agent task. History is optional.
+4. `session_request` accepts a title, optional purpose, and one or more typed operations. The Server
+   reuses a compatible ready Session bound to the same MCP installation, or returns an approval URL
+   when new authority is required.
 5. `session_status` checks the decision and privately binds the approved Session.
 6. `operation_execute` executes only an approved operation. Its stable operation ID makes retries safe.
 7. `session_complete` closes access when no Operation is active and records the agent-reported outcome.
@@ -86,15 +88,17 @@ request. The Sessions page shows the pending request immediately, then replaces 
 Session after approval and one-time claim. Its pending row opens the same review URL shown by the
 agent. The agent calls `session_status` and continues only if
 Odyshell grants the Session and the Client reports it ready.
-If the client loses the original response, it can call `sessions_list`, select the explicit active
-Session or pending request and continue instead of asking for duplicate approval.
+The Agent should select an explicit compatible Session from `sessions_list` instead of asking for
+duplicate approval. If it still calls `session_request`, the Server performs the same compatibility
+check before creating a request.
 
 Odyshell returns a `nextAction` after both the request and status checks. Agents should follow it
 instead of asking the member to repeat an approval. A ready status points to `operation_execute`;
 an opening status points back to `session_status` while the Client finishes opening the Session.
 
 Agents should inspect `machines_list` before choosing commands. Machine, Session, and status
-results expose the allowlisted platform, architecture, runner, capabilities, and default shell so
+results expose the machine description, allowlisted platform, architecture, runner, effective
+capabilities, and default shell so
 a Windows machine does not receive Linux-only commands such as `df -h`.
 If an executable is unavailable, `operation_execute` directs the Agent back to `machines_list`
 instead of encouraging another platform guess.

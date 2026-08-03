@@ -20,8 +20,11 @@ export type CloudIdentity = z.infer<typeof cloudIdentitySchema>;
 export type CloudMachine = {
   id: string;
   name: string;
+  description: string | null;
   status: string;
   runtime: unknown;
+  capabilities: Capability[];
+  availableCapabilities: Capability[];
   lastSeenAt: string | null;
   enrolledAt: string;
   online: boolean;

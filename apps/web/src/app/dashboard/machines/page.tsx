@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import {
   DashboardPage,
   DashboardPageHeader,
@@ -8,8 +7,6 @@ import {
 } from "@/components/dashboard-state";
 import { MachineList } from "@/components/machine-list";
 import { useDashboard } from "@/components/dashboard-provider";
-import { Button, buttonVariants } from "@/components/ui/button";
-import { PlusIcon } from "lucide-react";
 
 export default function MachinesPage() {
   const { state } = useDashboard();
@@ -19,30 +16,11 @@ export default function MachinesPage() {
 
   return (
     <DashboardPage>
-      <DashboardPageHeader
-        title="Machines"
-        action={
-          state.status === "ready" ? (
-            atLimit ? (
-              <Button type="button" disabled>
-                Machine limit reached
-              </Button>
-            ) : (
-              <Link
-                href="/dashboard/machines/add"
-                className={buttonVariants()}
-              >
-                <PlusIcon aria-hidden="true" data-icon="inline-start" />
-                Add
-              </Link>
-            )
-          ) : undefined
-        }
-      />
+      <DashboardPageHeader title="Machines" />
       {state.status !== "ready" ? (
         <DashboardStateNotice state={state} />
       ) : (
-        <MachineList machines={state.context.machines} />
+        <MachineList machines={state.context.machines} atLimit={atLimit} />
       )}
     </DashboardPage>
   );

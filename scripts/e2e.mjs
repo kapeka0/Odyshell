@@ -2610,6 +2610,97 @@ try {
     throw new Error("Client did not enforce its local capability policy");
   }
 
+  const machineUpdateResponse = await fetch(
+    new URL("/v1/internal/cloud/machines/update", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        ...cloudIdentity,
+        machineId: machine.id,
+        name: "e2e-machine-edited",
+        description: "Docker-backed E2E machine",
+        capabilities: clientCapabilities,
+      }),
+    },
+  );
+  const machineUpdate = await machineUpdateResponse.json();
+  if (
+    machineUpdateResponse.status !== 200 ||
+    machineUpdate.description !== "Docker-backed E2E machine" ||
+    machineUpdate.capabilities.includes("process.shell")
+  ) {
+    throw new Error("Cloud machine metadata update failed");
+  }
+  const widenedMachineUpdate = await fetch(
+    new URL("/v1/internal/cloud/machines/update", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        ...cloudIdentity,
+        machineId: machine.id,
+        name: "e2e-machine-edited",
+        description: "Docker-backed E2E machine",
+        capabilities: [...clientCapabilities, "process.shell"],
+      }),
+    },
+  );
+  if (widenedMachineUpdate.status !== 403) {
+    throw new Error("Cloud machine policy widened the Client Local Policy");
+  }
+  const crossWorkspaceMachineUpdate = await fetch(
+    new URL("/v1/internal/cloud/machines/update", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        userId: cliUserId,
+        organization: {
+          externalId: "org_machine_attacker",
+          slug: "machine-attacker",
+          name: "Machine Attacker",
+        },
+        machineId: machine.id,
+        name: "stolen-machine",
+        description: "Cross-workspace update",
+        capabilities: clientCapabilities,
+      }),
+    },
+  );
+  if (crossWorkspaceMachineUpdate.status !== 404) {
+    throw new Error("Cloud machine metadata crossed its Workspace boundary");
+  }
+  const restoreMachineName = await fetch(
+    new URL("/v1/internal/cloud/machines/update", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        ...cloudIdentity,
+        machineId: machine.id,
+        name: machine.name,
+        description: "Docker-backed E2E machine",
+        capabilities: clientCapabilities,
+      }),
+    },
+  );
+  if (restoreMachineName.status !== 200) {
+    throw new Error("Cloud machine name restore failed");
+  }
+
   const cliMachines = JSON.parse(
     await run(process.execPath, [
       tsxCli,
@@ -3364,6 +3455,7 @@ try {
           workspaceAuditIsolation: true,
           ed25519Authentication: true,
           runtimeMetadata: `${machine.runtime.hostPlatform}/${machine.runtime.architecture}`,
+          machineMetadataPolicy: true,
           odsCli: true,
           odsWorkspaceSelection: true,
           odsPing: true,

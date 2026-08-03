@@ -37,6 +37,12 @@ import {
   operationTimelineMetadata,
   privacyMinimalOperationMetadata,
 } from "./event-sinks.js";
+import {
+  deniedMachineCapability,
+  effectiveMachineCapabilities,
+  machineLocalCapabilities,
+  machineScopesAllowed,
+} from "./machine-policy.js";
 
 const { Pool } = pg;
 export const DEFAULT_ORGANIZATION_ID = "default";
@@ -112,9 +118,15 @@ interface MachineTable {
   workspaceId: string;
   id: string;
   name: string;
+  description: ColumnType<
+    string | null,
+    string | null | undefined,
+    string | null
+  >;
   publicKey: string;
   status: string;
   runtime: Json<unknown> | null;
+  capabilityPolicy: Json<Capability[]> | null;
   lastSeenAt: Date | null;
   enrolledAt: Generated<Date>;
   revokedAt: Date | null;
@@ -513,9 +525,12 @@ export type NotificationRecord = {
 export type MachineRecord = {
   id: string;
   name: string;
+  description?: string;
   publicKey: string;
   status: string;
   runtime?: unknown;
+  capabilities: Capability[];
+  availableCapabilities: Capability[];
   lastSeenAt?: number;
   enrolledAt: number;
   revokedAt?: number;
@@ -870,12 +885,19 @@ function workspaceRecord(workspace: Selectable<WorkspaceTable>): WorkspaceRecord
 }
 
 function machineRecord(machine: Selectable<MachineTable>): MachineRecord {
+  const availableCapabilities = machineLocalCapabilities(machine.runtime);
   return {
     id: machine.id,
     name: machine.name,
+    ...(machine.description === null ? {} : { description: machine.description }),
     publicKey: machine.publicKey,
     status: machine.status,
     ...(machine.runtime === null ? {} : { runtime: machine.runtime }),
+    capabilities: effectiveMachineCapabilities(
+      machine.runtime,
+      machine.capabilityPolicy,
+    ),
+    availableCapabilities,
     ...(machine.lastSeenAt === null ? {} : { lastSeenAt: timestamp(machine.lastSeenAt) }),
     enrolledAt: timestamp(machine.enrolledAt),
     ...(machine.revokedAt === null ? {} : { revokedAt: timestamp(machine.revokedAt) }),
@@ -2736,6 +2758,26 @@ async function rollbackSessionExperience(db: Kysely<DatabaseSchema>): Promise<vo
   `.execute(db);
 }
 
+async function migrateMachineMetadata(db: Kysely<DatabaseSchema>): Promise<void> {
+  await sql`
+    alter table odyshell.machines
+      add column description text,
+      add column capability_policy jsonb;
+    alter table odyshell.machines
+      add constraint machines_description_check
+      check (description is null or length(description) <= 280);
+  `.execute(db);
+}
+
+async function rollbackMachineMetadata(db: Kysely<DatabaseSchema>): Promise<void> {
+  await sql`
+    alter table odyshell.machines drop constraint machines_description_check;
+    alter table odyshell.machines
+      drop column capability_policy,
+      drop column description;
+  `.execute(db);
+}
+
 const migrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
     return {
@@ -2809,6 +2851,10 @@ const migrationProvider: MigrationProvider = {
       "019_session_experience": {
         up: migrateSessionExperience,
         down: rollbackSessionExperience,
+      },
+      "020_machine_metadata": {
+        up: migrateMachineMetadata,
+        down: rollbackMachineMetadata,
       },
     };
   },
@@ -3909,7 +3955,7 @@ export class PostgresDatabase {
       const machineIds = input.scopes.map((scope) => scope.machineId);
       const machines = await transaction
         .selectFrom("machines")
-        .select("id")
+        .select(["id", "runtime", "capabilityPolicy"])
         .where("workspaceId", "=", input.workspaceId)
         .where("id", "in", machineIds)
         .where("revokedAt", "is", null)
@@ -3917,7 +3963,8 @@ export class PostgresDatabase {
         .execute();
       if (
         machines.length !== machineIds.length ||
-        new Set(machineIds).size !== machineIds.length
+        new Set(machineIds).size !== machineIds.length ||
+        !machineScopesAllowed(machines, input.scopes)
       ) {
         return null;
       }
@@ -4170,7 +4217,7 @@ export class PostgresDatabase {
       const machineIds = input.scopes.map((scope) => scope.machineId);
       const machines = await transaction
         .selectFrom("machines")
-        .select("id")
+        .select(["id", "runtime", "capabilityPolicy"])
         .where("workspaceId", "=", input.workspaceId)
         .where("id", "in", machineIds)
         .where("revokedAt", "is", null)
@@ -4178,7 +4225,8 @@ export class PostgresDatabase {
         .execute();
       if (
         machines.length !== machineIds.length ||
-        new Set(machineIds).size !== machineIds.length
+        new Set(machineIds).size !== machineIds.length ||
+        !machineScopesAllowed(machines, input.scopes)
       ) {
         return null;
       }
@@ -4975,13 +5023,16 @@ export class PostgresDatabase {
       const requestedMachineIds = input.scopes.map((scope) => scope.machineId);
       const machines = await transaction
         .selectFrom("machines")
-        .select("id")
+        .select(["id", "runtime", "capabilityPolicy"])
         .where("workspaceId", "=", input.workspaceId)
         .where("id", "in", requestedMachineIds)
         .where("revokedAt", "is", null)
         .forShare()
         .execute();
-      if (machines.length !== requestedMachineIds.length) return null;
+      if (
+        machines.length !== requestedMachineIds.length ||
+        !machineScopesAllowed(machines, input.scopes)
+      ) return null;
 
       const primaryScope = input.scopes[0]!;
       const primaryReadPath =
@@ -5465,14 +5516,17 @@ export class PostgresDatabase {
       const requestedMachineIds = request.scopes.map((scope) => scope.machineId);
       const machines = await transaction
         .selectFrom("machines")
-        .select("id")
+        .select(["id", "runtime", "capabilityPolicy"])
         .where("workspaceId", "=", input.workspaceId)
         .where("id", "in", requestedMachineIds)
         .where("revokedAt", "is", null)
         .forShare()
         .execute();
       if (!agent) return { status: "agent_denied" };
-      if (machines.length !== requestedMachineIds.length) {
+      if (
+        machines.length !== requestedMachineIds.length ||
+        !machineScopesAllowed(machines, request.scopes)
+      ) {
         return { status: "machine_unavailable" };
       }
 
@@ -6936,6 +6990,48 @@ export class PostgresDatabase {
     return (await query.orderBy("enrolledAt", "asc").execute()).map(machineRecord);
   }
 
+  async updateMachine(input: {
+    workspaceId: string;
+    machineId: string;
+    name: string;
+    description: string;
+    capabilities: Capability[];
+  }): Promise<
+    | { status: "updated"; machine: MachineRecord }
+    | { status: "not_found" }
+    | { status: "capability_denied"; capability: Capability }
+  > {
+    return await this.db.transaction().execute(async (transaction) => {
+      const current = await transaction
+        .selectFrom("machines")
+        .selectAll()
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", input.machineId)
+        .where("revokedAt", "is", null)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!current) return { status: "not_found" };
+      const denied = deniedMachineCapability(
+        current.runtime,
+        input.capabilities,
+      );
+      if (denied) return { status: "capability_denied", capability: denied };
+      const updated = await transaction
+        .updateTable("machines")
+        .set({
+          name: input.name.trim(),
+          description: input.description.trim() || null,
+          capabilityPolicy: JSON.stringify(input.capabilities),
+        })
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", input.machineId)
+        .where("revokedAt", "is", null)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      return { status: "updated", machine: machineRecord(updated) };
+    });
+  }
+
   async activeMachinesExist(workspaceId: string, machineIds: string[]): Promise<boolean> {
     if (machineIds.length === 0) return true;
     const result = await this.db
@@ -7148,9 +7244,11 @@ export class PostgresDatabase {
           workspaceId: enrollment.workspaceId,
           id: input.machineId,
           name: input.name,
+          description: null,
           publicKey: input.publicKey,
           status: "offline",
           runtime: null,
+          capabilityPolicy: null,
           lastSeenAt: null,
           revokedAt: null,
           createdByHumanId: enrollment.createdByHumanId,
@@ -7492,6 +7590,23 @@ export class PostgresDatabase {
           .executeTakeFirst();
         if (!token) return false;
       }
+      const machine = await transaction
+        .selectFrom("machines")
+        .select(["id", "runtime", "capabilityPolicy"])
+        .where("workspaceId", "=", input.workspaceId)
+        .where("id", "=", input.machineId)
+        .where("revokedAt", "is", null)
+        .forShare()
+        .executeTakeFirst();
+      if (
+        !machine ||
+        !machineScopesAllowed([machine], [{
+          machineId: input.machineId,
+          profile: input.profile,
+          capabilities: input.capabilities,
+          restrictions: {},
+        }])
+      ) return false;
       await transaction
         .insertInto("sessions")
         .values({

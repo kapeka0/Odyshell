@@ -148,6 +148,12 @@ particular component, library or interaction pattern.
 - Tables place the filtered result count above the table, show optional context
   on the right and center pagination below. Activity uses that context for the
   workspace plan retention. Table skeletons preserve this same order.
+- Collection creation actions live in the table toolbar, never in the page
+  header. Search and filters form the left group; the concise Add or New action
+  forms the right group. Table skeletons preserve both groups.
+- Keep button labels stable when an action is unavailable. Explain a limit or
+  blocking condition in concise red text directly below the disabled action,
+  never by replacing the action label with the error.
 - The account menu cycles directly between System, Light and Dark before the
   Settings action, with comfortable inner padding between actions. Theme
   changes do not need success toasts.
@@ -211,6 +217,9 @@ particular component, library or interaction pattern.
   position or visibility.
 - Destructive row actions remain secondary, require confirmation and never
   compete with the view's primary creation action.
+- Machine rows show a concise, truncated description beneath the name when one
+  exists. Machine editing may change Server metadata and reduce effective
+  capabilities, but it can never grant beyond the Client Local Policy.
 - Users can permanently delete any Agent from its actions. Deletion closes
   active sessions, requires confirmation and retains Control Events according
   to the workspace retention policy.

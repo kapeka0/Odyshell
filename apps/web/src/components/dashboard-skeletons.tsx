@@ -13,13 +13,11 @@ export function OverviewSkeleton() {
 }
 
 export function TablePageSkeleton({
-  action = false,
   toolbarAction = false,
   filters = 1,
   columns = 4,
   summary = false,
 }: {
-  action?: boolean;
   toolbarAction?: boolean;
   filters?: number;
   columns?: number;
@@ -31,12 +29,9 @@ export function TablePageSkeleton({
       aria-busy="true"
       aria-label="Loading table"
     >
-      <div className="flex items-end justify-between gap-4">
-        <div className="flex flex-col gap-2">
-          <Skeleton className="h-4 w-20" />
-          <Skeleton className="h-9 w-36" />
-        </div>
-        {action ? <Skeleton className="h-8 w-28" /> : null}
+      <div className="flex flex-col gap-2">
+        <Skeleton className="h-4 w-20" />
+        <Skeleton className="h-9 w-36" />
       </div>
       <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between gap-2">

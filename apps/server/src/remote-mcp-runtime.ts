@@ -6,7 +6,9 @@ import type {
 import {
   capabilitySchema,
   operationSessionScopes,
+  sessionScopeDecision,
   type Capability,
+  type OperationAction,
 } from "@odyshell/protocol";
 import { sessionApprovalUrl, type ScopedRateLimiter } from "./cloud.js";
 import {
@@ -36,14 +38,19 @@ export function createRemoteMcpRuntime(
   return {
     async machines() {
       return {
-        data: (await db.listMachines(installation.workspaceId)).map((machine) => ({
-          id: machine.id,
-          name: machine.name,
-          online: gateway.isOnline(machine.id),
-          status: gateway.isOnline(machine.id) ? "online" : "offline",
-          ...mcpMachineExecutionFacts(machine.runtime),
-          lastSeenAt: isoTimestamp(machine.lastSeenAt),
-        })),
+        data: (await db.listMachines(installation.workspaceId)).map((machine) => {
+          const execution = mcpMachineExecutionFacts(machine.runtime);
+          return {
+            id: machine.id,
+            name: machine.name,
+            ...(machine.description ? { description: machine.description } : {}),
+            online: gateway.isOnline(machine.id),
+            status: gateway.isOnline(machine.id) ? "online" : "offline",
+            ...execution,
+            capabilities: machine.capabilities ?? execution.capabilities,
+            lastSeenAt: isoTimestamp(machine.lastSeenAt),
+          };
+        }),
       };
     },
     async ping(machineReference) {
@@ -59,6 +66,37 @@ export function createRemoteMcpRuntime(
       }
     },
     async request(input) {
+      const operations = await Promise.all(
+        input.operations.map(async (operation) => ({
+          machineId: (await resolveMcpMachine(db, installation, operation.machine))
+            .id,
+          action: operation.action,
+        })),
+      );
+      let scopes;
+      try {
+        scopes = operationSessionScopes(operations);
+      } catch {
+        throw new RemoteMcpError(
+          "Operations cannot be combined without broadening their scope.",
+          "session_scope_conflict",
+          400,
+        );
+      }
+      const reusable = await findReusableMcpSession(
+        db,
+        installation,
+        operations,
+      );
+      if (reusable) {
+        return {
+          id: reusable.sessionId,
+          sessionId: reusable.sessionId,
+          status: "ready",
+          reused: true,
+          expiresAt: isoTimestamp(reusable.expiresAt),
+        };
+      }
       if (
         !sessionRequestLimiter.allow(
           installation.workspaceId,
@@ -76,23 +114,6 @@ export function createRemoteMcpRuntime(
           "Session approval is unavailable",
           "session_approval_unavailable",
           503,
-        );
-      }
-      const operations = await Promise.all(
-        input.operations.map(async (operation) => ({
-          machineId: (await resolveMcpMachine(db, installation, operation.machine))
-            .id,
-          action: operation.action,
-        })),
-      );
-      let scopes;
-      try {
-        scopes = operationSessionScopes(operations);
-      } catch {
-        throw new RemoteMcpError(
-          "Operations cannot be combined without broadening their scope.",
-          "session_scope_conflict",
-          400,
         );
       }
       const requestId = randomUUID();
@@ -502,6 +523,49 @@ export function createRemoteMcpRuntime(
       };
     },
   };
+}
+
+async function findReusableMcpSession(
+  db: Database,
+  installation: McpInstallationRecord,
+  operations: Array<{ machineId: string; action: OperationAction }>,
+): Promise<AgentSessionCredentialPrincipal | null> {
+  const sessions = await db.listWorkspaceAgentSessions(
+    installation.workspaceId,
+    100,
+    { agentId: installation.agentId },
+  );
+  for (const session of sessions) {
+    if (
+      session.status !== "active" ||
+      session.expiresAt <= Date.now() ||
+      operations.some(
+        ({ machineId }) =>
+          !session.targets.some(
+            (target) =>
+              target.machineId === machineId && target.status === "ready",
+          ),
+      )
+    ) {
+      continue;
+    }
+    const principal = await db.findMcpSessionPrincipal({
+      workspaceId: installation.workspaceId,
+      installationId: installation.id,
+      sessionId: session.id,
+    });
+    if (
+      principal &&
+      operations.every(({ machineId, action }) =>
+        principal.scopes.some(
+          (scope) => sessionScopeDecision(scope, machineId, action).allowed,
+        ),
+      )
+    ) {
+      return principal;
+    }
+  }
+  return null;
 }
 
 function mcpMachineExecutionFacts(runtime: unknown): {

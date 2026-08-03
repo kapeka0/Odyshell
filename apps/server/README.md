@@ -9,6 +9,11 @@
 The Server exposes the Odyshell API and accepts outbound Client connections. It authenticates
 agents, checks machine and capability scopes, relays temporary tasks, and records an audit trail.
 
+Machine names and descriptions are Server metadata for humans and agents. Once configured, a
+Server capability selection is only a subset of the Client Local Policy; request creation and
+claim both fail closed when a Session asks for a capability disabled by that Server selection. The
+Client always enforces its independent Local Policy when opening the Session.
+
 It does not connect directly to private networks and does not require inbound access to Client
 machines.
 

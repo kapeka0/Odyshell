@@ -39,6 +39,7 @@ import {
   normalizeDeviceUserCode,
   privacySafeControlMetadata,
   revokeCloudMachineSchema,
+  updateCloudMachineSchema,
   ScopedConcurrencyLimiter,
   ScopedRateLimiter,
   sessionApprovalUrl,
@@ -1360,8 +1361,11 @@ app.post(
       machines: machines.map((machine) => ({
         id: machine.id,
         name: machine.name,
+        description: machine.description ?? null,
         status: machine.status,
         runtime: machine.runtime ?? null,
+        capabilities: machine.capabilities,
+        availableCapabilities: machine.availableCapabilities,
         lastSeenAt: isoTimestamp(machine.lastSeenAt),
         enrolledAt: isoTimestamp(machine.enrolledAt),
         online: gateway.isOnline(machine.id),
@@ -2371,6 +2375,55 @@ app.post(
       error: "legacy_agent_access_migrated",
       replacement: "agents",
     }),
+);
+
+app.post(
+  "/v1/internal/cloud/machines/update",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = updateCloudMachineSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request", details: parsed.error.issues });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const result = await db.updateMachine({
+      workspaceId: context.workspace.id,
+      machineId: parsed.data.machineId,
+      name: parsed.data.name,
+      description: parsed.data.description,
+      capabilities: parsed.data.capabilities,
+    });
+    if (result.status === "not_found") {
+      return reply.code(404).send({ error: "active_machine_not_found" });
+    }
+    if (result.status === "capability_denied") {
+      return reply.code(403).send({
+        error: "capability_denied_by_machine",
+        capability: result.capability,
+      });
+    }
+    await audit(
+      db,
+      context.workspace.id,
+      parsed.data.userId,
+      "machine.updated",
+      "machine",
+      result.machine.id,
+      { capabilities: result.machine.capabilities },
+    );
+    gateway.notifyWorkspace(context.workspace.id);
+    return {
+      id: result.machine.id,
+      name: result.machine.name,
+      description: result.machine.description ?? null,
+      capabilities: result.machine.capabilities,
+      availableCapabilities: result.machine.availableCapabilities,
+    };
+  },
 );
 
 app.post(

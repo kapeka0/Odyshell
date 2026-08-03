@@ -54,7 +54,7 @@ export const cloudManualSessionSchema = cloudIdentitySchema
     purpose: z.string().trim().max(280).optional(),
     agentId: z.string().uuid(),
     scopes: agentSessionRequestInputSchema.shape.scopes,
-    durationSeconds: z.number().int().min(15 * 60).max(24 * 60 * 60),
+    durationSeconds: z.number().int().min(5 * 60).max(24 * 60 * 60),
   })
   .strict()
   .superRefine((request, context) => {
@@ -114,6 +114,24 @@ export const deleteCloudAgentAccessSchema = cloudIdentitySchema.extend({
 export const revokeCloudMachineSchema = cloudIdentitySchema.extend({
   machineId: z.string().uuid(),
 });
+
+export const updateCloudMachineSchema = cloudIdentitySchema
+  .extend({
+    machineId: z.string().uuid(),
+    name: z.string().trim().min(1).max(128),
+    description: z.string().trim().max(280),
+    capabilities: z.array(capabilitySchema).max(32),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (new Set(input.capabilities).size !== input.capabilities.length) {
+      context.addIssue({
+        code: "custom",
+        message: "Capabilities must be unique",
+        path: ["capabilities"],
+      });
+    }
+  });
 
 export const deleteCloudAgentSchema = cloudIdentitySchema.extend({
   agentId: z.string().uuid(),

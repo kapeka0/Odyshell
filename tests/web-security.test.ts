@@ -424,6 +424,8 @@ describe("dashboard navigation performance boundary", () => {
     for (const items of ["agentOptions", "machineOptions", "durations"]) {
       expect(sessionForm).toContain(`items={${items}}`);
     }
+    expect(sessionForm).toContain('{ value: "300", label: "5 minutes" }');
+    expect(sessionForm).toContain('{ value: "900", label: "15 minutes" }');
     expect(eventSink).toContain("items={detailLevels}");
     expect(dataTable).toContain("items={filterOptions}");
   });
@@ -471,6 +473,44 @@ describe("dashboard navigation performance boundary", () => {
     expect(sessionList).toContain("toolbarAction={<CreateSessionSheet />}");
     expect(sessionsPage).not.toContain("action={<CreateSessionSheet />}");
     expect(sessionsLoading).toContain("toolbarAction");
+  });
+
+  it("edits machine metadata without widening the Client Local Policy", () => {
+    const root = process.cwd();
+    const machineList = readFileSync(
+      resolve(root, "apps/web/src/components/machine-list.tsx"),
+      "utf8",
+    );
+    const machineRoute = readFileSync(
+      resolve(root, "apps/web/src/app/api/machines/[machineId]/route.ts"),
+      "utf8",
+    );
+    expect(machineList).toContain("Edit machine");
+    expect(machineList).toContain("machine.availableCapabilities.includes");
+    expect(machineList).toContain("maxLength={280}");
+    expect(machineRoute).toContain("export async function PATCH");
+    expect(machineRoute).toContain("requireCloudRouteIdentity()");
+  });
+
+  it("keeps collection creation actions in table toolbars with stable labels", () => {
+    const root = process.cwd();
+    const machinePage = readFileSync(
+      resolve(root, "apps/web/src/app/dashboard/machines/page.tsx"),
+      "utf8",
+    );
+    const machineList = readFileSync(
+      resolve(root, "apps/web/src/components/machine-list.tsx"),
+      "utf8",
+    );
+    const loading = readFileSync(
+      resolve(root, "apps/web/src/app/dashboard/machines/loading.tsx"),
+      "utf8",
+    );
+    expect(machinePage).toContain('<DashboardPageHeader title="Machines" />');
+    expect(machineList).toContain("toolbarAction={");
+    expect(machineList).toContain("Machine limit reached");
+    expect(machineList).not.toContain(">Machine limit reached</Button>");
+    expect(loading).toContain("toolbarAction");
   });
 
   it("uses one default geometry for form controls", () => {
@@ -758,7 +798,7 @@ describe("dashboard navigation performance boundary", () => {
     expect(agentsPage).not.toContain('href="/dashboard/agents/add"');
     expect(machineForm).toContain("justify-end");
     expect(machineForm.indexOf("Cancel")).toBeLessThan(
-      machineForm.lastIndexOf('"Add"'),
+      machineForm.lastIndexOf("Add\n                </Button>"),
     );
     expect(machineForm).not.toContain("ArrowLeftIcon");
   });

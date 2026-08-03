@@ -1,13 +1,16 @@
 "use client";
 
+import type { Capability } from "@odyshell/protocol";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
-  CpuIcon,
   EllipsisIcon,
   EyeIcon,
+  PencilIcon,
+  PlusIcon,
   RadioIcon,
   Trash2Icon,
 } from "lucide-react";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { CopyableValue } from "@/components/copyable-value";
 import {
@@ -27,11 +30,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -43,25 +48,34 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
+  Field,
+  FieldContent,
+  FieldGroup,
+  FieldLabel,
+  FieldTitle,
+} from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
+import { capabilityGroups } from "@/lib/agent-access-options";
 import type { CloudMachine } from "@/lib/cloud-api";
 import { machinePlatform } from "@/lib/machine-platform";
 
-export function MachineList({ machines }: { machines: CloudMachine[] }) {
-  const { refresh } = useDashboard();
+export function MachineList({
+  machines,
+  atLimit,
+}: {
+  machines: CloudMachine[];
+  atLimit: boolean;
+}) {
+  const { refresh, optimisticallyUpdate } = useDashboard();
   const columns = useMemo<ColumnDef<CloudMachine>[]>(
     () => [
       {
         id: "search",
         accessorFn: (machine) =>
-          `${machine.name} ${machine.id} ${machinePlatform(machine.runtime)}`,
+          `${machine.name} ${machine.description ?? ""} ${machine.id} ${machinePlatform(machine.runtime)}`,
         enableHiding: true,
       },
       {
@@ -72,6 +86,11 @@ export function MachineList({ machines }: { machines: CloudMachine[] }) {
         cell: ({ row }) => (
           <div className="min-w-0">
             <p className="truncate font-medium">{row.original.name}</p>
+            {row.original.description ? (
+              <p className="max-w-72 truncate text-xs text-muted-foreground">
+                {row.original.description}
+              </p>
+            ) : null}
             <CopyableValue
               value={row.original.id}
               label={`${row.original.name} ID`}
@@ -122,28 +141,23 @@ export function MachineList({ machines }: { machines: CloudMachine[] }) {
         enableSorting: false,
         header: () => <span className="sr-only">Actions</span>,
         cell: ({ row }) => (
-          <MachineActions machine={row.original} refresh={refresh} />
+          <MachineActions
+            machine={row.original}
+            refresh={refresh}
+            onUpdated={(updated) =>
+              optimisticallyUpdate((context) => ({
+                ...context,
+                machines: context.machines.map((machine) =>
+                  machine.id === updated.id ? updated : machine,
+                ),
+              }))
+            }
+          />
         ),
       },
     ],
-    [refresh],
+    [optimisticallyUpdate, refresh],
   );
-
-  if (machines.length === 0) {
-    return (
-      <Empty className="min-h-64 rounded-lg border">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <CpuIcon aria-hidden="true" />
-          </EmptyMedia>
-          <EmptyTitle>No machines yet</EmptyTitle>
-          <EmptyDescription>
-            Use Add machine to create a one-time connection command.
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    );
-  }
 
   return (
     <DataTable
@@ -159,7 +173,32 @@ export function MachineList({ machines }: { machines: CloudMachine[] }) {
           { label: "Offline", value: "offline" },
         ],
       }}
-      emptyMessage="No machines match these filters."
+      emptyMessage={
+        machines.length === 0
+          ? "No machines yet."
+          : "No machines match these filters."
+      }
+      toolbarAction={
+        <div className="flex flex-col items-end gap-1">
+          {atLimit ? (
+            <Button type="button" disabled>
+              <PlusIcon aria-hidden="true" data-icon="inline-start" />
+              Add
+            </Button>
+          ) : (
+            <Link
+              href="/dashboard/machines/add"
+              className={buttonVariants()}
+            >
+              <PlusIcon aria-hidden="true" data-icon="inline-start" />
+              Add
+            </Link>
+          )}
+          {atLimit ? (
+            <p className="text-xs text-destructive">Machine limit reached</p>
+          ) : null}
+        </div>
+      }
     />
   );
 }
@@ -167,16 +206,84 @@ export function MachineList({ machines }: { machines: CloudMachine[] }) {
 function MachineActions({
   machine,
   refresh,
+  onUpdated,
 }: {
   machine: CloudMachine;
   refresh: () => Promise<unknown>;
+  onUpdated: (machine: CloudMachine) => void;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<
-    "ping" | "remove" | null
+    "ping" | "save" | "remove" | null
   >(null);
   const [error, setError] = useState<string | null>(null);
+  const [name, setName] = useState(machine.name);
+  const [description, setDescription] = useState(machine.description ?? "");
+  const [capabilities, setCapabilities] = useState<Capability[]>(
+    machine.capabilities,
+  );
+
+  function openEdit() {
+    setName(machine.name);
+    setDescription(machine.description ?? "");
+    setCapabilities(machine.capabilities);
+    setError(null);
+    setEditOpen(true);
+  }
+
+  async function saveMachine(event: React.FormEvent) {
+    event.preventDefault();
+    if (!name.trim()) return;
+    setPendingAction("save");
+    setError(null);
+    const optimistic = {
+      ...machine,
+      name: name.trim(),
+      description: description.trim() || null,
+      capabilities,
+    };
+    onUpdated(optimistic);
+    try {
+      const response = await fetch(`/api/machines/${machine.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name, description, capabilities }),
+      });
+      const body = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        name?: string;
+        description?: string | null;
+        capabilities?: Capability[];
+        availableCapabilities?: Capability[];
+      };
+      if (!response.ok) throw new Error(body.error ?? "Could not save machine");
+      onUpdated({
+        ...optimistic,
+        name: body.name ?? optimistic.name,
+        description: body.description ?? null,
+        capabilities: body.capabilities ?? optimistic.capabilities,
+        availableCapabilities:
+          body.availableCapabilities ?? machine.availableCapabilities,
+      });
+      setEditOpen(false);
+      toast.add({ title: "Machine saved", type: "success" });
+      await refresh();
+    } catch (reason) {
+      onUpdated(machine);
+      const message =
+        reason instanceof Error ? reason.message : "Could not save machine";
+      setError(message);
+      toast.add({
+        title: "Machine not saved",
+        description: message,
+        type: "error",
+      });
+    } finally {
+      setPendingAction(null);
+    }
+  }
 
   async function pingMachine() {
     setPendingAction("ping");
@@ -262,6 +369,10 @@ function MachineActions({
             <EyeIcon aria-hidden="true" />
             View details
           </DropdownMenuItem>
+          <DropdownMenuItem onClick={openEdit}>
+            <PencilIcon aria-hidden="true" />
+            Edit
+          </DropdownMenuItem>
           <DropdownMenuItem
             disabled={!machine.online}
             onClick={() => void pingMachine()}
@@ -308,6 +419,110 @@ function MachineActions({
               <span className="break-all font-mono text-xs">{machine.id}</span>
             </Detail>
           </dl>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit machine</DialogTitle>
+            <DialogDescription>
+              Metadata helps Agents choose the right machine. Capabilities can
+              only reduce the Client Local Policy.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={saveMachine}>
+            <FieldGroup className="max-h-[60svh] overflow-y-auto pr-1">
+              <Field>
+                <FieldLabel htmlFor={`machine-name-${machine.id}`}>
+                  Name
+                </FieldLabel>
+                <Input
+                  id={`machine-name-${machine.id}`}
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  maxLength={128}
+                  required
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor={`machine-description-${machine.id}`}>
+                  Description
+                </FieldLabel>
+                <Textarea
+                  id={`machine-description-${machine.id}`}
+                  value={description}
+                  onChange={(event) => setDescription(event.target.value)}
+                  maxLength={280}
+                  placeholder="Home server for media and backups"
+                />
+              </Field>
+              <Field>
+                <FieldLabel>Capabilities</FieldLabel>
+                <div className="rounded-lg border p-3">
+                  {capabilityGroups
+                    .flatMap((group) => group.capabilities)
+                    .map((capability) => {
+                      const available =
+                        machine.availableCapabilities.includes(
+                          capability.value,
+                        );
+                      return (
+                        <Field
+                          key={capability.value}
+                          orientation="horizontal"
+                          className="py-1.5"
+                        >
+                          <Checkbox
+                            id={`machine-${machine.id}-${capability.value}`}
+                            checked={capabilities.includes(capability.value)}
+                            disabled={!available}
+                            onCheckedChange={(checked) =>
+                              setCapabilities((current) =>
+                                checked
+                                  ? [...new Set([...current, capability.value])]
+                                  : current.filter(
+                                      (value) => value !== capability.value,
+                                    ),
+                              )
+                            }
+                          />
+                          <FieldContent>
+                            <FieldLabel
+                              htmlFor={`machine-${machine.id}-${capability.value}`}
+                            >
+                              <FieldTitle>{capability.label}</FieldTitle>
+                            </FieldLabel>
+                          </FieldContent>
+                        </Field>
+                      );
+                    })}
+                </div>
+              </Field>
+              {error ? (
+                <p className="text-sm text-destructive" role="alert">
+                  {error}
+                </p>
+              ) : null}
+            </FieldGroup>
+            <DialogFooter className="mt-4">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={pendingAction === "save"}
+                onClick={() => setEditOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={pendingAction === "save" || !name.trim()}
+              >
+                {pendingAction === "save" ? <Spinner /> : null}
+                Save
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 

@@ -20,6 +20,7 @@ import {
   privacySafeControlMetadata,
   revokeCloudAgentAccessSchema,
   revokeCloudMachineSchema,
+  updateCloudMachineSchema,
   ScopedConcurrencyLimiter,
   ScopedRateLimiter,
   verifyCloudLiveToken,
@@ -104,6 +105,22 @@ describe("cloud identity and device authorization boundaries", () => {
         workspaceId: "attacker-workspace",
       }).success,
     ).toBe(false);
+    const machineUpdate = {
+      ...identity,
+      machineId: "2dc24de7-ec0e-45b3-88c1-acbb900e51f8",
+      name: "Build server",
+      description: "Linux builder",
+      capabilities: ["fs.read", "process.exec"],
+    };
+    expect(updateCloudMachineSchema.safeParse(machineUpdate).success).toBe(true);
+    expect(updateCloudMachineSchema.safeParse({
+      ...machineUpdate,
+      workspaceId: "attacker-workspace",
+    }).success).toBe(false);
+    expect(updateCloudMachineSchema.safeParse({
+      ...machineUpdate,
+      capabilities: ["fs.read", "fs.read"],
+    }).success).toBe(false);
   });
 
   it("allows only intent-level capabilities through manual Session creation", () => {
@@ -131,6 +148,18 @@ describe("cloud identity and device authorization boundaries", () => {
     };
 
     expect(cloudManualSessionSchema.safeParse(request).success).toBe(true);
+    expect(
+      cloudManualSessionSchema.safeParse({
+        ...request,
+        durationSeconds: 5 * 60,
+      }).success,
+    ).toBe(true);
+    expect(
+      cloudManualSessionSchema.safeParse({
+        ...request,
+        durationSeconds: 5 * 60 - 1,
+      }).success,
+    ).toBe(false);
     expect(
       cloudManualSessionSchema.safeParse({
         ...request,
