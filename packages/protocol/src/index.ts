@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const PROTOCOL_VERSION = 2;
 export const DEFAULT_CLOUD_SERVER_URL =
-  "https://server-production-30ab.up.railway.app";
+  "https://server.odyshell.com";
 export const MAX_AGENT_ACCESS_SECONDS = 365 * 24 * 60 * 60;
 export const MAX_AGENT_SESSION_SECONDS = 24 * 60 * 60;
 export const MAX_CLIENT_CLOCK_SKEW_MILLISECONDS = 30_000;

@@ -108,6 +108,7 @@ describe("client platform support", () => {
   });
 
   it("uses Odyshell Cloud by default while preserving explicit self-hosted overrides", () => {
+    expect(DEFAULT_CLOUD_SERVER_URL).toBe("https://server.odyshell.com");
     expect(serverUrlFor({}, {}, undefined)).toBe(DEFAULT_CLOUD_SERVER_URL);
     expect(
       serverUrlFor(

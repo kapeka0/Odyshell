@@ -8,6 +8,7 @@ import {
   capabilityForAction,
   operationRequestSchema,
   organizationRequestSchema,
+  PROTOCOL_VERSION,
   sessionRequestSchema,
   workspaceRequestSchema,
   type Capability,
@@ -773,7 +774,7 @@ async function deleteWorkspaceAgent(
 
 app.get("/health", async () => {
   await db.health();
-  return { status: "ok", protocol: 1 };
+  return { status: "ok", protocol: PROTOCOL_VERSION };
 });
 
 app.post("/v1/auth/agent/device", async (request, reply) => {
