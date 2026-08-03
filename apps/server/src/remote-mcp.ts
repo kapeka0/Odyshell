@@ -1,4 +1,5 @@
 import { createClerkClient } from "@clerk/backend";
+import { decodeJwt } from "@clerk/backend/jwt";
 import {
   createMcpHandler,
   type AuthInfo,
@@ -32,7 +33,7 @@ export type RemoteMcpOauthIdentity = {
   userId: string;
   clientId: string;
   scopes: string[];
-  organizationIds: string[];
+  organizationId: string;
   token: string;
 };
 
@@ -68,6 +69,21 @@ export function remoteMcpConfiguration(
         .map((origin) => new URL(origin.trim()).origin),
     ),
   };
+}
+
+export function remoteMcpOrganizationId(
+  verifiedToken: string,
+  scopes: readonly string[],
+): string | null {
+  if (!scopes.includes("user:org:read")) return null;
+  try {
+    const organizationId = decodeJwt(verifiedToken).payload.org_id;
+    return typeof organizationId === "string" && organizationId.startsWith("org_")
+      ? organizationId
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export function remoteMcpOriginAllowed(
@@ -110,19 +126,15 @@ export function registerRemoteMcp(
       ) {
         return null;
       }
-      const memberships = await clerk.users.getOrganizationMembershipList({
-        userId: auth.userId,
-        limit: 100,
-      });
       const token = bearerToken(webRequest.headers.get("authorization") ?? undefined);
       if (!token) return null;
+      const organizationId = remoteMcpOrganizationId(token, auth.scopes);
+      if (!organizationId) return null;
       return {
         userId: auth.userId,
         clientId: auth.clientId,
         scopes: auth.scopes,
-        organizationIds: memberships.data.map(
-          (membership) => membership.organization.id,
-        ),
+        organizationId,
         token,
       };
     },
@@ -191,7 +203,7 @@ export function registerRemoteMcp(
         const workspace = await resolveWorkspace(
           dependencies.database,
           request.params.workspaceId,
-          identity.organizationIds,
+          identity.organizationId,
         );
         if (!workspace) {
           return reply.code(403).send({ error: "workspace_access_denied" });
@@ -229,15 +241,15 @@ export function registerRemoteMcp(
 async function resolveWorkspace(
   database: Database,
   requestedWorkspaceId: string | undefined,
-  organizationIds: string[],
+  organizationId: string,
 ): Promise<McpWorkspaceRecord | null> {
   if (requestedWorkspaceId) {
     const workspace = await database.mcpWorkspace(requestedWorkspaceId);
-    return workspace && organizationIds.includes(workspace.organizationExternalId)
+    return workspace && workspace.organizationExternalId === organizationId
       ? workspace
       : null;
   }
-  const workspaces = await database.mcpWorkspacesForOrganizations(organizationIds);
+  const workspaces = await database.mcpWorkspacesForOrganizations([organizationId]);
   return workspaces.length === 1 ? workspaces[0]! : null;
 }
 

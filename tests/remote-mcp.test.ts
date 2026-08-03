@@ -9,6 +9,7 @@ import { createRemoteMcpRuntime } from "../apps/server/src/remote-mcp-runtime.js
 import {
   registerRemoteMcp,
   remoteMcpConfiguration,
+  remoteMcpOrganizationId,
   remoteMcpOriginAllowed,
   type RemoteMcpOauth,
 } from "../apps/server/src/remote-mcp.js";
@@ -43,6 +44,21 @@ describe("remote MCP security boundary", () => {
     expect(remoteMcpOriginAllowed("https://evil.odyshell.com", allowed)).toBe(false);
     expect(remoteMcpOriginAllowed("https://odyshell.com.evil.test", allowed)).toBe(false);
     expect(remoteMcpOriginAllowed("not a url", allowed)).toBe(false);
+  });
+
+  it("accepts only an OAuth-selected Organization from a scoped JWT", () => {
+    const token = unsignedJwt({ org_id: "org_member" });
+
+    expect(
+      remoteMcpOrganizationId(token, ["openid", "user:org:read"]),
+    ).toBe("org_member");
+    expect(remoteMcpOrganizationId(token, ["openid"])).toBeNull();
+    expect(
+      remoteMcpOrganizationId(unsignedJwt({ org_id: "workspace-member" }), [
+        "user:org:read",
+      ]),
+    ).toBeNull();
+    expect(remoteMcpOrganizationId("not-a-jwt", ["user:org:read"])).toBeNull();
   });
 
   it("persists installation grants without OAuth or Session plaintext", async () => {
@@ -113,6 +129,40 @@ describe("remote MCP security boundary", () => {
     const response = await app.inject({
       method: "POST",
       url: "/mcp/workspace-id",
+      headers: { authorization: "Bearer safe-oauth-token" },
+      payload: initializeRequest(),
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({ error: "workspace_access_denied" });
+    expect(ensureMcpInstallation).not.toHaveBeenCalled();
+  });
+
+  it("binds workspace access to the Organization selected during OAuth consent", async () => {
+    const ensureMcpInstallation = vi.fn();
+    const authenticate = vi.fn(async () => ({
+      userId: "user-id",
+      clientId: "client-id",
+      scopes: ["openid", "user:org:read"],
+      organizationId: "org-member",
+      organizationIds: ["org-member", "org-private"],
+      token: "safe-oauth-token",
+    })) as RemoteMcpOauth["authenticate"];
+    const app = remoteMcpApp({
+      authenticate,
+      database: {
+        mcpWorkspace: vi.fn(async () => ({
+          workspaceId: "private-workspace",
+          workspaceName: "Private",
+          organizationExternalId: "org-private",
+        })),
+        ensureMcpInstallation,
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/mcp/private-workspace",
       headers: { authorization: "Bearer safe-oauth-token" },
       payload: initializeRequest(),
     });
@@ -301,8 +351,8 @@ function remoteMcpApp(
       vi.fn(async () => ({
         userId: "user-id",
         clientId: "client-id",
-        scopes: ["openid"],
-        organizationIds: ["org-member"],
+        scopes: ["openid", "user:org:read"],
+        organizationId: "org-member",
         token: "safe-oauth-token",
       })),
     applicationName: vi.fn(async () => "Test MCP"),
@@ -345,6 +395,12 @@ function initializeRequest() {
       clientInfo: { name: "security-test", version: "1.0.0" },
     },
   };
+}
+
+function unsignedJwt(payload: Record<string, unknown>) {
+  const encode = (value: Record<string, unknown>) =>
+    Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${encode({ alg: "RS256", typ: "at+jwt" })}.${encode(payload)}.${Buffer.from("signature").toString("base64url")}`;
 }
 
 function remoteRuntime(

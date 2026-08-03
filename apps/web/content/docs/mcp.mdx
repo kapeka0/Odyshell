@@ -22,6 +22,9 @@ account can access more than one Workspace, use the Workspace-specific URL shown
 https://mcp.example.com/mcp/<workspace-id>
 ```
 
+The consent screen also selects one Organization. Odyshell binds the installation to that exact
+Organization; membership in another Organization does not grant access to its Workspace.
+
 OAuth identifies the MCP installation. It does not authorize machine Operations. Odyshell creates
 or restores one persistent Agent for that installation, then requires a scoped Session for every
 task. Approved Sessions are bound to the installation in PostgreSQL, so Server restarts do not lose

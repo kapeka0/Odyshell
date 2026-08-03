@@ -80,7 +80,9 @@ Remote MCP installations use Clerk OAuth only for human and client identity. The
 installation-to-Agent and installation-to-Session bindings in PostgreSQL, but never stores OAuth
 access or refresh tokens. Every Operation still passes the normal Session scope and expiry checks.
 Stable client operation IDs prevent transport retries from dispatching duplicate work. Session
-completion revokes authority only after every Operation has reached a terminal state.
+completion revokes authority only after every Operation has reached a terminal state. The verified
+OAuth token must include `user:org:read`, and its selected Organization is the only Workspace
+ownership boundary accepted for that installation.
 
 Independent Agents may propose versioned autoapproval policies. Policies stay inactive until an
 administrator approves their exact machine, capability, restriction, duration, and validity
