@@ -213,7 +213,7 @@ describe("client platform support", () => {
 
   it("does not activate a socket that closes while authentication is queued", async () => {
     const queue = new MachineLifecycleQueue();
-    const socket = { readyState: 1 };
+    const socket: { readyState: 0 | 1 | 2 | 3 } = { readyState: 1 };
     let releaseBlocker!: () => void;
     let blockerStarted!: () => void;
     const started = new Promise<void>((resolveStarted) => {

@@ -68,7 +68,7 @@ const program = new Command();
 program
   .name("ods")
   .description("Agent-first access to private machines")
-  .version("0.12.0")
+  .version("0.12.1")
   .option("-j, --json", "emit stable JSON output")
   .option("--server <url>", "override the Odyshell server URL")
   .option("--workspace-id <id>", "select the administrator workspace")

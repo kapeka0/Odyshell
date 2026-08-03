@@ -413,7 +413,7 @@ try {
     !["linux", "macos", "windows"].includes(machine.runtime?.hostPlatform) ||
     !machine.runtime?.architecture ||
     machine.runtime?.containerOs !== "linux" ||
-    machine.runtime?.protocolVersion !== 1 ||
+    machine.runtime?.protocolVersion !== 2 ||
     !/^\d+\.\d+\.\d+$/u.test(machine.runtime?.clientVersion ?? "") ||
     !machine.runtime?.supportedCapabilities?.includes("fs.read") ||
     machine.compatible !== true ||
@@ -494,6 +494,7 @@ try {
       body: JSON.stringify({
         agentId: approvedAgentId,
         agentName: "E2E MCP Agent",
+        title: "Read approved test file",
         purpose: "Read the approved test file",
         scopes: [
           {
@@ -796,6 +797,7 @@ try {
         body: JSON.stringify({
           agentId: agentCredential.agentId,
           agentName: agentCredential.agentName,
+          title: purpose,
           purpose,
           scopes,
           durationSeconds: 600,
@@ -1029,6 +1031,7 @@ try {
       body: JSON.stringify({
         agentId: agentCredential.agentId,
         agentName: agentCredential.agentName,
+        title: "Verify Independent Agent identity",
         purpose: "Verify Independent Agent identity",
         scopes: [
           {
@@ -1168,6 +1171,7 @@ try {
         body: JSON.stringify({
           agentId: managedAgent.id,
           agentName: managedAgent.name,
+          title: "Verify Managed Agent delegation",
           purpose: "Verify Managed Agent delegation",
           scopes: [policyScope],
           durationSeconds: 600,
@@ -2335,9 +2339,9 @@ try {
       "-c",
       [
         "insert into odyshell.agent_sessions",
-        "(workspace_id, id, agent_id, purpose, status, expires_at)",
+        "(workspace_id, id, agent_id, title, purpose, status, expires_at)",
         `values ('${isolatedWorkspace.id}', '${crypto.randomUUID()}', '${targetAgentId}',`,
-        "'cross-workspace', 'active', now() + interval '1 minute');",
+        "'Cross workspace', 'cross-workspace', 'active', now() + interval '1 minute');",
       ].join(" "),
     ]);
   } catch {
@@ -2362,9 +2366,9 @@ try {
       "-c",
       [
         "insert into odyshell.agent_sessions",
-        "(workspace_id, id, agent_id, purpose, status, expires_at)",
+        "(workspace_id, id, agent_id, title, purpose, status, expires_at)",
         `values ('${isolatedWorkspace.id}', '${crypto.randomUUID()}', '${crypto.randomUUID()}',`,
-        "'legacy-escalation', 'active', now() + interval '1 minute');",
+        "'Legacy escalation', 'legacy-escalation', 'active', now() + interval '1 minute');",
       ].join(" "),
     ]);
   } catch {
@@ -2461,12 +2465,12 @@ try {
     "-c",
     [
       "insert into odyshell.agent_sessions",
-      "(workspace_id, id, agent_id, purpose, status, expires_at)",
+      "(workspace_id, id, agent_id, title, purpose, status, expires_at)",
       `values ('default', '${targetSessionId}', '${targetAgentId}',`,
-      "'credential-lifetime', 'active', now() + interval '1 minute');",
+      "'Credential lifetime', 'credential-lifetime', 'active', now() + interval '1 minute');",
     ].join(" "),
   ]);
-  let sessionCredentialLifetimeBound = false;
+  let orphanSessionCredentialRejected = false;
   try {
     await compose([
       "exec",
@@ -2483,18 +2487,15 @@ try {
       [
         "insert into odyshell.session_credentials",
         "(workspace_id, id, session_id, token_hash, status, expires_at, claimed_at)",
-        "select workspace_id,",
-        `'${crypto.randomUUID()}', id, 'session-${crypto.randomUUID()}', 'active',`,
-        "expires_at + interval '1 second', now()",
-        "from odyshell.agent_sessions",
-        `where workspace_id = 'default' and id = '${targetSessionId}';`,
+        `values ('default', '${crypto.randomUUID()}', '${crypto.randomUUID()}',`,
+        `'orphan-session-${crypto.randomUUID()}', 'active', now() + interval '1 minute', now());`,
       ].join(" "),
     ]);
   } catch {
-    sessionCredentialLifetimeBound = true;
+    orphanSessionCredentialRejected = true;
   }
-  if (!sessionCredentialLifetimeBound) {
-    throw new Error("A Session Credential outlived its Session");
+  if (!orphanSessionCredentialRejected) {
+    throw new Error("A Session Credential referenced an unknown Session");
   }
   await compose([
     "exec",
@@ -3292,7 +3293,7 @@ try {
           delegationEscalationRejected: true,
           delegationCascadeRevoked: true,
           overlongAgentCredentialRejected: true,
-          sessionCredentialLifetimeBound: true,
+          sessionCredentialReferenceBound: true,
           approvedSessionRead: approvedOutput,
           approvalReplayRejected: true,
           crossWorkspaceApprovalDenied: true,
