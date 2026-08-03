@@ -516,13 +516,21 @@ describe("dashboard navigation performance boundary", () => {
     expect(copyable).toContain('aria-live="polite"');
     expect(copyable).not.toContain("toast");
     expect(copyable).not.toContain("hover:text-foreground");
-    for (const file of ["enroll-machine.tsx"]) {
-      const generatedCommand = readFileSync(
-        resolve(componentsRoot, file),
-        "utf8",
-      );
+    expect(copyable).toContain('variant === "command"');
+    expect(copyable).toContain('className="absolute top-3 right-3"');
+    expect(copyable).toContain('size="icon-sm"');
+    for (const file of [
+      resolve(componentsRoot, "enroll-machine.tsx"),
+      resolve(
+        process.cwd(),
+        "apps/web/src/app/activate/success/page.tsx",
+      ),
+    ]) {
+      const generatedCommand = readFileSync(file, "utf8");
       expect(generatedCommand).toContain("border bg-muted/50");
+      expect(generatedCommand).toContain('variant="command"');
       expect(generatedCommand).not.toContain("bg-foreground p-");
+      expect(generatedCommand).not.toContain("hover:bg-muted/70");
     }
     for (const file of [
       "machine-list.tsx",

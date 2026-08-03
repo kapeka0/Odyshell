@@ -47,8 +47,8 @@ export default function ActivationSuccessPage() {
           <CopyableValue
             value={odyshellSkillInstallCommand}
             label="Odyshell skill installation command"
-            wrap
-            className="mt-4 w-full rounded-xl border bg-muted/50 p-4 font-mono text-xs leading-5 text-foreground hover:bg-muted/70"
+            variant="command"
+            className="mt-4 w-full rounded-xl border bg-muted/50 p-4 font-mono text-xs leading-5 text-foreground"
           />
         </section>
         <Link

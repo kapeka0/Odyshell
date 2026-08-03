@@ -145,8 +145,8 @@ export function EnrollMachine({
           <CopyableValue
             value={command}
             label="Machine enrollment command"
-            wrap
-            className="w-full rounded-xl border bg-muted/50 p-5 font-mono text-sm leading-6 text-foreground hover:bg-muted/70"
+            variant="command"
+            className="w-full rounded-xl border bg-muted/50 p-5 font-mono text-sm leading-6 text-foreground"
           />
           <div className="flex flex-wrap items-center justify-end gap-3 border-t pt-6">
             <span className="text-xs text-muted-foreground">

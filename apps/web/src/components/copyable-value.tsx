@@ -2,22 +2,24 @@
 
 import { CheckIcon, ClipboardIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 type CopyStatus = "idle" | "copied" | "failed";
+type CopyableValueVariant = "inline" | "command";
 
 export function CopyableValue({
   value,
   label,
   children,
   className,
-  wrap = false,
+  variant = "inline",
 }: {
   value: string;
   label: string;
   children?: React.ReactNode;
   className?: string;
-  wrap?: boolean;
+  variant?: CopyableValueVariant;
 }) {
   const [status, setStatus] = useState<CopyStatus>("idle");
   const resetTimer = useRef<number | undefined>(undefined);
@@ -44,6 +46,42 @@ export function CopyableValue({
     resetTimer.current = window.setTimeout(() => setStatus("idle"), 1_500);
   }
 
+  const icon =
+    status === "copied" ? (
+      <CheckIcon aria-hidden="true" />
+    ) : (
+      <ClipboardIcon aria-hidden="true" />
+    );
+  const statusMessage =
+    status === "copied"
+      ? "Copied"
+      : status === "failed"
+        ? "Copy failed"
+        : "";
+
+  if (variant === "command") {
+    return (
+      <div className={cn("relative", className)}>
+        <code className="block whitespace-pre-wrap break-all pr-10">
+          {children ?? value}
+        </code>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={`Copy ${label}`}
+          onClick={() => void copy()}
+          className="absolute top-3 right-3"
+        >
+          {icon}
+          <span className="sr-only" aria-live="polite">
+            {statusMessage}
+          </span>
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <button
       type="button"
@@ -54,21 +92,15 @@ export function CopyableValue({
         className,
       )}
     >
-      <span className={wrap ? "whitespace-pre-wrap break-all" : "truncate"}>
-        {children ?? value}
-      </span>
+      <span className="truncate">{children ?? value}</span>
       <span
         aria-hidden="true"
         className="-translate-x-1 shrink-0 opacity-0 transition-[opacity,transform] duration-150 group-hover/copy:translate-x-0 group-hover/copy:opacity-100 group-focus-visible/copy:translate-x-0 group-focus-visible/copy:opacity-100 motion-reduce:transition-none [&_svg]:size-3"
       >
-        {status === "copied" ? <CheckIcon /> : <ClipboardIcon />}
+        {icon}
       </span>
       <span className="sr-only" aria-live="polite">
-        {status === "copied"
-          ? "Copied"
-          : status === "failed"
-            ? "Copy failed"
-            : ""}
+        {statusMessage}
       </span>
     </button>
   );
