@@ -113,6 +113,52 @@ describe("remote MCP security boundary", () => {
     );
   });
 
+  it("serves authenticated MCP 2025-11-25 clients", async () => {
+    const app = remoteMcpApp();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/mcp/workspace-id",
+      headers: {
+        accept: "application/json, text/event-stream",
+        authorization: "Bearer safe-oauth-token",
+      },
+      payload: initializeRequest(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["content-type"]).toContain("text/event-stream");
+    const data = response.payload
+      .split("\n")
+      .find((line) => line.startsWith("data: "));
+    expect(data).toBeDefined();
+    expect(JSON.parse(data!.slice("data: ".length))).toMatchObject({
+      jsonrpc: "2.0",
+      id: 1,
+      result: { protocolVersion: "2025-11-25" },
+    });
+
+    const toolsResponse = await app.inject({
+      method: "POST",
+      url: "/mcp/workspace-id",
+      headers: {
+        accept: "application/json, text/event-stream",
+        authorization: "Bearer safe-oauth-token",
+        "mcp-protocol-version": "2025-11-25",
+      },
+      payload: {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/list",
+        params: {},
+      },
+    });
+
+    expect(toolsResponse.statusCode).toBe(200);
+    expect(toolsResponse.payload).toContain('"name":"machines_list"');
+    expect(toolsResponse.payload).toContain('"name":"session_request"');
+  });
+
   it("denies cross-workspace OAuth memberships", async () => {
     const ensureMcpInstallation = vi.fn();
     const app = remoteMcpApp({

@@ -162,7 +162,7 @@ export function registerRemoteMcp(
       );
     },
     {
-      legacy: "reject",
+      legacy: "stateless",
       responseMode: "json",
       onerror: (error) => app.log.error(error, "Remote MCP request failed"),
     },
