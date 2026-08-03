@@ -5041,7 +5041,6 @@ export class PostgresDatabase {
       .where("agentSessions.status", "=", "active")
       .where("agentSessions.expiresAt", ">", now)
       .where("agents.status", "=", "active")
-      .where("agentSessionTargets.status", "in", ["opening", "ready"])
       .orderBy("agentSessionTargets.machineId")
       .execute();
     const principal = principals[0];

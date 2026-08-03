@@ -354,7 +354,7 @@ try {
     !machine.runtime?.architecture ||
     machine.runtime?.containerOs !== "linux" ||
     machine.runtime?.protocolVersion !== 1 ||
-    machine.runtime?.clientVersion !== "0.10.0" ||
+    !/^\d+\.\d+\.\d+$/u.test(machine.runtime?.clientVersion ?? "") ||
     !machine.runtime?.supportedCapabilities?.includes("fs.read") ||
     machine.compatible !== true ||
     machine.upgradeRequired !== false
@@ -475,9 +475,9 @@ try {
     );
   }
   const approvalCode = new URL(requestedSession.approvalUrl).searchParams.get(
-    "code",
+    "request",
   );
-  if (!approvalCode) throw new Error("Session approval URL omitted its code");
+  if (!approvalCode) throw new Error("Session approval URL omitted its request");
 
   const wrongWorkspaceApproval = await fetch(
     new URL("/v1/internal/cloud/session-requests/approve", apiUrl),
@@ -494,7 +494,7 @@ try {
           slug: "other-organization",
           name: "Other organization",
         },
-        approvalCode,
+        requestId: approvalCode,
       }),
     },
   );
@@ -509,7 +509,7 @@ try {
       slug: "default",
       name: "Default organization",
     },
-    approvalCode,
+    requestId: approvalCode,
   };
   const agentDeviceStartResponse = await fetch(
     new URL("/v1/auth/agent/device", apiUrl),
@@ -769,7 +769,7 @@ try {
   }
   const widenedApprovalCode = new URL(
     widened.body.approvalUrl,
-  ).searchParams.get("code");
+  ).searchParams.get("request");
   if (!widenedApprovalCode) {
     throw new Error("Out-of-policy Session approval URL omitted its code");
   }
@@ -783,7 +783,7 @@ try {
       },
       body: JSON.stringify({
         ...approvalBody,
-        approvalCode: widenedApprovalCode,
+        requestId: widenedApprovalCode,
       }),
     },
   );
@@ -1344,6 +1344,47 @@ try {
     (value) => value.status === "ready" || value.status === "failed",
     "approved Session target",
   );
+  await compose([
+    "exec",
+    "-T",
+    "postgres",
+    "psql",
+    "-U",
+    "odyshell",
+    "-d",
+    "odyshell",
+    "-c",
+    `update odyshell.agent_session_targets set status = 'rejected' where session_id = '${claimedSession.sessionId}'; update odyshell.sessions set status = 'failed', error = 'capability_denied' where id in (select runtime_session_id from odyshell.agent_session_targets where session_id = '${claimedSession.sessionId}');`,
+  ]);
+  const rejectedTargetStatusResponse = await fetch(
+    new URL(`/v1/sessions/${claimedSession.sessionId}`, apiUrl),
+    {
+      headers: {
+        authorization: `Bearer ${claimedSession.sessionToken}`,
+      },
+    },
+  );
+  const rejectedTargetStatus = await rejectedTargetStatusResponse.json();
+  if (
+    rejectedTargetStatusResponse.status !== 200 ||
+    rejectedTargetStatus.status !== "failed"
+  ) {
+    throw new Error(
+      `A rejected target hid its Session status behind authentication: ${rejectedTargetStatusResponse.status} ${JSON.stringify(rejectedTargetStatus)}`,
+    );
+  }
+  await compose([
+    "exec",
+    "-T",
+    "postgres",
+    "psql",
+    "-U",
+    "odyshell",
+    "-d",
+    "odyshell",
+    "-c",
+    `update odyshell.agent_session_targets set status = 'ready' where session_id = '${claimedSession.sessionId}'; update odyshell.sessions set status = 'ready', error = null where id in (select runtime_session_id from odyshell.agent_session_targets where session_id = '${claimedSession.sessionId}');`,
+  ]);
   const scopedOperation = (action, idempotencyKey = crypto.randomUUID()) =>
     fetch(
       new URL(
@@ -1715,7 +1756,7 @@ try {
     );
   }
   const renewalCode = new URL(renewalRequest.approvalUrl).searchParams.get(
-    "code",
+    "request",
   );
   if (!renewalCode) throw new Error("Renewal approval omitted its code");
   const renewalApproval = await fetch(
@@ -1728,7 +1769,7 @@ try {
       },
       body: JSON.stringify({
         ...approvalBody,
-        approvalCode: renewalCode,
+        requestId: renewalCode,
       }),
     },
   );
