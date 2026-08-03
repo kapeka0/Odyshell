@@ -171,7 +171,7 @@ export const filesystemPathSchema = scopedPathSchema
     "Network paths are not allowed",
   )
   .describe(
-    "Exact filesystem path. Relative paths resolve inside the enrolled workspace; local absolute paths require an exact approved Session scope.",
+    "Exact filesystem path. Relative paths resolve from the Client working directory; local absolute paths require an exact approved Session scope.",
   );
 
 export const relativePathSchema = scopedPathSchema
@@ -181,7 +181,7 @@ export const relativePathSchema = scopedPathSchema
     "Path must be relative",
   )
   .describe(
-    "Path relative to the enrolled machine workspace. Absolute paths and parent traversal are not allowed.",
+    "Path relative to the Client working directory. Absolute paths and parent traversal are not allowed.",
   );
 
 export function normalizeRelativePath(value: string): string {
@@ -544,7 +544,7 @@ const processExecOperationActionSchema = z
     env: operationEnvironmentSchema.default({}),
   })
   .describe(
-    "Run one exact executable. Use this for an explicitly approved host path outside the enrolled workspace; do not use a shell command.",
+    "Run one exact executable. Use this for an explicitly approved host path outside the Client working directory; do not use a shell command.",
   );
 
 const processShellOperationActionSchema = z.object({

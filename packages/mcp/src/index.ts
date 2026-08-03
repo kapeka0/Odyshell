@@ -64,7 +64,7 @@ export function createApprovedMcpServer(
     { name: "odyshell", version: "0.10.2" },
     {
       instructions:
-        "List machines before choosing platform-specific operations. Request an explicit temporary Session for a typed operation. Filesystem paths may be relative to the enrolled workspace or exact absolute host paths. Absolute paths require an exact approved scope and a host execution profile. Use process.exec for exact executable and argument rules; process.shell is unavailable. When session_request returns an approval URL, show it verbatim as a clickable link and wait for the user to approve or deny it. Then check session_status before executing. If a tool response is lost, use session_requests_list to recover the request. Credentials stay inside Odyshell.",
+        "List machines before choosing platform-specific operations. Request an explicit temporary Session for a typed operation. Relative filesystem paths resolve from the Client working directory; exact absolute host paths are also supported. Absolute paths require an exact approved scope and a host execution profile. Use process.exec for exact executable and argument rules; process.shell is unavailable. When session_request returns an approval URL, show it verbatim as a clickable link and wait for the user to approve or deny it. Then follow nextAction and check session_status before executing. If a tool response is lost, use session_requests_list to recover the request. Credentials stay inside Odyshell.",
     },
   );
 
@@ -97,7 +97,7 @@ export function createApprovedMcpServer(
     {
       title: "Request operation access",
       description:
-        "Request a temporary Session scoped to one or more typed operations. Filesystem paths may be workspace-relative or exact absolute host paths. Absolute paths require a host profile and are approved as exact filesystem scopes. Use process.exec for an exact executable and arguments. Free-form shell is unavailable. If approval is required, show the returned link to the user and wait for their decision.",
+        "Request a temporary Session scoped to one or more typed operations. Relative filesystem paths resolve from the Client working directory; exact absolute host paths are also supported. Absolute paths require a host profile and are approved as exact filesystem scopes. Use process.exec for an exact executable and arguments. Free-form shell is unavailable. If approval is required, show the returned link to the user and wait for their decision, then follow nextAction.",
       inputSchema: z.object({
         operations: z
           .array(
@@ -149,7 +149,11 @@ export function createApprovedMcpServer(
       annotations: requestAnnotations,
     },
     async ({ requestId }) =>
-      runTool(() => runtime.status(requestId), reportUnexpectedError),
+      runSessionStatus(
+        requestId,
+        () => runtime.status(requestId),
+        reportUnexpectedError,
+      ),
   );
 
   server.registerTool(
@@ -293,7 +297,17 @@ async function runSessionRequest(
               ? [`Approval expires: ${result.expiresAt}`]
               : []),
             "",
-            "After the user reviews it, call session_status with the Request ID.",
+            "After the user reviews it, follow this next action:",
+            JSON.stringify(
+              {
+                nextAction: {
+                  tool: "session_status",
+                  requestId: result.id,
+                },
+              },
+              null,
+              2,
+            ),
           ].join("\n"),
         },
       ],
@@ -301,6 +315,49 @@ async function runSessionRequest(
   } catch (error) {
     return toolError(error, reportUnexpectedError);
   }
+}
+
+async function runSessionStatus(
+  requestId: string,
+  action: () => Promise<unknown>,
+  reportUnexpectedError: (error: unknown) => void,
+): Promise<CallToolResult> {
+  try {
+    const result = await action();
+    if (!isRecord(result) || typeof result.status !== "string") {
+      return textResult(result);
+    }
+    if (result.status === "ready" && typeof result.sessionId === "string") {
+      return textResult({
+        ...result,
+        nextAction: {
+          tool: "operation_execute",
+          sessionId: result.sessionId,
+          instruction: "Execute only an operation approved for this Session.",
+        },
+      });
+    }
+    if (result.status === "pending" || result.status === "opening") {
+      return textResult({
+        ...result,
+        nextAction: {
+          tool: "session_status",
+          requestId,
+          instruction:
+            result.status === "pending"
+              ? "Wait for the user decision, then check again."
+              : "The Client is opening the Session; check again shortly.",
+        },
+      });
+    }
+    return textResult(result);
+  } catch (error) {
+    return toolError(error, reportUnexpectedError);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function toolError(

@@ -166,7 +166,7 @@ export function createOdyshellMcpServer(
     { name: "odyshell", version: "0.10.2" },
     {
       instructions:
-        "Use typed filesystem and process tools on machines already allowed by the current Odyshell agent token. Prefer process_exec over process_shell. All paths are relative to the machine workspace.",
+        "Use typed filesystem and process tools on machines already allowed by the current Odyshell agent token. Prefer process_exec over process_shell. Relative paths resolve from the Client working directory.",
     },
   );
 
@@ -365,7 +365,7 @@ function registerFilesystemTools(
     "filesystem_stat",
     {
       title: "Inspect a filesystem path",
-      description: "Read metadata for a path relative to the machine workspace.",
+      description: "Read metadata for a path relative to the Client working directory.",
       inputSchema: z.object({ machine: machineSchema, path: relativePathSchema }),
       annotations: readOnlyAnnotations,
     },
@@ -377,7 +377,7 @@ function registerFilesystemTools(
     "filesystem_list",
     {
       title: "List a directory",
-      description: "List a directory relative to the machine workspace.",
+      description: "List a directory relative to the Client working directory.",
       inputSchema: z.object({
         machine: machineSchema,
         path: relativePathSchema.default("."),
@@ -392,7 +392,7 @@ function registerFilesystemTools(
     "filesystem_search",
     {
       title: "Search the workspace",
-      description: "Search for matching filenames below a workspace-relative path.",
+      description: "Search for matching filenames below a relative path.",
       inputSchema: z.object({
         machine: machineSchema,
         query: z.string().min(1).max(256),
@@ -409,7 +409,7 @@ function registerFilesystemTools(
     "filesystem_read",
     {
       title: "Read a file",
-      description: "Read a file relative to the machine workspace.",
+      description: "Read a file relative to the Client working directory.",
       inputSchema: z.object({ machine: machineSchema, path: relativePathSchema }),
       annotations: readOnlyAnnotations,
     },
@@ -421,7 +421,7 @@ function registerFilesystemTools(
     "filesystem_write",
     {
       title: "Write a file",
-      description: "Write UTF-8 content to a file relative to the machine workspace.",
+      description: "Write UTF-8 content to a file relative to the Client working directory.",
       inputSchema: z.object({
         machine: machineSchema,
         path: relativePathSchema,
@@ -444,7 +444,7 @@ function registerFilesystemTools(
     "filesystem_mkdir",
     {
       title: "Create a directory",
-      description: "Create a directory relative to the machine workspace.",
+      description: "Create a directory relative to the Client working directory.",
       inputSchema: z.object({
         machine: machineSchema,
         path: relativePathSchema,
@@ -466,7 +466,7 @@ function registerFilesystemTools(
     "filesystem_remove",
     {
       title: "Remove a filesystem path",
-      description: "Remove a path relative to the machine workspace.",
+      description: "Remove a path relative to the Client working directory.",
       inputSchema: z.object({
         machine: machineSchema,
         path: relativePathSchema,

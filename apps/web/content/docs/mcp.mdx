@@ -87,14 +87,19 @@ Odyshell grants the Session and the Client reports it ready.
 If the client loses the original response, it can call `session_requests_list`, select its recent
 request and continue with `session_status` instead of asking for duplicate approval.
 
+Odyshell returns a `nextAction` after both the request and status checks. Agents should follow it
+instead of asking the member to repeat an approval. A ready status points to `operation_execute`;
+an opening status points back to `session_status` while the Client finishes opening the Session.
+
 Agents should call `machines_list` before choosing commands. For example, a Windows machine should
 not receive Linux-only commands such as `df -h`. The Server exposes only an allowlisted runtime
 summary; local paths, Node details and Client configuration remain hidden.
 
 Each operation determines its capability and restriction automatically. Scopes for the same
 machine are combined without broadening their exact restrictions. Filesystem operations use an
-exact workspace-relative or absolute host path, `process.exec` uses an exact executable and
-arguments, and `docker.logs` uses an exact container. Absolute paths require a host profile.
+exact path relative to the Client working directory or an absolute host path, `process.exec` uses
+an exact executable and arguments, and `docker.logs` uses an exact container. Absolute paths
+require a host profile.
 Approval codes expire, are single-use and are bound to their Workspace.
 
 If combining filesystem operations would authorize a capability on a path that was not requested,
@@ -106,3 +111,11 @@ The Client applies its local policy independently.
 `process.shell` is not available through restricted Sessions. Agents can request `fs.read` for an
 exact absolute host file, such as `/etc/network/interfaces`, or use `process.exec` when the task
 requires an exact executable and argument array. The user sees the exact operation before approval.
+
+## Client-side blocks
+
+An MCP host may apply its own plan, safety or tool-availability controls before a call reaches
+Odyshell. If the host reports that a tool was blocked and no Operation appears in the Session
+Timeline, the machine and Session are not the cause: Odyshell never received the call. Continue in
+a host that exposes `session_status` and `operation_execute`, or use the local `ods mcp` connection.
+Odyshell does not weaken operation annotations to bypass a host's safety controls.

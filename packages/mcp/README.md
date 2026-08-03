@@ -19,6 +19,8 @@ When a Session needs human approval, the tool result tells the agent to show the
 wait for the user's decision before checking the request status.
 If the MCP client loses a tool response, it can list its own recent requests and resume the same
 approval flow.
+Request and status results include an explicit `nextAction`, so an agent can resume after human
+approval without asking for a duplicate Session.
 
 The same pending request and review link are available from the Odyshell Sessions dashboard.
 
@@ -26,8 +28,8 @@ Requests can group several exact operations into one least-privilege scope per m
 Operation IDs make retries safe, and completion is rejected while an Operation remains active.
 Groups that would create capability-path cross products are rejected.
 
-Filesystem paths may be relative to the enrolled machine workspace or exact absolute paths on a
-host profile. An absolute path is presented and approved as an exact filesystem scope. Docker
+Filesystem paths may be relative to the Client working directory or exact absolute paths on a host
+profile. An absolute path is presented and approved as an exact filesystem scope. Docker
 profiles reject absolute host paths. Restricted Sessions do not expose free-form shell;
 `process.exec` remains available for an exact executable and argument array.
 

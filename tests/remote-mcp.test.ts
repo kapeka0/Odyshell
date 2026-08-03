@@ -215,7 +215,7 @@ describe("remote MCP security boundary", () => {
     expect(toolsResponse.payload).toContain('"name":"machines_list"');
     expect(toolsResponse.payload).toContain('"name":"session_request"');
     expect(toolsResponse.payload).toContain(
-      "Relative paths resolve inside the enrolled workspace",
+      "Relative paths resolve from the Client working directory",
     );
     expect(toolsResponse.payload).not.toContain('"const":"process.shell"');
   });

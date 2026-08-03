@@ -85,6 +85,10 @@ describe("Odyshell MCP server", () => {
       },
     });
     expect(textOf(requested)).toContain("Approval required");
+    expect(textOf(requested)).toContain('"tool": "session_status"');
+    expect(textOf(requested)).toContain(
+      '"requestId": "7d8730ef-075c-40d5-a72d-8101abe17260"',
+    );
 
     const recovered = await client.callTool({
       name: "session_requests_list",
@@ -116,6 +120,7 @@ describe("Odyshell MCP server", () => {
     expect(textOf(result)).toContain(
       '"sessionId": "c837dd55-fdf0-47bb-887f-e4f857245dc7"',
     );
+    expect(textOf(result)).toContain('"tool": "operation_execute"');
     expect(textOf(result)).not.toContain("ods_session_secret");
   });
 
