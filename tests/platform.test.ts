@@ -370,6 +370,13 @@ describe("client platform support", () => {
       }),
     ).toBe(true);
     expect(
+      windowsTaskActionIsCurrent(action, options.configPath, {
+        nodePath: options.nodePath,
+        cliPath: "C:\\Users\\Ada & team\\pnpm\\ods.js",
+        canonicalizePath: () => options.cliPath,
+      }),
+    ).toBe(true);
+    expect(
       windowsTaskActionIsCurrent(
         {
           execute: options.nodePath,

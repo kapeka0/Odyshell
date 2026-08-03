@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, posix, resolve, win32 } from "node:path";
@@ -373,12 +374,17 @@ export function renderWindowsTaskAction(
 export function windowsTaskActionIsCurrent(
   action: { execute: string; arguments: string },
   configPath: string,
-  runtime: { nodePath?: string; cliPath?: string } = {},
+  runtime: {
+    nodePath?: string;
+    cliPath?: string;
+    canonicalizePath?: (path: string) => string;
+  } = {},
 ): boolean {
+  const cliPath = runtime.cliPath ?? process.argv[1] ?? "";
   const expected = renderWindowsTaskAction(
     {
       nodePath: runtime.nodePath ?? process.execPath,
-      cliPath: runtime.cliPath ?? process.argv[1] ?? "",
+      cliPath: (runtime.canonicalizePath ?? canonicalExecutablePath)(cliPath),
       configPath,
     },
   );
@@ -387,6 +393,15 @@ export function windowsTaskActionIsCurrent(
       win32.normalize(expected.execute).toLowerCase() &&
     action.arguments === expected.arguments
   );
+}
+
+function canonicalExecutablePath(path: string): string {
+  if (!path) return path;
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return path;
+  }
 }
 
 export async function installClientService(

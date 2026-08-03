@@ -120,7 +120,7 @@ describe("Odyshell MCP server", () => {
       enrolledAt: "2026-08-03T16:00:00.000Z",
       compatible: true,
       upgradeRequired: false,
-      clientVersion: "0.13.0",
+      clientVersion: "0.13.1",
       protocolVersion: 2,
     });
     const server = createApprovedOdyshellMcpServer(ods, {
