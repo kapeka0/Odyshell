@@ -184,9 +184,10 @@ persistent Agent per approved installation and keeps Session authority inside th
 hosted clients such as Claude or ChatGPT do not need a local `ods` process.
 
 The Agent keeps a persistent identity but receives no machine authority from login. It requests a
-temporary Session for a bounded group of typed operations, returns an approval URL, privately
-claims the credential once, performs the task, and completes the Session. The Server enforces the immutable machine,
-capability, path, and expiry; the Client applies its own local policy as a second boundary.
+temporary Session for a bounded group of typed operations, shows the approval URL to the user and
+waits, privately claims the credential once approved, performs the task, and completes the Session.
+The Server enforces the immutable machine, capability, path, and expiry; the Client applies its own
+local policy as a second boundary.
 
 Independent Agents can propose versioned autoapproval policies for repeated bounded work. An
 administrator approves the exact ceiling once; requests inside it autoapprove, while wider

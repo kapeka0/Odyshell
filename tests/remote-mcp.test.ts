@@ -159,6 +159,51 @@ describe("remote MCP security boundary", () => {
     expect(toolsResponse.payload).toContain('"name":"session_request"');
   });
 
+  it("tells the MCP client to show the Session approval link", async () => {
+    const request = vi.fn(async () => ({
+      id: "7d8730ef-075c-40d5-a72d-8101abe17260",
+      status: "pending",
+      approvalUrl: "https://odyshell.com/sessions/approve?code=SAFE",
+      expiresAt: "2026-08-03T11:17:26.648Z",
+    }));
+    const app = remoteMcpApp({ runtime: fakeRuntime({ request }) });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/mcp/workspace-id",
+      headers: {
+        accept: "application/json, text/event-stream",
+        authorization: "Bearer safe-oauth-token",
+        "mcp-protocol-version": "2025-11-25",
+      },
+      payload: {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: {
+          name: "session_request",
+          arguments: {
+            operations: [
+              {
+                machine: "rpi5",
+                action: { kind: "fs.read", path: "config/app.json" },
+              },
+            ],
+            purpose: "Inspect configuration",
+            durationSeconds: 900,
+          },
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.payload).toContain("Open this link to approve or deny");
+    expect(response.payload).toContain(
+      "https://odyshell.com/sessions/approve?code=SAFE",
+    );
+    expect(request).toHaveBeenCalledOnce();
+  });
+
   it("denies cross-workspace OAuth memberships", async () => {
     const ensureMcpInstallation = vi.fn();
     const app = remoteMcpApp({
@@ -367,6 +412,7 @@ function remoteMcpApp(
   overrides: {
     authenticate?: RemoteMcpOauth["authenticate"];
     database?: Record<string, unknown>;
+    runtime?: ApprovedMcpRuntime;
   } = {},
 ) {
   const app = Fastify();
@@ -413,12 +459,14 @@ function remoteMcpApp(
       CLERK_SECRET_KEY: "sk_test_placeholder",
       CLERK_PUBLISHABLE_KEY: "pk_test_placeholder",
     },
-    { database, oauth, runtime: () => fakeRuntime() },
+    { database, oauth, runtime: () => overrides.runtime ?? fakeRuntime() },
   );
   return app;
 }
 
-function fakeRuntime(): ApprovedMcpRuntime {
+function fakeRuntime(
+  overrides: Partial<ApprovedMcpRuntime> = {},
+): ApprovedMcpRuntime {
   return {
     machines: vi.fn(async () => ({ data: [] })),
     ping: vi.fn(),
@@ -427,6 +475,7 @@ function fakeRuntime(): ApprovedMcpRuntime {
     execute: vi.fn(),
     complete: vi.fn(),
     timeline: vi.fn(),
+    ...overrides,
   };
 }
 

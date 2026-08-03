@@ -13,7 +13,7 @@ export type ApprovedMcpRuntime = {
     purpose: string;
     durationSeconds: number;
     runId?: string;
-  }): Promise<unknown>;
+  }): Promise<ApprovedMcpSessionRequest>;
   status(requestId: string): Promise<unknown>;
   execute(input: {
     sessionId: string;
@@ -28,6 +28,13 @@ export type ApprovedMcpRuntime = {
     summary?: string;
   }): Promise<unknown>;
   timeline(sessionId: string): Promise<unknown>;
+};
+
+export type ApprovedMcpSessionRequest = {
+  id: string;
+  status: string;
+  approvalUrl?: string;
+  expiresAt: string | null;
 };
 
 export type ApprovedMcpOperationResult = {
@@ -53,7 +60,7 @@ export function createApprovedMcpServer(
     { name: "odyshell", version: "0.10.0" },
     {
       instructions:
-        "Request an explicit temporary Session for a typed operation. Ask the user to approve the URL, check session_status, then execute. Credentials stay inside Odyshell.",
+        "Request an explicit temporary Session for a typed operation. When session_request returns an approval URL, show it verbatim as a clickable link and wait for the user to approve or deny it. Then check session_status before executing. Credentials stay inside Odyshell.",
     },
   );
 
@@ -85,7 +92,7 @@ export function createApprovedMcpServer(
     {
       title: "Request operation access",
       description:
-        "Request a temporary Session scoped to one or more typed operations. A user approves the returned URL unless a matching policy applies.",
+        "Request a temporary Session scoped to one or more typed operations. If approval is required, show the returned link to the user and wait for their decision.",
       inputSchema: z.object({
         operations: z
           .array(
@@ -103,7 +110,7 @@ export function createApprovedMcpServer(
       annotations: requestAnnotations,
     },
     async (input) =>
-      runTool(
+      runSessionRequest(
         () =>
           runtime.request({
             operations: input.operations,
@@ -240,6 +247,40 @@ async function runTool(
 ): Promise<CallToolResult> {
   try {
     return textResult(await action());
+  } catch (error) {
+    return toolError(error, reportUnexpectedError);
+  }
+}
+
+async function runSessionRequest(
+  action: () => Promise<ApprovedMcpSessionRequest>,
+  reportUnexpectedError: (error: unknown) => void,
+): Promise<CallToolResult> {
+  try {
+    const result = await action();
+    if (result.status !== "pending" || !result.approvalUrl) {
+      return textResult(result);
+    }
+    return {
+      content: [
+        {
+          type: "text",
+          text: [
+            "Approval required.",
+            "",
+            "Open this link to approve or deny the Session:",
+            result.approvalUrl,
+            "",
+            `Request ID: ${result.id}`,
+            ...(result.expiresAt
+              ? [`Approval expires: ${result.expiresAt}`]
+              : []),
+            "",
+            "After the user reviews it, call session_status with the Request ID.",
+          ].join("\n"),
+        },
+      ],
+    };
   } catch (error) {
     return toolError(error, reportUnexpectedError);
   }
