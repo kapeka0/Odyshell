@@ -12,11 +12,14 @@ export async function cloudIdentityFor(
   orgId: string,
 ): Promise<CloudIdentity> {
   const clerk = await clerkClient();
-  const organization = await clerk.organizations.getOrganization({
-    organizationId: orgId,
-  });
+  const [organization, user] = await Promise.all([
+    clerk.organizations.getOrganization({ organizationId: orgId }),
+    clerk.users.getUser(userId),
+  ]);
+  const userName = [user.firstName, user.lastName].filter(Boolean).join(" ");
   return {
     userId,
+    ...(userName ? { userName } : {}),
     organization: {
       externalId: organization.id,
       slug:

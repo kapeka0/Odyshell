@@ -968,6 +968,36 @@ describe("dashboard navigation performance boundary", () => {
     expect(rootLayout).toContain("odyshell-square-dark.svg");
   });
 
+  it("keeps Settings cards quiet, descriptive and documentation-linked", () => {
+    const webRoot = resolve(process.cwd(), "apps/web/src");
+    const workspaceSettings = readFileSync(
+      resolve(webRoot, "app/dashboard/settings/page.tsx"),
+      "utf8",
+    );
+    const userSettings = readFileSync(
+      resolve(webRoot, "app/dashboard/user-settings/page.tsx"),
+      "utf8",
+    );
+    const skeletons = readFileSync(
+      resolve(webRoot, "components/dashboard-skeletons.tsx"),
+      "utf8",
+    );
+    const onboarding = readFileSync(
+      resolve(webRoot, "components/workspace-onboarding.tsx"),
+      "utf8",
+    );
+
+    for (const settings of [workspaceSettings, userSettings]) {
+      expect(settings).not.toContain('className="border-b p-4"');
+      expect(settings).toContain('border-0 bg-card');
+      expect(settings).toContain("<FieldDescription>");
+    }
+    expect(workspaceSettings).toContain('href="/docs/sessions#timeline"');
+    expect(skeletons).not.toContain('gap-6 border-b p-4');
+    expect(onboarding).toContain("suggestedWorkspaceName(user?.firstName)");
+    expect(onboarding).toContain("'s\"} Workspace");
+  });
+
   it("loads page-view analytics once from the global Next.js boundary", () => {
     const rootLayout = readFileSync(
       resolve(process.cwd(), "apps/web/src/app/layout.tsx"),

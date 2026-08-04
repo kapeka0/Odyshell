@@ -2948,6 +2948,16 @@ export function canonicalSessionTargetDecision(
   return statuses.includes("opening") ? "opening" : "failed";
 }
 
+export function defaultCloudWorkspaceName(userName?: string): string {
+  const firstName = userName?.trim().split(/\s+/u)[0];
+  if (!firstName) return "Default workspace";
+  const boundedName = firstName.slice(0, 84);
+  const possessive = boundedName.endsWith("s")
+    ? `${boundedName}'`
+    : `${boundedName}'s`;
+  return `${possessive} Workspace`;
+}
+
 type CanonicalSessionReconciliation =
   | { state: "opening" }
   | {
@@ -3176,6 +3186,7 @@ export class PostgresDatabase {
     externalId: string;
     slug: string;
     name: string;
+    userName?: string;
   }): Promise<{ organization: OrganizationRecord; workspace: WorkspaceRecord }> {
     return await this.db.transaction().execute(async (transaction) => {
       await sql`select pg_advisory_xact_lock(hashtext(${input.externalId}))`.execute(
@@ -3207,6 +3218,7 @@ export class PostgresDatabase {
           .executeTakeFirstOrThrow();
       }
 
+      const defaultWorkspaceName = defaultCloudWorkspaceName(input.userName);
       let workspace = await transaction
         .selectFrom("workspaces")
         .selectAll()
@@ -3220,8 +3232,18 @@ export class PostgresDatabase {
             id: randomUUID(),
             organizationId: organization.id,
             slug: "default",
-            name: "Default workspace",
+            name: defaultWorkspaceName,
           })
+          .returningAll()
+          .executeTakeFirstOrThrow();
+      } else if (
+        workspace.name === "Default workspace" &&
+        defaultWorkspaceName !== "Default workspace"
+      ) {
+        workspace = await transaction
+          .updateTable("workspaces")
+          .set({ name: defaultWorkspaceName })
+          .where("id", "=", workspace.id)
           .returningAll()
           .executeTakeFirstOrThrow();
       }

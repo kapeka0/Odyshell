@@ -33,6 +33,7 @@ describe("cloud identity and device authorization boundaries", () => {
   it("validates identity-bound user and workspace settings", () => {
     const identity = {
       userId: "user_123",
+      userName: "Karim Ahmed",
       organization: { externalId: "org_123", slug: "acme", name: "Acme" },
     };
     expect(cloudUserSettingsSchema.safeParse({ ...identity, timeZone: "Europe/Madrid" }).success).toBe(true);
@@ -84,6 +85,13 @@ describe("cloud identity and device authorization boundaries", () => {
     expect(
       cloudIdentitySchema.safeParse({
         userId: "",
+        organization: { externalId: "org", slug: "acme", name: "Acme" },
+      }).success,
+    ).toBe(false);
+    expect(
+      cloudIdentitySchema.safeParse({
+        userId: "user",
+        userName: "x".repeat(129),
         organization: { externalId: "org", slug: "acme", name: "Acme" },
       }).success,
     ).toBe(false);

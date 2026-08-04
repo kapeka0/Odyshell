@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -118,7 +119,7 @@ export function EventSinkSettings() {
             <FieldContent>
               <FieldTitle>{sink ? sink.endpoint : "Not configured"}</FieldTitle>
               <FieldDescription>
-                {sink ? `Secret ${sink.signingSecret}` : "Deliver events to your own HTTPS endpoint."}
+                {sink ? `Secret ${sink.signingSecret}` : "Deliver signed events to your own HTTPS endpoint."} <Link href="/docs/event-sinks">Learn more</Link>
               </FieldDescription>
             </FieldContent>
             <div className="flex w-full items-center justify-end gap-3 @md/field-group:w-auto">
@@ -145,6 +146,7 @@ export function EventSinkSettings() {
                     placeholder="https://events.example/odyshell"
                     required
                   />
+                  <FieldDescription>Public HTTPS destination for signed deliveries.</FieldDescription>
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="sink-detail">Detail</FieldLabel>
@@ -168,6 +170,7 @@ export function EventSinkSettings() {
                       </SelectGroup>
                     </SelectContent>
                   </Select>
+                  <FieldDescription>Controls the detail sent independently from Session logging.</FieldDescription>
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="sink-secret">Secret</FieldLabel>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useAuth } from "@clerk/nextjs";
+import Link from "next/link";
 import { useState } from "react";
 import { useDashboard } from "@/components/dashboard-provider";
 import {
@@ -211,10 +212,10 @@ export default function WorkspaceSettingsPage() {
         <Card>
           <CardContent className="p-0">
             <FieldGroup className="gap-0">
-              <Field orientation="responsive" className="border-b p-4">
+              <Field orientation="responsive" className="p-4">
                 <FieldContent>
                   <FieldTitle>Avatar</FieldTitle>
-                  <FieldDescription>Generated for this workspace.</FieldDescription>
+                  <FieldDescription>Identifies this workspace across Odyshell.</FieldDescription>
                 </FieldContent>
                 <div className="flex w-full items-center justify-end gap-3 @md/field-group:w-auto">
                   <WorkspaceIdentityAvatar identity={avatarSeed} name={name || workspace.name} className="size-10" />
@@ -223,18 +224,21 @@ export default function WorkspaceSettingsPage() {
                   ) : null}
                 </div>
               </Field>
-              <Field orientation="responsive" className="border-b p-4">
-                <FieldContent><FieldLabel htmlFor="workspace-name">Name</FieldLabel></FieldContent>
+              <Field orientation="responsive" className="p-4">
+                <FieldContent>
+                  <FieldLabel htmlFor="workspace-name">Name</FieldLabel>
+                  <FieldDescription>Shown to members and Agents.</FieldDescription>
+                </FieldContent>
                 <Input id="workspace-name" name="workspace-name" autoComplete="off" value={name} onChange={(event) => setName(event.target.value)} className="w-full @md/field-group:max-w-md" disabled={!admin} />
               </Field>
-              <ReadOnlyRow label="Slug" value={workspace.slug} />
-              <ReadOnlyRow label="Plan" value={state.context.plan.id} badge />
-              <ReadOnlyRow label="Machines" value={`${state.context.usage.machines} / ${state.context.plan.machineLimit}`} />
-              <ReadOnlyRow label="Agents" value={`${state.context.usage.activeAgents} / ${state.context.plan.activeAgentLimit}`} last />
+              <ReadOnlyRow label="Slug" description="Stable workspace handle." value={workspace.slug} />
+              <ReadOnlyRow label="Plan" description="Current plan and included limits." value={state.context.plan.id} badge />
+              <ReadOnlyRow label="Machines" description="Connected machine allowance." value={`${state.context.usage.machines} / ${state.context.plan.machineLimit}`} />
+              <ReadOnlyRow label="Agents" description="Active Agent allowance." value={`${state.context.usage.activeAgents} / ${state.context.plan.activeAgentLimit}`} />
             </FieldGroup>
           </CardContent>
           {admin ? (
-            <CardFooter className="justify-end gap-2">
+            <CardFooter className="justify-end gap-2 border-0 bg-card">
               <Button variant="outline" disabled={!detailsDirty || savingDetails} onClick={cancelDetails}>Cancel</Button>
               <Button disabled={!detailsDirty || savingDetails || !name.trim()} onClick={() => void saveDetails()}>
                 {savingDetails ? <Spinner data-icon="inline-start" /> : null}
@@ -261,7 +265,7 @@ export default function WorkspaceSettingsPage() {
                 <FieldContent>
                   <FieldTitle>Timeline detail</FieldTitle>
                   <FieldDescription>
-                    Captured when each new Session is requested.
+                    Captured when each new Session is requested. <Link href="/docs/sessions#timeline">Learn more</Link>
                   </FieldDescription>
                 </FieldContent>
                 <RadioGroup
@@ -270,8 +274,8 @@ export default function WorkspaceSettingsPage() {
                   disabled={!admin}
                   className="w-full gap-0 @md/field-group:max-w-lg"
                 >
-                  {loggingOptions.map((option, index) => (
-                    <Field key={option.value} orientation="horizontal" className={index < loggingOptions.length - 1 ? "border-b py-3" : "pt-3"}>
+                  {loggingOptions.map((option) => (
+                    <Field key={option.value} orientation="horizontal" className="py-2">
                       <RadioGroupItem value={option.value} id={`logging-${option.value}`} />
                       <FieldContent>
                         <FieldLabel htmlFor={`logging-${option.value}`}>{option.label}</FieldLabel>
@@ -284,7 +288,7 @@ export default function WorkspaceSettingsPage() {
             </FieldGroup>
           </CardContent>
           {admin ? (
-            <CardFooter className="justify-end gap-2">
+            <CardFooter className="justify-end gap-2 border-0 bg-card">
               <Button variant="outline" disabled={!loggingDirty || savingLogging} onClick={cancelLogging}>Cancel</Button>
               <Button disabled={!loggingDirty || savingLogging} onClick={() => void saveLogging(false)}>
                 {savingLogging ? <Spinner data-icon="inline-start" /> : null}
@@ -302,7 +306,7 @@ export default function WorkspaceSettingsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Enable Diagnostic logging?</AlertDialogTitle>
             <AlertDialogDescription>
-              Commands, paths, stdout and stderr may contain secrets. This applies only to new sessions.
+              Commands, paths, stdout and stderr may contain secrets. This applies only to new Sessions. <Link href="/docs/sessions#timeline">Review the logging levels.</Link>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -315,10 +319,13 @@ export default function WorkspaceSettingsPage() {
   );
 }
 
-function ReadOnlyRow({ label, value, badge = false, last = false }: { label: string; value: string; badge?: boolean; last?: boolean }) {
+function ReadOnlyRow({ label, description, value, badge = false }: { label: string; description: string; value: string; badge?: boolean }) {
   return (
-    <Field orientation="horizontal" className={last ? "p-4" : "border-b p-4"}>
-      <FieldTitle>{label}</FieldTitle>
+    <Field orientation="responsive" className="p-4">
+      <FieldContent>
+        <FieldTitle>{label}</FieldTitle>
+        <FieldDescription>{description}</FieldDescription>
+      </FieldContent>
       {badge ? <Badge variant="outline" className="capitalize">{value}</Badge> : <p className="font-mono text-sm tabular-nums text-muted-foreground">{value}</p>}
     </Field>
   );

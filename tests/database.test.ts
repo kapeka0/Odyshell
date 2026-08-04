@@ -4,10 +4,17 @@ import { resolve } from "node:path";
 import {
   canonicalSessionTargetDecision,
   createDatabase,
+  defaultCloudWorkspaceName,
   withDatabaseDeadlockRetry,
 } from "../apps/server/src/database.js";
 
 describe("server storage boundaries", () => {
+  it("names a new Cloud Workspace after its member", () => {
+    expect(defaultCloudWorkspaceName("Karim Ahmed")).toBe("Karim's Workspace");
+    expect(defaultCloudWorkspaceName("James")).toBe("James' Workspace");
+    expect(defaultCloudWorkspaceName()).toBe("Default workspace");
+    expect(defaultCloudWorkspaceName("a".repeat(128))).toHaveLength(96);
+  });
   it("snapshots workspace logging policy into every Session", () => {
     const database = readFileSync(
       resolve(process.cwd(), "apps/server/src/database.ts"),

@@ -278,8 +278,11 @@ particular component, library or interaction pattern.
   administrators.
 - Settings pages group related fields into named sections. Inside each contained
   surface, use responsive horizontal rows with the label and concise guidance on
-  the left, the control on the right, separators between rows and actions at the
-  bottom-right. Their skeletons preserve the same section and row structure.
+  the left, the control on the right, quiet spacing instead of inner separators,
+  and actions at the bottom-right. Every field includes brief helper text and
+  security-sensitive choices link to public documentation. Keep each Card on one
+  background and use the default shadcn treatment for Alerts and Dialogs. Their
+  skeletons preserve the same section and row structure.
 - Workspace Timeline logging is selected for new Sessions as Privacy-minimal,
   Operational or Diagnostic. Diagnostic requires an explicit warning. Keep Event
   Sink configuration independent from this workspace display setting.

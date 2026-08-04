@@ -944,6 +944,7 @@ try {
   }
   const cloudIdentity = {
     userId: cliUserId,
+    userName: "E2E Member",
     organization: approvalBody.organization,
   };
   const defaultSettingsContextResponse = await fetch(
@@ -959,6 +960,7 @@ try {
   );
   const defaultSettingsContext = await defaultSettingsContextResponse.json();
   if (
+    defaultSettingsContext.workspace?.name !== "E2E's Workspace" ||
     defaultSettingsContext.workspace?.loggingLevel !== "privacy-minimal" ||
     !defaultSettingsContext.workspace?.avatarSeed ||
     defaultSettingsContext.userPreferences?.timeZone !== "System"

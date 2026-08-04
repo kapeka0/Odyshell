@@ -1266,6 +1266,7 @@ app.post(
       externalId: parsed.data.organization.externalId,
       slug: parsed.data.organization.slug,
       name: parsed.data.organization.name,
+      ...(parsed.data.userName ? { userName: parsed.data.userName } : {}),
     });
     const [
       machines,

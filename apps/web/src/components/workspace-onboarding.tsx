@@ -1,6 +1,6 @@
 "use client";
 
-import { useAuth, useOrganizationList } from "@clerk/nextjs";
+import { useAuth, useOrganizationList, useUser } from "@clerk/nextjs";
 import { Building2Icon, CheckIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
@@ -22,15 +22,17 @@ const workspaceNameSchema = z
 export function WorkspaceOnboarding() {
   const router = useRouter();
   const { orgId } = useAuth();
+  const { user } = useUser();
   const { isLoaded, createOrganization, setActive, userMemberships } =
     useOrganizationList({
       userMemberships: { infinite: true },
     });
-  const [name, setName] = useState("");
+  const [name, setName] = useState<string | null>(null);
   const [pendingOrganizationId, setPendingOrganizationId] = useState<
     string | null
   >(null);
   const [error, setError] = useState<string | null>(null);
+  const workspaceName = name ?? suggestedWorkspaceName(user?.firstName);
 
   useEffect(() => {
     if (orgId) router.replace("/dashboard");
@@ -38,7 +40,7 @@ export function WorkspaceOnboarding() {
 
   async function createWorkspace(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const parsed = workspaceNameSchema.safeParse(name);
+    const parsed = workspaceNameSchema.safeParse(workspaceName);
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? "Invalid workspace name");
       return;
@@ -126,10 +128,10 @@ export function WorkspaceOnboarding() {
               id="workspace-name"
               name="workspace-name"
               autoComplete="organization"
-              value={name}
+              value={workspaceName}
               onChange={(event) => setName(event.target.value)}
               aria-invalid={Boolean(error)}
-              placeholder="Acme"
+              placeholder="Karim's Workspace"
             />
             {error ? <FieldError>{error}</FieldError> : null}
           </Field>
@@ -160,4 +162,10 @@ export function WorkspaceOnboarding() {
       </Alert>
     </div>
   );
+}
+
+function suggestedWorkspaceName(firstName?: string | null): string {
+  const name = firstName?.trim();
+  if (!name) return "My Workspace";
+  return `${name}${name.endsWith("s") ? "'" : "'s"} Workspace`;
 }

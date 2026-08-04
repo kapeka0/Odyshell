@@ -8,6 +8,7 @@ export { DEFAULT_CLOUD_SERVER_URL };
 
 const cloudIdentitySchema = z.object({
   userId: z.string().min(1),
+  userName: z.string().trim().min(1).max(128).optional(),
   organization: z.object({
     externalId: z.string().min(1),
     slug: z.string().min(1),

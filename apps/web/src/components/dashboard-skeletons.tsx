@@ -121,16 +121,16 @@ export function SettingsPageSkeleton({
           </div>
           <div className="overflow-hidden rounded-xl border">
             {Array.from({ length: rows }, (_, row) => (
-              <div key={row} className="flex min-h-16 items-center justify-between gap-6 border-b p-4 last:border-b-0">
+              <div key={row} className="flex min-h-16 items-center justify-between gap-6 p-4">
                 <div className="flex flex-col gap-2">
                   <Skeleton className="h-4 w-28" />
-                  {row === 0 ? <Skeleton className="h-3 w-44" /> : null}
+                  <Skeleton className="h-3 w-44" />
                 </div>
                 <Skeleton className="h-10 w-64 max-w-1/2" />
               </div>
             ))}
             {actionSections.includes(section) ? (
-              <div className="flex justify-end gap-2 border-t bg-muted/50 p-4">
+              <div className="flex justify-end gap-2 p-4">
                 <Skeleton className="h-10 w-20" />
                 <Skeleton className="h-10 w-16" />
               </div>

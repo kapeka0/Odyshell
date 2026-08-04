@@ -166,10 +166,10 @@ export default function UserSettingsPage() {
         <Card>
           <CardContent className="p-0">
             <FieldGroup className="gap-0">
-              <Field orientation="responsive" className="border-b p-4">
+              <Field orientation="responsive" className="p-4">
                 <FieldContent>
                   <FieldTitle>Photo</FieldTitle>
-                  <FieldDescription>Your profile image.</FieldDescription>
+                  <FieldDescription>Shown to other workspace members.</FieldDescription>
                 </FieldContent>
                 <div className="flex w-full items-center justify-end gap-2 @md/field-group:w-auto">
                   <UserIdentityAvatar
@@ -207,21 +207,23 @@ export default function UserSettingsPage() {
                   ) : null}
                 </div>
               </Field>
-              <Field orientation="responsive" className="border-b p-4">
+              <Field orientation="responsive" className="p-4">
                 <FieldContent>
                   <FieldLabel htmlFor="first-name">First name</FieldLabel>
+                  <FieldDescription>Used for your identity and workspace defaults.</FieldDescription>
                 </FieldContent>
                 <Input id="first-name" name="given-name" autoComplete="given-name" value={effectiveFirstName} onChange={(event) => setFirstName(event.target.value)} className="w-full @md/field-group:max-w-md" disabled={!isLoaded} />
               </Field>
               <Field orientation="responsive" className="p-4">
                 <FieldContent>
                   <FieldLabel htmlFor="last-name">Last name</FieldLabel>
+                  <FieldDescription>Completes your member identity.</FieldDescription>
                 </FieldContent>
                 <Input id="last-name" name="family-name" autoComplete="family-name" value={effectiveLastName} onChange={(event) => setLastName(event.target.value)} className="w-full @md/field-group:max-w-md" disabled={!isLoaded} />
               </Field>
             </FieldGroup>
           </CardContent>
-          <CardFooter className="justify-end gap-2">
+          <CardFooter className="justify-end gap-2 border-0 bg-card">
             <Button variant="outline" disabled={!profileDirty || savingProfile} onClick={() => {
               setFirstName(null);
               setLastName(null);
@@ -251,7 +253,7 @@ export default function UserSettingsPage() {
             <Field orientation="responsive" className="p-4">
               <FieldContent>
                 <FieldTitle>Timezone</FieldTitle>
-                <FieldDescription>System follows this browser.</FieldDescription>
+                <FieldDescription>Controls how dates and times appear across the dashboard.</FieldDescription>
               </FieldContent>
               <Select items={timeZones.map((value) => ({ label: value, value }))} value={timeZone} onValueChange={(value) => value && setTimeZone(value)}>
                 <SelectTrigger className="w-full @md/field-group:w-72"><SelectValue /></SelectTrigger>
@@ -261,7 +263,7 @@ export default function UserSettingsPage() {
               </Select>
             </Field>
           </CardContent>
-          <CardFooter className="justify-end gap-2">
+          <CardFooter className="justify-end gap-2 border-0 bg-card">
             <Button variant="outline" disabled={!timeZoneDirty || savingTimeZone} onClick={() => {
               setTimeZone(context.userPreferences.timeZone);
             }}>Cancel</Button>
