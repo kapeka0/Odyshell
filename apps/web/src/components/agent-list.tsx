@@ -140,7 +140,7 @@ export function AgentList({
       filters={[
         {
           columnId: "kind",
-          label: "All types",
+          label: "Types",
           options: [
             { label: "Independent", value: "independent" },
             { label: "Managed", value: "managed" },
@@ -148,7 +148,7 @@ export function AgentList({
         },
         {
           columnId: "status",
-          label: "All statuses",
+          label: "Statuses",
           options: [
             { label: "Active", value: "active" },
             { label: "Disabled", value: "disabled" },

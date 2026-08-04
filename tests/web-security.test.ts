@@ -391,7 +391,12 @@ describe("dashboard navigation performance boundary", () => {
       ),
       "utf8",
     );
+    const agentList = readFileSync(
+      resolve(process.cwd(), "apps/web/src/components/agent-list.tsx"),
+      "utf8",
+    );
     expect(selectDisplayLabel("Dates", [], "all")).toBe("All Dates");
+    expect(selectDisplayLabel("Statuses", [], "all")).toBe("All Statuses");
     expect(
       selectDisplayLabel(
         "Dates",
@@ -401,6 +406,9 @@ describe("dashboard navigation performance boundary", () => {
     ).toBe("Last 7 days");
     expect(dataTable).toContain("selectDisplayLabel(");
     expect(dataTable).not.toContain("<SelectValue />");
+    expect(agentList).toContain('label: "Types"');
+    expect(agentList).toContain('label: "Statuses"');
+    expect(agentList).not.toMatch(/label:\s*"All /u);
   });
 
   it("maps Select values to user-facing labels instead of internal identifiers", () => {
