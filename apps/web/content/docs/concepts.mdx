@@ -49,6 +49,13 @@ authorization and validation clearer than treating every action as shell text.
 
 ## Control Event
 
-A durable, privacy-minimal lifecycle record. It identifies who acted, what kind of action
-occurred, the target, time, and result. Session Timelines can retain a conservatively redacted command shape and exit status, but never file contents, stdout,
-or stderr.
+A durable, privacy-minimal lifecycle record. It identifies who acted, what kind
+of action occurred, the target, time, and result. It does not contain commands,
+paths, stdout or stderr.
+
+## Session Timeline
+
+The chronological record for one Session. The workspace logging level captured
+by the Session controls its detail: Operational can show automatically redacted
+commands, paths, stdout and stderr, while Diagnostic can show raw values that
+may include secrets. Privacy-minimal remains structural.

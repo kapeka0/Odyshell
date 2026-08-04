@@ -211,13 +211,13 @@ export default function UserSettingsPage() {
                 <FieldContent>
                   <FieldLabel htmlFor="first-name">First name</FieldLabel>
                 </FieldContent>
-                <Input id="first-name" value={effectiveFirstName} onChange={(event) => setFirstName(event.target.value)} className="w-full @md/field-group:max-w-md" disabled={!isLoaded} />
+                <Input id="first-name" name="given-name" autoComplete="given-name" value={effectiveFirstName} onChange={(event) => setFirstName(event.target.value)} className="w-full @md/field-group:max-w-md" disabled={!isLoaded} />
               </Field>
               <Field orientation="responsive" className="p-4">
                 <FieldContent>
                   <FieldLabel htmlFor="last-name">Last name</FieldLabel>
                 </FieldContent>
-                <Input id="last-name" value={effectiveLastName} onChange={(event) => setLastName(event.target.value)} className="w-full @md/field-group:max-w-md" disabled={!isLoaded} />
+                <Input id="last-name" name="family-name" autoComplete="family-name" value={effectiveLastName} onChange={(event) => setLastName(event.target.value)} className="w-full @md/field-group:max-w-md" disabled={!isLoaded} />
               </Field>
             </FieldGroup>
           </CardContent>

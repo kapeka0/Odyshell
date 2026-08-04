@@ -245,7 +245,9 @@ Sink delivery requires:
 - private, loopback, link-local, metadata, redirect, and DNS-rebinding defenses;
 - response-body and error redaction.
 
-Diagnostic stdout and stderr may stream to a sink but are not persisted by Odyshell.
+Operational and Diagnostic stdout and stderr can be reconstructed from temporary Operation
+delivery data for the Timeline or an independent Event Sink. They are not copied into durable
+Timeline events and disappear when that temporary data expires.
 
 ## Documentation rollout
 

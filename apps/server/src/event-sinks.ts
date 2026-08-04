@@ -406,7 +406,9 @@ export function redactTimelineMetadata(
     if (alwaysSensitiveKey.test(key)) continue;
     if (key === "summary") continue;
     if (level === "privacy-minimal" && !minimalKeys.has(key)) continue;
-    result[key] = operationalExportValue(key, value);
+    result[key] = level === "privacy-minimal"
+      ? privacyMinimalExportValue(key, value)
+      : operationalExportValue(key, value);
   }
   return result;
 }
@@ -421,9 +423,33 @@ export function redactEventSinkMetadata(
     if (alwaysSensitiveKey.test(key)) continue;
     if (key === "summary") continue;
     if (level === "privacy-minimal" && !eventSinkMinimalKeys.has(key)) continue;
-    result[key] = operationalExportValue(key, value);
+    result[key] = level === "privacy-minimal"
+      ? privacyMinimalExportValue(key, value)
+      : operationalExportValue(key, value);
   }
   return result;
+}
+
+function privacyMinimalExportValue(key: string, value: unknown): unknown {
+  if (key !== "scopes" || !Array.isArray(value)) {
+    return operationalExportValue(key, value);
+  }
+  return value.map((scope) => {
+    if (!scope || typeof scope !== "object") return {};
+    const candidate = scope as Record<string, unknown>;
+    return {
+      ...(typeof candidate.machineId === "string"
+        ? { machineId: candidate.machineId }
+        : {}),
+      ...(Array.isArray(candidate.capabilities)
+        ? {
+            capabilities: candidate.capabilities.filter(
+              (capability): capability is string => typeof capability === "string",
+            ),
+          }
+        : {}),
+    };
+  });
 }
 
 function operationalExportValue(key: string, value: unknown): unknown {
@@ -475,6 +501,8 @@ function redactOperationalArgs(args: string[]): string[] {
       redactNext = true;
       return argument;
     }
+    const assignment = sensitiveAssignment.exec(argument);
+    if (assignment) return `${assignment[1]}[REDACTED]`;
     return redactOperationalString(argument);
   });
 }

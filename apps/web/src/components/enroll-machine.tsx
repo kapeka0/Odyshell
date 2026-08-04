@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CopyableValue } from "@/components/copyable-value";
+import { useDashboard } from "@/components/dashboard-provider";
 import {
   Field,
   FieldContent,
@@ -38,6 +39,7 @@ import {
   toggleReadOnlyPreset,
 } from "@/lib/agent-access-options";
 import { machineEnrollmentCommand } from "@/lib/enrollment-command";
+import { formatDashboardTimestamp } from "@/lib/date-time";
 
 const machineNameSchema = z
   .string()
@@ -61,6 +63,7 @@ export function EnrollMachine({
   serverUrl: string;
   atLimit: boolean;
 }) {
+  const { state } = useDashboard();
   const [machineName, setMachineName] = useState("my-machine");
   const [capabilities, setCapabilities] = useState<Capability[]>([]);
   const [enrollment, setEnrollment] = useState<EnrollmentToken | null>(null);
@@ -154,10 +157,12 @@ export function EnrollMachine({
           <div className="flex flex-wrap items-center justify-end gap-3 border-t pt-6">
             <span className="text-xs text-muted-foreground">
               Expires{" "}
-              {new Date(enrollment.expiresAt).toLocaleTimeString([], {
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
+              {formatDashboardTimestamp(
+                enrollment.expiresAt,
+                state.status === "ready"
+                  ? state.context.userPreferences.timeZone
+                  : "System",
+              )}
             </span>
             <Link
               href="/dashboard/machines"

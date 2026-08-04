@@ -976,7 +976,7 @@ try {
       body: JSON.stringify({ ...cloudIdentity, timeZone: "UTC" }),
     },
   );
-  const workspaceSettingsResponse = await fetch(
+  const workspaceDetailsResponse = await fetch(
     new URL("/v1/internal/cloud/workspace/settings/update", apiUrl),
     {
       method: "POST",
@@ -986,13 +986,32 @@ try {
       },
       body: JSON.stringify({
         ...cloudIdentity,
+        section: "details",
         name: "E2E workspace",
         avatarSeed: "e2e-avatar-seed",
+      }),
+    },
+  );
+  const workspaceLoggingResponse = await fetch(
+    new URL("/v1/internal/cloud/workspace/settings/update", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        ...cloudIdentity,
+        section: "logging",
         loggingLevel: "operational",
       }),
     },
   );
-  if (userSettingsResponse.status !== 200 || workspaceSettingsResponse.status !== 200) {
+  if (
+    userSettingsResponse.status !== 200 ||
+    workspaceDetailsResponse.status !== 200 ||
+    workspaceLoggingResponse.status !== 200
+  ) {
     throw new Error("User or Workspace settings could not be updated");
   }
   const notificationContextResponse = await fetch(

@@ -256,9 +256,10 @@ particular component, library or interaction pattern.
   canvas nodes lead with the title. Session tables include the target machine;
   multi-machine Sessions show one machine and a compact remaining count.
 - Session detail uses a chronological live Timeline. Show lifecycle and
-  Operation events with their human, Agent or Odyshell actor. Keep verified
-  command text sanitized, show exit status, and never render retained stdout or
-  stderr. Auto-scroll only while the viewer remains at the bottom.
+  Operation events with their human, Agent or Odyshell actor. Privacy-minimal
+  stays structural; Operational renders automatically redacted commands, paths,
+  stdout and stderr; Diagnostic may render raw values, including secrets.
+  Auto-scroll only while the viewer remains at the bottom.
 - Manual Session creation starts from the Sessions table toolbar and uses a
   right-side Sheet with title, optional purpose, Agent, machine, duration and
   capabilities. Do not ask for a filesystem path or Docker container there.
@@ -283,8 +284,9 @@ particular component, library or interaction pattern.
   Operational or Diagnostic. Diagnostic requires an explicit warning. Keep Event
   Sink configuration independent from this workspace display setting.
 - Timeline exports and Event Sinks may use Privacy-minimal, Operational or
-  Diagnostic detail. Keep Control Events privacy-minimal, redact secrets at
-  every level and make broader Timeline output an explicit workspace choice.
+  Diagnostic detail. Keep Control Events privacy-minimal, automatically redact
+  Operational detail, warn that Diagnostic may contain raw secrets, and make
+  broader Timeline output an explicit workspace choice.
 - Keep public documentation outside the authenticated workspace and make it usable
   without a Clerk session.
 - Documentation starts with the Cloud workflow, uses progressive disclosure and

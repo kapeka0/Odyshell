@@ -402,9 +402,11 @@ Each Session Timeline combines two visibly different sources:
 1. verified Server and Client events;
 2. optional Agent-provided plan, progress, outcome, and summary.
 
-Privacy-minimal is the default. It retains Agent, human actor, machine, Operation kind, sanitized
-command, status or exit code, duration, and timestamps. It never retains stdout, stderr, file
-contents, credentials, authorization headers, environment values, or an unredacted command.
+Privacy-minimal is the default. It retains Agent, human actor, machine, Operation kind, status or
+exit code, duration, and timestamps. It excludes commands, paths, stdout, stderr, file contents,
+credentials, authorization headers, and environment values. Operational adds commands, paths and
+temporarily retained output with automatic secret redaction. Diagnostic exposes raw temporary
+detail and may contain secrets.
 
 Timeline events are immutable and identify their actor as the Agent, the responsible human member,
 or Odyshell for automatic lifecycle changes. The web renders them chronologically and updates a
@@ -418,7 +420,7 @@ Retention defaults:
 | Verified Timeline | 30 days |
 | Agent purpose and plan | 30 days |
 | Temporary Operation payload | At most 1 hour |
-| stdout and stderr | Not persisted by default |
+| stdout and stderr | Temporary Operation payload, at most 1 hour |
 
 ## Workspace notifications
 

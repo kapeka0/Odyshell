@@ -3555,19 +3555,24 @@ export class PostgresDatabase {
     };
   }
 
-  async updateWorkspaceSettings(input: {
-    workspaceId: string;
-    name: string;
-    avatarSeed: string;
-    loggingLevel: WorkspaceLoggingLevel;
-  }): Promise<WorkspaceRecord | null> {
+  async updateWorkspaceSettings(input:
+    | {
+        workspaceId: string;
+        section: "details";
+        name: string;
+        avatarSeed: string;
+      }
+    | {
+        workspaceId: string;
+        section: "logging";
+        loggingLevel: WorkspaceLoggingLevel;
+      }
+  ): Promise<WorkspaceRecord | null> {
     const workspace = await this.db
       .updateTable("workspaces")
-      .set({
-        name: input.name,
-        avatarSeed: input.avatarSeed,
-        loggingLevel: input.loggingLevel,
-      })
+      .set(input.section === "details"
+        ? { name: input.name, avatarSeed: input.avatarSeed }
+        : { loggingLevel: input.loggingLevel })
       .where("id", "=", input.workspaceId)
       .returningAll()
       .executeTakeFirst();

@@ -1429,12 +1429,20 @@ app.post(
       slug: parsed.data.organization.slug,
       name: parsed.data.organization.name,
     });
-    const workspace = await db.updateWorkspaceSettings({
-      workspaceId: context.workspace.id,
-      name: parsed.data.name,
-      avatarSeed: parsed.data.avatarSeed,
-      loggingLevel: parsed.data.loggingLevel,
-    });
+    const workspace = await db.updateWorkspaceSettings(
+      parsed.data.section === "details"
+        ? {
+            workspaceId: context.workspace.id,
+            section: "details",
+            name: parsed.data.name,
+            avatarSeed: parsed.data.avatarSeed,
+          }
+        : {
+            workspaceId: context.workspace.id,
+            section: "logging",
+            loggingLevel: parsed.data.loggingLevel,
+          },
+    );
     if (!workspace) {
       return reply.code(404).send({ error: "workspace_not_found" });
     }

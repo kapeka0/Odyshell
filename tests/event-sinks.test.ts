@@ -138,6 +138,33 @@ describe("Timeline Event Sinks", () => {
     });
   });
 
+  it("removes nested operation constraints from privacy-minimal scopes", () => {
+    expect(
+      redactTimelineMetadata(
+        {
+          scopes: [
+            {
+              machineId: "machine-1",
+              capabilities: ["fs.read", "process.exec"],
+              operations: [
+                { kind: "fs.read", path: "/srv/private.env" },
+                { kind: "process.exec", program: "cat", args: ["/srv/private.env"] },
+              ],
+            },
+          ],
+        },
+        "privacy-minimal",
+      ),
+    ).toEqual({
+      scopes: [
+        {
+          machineId: "machine-1",
+          capabilities: ["fs.read", "process.exec"],
+        },
+      ],
+    });
+  });
+
   it("builds useful operational metadata without copying process environments or file content", () => {
     expect(
       operationTimelineMetadata({
@@ -197,6 +224,17 @@ describe("Timeline Event Sinks", () => {
         },
       ]).stderr,
     ).toHaveLength(64 * 1024);
+  });
+
+  it("redacts compact secret assignments in operational arguments", () => {
+    expect(
+      redactTimelineMetadata(
+        { args: ["-p=hunter2", "-k:api-secret", "--token=ods_secret_value"] },
+        "operational",
+      ),
+    ).toEqual({
+      args: ["-p=[REDACTED]", "-k:[REDACTED]", "--token=[REDACTED]"],
+    });
   });
 
   it("exports privacy-minimal Timeline attribution and verified results", () => {

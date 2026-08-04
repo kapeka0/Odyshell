@@ -98,10 +98,10 @@ export function TablePageSkeleton({
 
 export function SettingsPageSkeleton({
   sections = [6, 3, 3],
-  actions = "last",
+  actionSections = [sections.length - 1],
 }: {
   sections?: number[];
-  actions?: "last" | "each";
+  actionSections?: number[];
 }) {
   return (
     <div
@@ -129,7 +129,7 @@ export function SettingsPageSkeleton({
                 <Skeleton className="h-10 w-64 max-w-1/2" />
               </div>
             ))}
-            {actions === "each" || section === sections.length - 1 ? (
+            {actionSections.includes(section) ? (
               <div className="flex justify-end gap-2 border-t bg-muted/50 p-4">
                 <Skeleton className="h-10 w-20" />
                 <Skeleton className="h-10 w-16" />

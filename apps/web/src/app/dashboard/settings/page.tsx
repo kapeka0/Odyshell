@@ -82,7 +82,8 @@ export default function WorkspaceSettingsPage() {
       ? state.context.workspace.loggingLevel
       : "privacy-minimal",
   );
-  const [saving, setSaving] = useState(false);
+  const [savingDetails, setSavingDetails] = useState(false);
+  const [savingLogging, setSavingLogging] = useState(false);
   const [confirmDiagnostic, setConfirmDiagnostic] = useState(false);
 
   if (state.status !== "ready") {
@@ -96,13 +97,54 @@ export default function WorkspaceSettingsPage() {
 
   const admin = orgRole === "org:admin";
   const workspace = state.context.workspace;
-  const dirty =
+  const detailsDirty =
     name.trim() !== workspace.name ||
-    avatarSeed !== workspace.avatarSeed ||
-    loggingLevel !== workspace.loggingLevel;
+    avatarSeed !== workspace.avatarSeed;
+  const loggingDirty = loggingLevel !== workspace.loggingLevel;
 
-  async function save(diagnosticConfirmed = false) {
-    if (!admin || !dirty || saving) return;
+  async function saveDetails() {
+    if (!admin || !detailsDirty || savingDetails) return;
+    const previous = workspace;
+    const nextName = name.trim();
+    setSavingDetails(true);
+    optimisticallyUpdate((context) => ({
+      ...context,
+      workspace: { ...context.workspace, name: nextName, avatarSeed },
+    }));
+    try {
+      const response = await fetch("/api/workspace-settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          section: "details",
+          name: nextName,
+          avatarSeed,
+        }),
+      });
+      if (!response.ok) throw new Error("workspace_details_not_saved");
+      await refresh();
+      toast.add({ title: "Workspace saved", type: "success" });
+    } catch {
+      optimisticallyUpdate((context) => ({
+        ...context,
+        workspace: {
+          ...context.workspace,
+          name: previous.name,
+          avatarSeed: previous.avatarSeed,
+        },
+      }));
+      toast.add({
+        title: "Workspace was not saved",
+        description: "Your previous settings were restored.",
+        type: "error",
+      });
+    } finally {
+      setSavingDetails(false);
+    }
+  }
+
+  async function saveLogging(diagnosticConfirmed = false) {
+    if (!admin || !loggingDirty || savingLogging) return;
     if (
       loggingLevel === "diagnostic" &&
       workspace.loggingLevel !== "diagnostic" &&
@@ -112,38 +154,48 @@ export default function WorkspaceSettingsPage() {
       return;
     }
     const previous = workspace;
-    const next = { ...workspace, name: name.trim(), avatarSeed, loggingLevel };
-    setSaving(true);
+    setSavingLogging(true);
     setConfirmDiagnostic(false);
-    optimisticallyUpdate((context) => ({ ...context, workspace: next }));
+    optimisticallyUpdate((context) => ({
+      ...context,
+      workspace: { ...context.workspace, loggingLevel },
+    }));
     try {
       const response = await fetch("/api/workspace-settings", {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          name: next.name,
-          avatarSeed: next.avatarSeed,
-          loggingLevel: next.loggingLevel,
+          section: "logging",
+          loggingLevel,
         }),
       });
-      if (!response.ok) throw new Error("workspace_settings_not_saved");
+      if (!response.ok) throw new Error("workspace_logging_not_saved");
       await refresh();
-      toast.add({ title: "Settings saved", type: "success" });
+      toast.add({ title: "Logging saved", type: "success" });
     } catch {
-      optimisticallyUpdate((context) => ({ ...context, workspace: previous }));
+      optimisticallyUpdate((context) => ({
+        ...context,
+        workspace: {
+          ...context.workspace,
+          loggingLevel: previous.loggingLevel,
+        },
+      }));
       toast.add({
         title: "Settings were not saved",
         description: "Your previous settings were restored.",
         type: "error",
       });
     } finally {
-      setSaving(false);
+      setSavingLogging(false);
     }
   }
 
-  function cancel() {
+  function cancelDetails() {
     setName(workspace.name);
     setAvatarSeed(workspace.avatarSeed);
+  }
+
+  function cancelLogging() {
     setLoggingLevel(workspace.loggingLevel);
   }
 
@@ -173,7 +225,7 @@ export default function WorkspaceSettingsPage() {
               </Field>
               <Field orientation="responsive" className="border-b p-4">
                 <FieldContent><FieldLabel htmlFor="workspace-name">Name</FieldLabel></FieldContent>
-                <Input id="workspace-name" value={name} onChange={(event) => setName(event.target.value)} className="w-full @md/field-group:max-w-md" disabled={!admin} />
+                <Input id="workspace-name" name="workspace-name" autoComplete="off" value={name} onChange={(event) => setName(event.target.value)} className="w-full @md/field-group:max-w-md" disabled={!admin} />
               </Field>
               <ReadOnlyRow label="Slug" value={workspace.slug} />
               <ReadOnlyRow label="Plan" value={state.context.plan.id} badge />
@@ -181,6 +233,15 @@ export default function WorkspaceSettingsPage() {
               <ReadOnlyRow label="Agents" value={`${state.context.usage.activeAgents} / ${state.context.plan.activeAgentLimit}`} last />
             </FieldGroup>
           </CardContent>
+          {admin ? (
+            <CardFooter className="justify-end gap-2">
+              <Button variant="outline" disabled={!detailsDirty || savingDetails} onClick={cancelDetails}>Cancel</Button>
+              <Button disabled={!detailsDirty || savingDetails || !name.trim()} onClick={() => void saveDetails()}>
+                {savingDetails ? <Spinner data-icon="inline-start" /> : null}
+                Save
+              </Button>
+            </CardFooter>
+          ) : null}
         </Card>
       </section>
 
@@ -194,29 +255,39 @@ export default function WorkspaceSettingsPage() {
             <CardTitle>Logging</CardTitle>
             <CardDescription>Timeline detail for new sessions.</CardDescription>
           </CardHeader>
-          <CardContent>
-            <RadioGroup
-              value={loggingLevel}
-              onValueChange={(value) => setLoggingLevel(value as LoggingLevel)}
-              disabled={!admin}
-              className="gap-0"
-            >
-              {loggingOptions.map((option, index) => (
-                <Field key={option.value} orientation="horizontal" className={index < loggingOptions.length - 1 ? "border-b py-4" : "pt-4"}>
-                  <RadioGroupItem value={option.value} id={`logging-${option.value}`} />
-                  <FieldContent>
-                    <FieldLabel htmlFor={`logging-${option.value}`}>{option.label}</FieldLabel>
-                    <FieldDescription>{option.description}</FieldDescription>
-                  </FieldContent>
-                </Field>
-              ))}
-            </RadioGroup>
+          <CardContent className="p-0">
+            <FieldGroup className="gap-0">
+              <Field orientation="responsive" className="items-start p-4">
+                <FieldContent>
+                  <FieldTitle>Timeline detail</FieldTitle>
+                  <FieldDescription>
+                    Captured when each new Session is requested.
+                  </FieldDescription>
+                </FieldContent>
+                <RadioGroup
+                  value={loggingLevel}
+                  onValueChange={(value) => setLoggingLevel(value as LoggingLevel)}
+                  disabled={!admin}
+                  className="w-full gap-0 @md/field-group:max-w-lg"
+                >
+                  {loggingOptions.map((option, index) => (
+                    <Field key={option.value} orientation="horizontal" className={index < loggingOptions.length - 1 ? "border-b py-3" : "pt-3"}>
+                      <RadioGroupItem value={option.value} id={`logging-${option.value}`} />
+                      <FieldContent>
+                        <FieldLabel htmlFor={`logging-${option.value}`}>{option.label}</FieldLabel>
+                        <FieldDescription>{option.description}</FieldDescription>
+                      </FieldContent>
+                    </Field>
+                  ))}
+                </RadioGroup>
+              </Field>
+            </FieldGroup>
           </CardContent>
           {admin ? (
             <CardFooter className="justify-end gap-2">
-              <Button variant="outline" disabled={!dirty || saving} onClick={cancel}>Cancel</Button>
-              <Button disabled={!dirty || saving || !name.trim()} onClick={() => void save(false)}>
-                {saving ? <Spinner data-icon="inline-start" /> : null}
+              <Button variant="outline" disabled={!loggingDirty || savingLogging} onClick={cancelLogging}>Cancel</Button>
+              <Button disabled={!loggingDirty || savingLogging} onClick={() => void saveLogging(false)}>
+                {savingLogging ? <Spinner data-icon="inline-start" /> : null}
                 Save
               </Button>
             </CardFooter>
@@ -236,7 +307,7 @@ export default function WorkspaceSettingsPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void save(true)}>Enable</AlertDialogAction>
+            <AlertDialogAction onClick={() => void saveLogging(true)}>Enable</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -39,16 +39,21 @@ describe("cloud identity and device authorization boundaries", () => {
     expect(cloudUserSettingsSchema.safeParse({ ...identity, timeZone: "Mars/Olympus" }).success).toBe(false);
     expect(cloudWorkspaceSettingsSchema.safeParse({
       ...identity,
+      section: "details",
       name: "Production",
       avatarSeed: "seed",
-      loggingLevel: "operational",
     }).success).toBe(true);
     expect(cloudWorkspaceSettingsSchema.safeParse({
       ...identity,
-      name: "Production",
-      avatarSeed: "seed",
+      section: "logging",
       loggingLevel: "everything",
       workspaceId: "attacker-workspace",
+    }).success).toBe(false);
+    expect(cloudWorkspaceSettingsSchema.safeParse({
+      ...identity,
+      section: "logging",
+      loggingLevel: "operational",
+      name: "must-not-be-accepted",
     }).success).toBe(false);
   });
 

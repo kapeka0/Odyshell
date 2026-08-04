@@ -69,11 +69,17 @@ export const cloudUserSettingsSchema = cloudIdentitySchema.extend({
   ),
 }).strict();
 
-export const cloudWorkspaceSettingsSchema = cloudIdentitySchema.extend({
-  name: z.string().trim().min(1).max(96),
-  avatarSeed: z.string().trim().min(1).max(128),
-  loggingLevel: z.enum(workspaceLoggingLevels),
-}).strict();
+export const cloudWorkspaceSettingsSchema = z.discriminatedUnion("section", [
+  cloudIdentitySchema.extend({
+    section: z.literal("details"),
+    name: z.string().trim().min(1).max(96),
+    avatarSeed: z.string().trim().min(1).max(128),
+  }).strict(),
+  cloudIdentitySchema.extend({
+    section: z.literal("logging"),
+    loggingLevel: z.enum(workspaceLoggingLevels),
+  }).strict(),
+]);
 
 export const cloudManualSessionSchema = cloudIdentitySchema
   .extend({
