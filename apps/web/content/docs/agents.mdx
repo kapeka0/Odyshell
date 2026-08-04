@@ -42,8 +42,10 @@ returns a 90-day Agent Credential to the runtime. It can request Sessions and in
 requests, but cannot execute an Operation or administer the workspace. Rotate it before expiry;
 the previous credential remains valid for at most ten minutes.
 
-The MCP requests a bounded task as one or more typed operations. Sessions can authorize explicit
-filesystem paths, exact `process.exec` program and argument rules, and exact Docker container names.
+The MCP requests either one or more exact typed Operations or explicit broad Host Shell authority.
+Typed Sessions can authorize explicit filesystem paths, exact `process.exec` program and argument
+rules, and exact Docker container names. Host Shell instead approves the capability without an
+advance command list.
 
 Its effective authority is the intersection of:
 
@@ -85,6 +87,7 @@ Requests wholly inside an active policy are approved automatically. A request th
 capability, restriction, or longer duration remains pending for a human; Odyshell never partially
 approves it. Pausing or revoking a policy stops future automatic approvals without changing
 Sessions already issued from an earlier version.
+`host.shell` cannot be included in an Autoapproval Policy and is always sent to a human for review.
 
 Open **Policies** to review current and historical versions. Every autoapproved Session records the
 exact policy ID and version that justified it.
@@ -94,6 +97,8 @@ exact policy ID and version that justified it.
 An Independent Agent can propose a Delegation Policy with an exact scope, Session duration,
 validity, and Managed Agent limit. After an administrator approves it, the Agent can create
 persistent Managed Agent identities inside that ceiling.
+Delegation Policy scopes cannot contain `host.shell`, so Managed Agents cannot receive Host Shell
+authority through delegation.
 
 A Managed Agent has no durable credential and cannot create another Agent. Its parent requests
 Sessions in its name and gives a worker only the claimed Session Credential:

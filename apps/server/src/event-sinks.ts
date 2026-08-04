@@ -223,7 +223,10 @@ const eventSinkMinimalKeys = new Set([
   "correlationId",
   "outcome",
 ]);
-const alwaysSensitiveKey = /(?:token|secret|password|credential|authorization|cookie|env)/iu;
+const alwaysSensitiveKey = /(?:token|secret|password|credential|authorization|cookie|env|stdin)/iu;
+const neverExportedKey = /^(?:env(?:ironment)?|stdin(?:Base64)?)$/iu;
+const neverEventSinkContentKey =
+  /^(?:command|program|args|stdout|stderr|summary|env(?:ironment)?|stdin(?:Base64)?)$/iu;
 const secretValuePatterns = [
   /\b(?:bearer|basic)\s+[a-z0-9._~+/=-]+\b/giu,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/gu,
@@ -246,7 +249,7 @@ export function operationTimelineMetadata(
         args: action.args,
         cwd: action.cwd,
       };
-    case "process.shell":
+    case "host.shell":
       return {
         kind: action.kind,
         cwd: action.cwd,
@@ -316,40 +319,6 @@ function sanitizeArgs(args: string[]): string[] {
   });
 }
 
-function sanitizeShellCommand(command: string): string {
-  const parts = command.split(/(\s+|&&|\|\||[|;])/u);
-  let commandPosition = true;
-  let redactNext = 0;
-  return parts.map((part) => {
-    if (!part || /^\s+$/u.test(part)) return part;
-    if (/^(?:&&|\|\||[|;])$/u.test(part)) {
-      commandPosition = true;
-      redactNext = 0;
-      return part;
-    }
-    if (redactNext > 0) {
-      redactNext -= 1;
-      return "[REDACTED]";
-    }
-    const unquoted = part.replace(/^["']|["']$/gu, "");
-    if (sensitiveFlag.test(unquoted)) {
-      redactNext = unquoted.toLowerCase().startsWith("authorization") ? 2 : 1;
-      commandPosition = false;
-      return part;
-    }
-    const assignment = sensitiveAssignment.exec(unquoted);
-    if (assignment) {
-      commandPosition = false;
-      return `${assignment[1]}[REDACTED]`;
-    }
-    if (commandPosition) {
-      commandPosition = false;
-      return sanitizeProgram(unquoted);
-    }
-    return sanitizeArgument(unquoted);
-  }).join("");
-}
-
 export function privacyMinimalOperationMetadata(
   action: OperationAction,
 ): Record<string, unknown> {
@@ -360,11 +329,8 @@ export function privacyMinimalOperationMetadata(
       args: sanitizeArgs(action.args),
     };
   }
-  if (action.kind === "process.shell") {
-    return {
-      kind: action.kind,
-      command: sanitizeShellCommand(action.command),
-    };
+  if (action.kind === "host.shell") {
+    return { kind: action.kind };
   }
   // Privacy-minimal is an allowlist. Filesystem paths, search queries and
   // Docker container names can disclose customer data even without output.
@@ -400,7 +366,7 @@ export function redactTimelineMetadata(
   metadata: Record<string, unknown>,
   level: EventSinkDetailLevel,
 ): Record<string, unknown> {
-  if (level === "diagnostic") return structuredClone(metadata);
+  if (level === "diagnostic") return diagnosticExportMetadata(metadata);
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(metadata)) {
     if (alwaysSensitiveKey.test(key)) continue;
@@ -417,9 +383,10 @@ export function redactEventSinkMetadata(
   metadata: Record<string, unknown>,
   level: EventSinkDetailLevel,
 ): Record<string, unknown> {
-  if (level === "diagnostic") return structuredClone(metadata);
+  const exportable = stripEventSinkContent(metadata) as Record<string, unknown>;
+  if (level === "diagnostic") return diagnosticExportMetadata(exportable);
   const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(metadata)) {
+  for (const [key, value] of Object.entries(exportable)) {
     if (alwaysSensitiveKey.test(key)) continue;
     if (key === "summary") continue;
     if (level === "privacy-minimal" && !eventSinkMinimalKeys.has(key)) continue;
@@ -428,6 +395,26 @@ export function redactEventSinkMetadata(
       : operationalExportValue(key, value);
   }
   return result;
+}
+
+function stripEventSinkContent(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripEventSinkContent);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => !neverEventSinkContentKey.test(key))
+      .map(([key, nested]) => [key, stripEventSinkContent(nested)]),
+  );
+}
+
+function diagnosticExportMetadata(
+  metadata: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(structuredClone(metadata)).filter(
+      ([key]) => !neverExportedKey.test(key),
+    ),
+  );
 }
 
 function privacyMinimalExportValue(key: string, value: unknown): unknown {

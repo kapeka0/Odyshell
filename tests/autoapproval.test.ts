@@ -119,10 +119,10 @@ describe("autoapprovalDecision", () => {
     }
   });
 
-  it("never autoapproves an unrestricted shell capability", () => {
+  it("never autoapproves Host Shell authority", () => {
     const shellScope: SessionMachineScope = {
       ...readScope,
-      capabilities: ["process.shell"],
+      capabilities: ["host.shell"],
       restrictions: {},
     };
     expect(
@@ -201,5 +201,30 @@ describe("managedDelegationDecision", () => {
         }>),
       }),
     ).toEqual({ allowed: false, reason });
+  });
+
+  it("never delegates Host Shell authority", () => {
+    const shellScope: SessionMachineScope = {
+      ...readScope,
+      capabilities: ["host.shell"],
+      restrictions: {},
+    };
+
+    expect(
+      managedDelegationDecision({
+        childScopes: [shellScope],
+        childMaxSessionSeconds: 300,
+        childExpiresAt: 9_000,
+        activeManagedAgents: 0,
+        delegation: {
+          status: "active",
+          scopes: [shellScope],
+          maxSessionSeconds: 600,
+          maxManagedAgents: 2,
+          expiresAt: 10_000,
+        },
+        now: 1_000,
+      }),
+    ).toEqual({ allowed: false, reason: "unsafe_capability" });
   });
 });

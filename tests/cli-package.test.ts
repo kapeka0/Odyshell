@@ -76,17 +76,38 @@ describe("CLI npm package", () => {
     expect(entry).not.toContain('.command("remove")\n  .description("stop and delete one local Client Profile")');
   });
 
-  it("requests typed Sessions instead of accepting a repeated capability", () => {
+  it("separates typed Session requests from command-free Host Shell requests", () => {
     const entry = readFileSync(resolve(cliRoot, "src/index.ts"), "utf8");
     const temporaryFlow = entry.slice(
       entry.indexOf("async function runInTemporarySession"),
       entry.indexOf("program\n  .command(\"login\")"),
     );
+    const shellFlow = entry.slice(
+      entry.indexOf('  .command("shell <machine>'),
+      entry.indexOf("const fsCommand"),
+    );
 
     expect(temporaryFlow).toContain("requestOperationSession");
-    expect(temporaryFlow).toContain("claimedSession(claim).execute");
+    expect(temporaryFlow).toContain("requestHostShellSession");
+    expect(temporaryFlow).toContain("session.host.shell");
+    expect(temporaryFlow).toContain("session.execute");
     expect(temporaryFlow).not.toContain("createSession(");
     expect(temporaryFlow).not.toContain("capability:");
-    expect(temporaryFlow).toContain("process_shell_unsupported");
+    expect(temporaryFlow).not.toContain("process.shell");
+    expect(shellFlow).toContain('.command("shell <machine> <command>")');
+    expect(shellFlow).not.toContain('commandParts.join(" ")');
+    expect(shellFlow).toContain(".requiredOption(");
+    expect(shellFlow).toContain('"--purpose <purpose>"');
+    expect(temporaryFlow).toContain("purpose: requestMetadata?.purpose");
+  });
+
+  it("exposes only canonical Agent Session commands", () => {
+    const entry = readFileSync(resolve(cliRoot, "src/index.ts"), "utf8");
+
+    expect(entry).toContain('.command("sessions")');
+    expect(entry).not.toContain('.command("session")');
+    expect(entry).not.toContain('api.createOperation(');
+    expect(entry).not.toContain('.session(sessionId)');
+    expect(entry).not.toContain('.closeSession(sessionId)');
   });
 });

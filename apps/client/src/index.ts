@@ -29,9 +29,16 @@ import type {
 } from "./executor.js";
 import { HostExecutor } from "./host-executor.js";
 import { OperationJournal, type JournalResult } from "./journal.js";
+import { PendingOperation } from "./operation-control.js";
+import { passwordlessSudoAvailable } from "./profile.js";
+import {
+  assertLocalAuthorityNotQuarantined,
+  quarantineLocalAuthority,
+} from "./quarantine.js";
 import {
   clientConfigPathForProfile,
   defaultClientConfigPath,
+  hostAccountShell,
   hostPlatform,
   normalizeServerUrl,
 } from "./platform.js";
@@ -105,7 +112,7 @@ export type EnrollClientOptions = {
   serverUrl: string;
   token: string;
   machineName: string;
-  workspaceRoot: string;
+  mountSource?: string;
   configPath: string;
   profileName?: string;
   allowedCapabilities: Capability[];
@@ -120,7 +127,6 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
   configPath: string;
 }> {
   const serverUrl = options.serverUrl;
-  const workspaceRoot = resolve(options.workspaceRoot);
   const configPath = resolve(options.configPath);
   const parsedCapabilities = capabilitySchema
     .array()
@@ -128,6 +134,16 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
     .safeParse([...new Set(options.allowedCapabilities)]);
   if (!parsedCapabilities.success) {
     throw new Error("At least one valid capability must be explicitly allowed");
+  }
+  const runner = options.runner ?? "host";
+  if (runner === "docker" && parsedCapabilities.data.includes("host.shell")) {
+    throw new Error("host.shell is only available through the host runner");
+  }
+  if (runner === "docker" && !options.mountSource) {
+    throw new Error("Docker enrollment requires an explicit mount source");
+  }
+  if (runner === "host" && options.mountSource !== undefined) {
+    throw new Error("--mount-source is only available with the Docker runner");
   }
   const { publicKey, privateKey } = generateKeyPairSync("ed25519", {
     publicKeyEncoding: { type: "spki", format: "pem" },
@@ -152,28 +168,30 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
   };
   if (!response.ok || !body.machineId) throw new Error(body.error ?? `Enrollment failed: ${response.status}`);
 
-  const runner = options.runner ?? "host";
   const profile =
     runner === "docker"
       ? {
           runner,
-          workspaceRoot,
+          mountSource: resolve(options.mountSource!),
           image: options.image ?? "alpine:3.22",
           network: "none" as const,
           maxSessionTtlSeconds: MAX_AGENT_SESSION_SECONDS,
           maxConcurrentSessions: 2,
+          maxConcurrentOperations: 4,
+          maxOperationTimeoutSeconds: 3_600,
           maxOutputBytes: 1024 * 1024,
           capabilities: parsedCapabilities.data,
         }
       : {
           runner,
-          workspaceRoot,
           maxSessionTtlSeconds: MAX_AGENT_SESSION_SECONDS,
           maxConcurrentSessions: 2,
+          maxConcurrentOperations: 4,
+          maxOperationTimeoutSeconds: 3_600,
           maxOutputBytes: 1024 * 1024,
           capabilities: parsedCapabilities.data,
         };
-  const config: ClientConfig = {
+  const config: ClientConfig = clientConfigSchema.parse({
     serverUrl,
     ...(body.workspaceId ? { workspaceId: body.workspaceId } : {}),
     ...(options.profileName ? { profileName: options.profileName } : {}),
@@ -185,7 +203,7 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
     profiles: {
       workspace: profile,
     },
-  };
+  });
   await mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, {
     mode: 0o600,
@@ -201,20 +219,22 @@ export async function inspectClientRuntime(
   allowPrivilegeEscalation = false,
 ): Promise<ClientRuntimeInfo> {
   const uniqueRunners = [...new Set(runners)];
+  const effectivePasswordlessSudo =
+    process.platform === "linux" && uniqueRunners.includes("host")
+      ? await passwordlessSudoAvailable()
+      : false;
   const runtime: ClientRuntimeInfo = {
     hostPlatform: hostPlatform(),
     architecture: process.arch,
-    defaultShell:
-      process.platform === "win32"
-        ? (process.env.ComSpec ?? "cmd.exe")
-        : (process.env.SHELL ?? "/bin/sh"),
-    privilegeEscalation: allowPrivilegeEscalation ? "sudo" : "none",
+    defaultShell: hostAccountShell().program,
+    privilegeEscalation: reportedPrivilegeEscalation(
+      allowPrivilegeEscalation,
+      effectivePasswordlessSudo,
+    ),
     nodeVersion: process.version,
     protocolVersion: PROTOCOL_VERSION,
     clientVersion: CLIENT_VERSION,
-    supportedCapabilities: uniqueRunners.includes("host")
-      ? allCapabilities
-      : allCapabilities.filter((capability) => capability !== "docker.logs"),
+    supportedCapabilities: supportedCapabilitiesForRunners(uniqueRunners),
     executionRunners: uniqueRunners,
     ...(profiles
       ? {
@@ -239,10 +259,108 @@ export async function inspectClientRuntime(
   return runtime;
 }
 
+export function reportedPrivilegeEscalation(
+  configured: boolean,
+  passwordlessSudoAvailable: boolean,
+): "none" | "sudo" {
+  return configured || passwordlessSudoAvailable ? "sudo" : "none";
+}
+
+export function supportedCapabilitiesForRunners(
+  runners: Array<"host" | "docker">,
+): Capability[] {
+  if (runners.includes("host")) return [...allCapabilities];
+  return allCapabilities.filter(
+    (capability) => capability !== "docker.logs" && capability !== "host.shell",
+  );
+}
+
 type ActiveSession = {
   session: RunningSession;
   executor: OperationExecutor;
+  closing: boolean;
 };
+
+type BufferedClientMessage = {
+  message: ClientToServerMessage;
+  outputBytes: number;
+};
+
+export class ClientMessageBuffer {
+  private readonly messages: BufferedClientMessage[] = [];
+  private outputBytes = 0;
+
+  constructor(
+    private readonly maximumMessages = 4_096,
+    private readonly maximumOutputBytes = 16 * 1024 * 1024,
+  ) {}
+
+  enqueue(message: ClientToServerMessage): boolean {
+    const outputBytes = message.type === "operation.event"
+      ? Buffer.byteLength(message.dataBase64, "base64")
+      : 0;
+    if (
+      outputBytes > 0 &&
+      this.outputBytes + outputBytes > this.maximumOutputBytes
+    ) {
+      return false;
+    }
+    if (this.messages.length >= this.maximumMessages) {
+      if (message.type === "operation.event") return false;
+      const eventIndex = this.messages.findIndex(
+        (entry) => entry.message.type === "operation.event",
+      );
+      const removeAt = eventIndex >= 0 ? eventIndex : 0;
+      const [removed] = this.messages.splice(removeAt, 1);
+      this.outputBytes -= removed?.outputBytes ?? 0;
+    }
+    this.messages.push({ message, outputBytes });
+    this.outputBytes += outputBytes;
+    return true;
+  }
+
+  peek(): ClientToServerMessage | undefined {
+    return this.messages[0]?.message;
+  }
+
+  shift(): ClientToServerMessage | undefined {
+    const entry = this.messages.shift();
+    if (!entry) return undefined;
+    this.outputBytes -= entry.outputBytes;
+    return entry.message;
+  }
+
+  drain(): ClientToServerMessage[] {
+    const messages = this.messages.map((entry) => entry.message);
+    this.messages.length = 0;
+    this.outputBytes = 0;
+    return messages;
+  }
+}
+
+export function operationTimeoutMilliseconds(
+  requestedSeconds: number,
+  localMaximumSeconds: number,
+  sessionExpiresAt: Date,
+  now = Date.now(),
+): number {
+  if (
+    !Number.isFinite(requestedSeconds) ||
+    requestedSeconds <= 0 ||
+    !Number.isFinite(localMaximumSeconds) ||
+    localMaximumSeconds <= 0
+  ) {
+    return 0;
+  }
+  return Math.max(
+    0,
+    Math.min(
+      Math.floor(requestedSeconds * 1_000),
+      Math.floor(localMaximumSeconds * 1_000),
+      sessionExpiresAt.getTime() - now,
+    ),
+  );
+}
 
 export async function terminateLocalAuthority(
   cancelOperations: Array<() => Promise<void>>,
@@ -263,8 +381,13 @@ export async function terminateLocalAuthority(
   }
 }
 
+export function terminalMachineClose(code: number): boolean {
+  return code === 4004;
+}
+
 export class Client {
   private socket: WebSocket | undefined;
+  private authenticated = false;
   private heartbeat?: NodeJS.Timeout;
   private reconnectTimer: NodeJS.Timeout | undefined;
   private reconnectDelay = 1_000;
@@ -272,12 +395,17 @@ export class Client {
   private readonly sessions = new Map<string, ActiveSession>();
   private readonly closedSessions = new Set<string>();
   private readonly closingSessions = new Map<string, Promise<void>>();
-  private readonly operations = new Map<string, RunningOperation>();
+  private readonly operations = new Map<string, PendingOperation>();
+  private readonly bufferedMessages = new ClientMessageBuffer();
   private readonly executors = new Map<"host" | "docker", OperationExecutor>();
   private readonly journal: OperationJournal;
+  private messageQueue = Promise.resolve();
+  private shutdown: Promise<void> | undefined;
   private runtime: ClientRuntimeInfo | undefined;
+  private failClosedKeepalive: NodeJS.Timeout | undefined;
 
   constructor(private readonly config: ClientConfig) {
+    assertLocalAuthorityNotQuarantined(config.stateDirectory);
     const runners = new Set(
       Object.values(config.profiles).map((profile) => profile.runner),
     );
@@ -289,6 +417,12 @@ export class Client {
   }
 
   async start(): Promise<void> {
+    const interruptedOperations = this.journal.recoverInterrupted();
+    if (interruptedOperations > 0) {
+      console.error(
+        `Recovered ${interruptedOperations} interrupted Operation${interruptedOperations === 1 ? "" : "s"} as execution_unknown`,
+      );
+    }
     this.runtime = await inspectClientRuntime(
       [...this.executors.keys()],
       this.config.profiles,
@@ -299,15 +433,22 @@ export class Client {
   }
 
   async stop(): Promise<void> {
+    if (this.shutdown) return await this.shutdown;
     this.stopped = true;
+    this.authenticated = false;
     if (this.heartbeat) clearInterval(this.heartbeat);
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    this.socket?.close();
-    try {
-      await this.dropLocalAuthority();
-    } finally {
-      this.journal.close();
-    }
+    const socket = this.socket;
+    this.shutdown = (async (): Promise<void> => {
+      socket?.close();
+      await this.messageQueue;
+      try {
+        await this.dropLocalAuthority();
+      } finally {
+        this.journal.close();
+      }
+    })();
+    await this.shutdown;
   }
 
   private async connect(): Promise<void> {
@@ -316,36 +457,75 @@ export class Client {
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(url);
     this.socket = socket;
+    this.authenticated = false;
 
     socket.on("open", () => console.log(`Connected to ${url.toString()}`));
     socket.on("message", (data) => {
-      void this.handle(parseServerMessage(data.toString())).catch((error: unknown) => {
-        console.error("Client message failed:", error);
-      });
+      this.messageQueue = this.messageQueue
+        .then(() => {
+          if (this.socket !== socket || this.stopped) return;
+          return this.handle(parseServerMessage(data.toString()));
+        })
+        .catch((error: unknown) => {
+          console.error("Client message failed:", error);
+        });
     });
-    socket.on("close", () => {
+    socket.on("close", (code) => {
       if (this.heartbeat) clearInterval(this.heartbeat);
       if (this.socket !== socket) return;
       this.socket = undefined;
-      void this.dropLocalAuthority()
-        .then(() => {
-          if (this.stopped) return;
-          console.error(`Disconnected; reconnecting in ${this.reconnectDelay}ms`);
-          this.reconnectTimer = setTimeout(() => {
-            this.reconnectTimer = undefined;
-            void this.connect();
-          }, this.reconnectDelay);
-          this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30_000);
-        })
-        .catch((error: unknown) => {
-          this.stopped = true;
-          console.error(
-            "Local authority cleanup could not be verified; Client stopped",
-            error,
-          );
-        });
+      this.authenticated = false;
+      if (terminalMachineClose(code)) {
+        this.beginTerminalRevocation();
+        return;
+      }
+      if (this.stopped) return;
+      console.error(`Disconnected; reconnecting in ${this.reconnectDelay}ms`);
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = undefined;
+        void this.connect();
+      }, this.reconnectDelay);
+      this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30_000);
     });
     socket.on("error", (error) => console.error("Client socket error:", error.message));
+  }
+
+  private beginTerminalRevocation(): void {
+    console.error("Machine access was revoked; terminating local authority");
+    this.beginTerminalShutdown("Machine revocation");
+  }
+
+  private beginTerminalFailure(context: string, error: unknown): void {
+    console.error(`${context}; terminating local authority:`, error);
+    try {
+      quarantineLocalAuthority(this.config.stateDirectory);
+    } catch (quarantineError) {
+      console.error("Unable to persist the local authority quarantine:", quarantineError);
+      this.failClosedKeepalive ??= setInterval(() => {}, 24 * 60 * 60_000);
+    }
+    this.beginTerminalShutdown(context);
+  }
+
+  private beginTerminalShutdown(context: string): void {
+    if (this.shutdown) return;
+    this.stopped = true;
+    this.authenticated = false;
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    const socket = this.socket;
+    this.socket = undefined;
+    socket?.close(1011, "Local authority enforcement failed");
+    this.shutdown = (async (): Promise<void> => {
+      try {
+        await this.messageQueue;
+        await this.dropLocalAuthority();
+      } finally {
+        this.journal.close();
+      }
+    })();
+    void this.shutdown.catch((error: unknown) => {
+      console.error(`${context} cleanup failed:`, error);
+    });
   }
 
   private send(message: ClientToServerMessage): void {
@@ -355,21 +535,62 @@ export class Client {
     this.socket.send(JSON.stringify(message));
   }
 
+  private deliver(message: ClientToServerMessage): boolean {
+    if (
+      this.authenticated &&
+      this.socket?.readyState === WebSocket.OPEN
+    ) {
+      try {
+        this.send(message);
+        return true;
+      } catch {
+        this.authenticated = false;
+      }
+    }
+    return this.bufferedMessages.enqueue(message);
+  }
+
+  private flushBufferedMessages(): void {
+    while (
+      this.authenticated &&
+      this.socket?.readyState === WebSocket.OPEN
+    ) {
+      const message = this.bufferedMessages.peek();
+      if (!message) return;
+      try {
+        this.send(message);
+        this.bufferedMessages.shift();
+      } catch {
+        this.authenticated = false;
+        return;
+      }
+    }
+  }
+
   private async dropLocalAuthority(): Promise<void> {
     const operations = [...this.operations.values()];
-    this.operations.clear();
     const sessions = [...this.sessions.values()];
+    for (const active of sessions) active.closing = true;
     this.sessions.clear();
-    await terminateLocalAuthority(
-      operations.map((operation) => async () => operation.cancel()),
-      sessions.map(
-        (active) => async () =>
-          active.executor.closeSession(active.session),
-      ),
-    );
+    let terminationError: unknown;
+    try {
+      await terminateLocalAuthority(
+        operations.map((operation) => async () => operation.cancel()),
+        sessions.map(
+          (active) => async () =>
+            active.executor.closeSession(active.session),
+        ),
+      );
+    } catch (error) {
+      terminationError = error;
+    }
+    await Promise.all(operations.map((operation) => operation.waitUntilFinished()));
+    this.operations.clear();
+    if (terminationError !== undefined) throw terminationError;
   }
 
   private async handle(message: ServerToClientMessage): Promise<void> {
+    if (this.stopped) return;
     switch (message.type) {
       case "challenge": {
         const signature = sign(
@@ -387,8 +608,11 @@ export class Client {
         break;
       }
       case "authenticated":
+        this.authenticated = true;
         this.reconnectDelay = 1_000;
         console.log(`Authenticated as ${this.config.machineName} (${message.machineId})`);
+        this.flushBufferedMessages();
+        this.reconcileJournalResults();
         if (this.heartbeat) clearInterval(this.heartbeat);
         this.heartbeat = setInterval(() => {
           try {
@@ -412,19 +636,30 @@ export class Client {
         });
         break;
       case "session.open":
+        if (!this.authenticated) return;
         await this.openSession(message);
         break;
       case "session.expires":
+        if (!this.authenticated) return;
         this.updateSessionExpiry(message);
         break;
       case "session.close":
+        if (!this.authenticated) return;
         await this.closeSession(message.sessionId, message.reason);
         break;
       case "operation.start":
-        await this.startOperation(message);
+        if (!this.authenticated) return;
+        void this.startOperation(message).catch((error: unknown) => {
+          console.error("Client Operation failed:", error);
+        });
+        break;
+      case "operation.acknowledged":
+        if (!this.authenticated) return;
+        this.journal.acknowledge(message.operationId);
         break;
       case "operation.cancel":
-        await this.operations.get(message.operationId)?.cancel();
+        if (!this.authenticated) return;
+        await this.cancelOperation(message.operationId);
         break;
     }
   }
@@ -434,7 +669,7 @@ export class Client {
   ): Promise<void> {
     try {
       if (this.closedSessions.has(message.sessionId)) {
-        this.send({
+        this.deliver({
           type: "session.closed",
           sessionId: message.sessionId,
           reason: "already_closed",
@@ -443,6 +678,9 @@ export class Client {
       }
       const existing = this.sessions.get(message.sessionId);
       if (existing) {
+        if (existing.closing) {
+          throw new Error("Session is already closing on this client");
+        }
         const requested = {
           machineId: this.config.machineId,
           profile: message.profile,
@@ -468,14 +706,11 @@ export class Client {
           expiresAt: message.expiresAt,
           ...(message.serverTime ? { serverTime: message.serverTime } : {}),
         });
-        this.send({
+        this.deliver({
           type: "session.opened",
           sessionId: message.sessionId,
           runner: existing.session.runner,
           runtimeId: existing.session.runtimeId,
-          ...(existing.session.containerId
-            ? { containerId: existing.session.containerId }
-            : {}),
         });
         return;
       }
@@ -499,27 +734,26 @@ export class Client {
         message.capabilities,
         message.restrictions,
         localDeadline,
-        () => void this.closeSession(message.sessionId, "expired"),
+        () => this.closeSessionSafely(message.sessionId, "expired"),
       );
       if (this.closedSessions.has(message.sessionId)) {
         await executor.closeSession(session);
-        this.send({
+        this.deliver({
           type: "session.closed",
           sessionId: message.sessionId,
           reason: "closed_while_opening",
         });
         return;
       }
-      this.sessions.set(message.sessionId, { session, executor });
-      this.send({
+      this.sessions.set(message.sessionId, { session, executor, closing: false });
+      this.deliver({
         type: "session.opened",
         sessionId: message.sessionId,
         runner: session.runner,
         runtimeId: session.runtimeId,
-        ...(session.containerId ? { containerId: session.containerId } : {}),
       });
     } catch (error) {
-      this.send({
+      this.deliver({
         type: "session.open_failed",
         sessionId: message.sessionId,
         error: error instanceof Error ? error.message : String(error),
@@ -538,15 +772,24 @@ export class Client {
       ttlMilliseconds <= 0 ||
       ttlMilliseconds > active.session.profile.maxSessionTtlSeconds * 1_000
     ) {
-      void this.closeSession(message.sessionId, "invalid_expiry");
+      this.closeSessionSafely(message.sessionId, "invalid_expiry");
       return;
     }
     clearTimeout(active.session.expiryTimer);
     active.session.expiresAt = expiresAt;
     active.session.expiryTimer = setTimeout(
-      () => void this.closeSession(message.sessionId, "expired"),
+      () => this.closeSessionSafely(message.sessionId, "expired"),
       ttlMilliseconds,
     );
+  }
+
+  private closeSessionSafely(sessionId: string, reason: string): void {
+    void this.closeSession(sessionId, reason).catch((error: unknown) => {
+      this.beginTerminalFailure(
+        `Session ${reason} cleanup could not prove local authority termination`,
+        error,
+      );
+    });
   }
 
   private async closeSession(sessionId: string, reason: string): Promise<void> {
@@ -561,17 +804,29 @@ export class Client {
       if (oldest !== undefined) this.closedSessions.delete(oldest);
     }
     const active = this.sessions.get(sessionId);
-    this.sessions.delete(sessionId);
+    if (active) active.closing = true;
+    const operations = [...this.operations.values()].filter(
+      (operation) => operation.sessionId === sessionId,
+    );
     const closing = (async (): Promise<void> => {
-      if (active) {
-        await active.executor.closeSession(active.session);
-      }
-      this.send({ type: "session.closed", sessionId, reason });
+      await terminateLocalAuthority(
+        operations.map((operation) => async () => operation.cancel()),
+        active
+          ? [async () => active.executor.closeSession(active.session)]
+          : [],
+      );
+      await Promise.all(
+        operations.map((operation) => operation.waitUntilFinished()),
+      );
+      this.deliver({ type: "session.closed", sessionId, reason });
     })();
     this.closingSessions.set(sessionId, closing);
     try {
       await closing;
     } finally {
+      if (active && this.sessions.get(sessionId) === active) {
+        this.sessions.delete(sessionId);
+      }
       if (this.closingSessions.get(sessionId) === closing) {
         this.closingSessions.delete(sessionId);
       }
@@ -582,7 +837,7 @@ export class Client {
     message: Extract<ServerToClientMessage, { type: "operation.start" }>,
   ): Promise<void> {
     const receipt = this.journal.receive(message.operationId);
-    if (receipt === "completed" || receipt === "unknown") {
+    if (receipt === "completed") {
       const previous = this.journal.result(message.operationId);
       if (previous) this.sendCompletion(message.operationId, previous);
       return;
@@ -590,7 +845,7 @@ export class Client {
     if (receipt !== "new") return;
 
     const active = this.sessions.get(message.sessionId);
-    if (!active) {
+    if (!active || active.closing) {
       const result: JournalResult = {
         status: "failed",
         exitCode: null,
@@ -602,15 +857,64 @@ export class Client {
       return;
     }
 
+    const operationsForProfile = [...this.operations.values()].filter(
+      (operation) => operation.profile === active.session.profile,
+    ).length;
+    if (
+      operationsForProfile >= active.session.profile.maxConcurrentOperations
+    ) {
+      const result: JournalResult = {
+        status: "failed",
+        exitCode: null,
+        error: "Local concurrent Operation limit reached",
+        outputTruncated: false,
+      };
+      this.journal.complete(message.operationId, result);
+      this.sendCompletion(message.operationId, result);
+      return;
+    }
+
+    const control = new PendingOperation(
+      message.sessionId,
+      active.session.profile,
+    );
+    this.operations.set(message.operationId, control);
+
     let sequence = 0;
     let outputBytes = 0;
     let outputTruncated = false;
     let timedOut = false;
-    let cancelled = false;
-    const maximum = Math.min(message.maxOutputBytes, active.session.profile.maxOutputBytes);
+    let terminalFailure: unknown;
+    let timer: NodeJS.Timeout | undefined;
+    const deadlineMarker = Symbol("operation-deadline");
+    const executionSignal = control.executionSignal();
+    const deadlineReached = new Promise<typeof deadlineMarker>((resolveDeadline) => {
+      if (executionSignal.aborted) {
+        resolveDeadline(deadlineMarker);
+        return;
+      }
+      executionSignal.addEventListener(
+        "abort",
+        () => resolveDeadline(deadlineMarker),
+        { once: true },
+      );
+    });
+    const cancellationFailure = control.waitForCancellationFailure().catch(
+      (error: unknown) => {
+        terminalFailure = error;
+        throw error;
+      },
+    );
+    const requestedMaximum = Number.isInteger(message.maxOutputBytes) &&
+        message.maxOutputBytes > 0
+      ? message.maxOutputBytes
+      : 0;
+    const maximum = Math.min(
+      requestedMaximum,
+      active.session.profile.maxOutputBytes,
+    );
     const maximumEventBytes = 256 * 1024;
     const emit = (stream: "stdout" | "stderr" | "result", data: Buffer): void => {
-      if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
       if (outputTruncated) return;
       const remaining = maximum - outputBytes;
       if (remaining <= 0) {
@@ -618,92 +922,168 @@ export class Client {
         return;
       }
       const accepted = data.subarray(0, remaining);
-      outputBytes += accepted.length;
-      if (accepted.length < data.length) outputTruncated = true;
       for (let offset = 0; offset < accepted.length; offset += maximumEventBytes) {
-        this.send({
+        const chunk = accepted.subarray(offset, offset + maximumEventBytes);
+        const delivered = this.deliver({
           type: "operation.event",
           operationId: message.operationId,
-          sequence: sequence++,
+          sequence,
           stream,
-          dataBase64: accepted.subarray(offset, offset + maximumEventBytes).toString("base64"),
+          dataBase64: chunk.toString("base64"),
         });
+        if (!delivered) {
+          outputTruncated = true;
+          return;
+        }
+        sequence += 1;
+        outputBytes += chunk.length;
       }
+      if (accepted.length < data.length) outputTruncated = true;
     };
 
     try {
+      if (
+        active.closing ||
+        this.sessions.get(message.sessionId) !== active ||
+        active.session.expiresAt.getTime() <= Date.now()
+      ) {
+        throw new Error("Session closed before the Operation could start");
+      }
       this.journal.markRunning(message.operationId);
-      this.send({ type: "operation.started", operationId: message.operationId, at: new Date().toISOString() });
-      const running = await active.executor.execute(
+      this.deliver({
+        type: "operation.started",
+        operationId: message.operationId,
+        at: new Date().toISOString(),
+      });
+      const timeoutMilliseconds = operationTimeoutMilliseconds(
+        message.timeoutSeconds,
+        active.session.profile.maxOperationTimeoutSeconds,
+        active.session.expiresAt,
+      );
+      if (timeoutMilliseconds <= 0) {
+        timedOut = true;
+        control.failStart();
+        await control.cancel();
+        throw new Error("Operation deadline elapsed before process start");
+      }
+      timer = setTimeout(() => {
+        timedOut = true;
+        void control.cancel().catch(() => {});
+      }, timeoutMilliseconds);
+      const executionPreparation = active.executor.execute(
         message.operationId,
         active.session,
         message.action,
         {
-        stdout: (data) => emit("stdout", data),
-        stderr: (data) => emit("stderr", data),
-        result: (data) => emit("result", data),
+          stdout: (data) => emit("stdout", data),
+          stderr: (data) => emit("stderr", data),
+          result: (data) => emit("result", data),
         },
+        { signal: executionSignal },
       );
-      const originalCancel = running.cancel;
-      running.cancel = async () => {
-        cancelled = true;
-        await originalCancel();
-      };
-      this.operations.set(message.operationId, running);
-      void (async () => {
-        const timer = setTimeout(() => {
-          timedOut = true;
-          void originalCancel();
-        }, Math.min(message.timeoutSeconds, 1800) * 1000);
-        try {
-          const { exitCode } = await running.done;
-          const result: JournalResult = {
-            status: timedOut
-              ? "timed_out"
-              : cancelled
-                ? "cancelled"
-                : exitCode === 0
-                  ? "succeeded"
-                  : "failed",
-            exitCode,
-            ...(outputTruncated ? { error: "Output limit reached" } : {}),
-            outputTruncated,
-          };
-          this.journal.complete(message.operationId, result);
-          this.sendCompletion(message.operationId, result);
-        } catch (error) {
-          const result: JournalResult = {
-            status: timedOut
-              ? "timed_out"
-              : cancelled
-                ? "cancelled"
-                : "failed",
-            exitCode: null,
-            error: error instanceof Error ? error.message : String(error),
-            outputTruncated,
-          };
-          this.journal.complete(message.operationId, result);
-          this.sendCompletion(message.operationId, result);
-        } finally {
-          clearTimeout(timer);
-          this.operations.delete(message.operationId);
-        }
-      })();
-    } catch (error) {
+      void executionPreparation.then(
+        (lateRunning) => {
+          if (!executionSignal.aborted) return;
+          void lateRunning.cancel().catch((error: unknown) => {
+            this.beginTerminalFailure(
+              "Late Operation preparation could not be terminated",
+              error,
+            );
+          });
+        },
+        () => {},
+      );
+      const prepared = await Promise.race([executionPreparation, deadlineReached]);
+      if (prepared === deadlineMarker) {
+        control.failStart();
+        await control.cancel();
+        throw new Error(
+          timedOut
+            ? "Operation deadline elapsed before process start"
+            : "Operation was cancelled before process start",
+        );
+      }
+      const running = prepared;
+      control.attach(running);
+      if (control.cancelRequested) await control.cancel();
+      const { exitCode } = await Promise.race([running.done, cancellationFailure]);
       const result: JournalResult = {
-        status: timedOut ? "timed_out" : cancelled ? "cancelled" : "failed",
-        exitCode: null,
-        error: error instanceof Error ? error.message : String(error),
+        status: timedOut
+          ? "timed_out"
+          : control.cancelRequested
+            ? "cancelled"
+            : exitCode === 0
+              ? "succeeded"
+              : "failed",
+        exitCode,
+        ...(outputTruncated ? { error: "Output limit reached" } : {}),
         outputTruncated,
       };
       this.journal.complete(message.operationId, result);
       this.sendCompletion(message.operationId, result);
+    } catch (error) {
+      control.failStart();
+      const terminationUnconfirmed = terminalFailure !== undefined;
+      const result: JournalResult = {
+        status: terminationUnconfirmed
+          ? "execution_unknown"
+          : timedOut
+            ? "timed_out"
+            : control.cancelRequested
+              ? "cancelled"
+              : "failed",
+        exitCode: null,
+        error: terminationUnconfirmed
+          ? `Unable to confirm process-tree termination: ${error instanceof Error ? error.message : String(error)}`
+          : error instanceof Error
+            ? error.message
+            : String(error),
+        outputTruncated,
+      };
+      this.journal.complete(message.operationId, result);
+      this.sendCompletion(message.operationId, result);
+    } finally {
+      if (timer) clearTimeout(timer);
+      if (this.operations.get(message.operationId) === control) {
+        this.operations.delete(message.operationId);
+      }
+      control.markFinished();
+      if (terminalFailure !== undefined) {
+        this.beginTerminalFailure(
+          "Operation process-tree termination could not be proved",
+          terminalFailure,
+        );
+      }
     }
   }
 
+  private async cancelOperation(operationId: string): Promise<void> {
+    const operation = this.operations.get(operationId);
+    if (operation) {
+      await operation.cancel();
+      return;
+    }
+    const previous = this.journal.result(operationId);
+    if (previous) {
+      this.sendCompletion(operationId, previous);
+      return;
+    }
+    const receipt = this.journal.receive(operationId);
+    const result: JournalResult = {
+      status: receipt === "new" ? "cancelled" : "execution_unknown",
+      exitCode: null,
+      error:
+        receipt === "new"
+          ? "Operation was cancelled before execution started"
+          : "Operation execution state was unavailable when cancellation arrived",
+      outputTruncated: false,
+    };
+    this.journal.complete(operationId, result);
+    this.sendCompletion(operationId, result);
+  }
+
   private sendCompletion(operationId: string, result: JournalResult): void {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
-    this.send({
+    this.deliver({
       type: "operation.completed",
       operationId,
       status: result.status,
@@ -712,6 +1092,12 @@ export class Client {
       outputTruncated: result.outputTruncated,
       at: new Date().toISOString(),
     });
+  }
+
+  private reconcileJournalResults(): void {
+    for (const entry of this.journal.resultsForReconciliation()) {
+      this.sendCompletion(entry.operationId, entry.result);
+    }
   }
 }
 
@@ -728,8 +1114,17 @@ export async function runClient(
   }
   const config: ClientConfig = parsed.data;
   const client = new Client(config);
+  let shuttingDown = false;
   const shutdown = (): void => {
-    void client.stop().finally(() => process.exit(0));
+    if (shuttingDown) return;
+    shuttingDown = true;
+    void client.stop().then(
+      () => process.exit(0),
+      (error: unknown) => {
+        console.error("Client shutdown could not prove local authority termination:", error);
+        process.exit(1);
+      },
+    );
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);

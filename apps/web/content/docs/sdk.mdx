@@ -1,6 +1,6 @@
 ---
 title: TypeScript SDK
-description: Request typed Odyshell operations from a TypeScript agent.
+description: Request typed Operations or explicit Host Shell authority from a TypeScript Agent.
 ---
 
 Install the programmatic interface:
@@ -28,7 +28,6 @@ const request = await agent.requestOperationSession({
     program: "git",
     args: ["status", "--short"],
     cwd: ".",
-    env: {},
   },
 });
 ```
@@ -36,6 +35,8 @@ const request = await agent.requestOperationSession({
 After approval, call `agent.claim(request.id)` once. Pass the result to
 `ods.claimedSession(claim).execute(machineId, action)`. Human, Agent and Session clients expose
 different authority; an Agent Credential cannot execute an Operation.
+The SDK has no direct runtime Session creation API and no top-level `process`, `fs`, `docker`, or
+`execute` shortcuts. Operations start only from a claimed canonical Agent Session.
 
 Use environment variables or a secret manager for credentials. Never put an agent credential in
 source code, logs, or generated documentation.
@@ -43,6 +44,32 @@ source code, logs, or generated documentation.
 The shared operation contract covers typed process, filesystem and Docker log work. The operation
 determines its capability and minimum restriction automatically. Authorization remains enforced by
 the Server and target Client; TypeScript types are not a security boundary.
+
+Host Shell uses a separate, manually approved request because its commands are not known in
+advance:
+
+```ts
+const shellRequest = await agent.requestHostShellSession({
+  machineId,
+  title: "Repair the development environment",
+  purpose: "Inspect failures and choose each next command from the result",
+  durationSeconds: 900,
+});
+
+console.log(shellRequest.approvalUrl);
+const shellClaim = await agent.claim(shellRequest.id);
+const shell = ods.claimedSession(shellClaim);
+
+await shell.host.shell({ machineId, command: "node --version" });
+await shell.host.shell({ machineId, command: "npm test" });
+```
+
+`host.shell` is available only through a host Client Profile and is never autoapproved or
+delegated. Every command is a separate Operation chosen after approval. It runs natively as the
+operating-system user running the Client and starts in that user's Home unless the Operation sets
+another working directory. There is no sandbox, PTY, persistent shell process, or shell state
+shared between commands. A missing command can fail without ending the Session, so the Agent can
+inspect the result and try another command.
 
 An Independent Agent can create Managed Agent identities after an administrator approves its
 Delegation Policy:
@@ -66,3 +93,5 @@ const child = await ods.createManagedAgent({
 
 Use `managedAgents()`, `disableManagedAgent(id)`, and `deleteManagedAgent(id)` for its lifecycle.
 The Managed Agent receives no Agent Credential; the parent requests and claims Sessions for it.
+Autoapproval and Delegation Policy scopes cannot contain `host.shell`; every Host Shell Session
+requires a human decision.

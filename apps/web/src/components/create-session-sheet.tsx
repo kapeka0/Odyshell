@@ -4,6 +4,7 @@ import type { Capability } from "@odyshell/protocol";
 import { PlusIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useDashboard } from "@/components/dashboard-provider";
+import { HostShellWarning } from "@/components/host-shell-warning";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -34,12 +35,15 @@ import {
   capabilityGroups,
 } from "@/lib/agent-access-options";
 import {
+  capabilitiesForHostShellSelection,
   capabilitiesForManualPreset,
   manualReadOnlyCapabilities,
-  manualSessionCapabilities,
+  manualSelectableCapabilities,
   manualSessionSelectionIsValid,
+  toggleManualHostShellSelection,
   type ManualAccessPreset,
 } from "@/lib/manual-session-access";
+import { executionWarningState } from "@/lib/host-shell-access";
 import { machinePrivilegeEscalation } from "@/lib/machine-platform";
 
 const durations = [
@@ -55,7 +59,9 @@ const manualCapabilityGroups = capabilityGroups
   .map((group) => ({
     ...group,
     capabilities: group.capabilities.filter(
-      (capability) => manualSessionCapabilities.includes(capability.value),
+      (capability) =>
+        capability.value !== "host.shell" &&
+        manualSelectableCapabilities.includes(capability.value),
     ),
   }))
   .filter((group) => group.capabilities.length > 0);
@@ -81,21 +87,24 @@ export function CreateSessionSheet() {
   const locallyAllowed = useMemo<Capability[]>(
     () =>
       (machine?.capabilities ?? []).filter((value) =>
-        manualSessionCapabilities.includes(value),
+        manualSelectableCapabilities.includes(value),
       ),
     [machine?.capabilities],
   );
   const availablePresets = useMemo(
     () => ({
       "read-only": capabilitiesForManualPreset("read-only", locallyAllowed),
-      shell: capabilitiesForManualPreset("shell", locallyAllowed),
-      full: capabilitiesForManualPreset("full", locallyAllowed),
+      "host-shell": capabilitiesForHostShellSelection(locallyAllowed),
     }),
     [locallyAllowed],
   );
   const selectionIsValid = manualSessionSelectionIsValid(
     capabilities,
     locallyAllowed,
+  );
+  const warningState = executionWarningState(
+    capabilities,
+    machinePrivilegeEscalation(machine?.runtime),
   );
   const canSubmit = Boolean(
     title.trim() &&
@@ -126,7 +135,7 @@ export function CreateSessionSheet() {
       (candidate) => candidate.id === nextMachineId,
     );
     const nextAllowed: Capability[] = (nextMachine?.capabilities ?? []).filter(
-      (capability) => manualSessionCapabilities.includes(capability),
+      (capability) => manualSelectableCapabilities.includes(capability),
     );
     setMachineId(nextMachineId);
     const nextCapabilities = capabilitiesForManualPreset(
@@ -151,6 +160,18 @@ export function CreateSessionSheet() {
         : [...current, capability];
       return next;
     });
+  }
+
+  function toggleHostShell() {
+    const currentPreset = accessPreset;
+    setAccessPreset(null);
+    setCapabilities((current) =>
+      toggleManualHostShellSelection(
+        current,
+        locallyAllowed,
+        currentPreset,
+      )
+    );
   }
 
   async function submit(event: React.FormEvent) {
@@ -242,18 +263,25 @@ export function CreateSessionSheet() {
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <FieldLabel>Access</FieldLabel>
                   <ToggleGroup
-                    aria-label="Access preset"
+                    aria-label="Access selection"
                     value={accessPreset ? [accessPreset] : []}
                     onValueChange={selectAccessPreset}
                     variant="outline"
                     size="sm"
                   >
                     <ToggleGroupItem type="button" value="read-only" disabled={availablePresets["read-only"].length === 0}>Read only</ToggleGroupItem>
-                    <ToggleGroupItem type="button" value="shell" disabled={availablePresets.shell.length === 0}>Shell access</ToggleGroupItem>
-                    <ToggleGroupItem type="button" value="full" disabled={availablePresets.full.length === 0}>Full access</ToggleGroupItem>
                   </ToggleGroup>
                 </div>
                 <div className="rounded-lg border p-3">
+                  <label className="flex items-center gap-2 py-1.5 text-sm">
+                    <Checkbox
+                      value="host-shell"
+                      checked={warningState.hostShell}
+                      disabled={availablePresets["host-shell"].length === 0}
+                      onCheckedChange={toggleHostShell}
+                    />
+                    Host Shell
+                  </label>
                   {manualCapabilityGroups.flatMap((group) => group.capabilities).map((capability) => (
                     <label key={capability.value} className="flex items-center gap-2 py-1.5 text-sm">
                       <Checkbox checked={capabilities.includes(capability.value)} disabled={!locallyAllowed.includes(capability.value)} onCheckedChange={() => toggleCapability(capability.value)} />
@@ -262,19 +290,14 @@ export function CreateSessionSheet() {
                   ))}
                 </div>
               </Field>
-              {capabilities.some((capability) => capability.startsWith("process.")) ? (
+              {warningState.hostShell ? (
+                <HostShellWarning />
+              ) : null}
+              {warningState.rootAccess ? (
                 <Alert>
-                  <AlertTitle>
-                    {machinePrivilegeEscalation(machine?.runtime) === "sudo"
-                      ? "Root access possible"
-                      : "Shell access"}
-                  </AlertTitle>
+                  <AlertTitle>Root access possible</AlertTitle>
                   <AlertDescription>
-                    {machinePrivilegeEscalation(machine?.runtime) === "sudo"
-                      ? "This machine allows passwordless sudo during the Session."
-                      : capabilities.includes("process.shell")
-                        ? "Commands run as the local Client user until this Session expires."
-                        : "Programs run as the local Client user until this Session expires."}
+                    This machine allows passwordless sudo during the Session.
                   </AlertDescription>
                 </Alert>
               ) : null}

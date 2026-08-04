@@ -26,15 +26,15 @@ import {
 import {
   isReadOnlyPreset,
   readOnlyCapabilities,
-  fullAccessCapabilities,
-  isFullAccessPreset,
   toggleReadOnlyPreset,
-  toggleFullAccessPreset,
 } from "../apps/web/src/lib/agent-access-options.js";
 import {
+  capabilitiesForHostShellSelection,
   capabilitiesForManualPreset,
   manualSessionSelectionIsValid,
+  toggleManualHostShellSelection,
 } from "../apps/web/src/lib/manual-session-access.js";
+import { executionWarningState } from "../apps/web/src/lib/host-shell-access.js";
 import {
   deviceApprovalErrorPath,
   deviceApprovalReason,
@@ -280,24 +280,17 @@ describe("web authentication boundaries", () => {
   });
 
   it("replaces unsafe capabilities with read-only and clears the preset on a second click", () => {
-    const enabled = toggleReadOnlyPreset(["fs.write", "process.shell"]);
+    const enabled = toggleReadOnlyPreset(["fs.write", "host.shell"]);
     expect(enabled).toEqual(readOnlyCapabilities);
     expect(isReadOnlyPreset(enabled)).toBe(true);
     expect(toggleReadOnlyPreset(enabled)).toEqual([]);
     expect(isReadOnlyPreset(["fs.read"])).toBe(false);
   });
 
-  it("selects every local capability with the full-access preset", () => {
-    const enabled = toggleFullAccessPreset(["fs.read"]);
-    expect(enabled).toEqual(fullAccessCapabilities);
-    expect(isFullAccessPreset(enabled)).toBe(true);
-    expect(toggleFullAccessPreset(enabled)).toEqual([]);
-  });
-
-  it("maps manual Session presets to intent-level capabilities", () => {
+  it("keeps Host Shell separate from every structured access preset", () => {
     const locallyAllowed = [
       "process.exec",
-      "process.shell",
+      "host.shell",
       "fs.stat",
       "fs.list",
       "fs.search",
@@ -314,35 +307,66 @@ describe("web authentication boundaries", () => {
       "fs.search",
       "fs.read",
     ]);
-    expect(capabilitiesForManualPreset("shell", locallyAllowed)).toEqual([
-      "process.shell",
-    ]);
-    expect(capabilitiesForManualPreset("full", locallyAllowed)).toEqual([
-      "process.shell",
-      "fs.stat",
-      "fs.list",
-      "fs.search",
-      "fs.read",
-      "fs.write",
-      "fs.mkdir",
-      "fs.remove",
+    expect(capabilitiesForHostShellSelection(locallyAllowed)).toEqual([
+      "host.shell",
     ]);
   });
 
-  it("cannot grant shell access beyond the machine Local Policy", () => {
-    expect(capabilitiesForManualPreset("shell", ["fs.read"])).toEqual([]);
-    expect(
-      capabilitiesForManualPreset("full", ["fs.read", "fs.write"]),
-    ).toEqual(["fs.read", "fs.write"]);
+  it("cannot grant Host Shell beyond the machine Local Policy", () => {
+    expect(capabilitiesForHostShellSelection(["fs.read"])).toEqual([]);
     expect(
       manualSessionSelectionIsValid(
-        ["process.shell", "fs.read"],
+        ["host.shell", "fs.read"],
         ["fs.read"],
       ),
     ).toBe(false);
     expect(
       manualSessionSelectionIsValid(["fs.read"], ["fs.read"]),
     ).toBe(true);
+  });
+
+  it("does not retain implicit Read-only authority when Host Shell is selected", () => {
+    const locallyAllowed = [
+      "host.shell",
+      "fs.stat",
+      "fs.list",
+      "fs.search",
+      "fs.read",
+    ] as const;
+    const readOnly = capabilitiesForManualPreset("read-only", locallyAllowed);
+
+    expect(
+      toggleManualHostShellSelection(readOnly, locallyAllowed, "read-only"),
+    ).toEqual(["host.shell"]);
+    expect(
+      toggleManualHostShellSelection(["fs.read"], locallyAllowed, null),
+    ).toEqual(["fs.read", "host.shell"]);
+    expect(
+      toggleManualHostShellSelection(
+        ["fs.read", "host.shell"],
+        locallyAllowed,
+        null,
+      ),
+    ).toEqual(["fs.read"]);
+  });
+
+  it("keeps the Host Shell warning independent from the additive sudo warning", () => {
+    expect(executionWarningState([], "none")).toEqual({
+      hostShell: false,
+      rootAccess: false,
+    });
+    expect(executionWarningState(["host.shell"], "none")).toEqual({
+      hostShell: true,
+      rootAccess: false,
+    });
+    expect(executionWarningState(["process.exec"], "sudo")).toEqual({
+      hostShell: false,
+      rootAccess: true,
+    });
+    expect(executionWarningState(["host.shell"], "sudo")).toEqual({
+      hostShell: true,
+      rootAccess: true,
+    });
   });
 });
 
@@ -484,6 +508,34 @@ describe("dashboard navigation performance boundary", () => {
       ),
       "utf8",
     );
+    const enrollment = readFileSync(
+      resolve(componentsRoot, "enroll-machine.tsx"),
+      "utf8",
+    );
+    const machineList = readFileSync(
+      resolve(componentsRoot, "machine-list.tsx"),
+      "utf8",
+    );
+    const approval = readFileSync(
+      resolve(componentsRoot, "session-approval.tsx"),
+      "utf8",
+    );
+    const hostShellWarning = readFileSync(
+      resolve(componentsRoot, "host-shell-warning.tsx"),
+      "utf8",
+    );
+    const accessOptions = readFileSync(
+      resolve(process.cwd(), "apps/web/src/lib/agent-access-options.ts"),
+      "utf8",
+    );
+    const manualAccess = readFileSync(
+      resolve(process.cwd(), "apps/web/src/lib/manual-session-access.ts"),
+      "utf8",
+    );
+    const server = readFileSync(
+      resolve(process.cwd(), "apps/server/src/index.ts"),
+      "utf8",
+    );
 
     expect(sessionForm).not.toContain("session-path");
     expect(sessionForm).not.toContain("session-container");
@@ -492,8 +544,40 @@ describe("dashboard navigation performance boundary", () => {
     expect(sessionForm).not.toContain("session-program");
     expect(sessionForm).not.toContain("session-args");
     expect(sessionForm).not.toContain("splitArguments");
-    expect(sessionForm).toContain('value="shell"');
-    expect(sessionForm).toContain("Shell access");
+    expect(sessionForm).toContain('value="host-shell"');
+    expect(sessionForm).toContain("Host Shell");
+    expect(sessionForm.match(/Host Shell/gu) ?? []).toHaveLength(1);
+    expect(sessionForm).not.toContain("Full access");
+    expect(enrollment).not.toContain("Full access");
+    for (const surface of [
+      sessionForm,
+      enrollment,
+      machineList,
+      approval,
+      accessOptions,
+      manualAccess,
+    ]) {
+      expect(surface).not.toContain("process.shell");
+      expect(surface).not.toContain("Full access");
+    }
+    for (const surface of [sessionForm, enrollment, machineList, approval]) {
+      expect(surface).toContain("HostShellWarning");
+    }
+    expect(machineList).toContain("executionWarningState");
+    expect(machineList).toContain("Root access possible");
+    expect(hostShellWarning).toContain("operating-system user running the Client");
+    expect(hostShellWarning).toContain("user's Home");
+    expect(hostShellWarning).toContain("files, credentials, network, and services");
+    expect(hostShellWarning).toContain("no sandbox or isolation");
+    expect(hostShellWarning).toContain("persist after the Session ends");
+    expect(approval).toContain('<ApprovalRow label="Task"');
+    expect(approval).toContain('label="Replaces"');
+    expect(approval).not.toContain('label="Renews"');
+    const inspection = server.slice(
+      server.indexOf('"/v1/internal/cloud/session-requests/inspect"'),
+      server.indexOf('"/v1/internal/cloud/session-requests/approve"'),
+    );
+    expect(inspection).toContain("title: sessionRequest.title");
     expect(sessionForm).toContain("agent?.credentialActive");
     expect(sessionForm).toContain("machine?.online");
     expect(sessionForm).toContain("selectionIsValid");
@@ -1173,6 +1257,14 @@ describe("dashboard navigation performance boundary", () => {
     expect(loading).toContain("Skeleton");
     expect(server).toContain('"/v1/internal/cloud/agent-policies/approve"');
     expect(server).toContain("agent_credential_required");
+    const proposalSchema = server.slice(
+      server.indexOf("const agentPolicyProposalSchema"),
+      server.indexOf("const cloudAgentPolicySchema"),
+    );
+    expect(proposalSchema).toContain('scope.capabilities.includes("host.shell")');
+    expect(proposalSchema).toContain(
+      "Host Shell cannot be included in autoapproval or delegation policies",
+    );
   });
 
   it("keeps Managed Agent delegation single-level and attributable", () => {

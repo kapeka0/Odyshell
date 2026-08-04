@@ -1,8 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import {
-  ApiError,
-  Odyshell,
-} from "../packages/sdk/src/index.js";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
+import { ApiError, Odyshell } from "../packages/sdk/src/index.js";
 
 type CapturedRequest = {
   path: string;
@@ -12,6 +9,31 @@ type CapturedRequest = {
 };
 
 describe("Odyshell SDK", () => {
+  it("does not expose the legacy direct Session execution surface", () => {
+    type LegacySurface = Extract<
+      keyof Odyshell,
+      "process" | "fs" | "docker" | "execute" | "sessions" | "createSession"
+    >;
+
+    expectTypeOf<LegacySurface>().toEqualTypeOf<never>();
+
+    const ods = new Odyshell({
+      serverUrl: "https://ods.example",
+      agentToken: "agent-secret",
+      fetch: vi.fn(),
+    });
+    for (const property of [
+      "process",
+      "fs",
+      "docker",
+      "execute",
+      "sessions",
+      "createSession",
+    ]) {
+      expect(ods).not.toHaveProperty(property);
+    }
+  });
+
   it("executes through a claimed Session without sending broader credentials", async () => {
     const requests: CapturedRequest[] = [];
     const fetch = mockFetch(requests, (request) => {
@@ -80,11 +102,49 @@ describe("Odyshell SDK", () => {
       body: expect.objectContaining({
         machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
         action: { kind: "fs.read", path: "config/app.json" },
+        timeoutSeconds: 600,
+        maxOutputBytes: 1024 * 1024,
       }),
     });
     expect(JSON.stringify(requests)).not.toContain("human-secret");
     expect(JSON.stringify(requests)).not.toContain("agent-secret");
     expect(JSON.stringify(requests)).not.toContain("capabilities");
+  });
+
+  it("cancels Operations through both low-level and claimed Session clients", async () => {
+    const requests: CapturedRequest[] = [];
+    const fetch = mockFetch(requests, () => ({
+      id: "operation-id",
+      status: "cancellation_requested",
+    }));
+    const ods = new Odyshell({
+      serverUrl: "https://ods.example",
+      agentToken: "agent-secret",
+      fetch,
+    });
+    const session = ods.claimedSession({
+      sessionId: "session-id",
+      sessionToken: "session-secret",
+      scopes: [],
+      status: "opening",
+      expiresAt: "2026-07-31T01:00:00.000Z",
+    });
+
+    await ods.cancelOperation("operation-id");
+    await session.cancelOperation("operation-id");
+
+    expect(requests).toMatchObject([
+      {
+        path: "/v1/operations/operation-id/cancel",
+        method: "POST",
+        headers: { authorization: "Bearer agent-secret" },
+      },
+      {
+        path: "/v1/operations/operation-id/cancel",
+        method: "POST",
+        headers: { authorization: "Bearer session-secret" },
+      },
+    ]);
   });
 
   it("derives an exact scope when an Agent requests an operation Session", async () => {
@@ -126,6 +186,146 @@ describe("Odyshell SDK", () => {
         },
       }],
     });
+  });
+
+  it("requests Host Shell authority without anticipating a command", async () => {
+    const requests: CapturedRequest[] = [];
+    const fetch = mockFetch(requests, () => ({
+      id: "request-id",
+      status: "pending",
+      expiresAt: "2026-07-31T00:10:00.000Z",
+      scopes: [],
+    }));
+    const ods = new Odyshell({
+      serverUrl: "https://ods.example",
+      agentToken: "agent-secret",
+      fetch,
+    });
+
+    await ods.agent({
+      id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+      name: "Codex",
+    }).requestHostShellSession({
+      machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
+      title: "Diagnose the build",
+      purpose: "Run dependent commands",
+      durationSeconds: 900,
+      predecessorSessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
+    });
+
+    expect(requests[0]?.body).toMatchObject({
+      agentId: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+      title: "Diagnose the build",
+      predecessorSessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
+      scopes: [{
+        machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
+        profile: "workspace",
+        capabilities: ["host.shell"],
+        restrictions: {},
+      }],
+    });
+    expect(requests[0]?.body).not.toHaveProperty("command");
+    expect(requests[0]?.body).not.toHaveProperty("action");
+    expect(requests[0]?.body).not.toHaveProperty("scopes.0.action");
+  });
+
+  it("rejects Host Shell on the typed-operation request helper", async () => {
+    const requests: CapturedRequest[] = [];
+    const ods = new Odyshell({
+      serverUrl: "https://ods.example",
+      agentToken: "agent-secret",
+      fetch: mockFetch(requests, () => ({})),
+    });
+    const agent = ods.agent({
+      id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+      name: "Codex",
+    });
+
+    await expect(agent.requestOperationSession({
+      machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
+      title: "Invalid anticipated shell command",
+      durationSeconds: 900,
+      action: {
+        kind: "host.shell",
+        command: "npm test",
+        cwd: ".",
+        env: {},
+      },
+    } as never)).rejects.toMatchObject({ code: "host_shell_request_required" });
+    expect(requests).toHaveLength(0);
+  });
+
+  it("executes Host Shell only through a claimed Session", async () => {
+    const requests: CapturedRequest[] = [];
+    const fetch = mockFetch(requests, (request) => {
+      if (request.path.endsWith("/operations")) {
+        return { id: "operation-id", status: "queued" };
+      }
+      if (request.path === "/v1/sessions/session-id") {
+        return {
+          id: "session-id",
+          machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
+          profile: "workspace",
+          capabilities: ["host.shell"],
+          status: "ready",
+          expiresAt: "2026-07-31T01:00:00.000Z",
+          createdAt: "2026-07-31T00:00:00.000Z",
+        };
+      }
+      return {
+        id: "operation-id",
+        sessionId: "session-id",
+        action: { kind: "host.shell", command: "npm test", cwd: ".", env: {} },
+        status: "succeeded",
+        exitCode: 0,
+        outputTruncated: false,
+        events: [],
+        createdAt: "2026-07-31T00:00:00.000Z",
+        updatedAt: "2026-07-31T00:00:00.000Z",
+      };
+    });
+    const ods = new Odyshell({
+      serverUrl: "https://ods.example",
+      agentToken: "agent-secret",
+      fetch,
+    });
+    const session = ods.claimedSession({
+      sessionId: "session-id",
+      sessionToken: "session-secret",
+      scopes: [{
+        machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
+        profile: "workspace",
+        capabilities: ["host.shell"],
+        restrictions: {},
+      }],
+      status: "opening",
+      expiresAt: "2026-07-31T01:00:00.000Z",
+    });
+
+    await session.host.shell({
+      machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
+      command: "npm test",
+      env: { CI: "true" },
+      stdinBase64: Buffer.from("yes\n").toString("base64"),
+    });
+
+    expect(requests.find((request) => request.path.endsWith("/operations")))
+      .toMatchObject({
+        path: "/v1/sessions/session-id/operations",
+        headers: expect.objectContaining({ authorization: "Bearer session-secret" }),
+        body: expect.objectContaining({
+          machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
+          action: {
+            kind: "host.shell",
+            command: "npm test",
+            cwd: ".",
+            env: { CI: "true" },
+            stdinBase64: Buffer.from("yes\n").toString("base64"),
+          },
+        }),
+      });
+    expect(ods).not.toHaveProperty("process");
+    expect(ods).not.toHaveProperty("host");
   });
 
   it("keeps agent and administrator credentials on separate request surfaces", async () => {
@@ -358,6 +558,29 @@ describe("Odyshell SDK", () => {
     ]);
   });
 
+  it("rejects Host Shell before proposing autoapproval or delegation policy", async () => {
+    const requests: CapturedRequest[] = [];
+    const ods = new Odyshell({
+      serverUrl: "https://ods.example",
+      agentToken: "agent-secret",
+      fetch: mockFetch(requests, () => ({})),
+    });
+
+    await expect(
+      ods.proposeAgentPolicy({
+        scopes: [{
+          machineId: "11111111-1111-4111-8111-111111111111",
+          profile: "host",
+          capabilities: ["host.shell"],
+          restrictions: {},
+        }] as never,
+        maxSessionSeconds: 600,
+        validForSeconds: 2_592_000,
+      }),
+    ).rejects.toMatchObject({ code: "unsafe_capability" });
+    expect(requests).toEqual([]);
+  });
+
   it("creates and manages one-level Managed Agent identities", async () => {
     const requests: CapturedRequest[] = [];
     const fetch = mockFetch(requests, (request) =>
@@ -456,119 +679,7 @@ describe("Odyshell SDK", () => {
     expect(String(error)).not.toContain("agent-super-secret");
   });
 
-  it("runs a typed operation in a least-privilege temporary session", async () => {
-    const requests: CapturedRequest[] = [];
-    const fetch = mockFetch(requests, (request) => {
-      if (request.path === "/v1/machines") {
-        return {
-          data: [
-            {
-              id: "machine-id",
-              name: "rpi5",
-              status: "online",
-              online: true,
-              lastSeenAt: "2026-07-29T18:00:00.000Z",
-              enrolledAt: "2026-07-29T17:00:00.000Z",
-            },
-          ],
-        };
-      }
-      if (request.path === "/v1/sessions" && request.method === "POST") {
-        return session("opening");
-      }
-      if (request.path === "/v1/sessions/session-id" && request.method === "GET") {
-        return session("ready");
-      }
-      if (
-        request.path === "/v1/sessions/session-id/operations" &&
-        request.method === "POST"
-      ) {
-        return { id: "operation-id", status: "queued" };
-      }
-      if (request.path === "/v1/operations/operation-id") {
-        return {
-          id: "operation-id",
-          sessionId: "session-id",
-          action: {
-            kind: "fs.write",
-            path: "config/app.json",
-            contentBase64: "eyJvayI6dHJ1ZX0=",
-            createParents: true,
-          },
-          status: "succeeded",
-          exitCode: 0,
-          outputTruncated: false,
-          events: [
-            {
-              sequence: 0,
-              stream: "result",
-              dataBase64: Buffer.from('{"bytesWritten":11}').toString("base64"),
-            },
-          ],
-          createdAt: "2026-07-29T18:00:00.000Z",
-          updatedAt: "2026-07-29T18:00:01.000Z",
-        };
-      }
-      if (
-        request.path === "/v1/sessions/session-id" &&
-        request.method === "DELETE"
-      ) {
-        return { id: "session-id", status: "closed" };
-      }
-      throw new Error(`Unexpected request: ${request.method} ${request.path}`);
-    });
-    const ods = new Odyshell({
-      serverUrl: "https://ods.example",
-      agentToken: "agent-secret",
-      fetch,
-    });
-
-    const result = await ods.fs.write({
-      machine: "rpi5",
-      path: "config/app.json",
-      content: '{"ok":true}',
-      createParents: true,
-      ttlSeconds: 60,
-      timeoutSeconds: 15,
-    });
-
-    expect(result.result).toEqual({ bytesWritten: 11 });
-    expect(requests.find((request) => request.path === "/v1/sessions")?.body).toEqual({
-      machineId: "machine-id",
-      profile: "workspace",
-      ttlSeconds: 60,
-      capabilities: ["fs.write"],
-    });
-    expect(
-      requests.find((request) => request.path.endsWith("/operations"))?.body,
-    ).toEqual({
-      action: {
-        kind: "fs.write",
-        path: "config/app.json",
-        contentBase64: Buffer.from('{"ok":true}').toString("base64"),
-        createParents: true,
-      },
-      timeoutSeconds: 15,
-      maxOutputBytes: 1024 * 1024,
-    });
-    expect(requests.at(-1)).toMatchObject({
-      method: "DELETE",
-      path: "/v1/sessions/session-id",
-    });
-  });
 });
-
-function session(status: "opening" | "ready") {
-  return {
-    id: "session-id",
-    machineId: "machine-id",
-    profile: "workspace",
-    capabilities: ["fs.write"],
-    status,
-    expiresAt: "2026-07-29T19:00:00.000Z",
-    createdAt: "2026-07-29T18:00:00.000Z",
-  };
-}
 
 function mockFetch(
   requests: CapturedRequest[],

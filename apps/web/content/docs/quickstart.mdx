@@ -25,8 +25,9 @@ embedded in the URL.
 ## 3. Connect a machine
 
 In Odyshell Cloud, open **Machines**, select **Add**, and choose the capabilities the Client may
-expose. Run the generated `ods up` command on the target machine. Relative paths use the directory
-where the Profile is enrolled; exact absolute paths can be requested and reviewed separately.
+expose. Run the generated `ods up` command on the target machine. Relative host paths start from
+the Home directory of the operating-system user running the Client; exact absolute paths can be
+requested and reviewed separately.
 
 The enrollment token in that command expires after ten minutes and works once. The Client then
 keeps an outbound connection to Odyshell; the machine does not expose an inbound port.

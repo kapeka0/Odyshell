@@ -13,28 +13,51 @@ trusted runtime interface.
 The surface includes machine discovery and ping, Session recovery/status/completion, typed
 Operation execution, and Session timelines. It contains no enrollment, member, billing, or
 administrator tools. Machine discovery reports an allowlisted platform and local capability
-summary without exposing workspace paths or Client configuration.
+summary without exposing host paths or Client configuration.
 
 When a Session needs human approval, the tool result tells the agent to show the approval link and
 wait for the user's decision before checking the request status.
-If the MCP client loses a tool response or opens a new chat, `sessions_list` recovers its pending
-requests and active Sessions without creating duplicate authority.
+If the MCP client loses a tool response or opens a new chat, `sessions_list` recovers pending
+requests and lists active Sessions. Active authority remains reusable only while the same local MCP
+process holds its claim or the same remote installation retains its persistent grant.
 Request and status results include an explicit `nextAction`, so an agent can resume after human
 approval without asking for a duplicate Session.
+
+Local `ods mcp` reuses a compatible ready Session only when that same running process claimed its
+Session Credential. The credential remains in memory, is never persisted, and is revalidated
+against active Server state before reuse. Restarting the process can recover pending unclaimed
+requests, but authority claimed by the previous process requires a new Session request and
+approval. Remote MCP instead stores an installation-bound grant in PostgreSQL, so compatible
+authority remains reusable by that installation across stateless requests and Server restarts.
 
 The same pending request and review link are available from the Odyshell Sessions dashboard.
 
 Requests can group several exact operations into one least-privilege scope per machine. The MCP
-server derives stable Operation IDs from MCP request identity instead of exposing them to the
-agent. It also bounds execution time to the Session lifetime remaining. Completion is rejected
-while an Operation remains active, and groups that would create capability-path cross products
-are rejected.
+`operation_execute` requires a fresh UUIDv4 `idempotencyKey` for each logical Operation. The MCP client
+reuses it only when retrying that exact call; a new call, even with identical action content, uses a
+new UUID. This explicit identity is necessary because JSON-RPC request IDs may be reused after a
+response and stateless HTTP cannot otherwise distinguish a retry from a later identical call. The
+UUID is independent of command text, arguments, file content, environment values, and standard
+input, so its retained hash is not a content dictionary oracle. Odyshell also bounds execution time
+to the Session lifetime remaining. Completion is rejected while an Operation remains active, and
+groups that would create capability-path cross products are rejected.
 
-Filesystem paths may be relative to the Client working directory or exact absolute paths on a host
+Filesystem paths may be relative to the Client Home or exact absolute paths on a host
 profile. An absolute path is presented and approved as an exact filesystem scope. Docker
 profiles reject absolute host paths. Prefer `process.exec` for an exact executable and argument
-array. `process.shell` is available for dependent multi-command work, remains temporary, is never
-autoapproved, and records a conservatively redacted command shape without retaining argument
-values or output.
+array. `session_request` accepts exactly one authority mode: `operations` retains the exact typed
+actions being requested, while `hostShell: { machine }` requests temporary broad Host Shell
+authority without guessing future commands. A linked escalation can carry `predecessorSessionId`.
+Actual `host.shell` commands are supplied only to `operation_execute`; Host Shell is never
+autoapproved. Persistable command action fields and output remain temporary delivery data, while
+environment values and standard input are transport-only and never persisted. Privacy-minimal
+Timeline data and Event Sinks do not export command text or output. Commands run as the Client's
+operating-system user, start in that user's Home by default, have no sandbox or isolation, and may
+persist changes after the Session ends. The process inherits an allowlisted base environment;
+explicit environment values affect only that Operation, while a POSIX login shell can still load
+user startup files. Operation execution defaults to 600 seconds and is capped at 24 hours
+before the Server reduces it to the Session lifetime remaining. Graceful cancellation stops the
+process group, but an abrupt Client crash can leave a detached POSIX command running; the result is
+reconciled as unknown.
 
 [MCP documentation](https://odyshell.com/docs/mcp) · [Back to Odyshell](../../README.md)

@@ -63,6 +63,15 @@ Then add:
 
 The process uses the existing local `ods` configuration. Its identity is saved locally. A claimed
 Session Credential stays in MCP memory and is never returned in a tool result.
+Local `ods mcp` reuses only Sessions claimed by that same running process, after revalidating that
+the Session is active, unexpired, ready, and covers every requested Operation. It never saves the
+Session Credential. An MCP-host or `ods mcp` restart can still recover pending, unclaimed requests,
+but restarting `ods mcp` requires a new Session request and approval before using authority that a
+previous process had already claimed.
+
+Remote MCP keeps its installation-bound Session grant in PostgreSQL. That persistent binding lets
+the same installation reuse compatible ready authority across stateless requests and Server
+restarts without returning the credential to the model.
 
 ## Request an operation
 
@@ -72,28 +81,34 @@ The approval-based workflow exposes eight tools:
    runner, effective capabilities, and privilege-escalation policy.
 2. `machine_ping` checks the complete connection path.
 3. `sessions_list` returns pending requests and active Sessions. Call it before requesting access
-   so existing ready authority can be reused after an interrupted response, tool-host restart, new
-   chat, or another step in the same Agent task. History is optional.
-4. `session_request` accepts a title, optional purpose, and one or more typed operations. The Server
-   reuses a compatible ready Session bound to the same MCP installation, or returns an approval URL
-   when new authority is required.
+   so existing ready authority can be reused after an interrupted response, a new chat, or another
+   step in the same Agent task. History is optional. A local process restart does not preserve a
+   claimed Session Credential; remote installation grants do survive Server restarts.
+4. `session_request` accepts a title, optional purpose, and either exact typed Operations or
+   explicit broad Host Shell authority. A Host Shell request identifies its machine, objective,
+   duration, and capability without approving an advance command list. Local MCP reuses compatible
+   authority claimed in the current process; remote MCP reuses a compatible ready Session bound to
+   the persistent installation. Otherwise the tool returns an approval URL for new authority.
 5. `session_status` checks the decision and privately binds the approved Session.
-6. `operation_execute` executes only an approved operation. Odyshell derives its idempotency key
-   from the MCP request, so agents never manage or reuse internal Operation IDs. If the requested
-   timeout exceeds the Session lifetime remaining, Odyshell safely reduces it instead of requiring
-   another tool call.
+6. `operation_execute` executes only an approved operation and requires an explicit UUIDv4
+   `idempotencyKey`. Generate a fresh UUID for each logical Operation, and reuse that exact UUID only
+   when retrying the same call. A later call uses a new UUID even when its Session, action, timeout,
+   or JSON-RPC request ID matches an earlier call. The UUID is independent of command text,
+   arguments, file content, environment values, and standard input, so retained idempotency
+   metadata cannot act as a content dictionary oracle. If the requested timeout exceeds the
+   Session lifetime remaining, Odyshell safely reduces it instead of requiring another tool call.
 7. `session_complete` closes access when no Operation is active and records the agent-reported outcome.
 8. `timeline_list` reads the verified Session timeline.
 
 When approval is required, the agent shows the URL returned by `session_request` as a clickable
-link and waits. Open it to review the exact machines and Operations, then approve or deny the
-request. The Sessions page shows the pending request immediately, then replaces it with the active
-Session after approval and one-time claim. Its pending row opens the same review URL shown by the
-agent. The agent calls `session_status` and continues only if
+link and waits. Open it to review the exact typed Operations or broad Host Shell authority, then
+approve or deny the request. The Sessions page shows the pending request immediately, then replaces
+it with the active Session after approval and one-time claim. Its pending row opens the same review
+URL shown by the agent. The agent calls `session_status` and continues only if
 Odyshell grants the Session and the Client reports it ready.
-The Agent should select an explicit compatible Session from `sessions_list` instead of asking for
-duplicate approval. If it still calls `session_request`, the Server performs the same compatibility
-check before creating a request.
+The Agent can select an explicit compatible Session from `sessions_list` when it is bound to the
+current local process or remote installation. Calling `session_request` performs the same
+transport-appropriate compatibility check before creating a duplicate approval request.
 
 Odyshell returns a `nextAction` after both the request and status checks. Agents should follow it
 instead of asking the member to repeat an approval. A ready status points to `operation_execute`;
@@ -103,16 +118,19 @@ Agents should inspect `machines_list` before choosing commands. Machine, Session
 results expose the machine description, allowlisted platform, architecture, runner, effective
 capabilities, default shell, and whether sudo is locally allowed so
 a Windows machine does not receive Linux-only commands such as `df -h`.
+On Linux this reports effective runtime access: an installed service enforces its disabled setting
+with `NoNewPrivileges`, while a foreground Client probes `sudo -n` because it has no equivalent
+service boundary.
 Before requesting a sudo command, the Agent must disclose intended root access in the Session title
 or purpose so the approval is unambiguous.
 If an executable is unavailable, `operation_execute` directs the Agent back to `machines_list`
 instead of encouraging another platform guess.
 
-Each operation determines its capability and restriction automatically. Scopes for the same
-machine are combined without broadening their exact restrictions. Filesystem operations use an
-exact path relative to the Client working directory or an absolute host path, `process.exec` uses
-an exact executable and arguments, and `docker.logs` uses an exact container. Absolute paths
-require a host profile.
+Each structured Operation determines its capability and restriction automatically. Scopes for the
+same machine are combined without broadening their exact restrictions. Filesystem Operations use
+an exact path relative to the Client user's Home or an absolute host path, `process.exec` uses an
+exact executable and arguments, and `docker.logs` uses an exact container. Absolute host paths
+require a host Profile; Docker Profiles use their Docker-specific mount source.
 Approval codes expire, are single-use and are bound to their Workspace.
 
 If combining filesystem operations would authorize a capability on a path that was not requested,
@@ -122,10 +140,17 @@ The Server validates Session identity, machine, capability, path and expiry on e
 The Client applies its local policy independently.
 
 Agents should prefer native filesystem and Docker Operations or `process.exec`. They can request
-`process.shell` for multi-step work where the next command depends on stdout or stderr from the
-previous one. Shell authority is broad, temporary, never autoapproved, bounded by the machine's
-Local Policy, and every command is recorded after secret redaction. It does not create a persistent
-PTY; each Operation has an explicit working directory and deadline.
+`host.shell` for multi-step work where the next command depends on stdout or stderr from the
+previous one. Host Shell authority is broad, temporary, never autoapproved or delegated, and
+bounded by the machine's Local Policy. Each command is a separate Operation that starts in the
+Client user's Home by default; there is no persistent terminal, PTY, sandbox, isolation, or shell
+state across commands. A per-command working directory does not narrow Host Shell authority.
+Commands run with everything available to the operating-system user running the Client, and their
+changes may persist after the Session ends. The command inherits an allowlisted base environment;
+explicit environment values apply only to that Operation and are never persisted, while a POSIX
+login shell can still load user startup files. Graceful cancellation stops the process group, but an
+abrupt Client crash can leave a detached POSIX command running; the result is reconciled as
+unknown.
 
 ## Client-side blocks
 

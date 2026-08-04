@@ -93,18 +93,36 @@ Client logs, reconnect it, and confirm that Server and Client versions match.
 ## Operation denied
 
 Compare the capability required by the operation with both the agent credential and the
-machine's local `--allow` policy. Also check credential expiry, machine assignment, filesystem
-workspace boundaries, and operating-system permissions.
+machine's local `--allow` policy. Also check credential expiry, machine assignment, any exact path
+restriction, and operating-system permissions.
 
 ## `sudo` cannot gain privileges
 
-Linux Client services set `NoNewPrivileges` unless the machine owner opts in for that Profile.
-First configure a narrow passwordless sudoers rule, then run locally:
+Installed Linux Client services set `NoNewPrivileges` unless the machine owner opts in for that
+Profile. First configure a narrow passwordless sudoers rule, then run locally:
 
 ```bash
 ods profiles configure default --allow-sudo
 ```
 
 The command fails closed when `sudo -n true` does not succeed. Use `--deny-sudo` to restore the
-default. A Profile with sudo enabled makes approved process Sessions root-capable; structured
-filesystem operations remain unprivileged.
+installed-service restriction. A Profile with sudo enabled makes approved process Sessions
+root-capable; structured filesystem operations remain unprivileged.
+
+`ods client start` runs in the foreground and does not gain the service-level
+`NoNewPrivileges` boundary. The Client probes effective `sudo -n` and reports root capability so
+approval surfaces can warn even if the Profile setting is disabled. Odyshell does not claim an
+equivalent privilege-escalation restriction on macOS or Windows.
+
+## A command may still be running after a Client crash
+
+Graceful Session closure and cancellation terminate the active process group. On POSIX, Host Shell
+commands use detached process groups. Without a separate Operation supervisor, an abrupt Client
+crash can leave a command running until it exits by itself or is stopped by the machine owner or
+operating system. After restart, Odyshell reports the execution result as unknown instead of
+assuming the command stopped. On Windows, tree termination is best effort when the command leader
+has already exited.
+
+If the Client reports `authority_termination_unconfirmed`, it has quarantined the local Profile and
+will refuse to reconnect it after a service restart. Inspect the machine for surviving processes,
+then remove and re-enroll that Profile to replace its local identity and state.

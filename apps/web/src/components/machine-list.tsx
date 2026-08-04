@@ -18,8 +18,14 @@ import {
   DataTableColumnHeader,
 } from "@/components/data-table";
 import { useDashboard } from "@/components/dashboard-provider";
+import { HostShellWarning } from "@/components/host-shell-warning";
 import { StatusBadge } from "@/components/status-badge";
 import { StatusDot } from "@/components/status-dot";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/ui/alert";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -62,6 +68,7 @@ import { toast } from "@/components/ui/toast";
 import { capabilityGroups } from "@/lib/agent-access-options";
 import type { CloudMachine } from "@/lib/cloud-api";
 import { formatDashboardTimestamp } from "@/lib/date-time";
+import { executionWarningState } from "@/lib/host-shell-access";
 import {
   machinePlatform,
   machinePrivilegeEscalation,
@@ -227,6 +234,10 @@ function MachineActions({
   const [description, setDescription] = useState(machine.description ?? "");
   const [capabilities, setCapabilities] = useState<Capability[]>(
     machine.capabilities,
+  );
+  const warningState = executionWarningState(
+    capabilities,
+    machinePrivilegeEscalation(machine.runtime),
   );
 
   function openEdit() {
@@ -522,6 +533,15 @@ function MachineActions({
                     })}
                 </div>
               </Field>
+              {warningState.hostShell ? <HostShellWarning /> : null}
+              {warningState.rootAccess ? (
+                <Alert>
+                  <AlertTitle>Root access possible</AlertTitle>
+                  <AlertDescription>
+                    This machine allows passwordless sudo during a Session.
+                  </AlertDescription>
+                </Alert>
+              ) : null}
               {error ? (
                 <p className="text-sm text-destructive" role="alert">
                   {error}

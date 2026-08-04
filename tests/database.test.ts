@@ -15,6 +15,23 @@ describe("server storage boundaries", () => {
     expect(defaultCloudWorkspaceName()).toBe("Default workspace");
     expect(defaultCloudWorkspaceName("a".repeat(128))).toHaveLength(96);
   });
+
+  it("checks machine scope before persisting Session approval state", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const request = database.slice(
+      database.indexOf("async createAgentSessionRequest("),
+      database.indexOf("async sessionRequestForApproval("),
+    );
+
+    expect(request.indexOf("!machineScopesAllowed(machines, scopes)")).toBeGreaterThan(-1);
+    expect(request.indexOf("!machineScopesAllowed(machines, scopes)")).toBeLessThan(
+      request.indexOf('.insertInto("agentSessionRequests")'),
+    );
+  });
+
   it("snapshots workspace logging policy into every Session", () => {
     const database = readFileSync(
       resolve(process.cwd(), "apps/server/src/database.ts"),
@@ -74,7 +91,7 @@ describe("server storage boundaries", () => {
     );
     const acknowledgements = database.slice(
       database.indexOf("async markSessionOpened("),
-      database.indexOf("async findOperationByIdempotency("),
+      database.indexOf("async replayOperationByIdempotency("),
     );
 
     expect(cancellation.indexOf('.updateTable("sessions")')).toBeLessThan(
@@ -209,7 +226,7 @@ describe("server storage boundaries", () => {
     );
     const reconciliation = database.slice(
       database.indexOf("async function reconcileCanonicalAgentSession("),
-      database.indexOf("export class PostgresDatabase"),
+      database.indexOf("type AgentSessionTerminationInput"),
     );
 
     expect(canonicalSessionTargetDecision(["ready", "opening"])).toBe("ready");
@@ -219,30 +236,81 @@ describe("server storage boundaries", () => {
     expect(reconciliation).toContain('.updateTable("sessionCredentials")');
   });
 
-  it("keeps rejected targets retryable until their canonical Session expires", () => {
+  it("preserves authority on disconnect and reopens active targets after reconnect", () => {
     const database = readFileSync(
       resolve(process.cwd(), "apps/server/src/database.ts"),
       "utf8",
     );
-    const retry = database.slice(
-      database.indexOf("async retryAgentSessionTargets("),
+    const disconnect = database.slice(
+      database.indexOf("async markMachineDisconnected("),
+      database.indexOf("async setMachineOnline("),
+    );
+    const reconnect = database.slice(
+      database.indexOf("async reconnectAgentSessionTargets("),
+      database.indexOf("async setMachineIncompatible("),
+    );
+    const pendingClose = database.slice(
+      database.indexOf("async agentSessionTargetsPendingClose("),
       database.indexOf("async setMachineIncompatible("),
     );
     const reconciliation = database.slice(
       database.indexOf("async function reconcileCanonicalAgentSession("),
-      database.indexOf("export class PostgresDatabase"),
+      database.indexOf("type AgentSessionTerminationInput"),
     );
 
-    expect(retry).toContain('.where("agentSessionTargets.status", "=", "rejected")');
-    expect(retry).toContain('.where("agentSessions.status", "=", "active")');
-    expect(retry).toContain('.where("agentSessions.expiresAt", ">", now)');
-    expect(retry).toContain('status: "opening"');
-    expect(retry).toContain('eventType: "target.retrying"');
+    expect(disconnect).not.toContain('.updateTable("operations")');
+    expect(disconnect).not.toContain('.updateTable("sessions")');
+    expect(disconnect).not.toContain('.updateTable("agentSessionTargets")');
+    expect(reconnect).toContain('"agentSessionTargets.status"');
+    expect(reconnect).toContain('["opening", "ready", "rejected"]');
+    expect(reconnect).toContain('.where("agentSessions.status", "=", "active")');
+    expect(reconnect).toContain('.where("agentSessions.expiresAt", ">", now)');
+    expect(reconnect).toContain('status: "opening"');
+    expect(reconnect).toContain('eventType: "target.reconnecting"');
+    expect(pendingClose).toContain('.where("sessions.status", "=", "closing")');
+    expect(pendingClose).toContain('reason: target.canonicalStatus');
     expect(reconciliation).not.toContain('kind: "session.failed"');
     expect(reconciliation).not.toContain('.updateTable("mcpSessionGrants")');
-    expect(database).not.toContain(
-      '.where("agentSessionTargets.status", "in", ["opening", "ready"])',
+  });
+
+  it("revokes machine targets canonically and revalidates Operation delivery", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
     );
+    const revocation = database.slice(
+      database.indexOf("async revokeMachine("),
+      database.indexOf("async listSessions("),
+    );
+    const operationCreation = database.slice(
+      database.indexOf("async createOperation("),
+      database.indexOf("async markOperationStarted("),
+    );
+
+    expect(revocation).toContain('.updateTable("agentSessionTargets")');
+    expect(revocation).toContain('.updateTable("agentSessions")');
+    expect(revocation).toContain('.updateTable("sessionCredentials")');
+    expect(revocation).toContain('.updateTable("mcpSessionGrants")');
+    expect(revocation).toContain('eventType: "target.revoked"');
+    expect(revocation).toContain('eventType: "operation.completed"');
+    expect(revocation).toContain('status: "execution_unknown"');
+    expect(revocation).toContain('error: "machine_revoked"');
+    expect(revocation).toContain("kind: operation.action.kind");
+    expect(revocation).not.toContain("command:");
+    expect(revocation).toContain(
+      '.returning(["id", "sessionId", "action"])',
+    );
+    expect(revocation).toContain("withDatabaseDeadlockRetry");
+    expect(revocation).toContain('.orderBy("sessionId")');
+    expect(revocation).toContain('.orderBy("machineId")');
+    expect(operationCreation).toContain('.innerJoin("machines"');
+    expect(operationCreation).toContain('.where("sessions.status", "=", "ready")');
+    expect(operationCreation).toContain('.where("machines.revokedAt", "is", null)');
+    expect(operationCreation).toContain('.where("sessions.expiresAt", ">", now)');
+    expect(operationCreation).toContain("const authorizedAt = new Date()");
+    expect(operationCreation).toContain("runtime.expiresAt <= authorizedAt");
+    expect(operationCreation).toContain("canonical.targetMachineId !== input.machineId");
+    expect(operationCreation).toContain(".forShare()");
   });
 
   it("expands identity and authority without making legacy sessions canonical", () => {
@@ -391,11 +459,39 @@ describe("server storage boundaries", () => {
     expect(claim).toContain('.insertInto("sessionCredentials")');
     expect(claim).not.toContain("sessionToken");
 
-    const idempotencyLookup = database.slice(
-      database.indexOf("async findOperationByIdempotency("),
+    const idempotencyReplay = database.slice(
+      database.indexOf("async replayOperationByIdempotency("),
       database.indexOf("async sessionForOperation("),
     );
-    expect(idempotencyLookup).toContain('.where("sessionId", "=", sessionId)');
+    const operationCreation = database.slice(
+      database.indexOf("async createOperation("),
+      database.indexOf("async markOperationStarted("),
+    );
+    expect(idempotencyReplay).toContain(
+      '.where("idempotencyScopeId", "=", input.idempotencyScopeId)',
+    );
+    expect(idempotencyReplay).toContain('"idempotencyFingerprint"');
+    expect(idempotencyReplay).toContain(".forUpdate()");
+    expect(idempotencyReplay.indexOf("dispatch(operation)")).toBeLessThan(
+      idempotencyReplay.indexOf('.updateTable("operations")'),
+    );
+    expect(migration).toContain("operations_scope_principal_idempotency_unique");
+    expect(migration).toContain(
+      "partition by workspace_id, idempotency_scope_id, principal_id, idempotency_key",
+    );
+    expect(migration).toContain(
+      "unique (workspace_id, idempotency_scope_id, principal_id, idempotency_key)",
+    );
+    expect(migration).toContain("idempotency_fingerprint");
+    expect(operationCreation).toContain(
+      "canonical.canonicalSessionId !== input.idempotencyScopeId",
+    );
+    expect(operationCreation).toContain(
+      '.insertInto("operationIdempotencyKeys")',
+    );
+    expect(operationCreation).toMatch(
+      /\.columns\(\[\s*"workspaceId",\s*"idempotencyScopeId",\s*"principalId",\s*"idempotencyKeyHash",?\s*\]\)/u,
+    );
   });
 
   it("creates canonical Sessions only for an active Agent in the same workspace", () => {
@@ -419,6 +515,134 @@ describe("server storage boundaries", () => {
     expect(creation).toContain('.insertInto("agentSessions")');
     expect(creation).not.toContain("agentTokens");
     expect(creation).not.toContain('.insertInto("sessions")');
+  });
+
+  it("uses one payload-free idempotency registry before and after Operation purge", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const migration = database.slice(
+      database.indexOf("async function migrateOperationIdempotencyKeys("),
+      database.indexOf("const migrationProvider"),
+    );
+    const replay = database.slice(
+      database.indexOf("async replayOperationByIdempotency("),
+      database.indexOf("async sessionForOperation("),
+    );
+    const completion = database.slice(
+      database.indexOf("async markOperationCompleted("),
+      database.indexOf("async getOperation("),
+    );
+    const purge = database.slice(
+      database.indexOf("async purgeExpiredData("),
+      database.indexOf("async notifyStaleOfflineMachines("),
+    );
+
+    expect(migration).toContain("create table odyshell.operation_idempotency_keys");
+    expect(migration).toContain(
+      "unique (workspace_id, idempotency_scope_id, principal_id, idempotency_key_hash)",
+    );
+    expect(migration).toContain("set has_transient_input = (action ->> 'kind' = 'host.shell')");
+    expect(migration).toContain("drop column idempotency_key");
+    expect(migration).not.toContain("action jsonb");
+    expect(migration).not.toContain("command");
+    expect(replay).toContain('selectFrom("operationIdempotencyKeys")');
+    expect(replay).toContain("operationIdempotencyKeyHash(input.idempotencyKey)");
+    expect(replay).toContain('"hasTransientInput"');
+    expect(replay).toContain("operation.id !== input.freshOperationId");
+    expect(completion).toContain('selectFrom("operationIdempotencyKeys")');
+    expect(completion).toContain('.where("machineId", "=", input.machineId)');
+    expect(purge.indexOf('.updateTable("operationIdempotencyKeys")')).toBeLessThan(
+      purge.indexOf('.deleteFrom("operations")'),
+    );
+    expect(purge).toContain('.where("purgedAt", "<", auditBefore)');
+  });
+
+  it("terminalizes Operations by an absolute execution deadline", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const server = readFileSync(
+      resolve(process.cwd(), "apps/server/src/index.ts"),
+      "utf8",
+    );
+    const expiry = database.slice(
+      database.indexOf("async expireStaleOperations("),
+      database.indexOf("async getOperation("),
+    );
+    const expiryTimer = server.slice(
+      server.indexOf("const expiryTimer = setInterval("),
+      server.indexOf("const retentionTimer = setInterval("),
+    );
+
+    expect(expiry).toContain('sql.ref("operations.createdAt")');
+    expect(expiry).toContain('sql.ref("operations.timeoutSeconds")');
+    expect(expiry).not.toContain('sql.ref("operations.updatedAt")');
+    expect(expiry).toContain('.forUpdate("operations")');
+    expect(expiry).toContain('error: "completion_not_received"');
+    expect(expiry).toContain('status: "execution_unknown"');
+    expect(expiry).toContain('eventType: "operation.completed"');
+    expect(expiry.match(/\.insertInto\("sessionTimelineEvents"\)/gu)).toHaveLength(1);
+    expect(expiryTimer).toContain("await db.expireStaleOperations()");
+    expect(expiryTimer).toContain("if (sweepingExpiry) return");
+    expect(expiryTimer).toContain("sweepingExpiry = false");
+    expect(expiryTimer).toContain('type: "operation.cancel"');
+    expect(expiryTimer).toContain('error: "completion_not_received"');
+  });
+
+  it("persists cancellation before transport and retries its signal idempotently", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const server = readFileSync(
+      resolve(process.cwd(), "apps/server/src/index.ts"),
+      "utf8",
+    );
+    const cancellation = database.slice(
+      database.indexOf("async requestOperationCancellation("),
+      database.indexOf("async operationExists("),
+    );
+    const completion = database.slice(
+      database.indexOf("async markOperationCompleted("),
+      database.indexOf("async expireStaleOperations("),
+    );
+    const expiry = database.slice(
+      database.indexOf("async expireStaleOperations("),
+      database.indexOf("async getOperation("),
+    );
+    const endpoint = server.slice(
+      server.indexOf('"/v1/operations/:operationId/cancel"'),
+      server.indexOf('"/v1/operations/:operationId/events"'),
+    );
+    const reconnect = database.slice(
+      database.indexOf("async pendingOperationCancellations("),
+      database.indexOf("async operationExists("),
+    );
+
+    expect(cancellation.indexOf('.forUpdate("operations")')).toBeLessThan(
+      cancellation.indexOf('status: "cancellation_requested"'),
+    );
+    expect(cancellation).toContain('error: "cancellation_requested"');
+    expect(cancellation).toContain('.insertInto("auditEvents")');
+    expect(cancellation).toContain('action: "operation.cancel_requested"');
+    expect(endpoint.indexOf("await db.requestOperationCancellation(")).toBeLessThan(
+      endpoint.indexOf('type: "operation.cancel"'),
+    );
+    expect(endpoint).toContain(
+      'operation.status !== "cancellation_requested"',
+    );
+    expect(endpoint).toContain("await gateway.runMachineLifecycle(");
+    expect(endpoint).not.toContain('"operation.cancel_requested"');
+    expect(reconnect).toContain('.where("operations.status", "=", "cancellation_requested")');
+    expect(completion).toContain(
+      '.where("status", "in", NONTERMINAL_OPERATION_STATUSES)',
+    );
+    expect(expiry).toContain(
+      '.where("operations.status", "in", NONTERMINAL_OPERATION_STATUSES)',
+    );
   });
 
   it("returns canonical Session metadata only while its Agent and Session are active", () => {
@@ -451,6 +675,11 @@ describe("server storage boundaries", () => {
       database.indexOf("async cancelAgentSession("),
       database.indexOf("async rejectAgentSessionTarget("),
     );
+    const termination = database.slice(
+      database.indexOf("async function terminateAgentSessionTransaction("),
+      database.indexOf("export class PostgresDatabase"),
+    );
+    const cancellationBoundary = `${cancellation}\n${termination}`;
 
     expect(listing).toContain(
       '.where("agentSessions.workspaceId", "=", workspaceId)',
@@ -467,12 +696,53 @@ describe("server storage boundaries", () => {
     expect(listing).toContain(
       '.where("agentSessionTargets.workspaceId", "=", workspaceId)',
     );
-    expect(cancellation).toContain(
+    expect(cancellationBoundary).toContain(
       "request?.requestedByHumanId !== input.requestedByHumanId",
     );
-    expect(cancellation.indexOf('.updateTable("sessionCredentials")')).toBeLessThan(
-      cancellation.indexOf('.updateTable("agentSessions")'),
+    expect(termination.indexOf('.updateTable("sessionCredentials")')).toBeLessThan(
+      termination.indexOf('.updateTable("agentSessions")'),
     );
+  });
+
+  it("atomically revokes a linked predecessor when its replacement is claimed", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const creation = database.slice(
+      database.indexOf("async createAgentSessionRequest("),
+      database.indexOf("async sessionRequestForApproval("),
+    );
+    const claim = database.slice(
+      database.indexOf("async claimAgentSessionRequest("),
+      database.indexOf("async findSessionCredentialPrincipal("),
+    );
+    const termination = database.slice(
+      database.indexOf("async function terminateAgentSessionTransaction("),
+      database.indexOf("export class PostgresDatabase"),
+    );
+
+    expect(creation).toContain('input.predecessorSessionId');
+    expect(creation).toContain('.where("agentSessions.status", "=", "active")');
+    expect(creation).toContain('input.predecessorMode === "renewal"');
+    expect(creation).toContain(
+      'input.predecessorMode === "host_shell_escalation"',
+    );
+    expect(creation).toContain('"agentSessionRequests.requestedByHumanId"');
+    expect(creation).toContain("input.humanId");
+    expect(claim).toContain("withDatabaseDeadlockRetry");
+    expect(claim).toContain("terminateAgentSessionTransaction(transaction");
+    expect(claim).toContain('reason: "revoked"');
+    expect(claim).toContain("requireUnexpiredAt: input.now");
+    expect(claim).toContain('status: "predecessor_unavailable"');
+    expect(claim.indexOf("terminateAgentSessionTransaction(transaction")).toBeLessThan(
+      claim.indexOf('.insertInto("agentSessions")'),
+    );
+    expect(termination).toContain('.updateTable("sessionCredentials")');
+    expect(termination).toContain('.updateTable("mcpSessionGrants")');
+    expect(termination).toContain('.updateTable("operations")');
+    expect(termination).toContain('.updateTable("sessions")');
+    expect(termination).toContain("session.expiresAt <= new Date(input.requireUnexpiredAt)");
   });
 
   it("lists unclaimed Session requests only inside their Workspace", () => {

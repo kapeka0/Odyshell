@@ -22,6 +22,7 @@ ods status
 ods machines
 ods ping my-machine
 ods exec my-machine -- uname -a
+ods shell --purpose "Inspect the user environment" my-machine "pwd && id"
 ods fs list my-machine .
 ods fs read my-machine README.md
 ods docker logs my-machine api --tail 100
@@ -40,10 +41,16 @@ ods audit
 - `ods client start` runs the Client in the foreground.
 - `ods profiles ls` lists local Profiles and their service state.
 - `ods profiles status <name>` inspects one Profile.
-- `ods profiles configure <name> --allow-sudo` explicitly permits passwordless sudo on Linux.
-- `ods profiles configure <name> --deny-sudo` restores privilege blocking.
+- `ods profiles configure <name> --allow-sudo` explicitly permits passwordless sudo for an
+  installed Linux service.
+- `ods profiles configure <name> --deny-sudo` restores that service's `NoNewPrivileges` boundary.
 - `ods profiles remove <name>` stops a Profile and deletes its local identity.
 - `ods reset --yes` signs out and removes every local Profile, including legacy identities.
+
+The sudo setting controls the installed Linux systemd service. A foreground `ods client start`
+process keeps the operating-system user's real authority and detects effective `sudo -n` so
+approvals can warn even when the Profile setting is disabled. Odyshell does not claim equivalent
+privilege-escalation enforcement on macOS or Windows.
 
 Use `--profile <name>` with `ods up`, `ods down`, or `ods client status` when one host connects to
 several Workspaces or Servers. Profiles are isolated and can run simultaneously. The default name
@@ -64,8 +71,15 @@ High-level operation commands request a Session derived from the exact operation
 policy exists, the CLI prints an approval URL and waits. The Session Credential is claimed once,
 used for the operation and revoked when the command finishes.
 
-`ods shell` is deprecated because unrestricted shell text cannot be translated into a narrow
-Session. Use `ods exec <machine> <program> [args...]`.
+`ods shell --purpose <purpose> [--title <title>] <machine> <command>` requests an explicit Host
+Shell Session, waits for human approval, runs one native command, and closes the Session.
+`--purpose` is required and describes the goal shown before approval. Pass the complete command as
+one quoted argument. Host Shell starts in the Client user's Home and has no sandbox or isolation.
+Its process receives an allowlisted base environment rather than every Client variable; explicit
+values last for one Operation, although a POSIX login shell can load user startup files. An abrupt
+Client crash can leave a detached POSIX command running; the result is reconciled as unknown.
+Prefer `ods exec <machine> <program> [args...]` when an exact program and argument list is
+sufficient.
 
 ## Agent integrations
 

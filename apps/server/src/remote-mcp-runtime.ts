@@ -9,6 +9,8 @@ import {
   sessionScopeDecision,
   type Capability,
   type OperationAction,
+  type ScopedOperationAction,
+  type SessionMachineScope,
 } from "@odyshell/protocol";
 import { sessionApprovalUrl, type ScopedRateLimiter } from "./cloud.js";
 import {
@@ -18,10 +20,13 @@ import {
   type McpInstallationRecord,
 } from "./database.js";
 import {
+  clampSessionOperationTimeout,
+  hostShellEscalationScopes,
   sessionOperationDecision,
   type AgentSessionPrincipal,
 } from "./agent-sessions.js";
 import type { ClientGateway } from "./gateway.js";
+import { deliverOperation } from "./operation-delivery.js";
 
 export type RemoteMcpRuntimeDependencies = {
   database: Database;
@@ -66,28 +71,101 @@ export function createRemoteMcpRuntime(
       }
     },
     async request(input) {
-      const operations = await Promise.all(
-        input.operations.map(async (operation) => ({
-          machineId: (await resolveMcpMachine(db, installation, operation.machine))
-            .id,
-          action: operation.action,
-        })),
-      );
-      let scopes;
-      try {
-        scopes = operationSessionScopes(operations);
-      } catch {
-        throw new RemoteMcpError(
-          "Operations cannot be combined without broadening their scope.",
-          "session_scope_conflict",
-          400,
+      const operations: Array<{
+        machineId: string;
+        action: ScopedOperationAction;
+      }> = [];
+      let scopes: SessionMachineScope[];
+      let kinds: string[];
+      let reusable: AgentSessionCredentialPrincipal | null = null;
+      if (input.hostShell) {
+        const machine = await resolveMcpMachine(
+          db,
+          installation,
+          input.hostShell.machine,
         );
+        kinds = ["host.shell"];
+        if (input.predecessorSessionId) {
+          const predecessor = await db.agentSessionForRenewal(
+            installation.workspaceId,
+            input.predecessorSessionId,
+            installation.agentId,
+            installation.userId,
+          );
+          if (!predecessor) {
+            throw new RemoteMcpError(
+              "The predecessor Session is unavailable",
+              "predecessor_session_unavailable",
+              409,
+            );
+          }
+          const escalation = hostShellEscalationScopes(
+            predecessor.scopes,
+            machine.id,
+          );
+          if (!escalation.allowed) {
+            throw new RemoteMcpError(
+              "Host Shell can only be added to a predecessor machine",
+              escalation.code,
+              403,
+            );
+          }
+          scopes = escalation.scopes;
+        } else {
+          scopes = [
+            {
+              machineId: machine.id,
+              profile: "workspace",
+              capabilities: ["host.shell"],
+              restrictions: {},
+            },
+          ];
+          reusable = await findReusableMcpHostShellSession(
+            db,
+            installation,
+            machine.id,
+          );
+        }
+      } else {
+        if (
+          input.operations.some(
+            (operation) =>
+              (operation.action as OperationAction).kind === "host.shell",
+          )
+        ) {
+          throw new RemoteMcpError(
+            "Request Host Shell authority without anticipating a command",
+            "host_shell_request_required",
+            400,
+          );
+        }
+        const resolved = await Promise.all(
+          input.operations.map(async (operation) => ({
+            machineId: (
+              await resolveMcpMachine(db, installation, operation.machine)
+            ).id,
+            action: operation.action,
+          })),
+        );
+        operations.push(...resolved);
+        kinds = operations.map((operation) => operation.action.kind);
+        try {
+          scopes = operationSessionScopes(operations);
+        } catch {
+          throw new RemoteMcpError(
+            "Operations cannot be combined without broadening their scope.",
+            "session_scope_conflict",
+            400,
+          );
+        }
+        if (!input.predecessorSessionId) {
+          reusable = await findReusableMcpSession(
+            db,
+            installation,
+            operations,
+          );
+        }
       }
-      const reusable = await findReusableMcpSession(
-        db,
-        installation,
-        operations,
-      );
       if (reusable) {
         return {
           id: reusable.sessionId,
@@ -130,6 +208,12 @@ export function createRemoteMcpRuntime(
         durationSeconds: input.durationSeconds,
         approvalCodeHash: hashToken(requestId),
         expiresAt: Date.now() + 10 * 60 * 1_000,
+        ...(input.predecessorSessionId
+          ? {
+              predecessorSessionId: input.predecessorSessionId,
+              predecessorMode: "host_shell_escalation" as const,
+            }
+          : {}),
       });
       if (!created) {
         throw new RemoteMcpError(
@@ -147,9 +231,12 @@ export function createRemoteMcpRuntime(
         requestId,
         {
           machineIds: scopes.map((scope) => scope.machineId),
-          kinds: input.operations.map((operation) => operation.action.kind),
+          kinds,
           durationSeconds: input.durationSeconds,
           source: "remote_mcp",
+          ...(input.predecessorSessionId
+            ? { predecessorSessionId: input.predecessorSessionId }
+            : {}),
         },
       );
       gateway.notifyWorkspace(installation.workspaceId);
@@ -274,6 +361,21 @@ export function createRemoteMcpRuntime(
           result.status === "expired" ? 410 : 409,
         );
       }
+      if (result.superseded) {
+        for (const operation of result.superseded.operations) {
+          gateway.send(operation.machineId, {
+            type: "operation.cancel",
+            operationId: operation.id,
+          });
+        }
+        for (const target of result.superseded.targets) {
+          gateway.send(target.machineId, {
+            type: "session.close",
+            sessionId: target.runtimeSessionId,
+            reason: "revoked",
+          });
+        }
+      }
       for (const target of result.targets) {
         const sent = gateway.send(target.machineId, {
           type: "session.open",
@@ -329,14 +431,12 @@ export function createRemoteMcpRuntime(
         expiresAt: principal.expiresAt,
       };
       const decisionTime = Date.now();
-      const remainingTimeoutSeconds = Math.max(
-        0,
-        Math.floor((principal.expiresAt - decisionTime) / 1_000) - 1,
-      );
       const timeoutSeconds =
-        remainingTimeoutSeconds > 0
-          ? Math.min(input.timeoutSeconds, remainingTimeoutSeconds)
-          : input.timeoutSeconds;
+        clampSessionOperationTimeout(
+          input.timeoutSeconds,
+          principal.expiresAt,
+          decisionTime,
+        ) ?? input.timeoutSeconds;
       const decision = sessionOperationDecision(
         sessionPrincipal,
         input.sessionId,
@@ -374,22 +474,6 @@ export function createRemoteMcpRuntime(
           404,
         );
       }
-      const existing = await db.findOperationByIdempotency(
-        principal.workspaceId,
-        target.runtimeSessionId,
-        principal.agentId,
-        input.operationId,
-      );
-      if (existing) {
-        return waitForRemoteMcpOperation(
-          db,
-          principal.workspaceId,
-          principal.agentId,
-          input.sessionId,
-          existing.id,
-          timeoutSeconds,
-        );
-      }
       if (target.status !== "ready") {
         throw new RemoteMcpError(
           "Session target is not ready",
@@ -397,62 +481,55 @@ export function createRemoteMcpRuntime(
           409,
         );
       }
-      if (!gateway.isOnline(machine.id)) {
-        throw new RemoteMcpError("Machine is offline", "machine_offline", 409);
-      }
-      const operationId = randomUUID();
-      const created = await db.createOperation({
-        workspaceId: principal.workspaceId,
-        id: operationId,
-        sessionId: target.runtimeSessionId,
-        principalId: principal.agentId,
-        action: input.action,
-        timeoutSeconds,
-        maxOutputBytes: 1024 * 1024,
-        idempotencyKey: input.operationId,
-      });
-      if (!created) {
-        const replay = await db.findOperationByIdempotency(
-          principal.workspaceId,
-          target.runtimeSessionId,
-          principal.agentId,
-          input.operationId,
-        );
-        if (!replay) {
-          throw new RemoteMcpError(
-            "Session is no longer active",
-            "session_not_active",
-            409,
-          );
-        }
+      const delivery = await deliverOperation(
+        { database: db, gateway },
+        {
+          workspaceId: principal.workspaceId,
+          machineId: machine.id,
+          sessionId: target.runtimeSessionId,
+          idempotencyScopeId: input.sessionId,
+          principalId: principal.agentId,
+          action: input.action,
+          timeoutSeconds,
+          requestedTimeoutSeconds: input.timeoutSeconds,
+          maxOutputBytes: 1024 * 1024,
+          idempotencyKey: input.idempotencyKey,
+        },
+      );
+      if (delivery.kind === "replay") {
         return waitForRemoteMcpOperation(
           db,
           principal.workspaceId,
           principal.agentId,
           input.sessionId,
-          replay.id,
+          delivery.id,
           timeoutSeconds,
         );
       }
-      const sent = gateway.send(machine.id, {
-        type: "operation.start",
-        operationId,
-        sessionId: target.runtimeSessionId,
-        action: input.action,
-        timeoutSeconds,
-        maxOutputBytes: 1024 * 1024,
-      });
-      if (!sent) {
+      if (delivery.kind === "idempotency_conflict") {
+        throw new RemoteMcpError(
+          "Idempotency key was already used for a different Operation payload",
+          "idempotency_conflict",
+          409,
+        );
+      }
+      if (delivery.kind === "session_not_active") {
+        throw new RemoteMcpError(
+          "Session is no longer active",
+          "session_not_active",
+          409,
+        );
+      }
+      if (delivery.kind === "machine_offline") {
         throw new RemoteMcpError("Machine is offline", "machine_offline", 409);
       }
-      await db.markOperationDelivered(principal.workspaceId, operationId);
       await audit(
         db,
         principal.workspaceId,
         principal.agentId,
         "operation.created",
         "operation",
-        operationId,
+        delivery.id,
         {
           sessionId: input.sessionId,
           machineId: machine.id,
@@ -465,7 +542,7 @@ export function createRemoteMcpRuntime(
         principal.workspaceId,
         principal.agentId,
         input.sessionId,
-        operationId,
+        delivery.id,
         timeoutSeconds,
       );
     },
@@ -570,6 +647,44 @@ async function findReusableMcpSession(
         principal.scopes.some(
           (scope) => sessionScopeDecision(scope, machineId, action).allowed,
         ),
+      )
+    ) {
+      return principal;
+    }
+  }
+  return null;
+}
+
+async function findReusableMcpHostShellSession(
+  db: Database,
+  installation: McpInstallationRecord,
+  machineId: string,
+): Promise<AgentSessionCredentialPrincipal | null> {
+  const sessions = await db.listWorkspaceAgentSessions(
+    installation.workspaceId,
+    100,
+    { agentId: installation.agentId },
+  );
+  for (const session of sessions) {
+    if (
+      session.status !== "active" ||
+      session.expiresAt <= Date.now() ||
+      !session.targets.some(
+        (target) => target.machineId === machineId && target.status === "ready",
+      )
+    ) {
+      continue;
+    }
+    const principal = await db.findMcpSessionPrincipal({
+      workspaceId: installation.workspaceId,
+      installationId: installation.id,
+      sessionId: session.id,
+    });
+    if (
+      principal?.scopes.some(
+        (scope) =>
+          scope.machineId === machineId &&
+          scope.capabilities.includes("host.shell"),
       )
     ) {
       return principal;
@@ -761,7 +876,11 @@ async function waitForRemoteMcpOperation(
     if (!operation) {
       throw new RemoteMcpError("Operation was not found", "operation_not_found", 404);
     }
-    if (!["queued", "delivered", "running"].includes(operation.status)) {
+    if (
+      !["queued", "delivered", "running", "cancellation_requested"].includes(
+        operation.status,
+      )
+    ) {
       const output = { stdout: "", stderr: "", result: "" };
       for (const event of operation.events) {
         if (event.stream in output) {

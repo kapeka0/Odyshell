@@ -37,12 +37,17 @@ Autoapproval policies are inactive until an administrator approves their exact c
 versioned, expire within one year, and fail closed for unknown restrictions. Requests outside the
 ceiling remain pending rather than being reduced silently. Each automatically approved Session
 retains the policy ID and version that authorized it.
-`process.shell` is deliberately broader than structured execution. It is never autoapproved,
-requires an explicit Session capability, remains bounded by expiry and the Client Local Policy,
-and records every sanitized command and status. Prefer `process.exec` whenever an exact program
-and argument list is sufficient.
-Caller-supplied process environment variables are also denied until Session restrictions can
-authorize exact keys and values.
+`host.shell` is deliberately broader than structured execution. It is never autoapproved or
+delegated, requires an explicit Session capability, remains bounded by expiry and the Client Local
+Policy, and records structural status in the privacy-minimal Timeline. Persistable command action
+fields and output remain temporary delivery data; environment values and standard input are never
+persisted. Prefer `process.exec` whenever an exact program and argument list is sufficient.
+`process.exec` has no caller-supplied environment field; its contract is limited to the exact
+program, arguments, and working directory. Host Shell can supply per-command environment values
+under its broad authority, but those values are never persisted or shared with later Operations.
+Host Shell
+inherits only an allowlisted base environment from the Client process. On POSIX, its login shell
+can still load the user's startup files and read other same-user resources.
 
 Delegation is limited to one level. A Managed Agent receives no Agent Credential and cannot
 delegate again. Its policy must remain inside the active parent Delegation Policy, and the Server
@@ -64,34 +69,52 @@ supports them, and a selected Profile never falls back to another Profile's cred
 
 ## Host authority
 
-Host operations run as the user running the Client. Use a dedicated operating-system user and
-grant it only the workspace, executables, Docker access, and services an agent actually needs.
+Host Shell commands run as the operating-system user running the Client. Each command starts in
+that user's Home by default. A command can choose another working directory, but this does not
+narrow access. Commands can access that user's files, credentials, network, and services. There is
+no sandbox or isolation. Changes may persist after the Session ends. Session expiry stops future
+commands but cannot undo a change a completed command already made.
 
-Prefer typed filesystem operations and `process.exec`. Grant `process.shell`, filesystem writes,
+Graceful cancellation terminates the active process group. There is no separate Operation
+supervisor, so an abrupt Client crash can leave a detached POSIX command running until it exits or
+is stopped externally. Restart reconciliation records an unknown result instead of claiming the
+command was terminated. Windows tree termination is best effort once the command leader has exited.
+If a graceful termination attempt cannot be confirmed, the Client persists a Profile quarantine and
+refuses to reconnect it after restart.
+
+Use a dedicated operating-system user and give it only the resources an Agent should control.
+Prefer typed filesystem Operations and `process.exec`. Grant `host.shell`, filesystem writes,
 removal, or Docker access only when the task requires them.
 
-Dashboard access presets are convenience mappings, not new authority. **Shell access** grants only
-`process.shell`; **Full access** adds the structured filesystem capabilities available in the
-Client Local Policy. Linux Clients block privilege escalation by default. A machine owner may
-locally enable passwordless sudo for one Profile; when enabled, approvals warn that process access
-can reach root. Cloud, the dashboard, and Agents cannot enable it remotely. Structured filesystem
-operations continue to run as the Client user.
+**Read only** is the dashboard's structured convenience preset. **Host Shell** is a separate,
+explicit selection and is never bundled into a broad preset. Enrollment, manual Session creation,
+and approval repeat the same-user warning whenever Host Shell is selected or requested. Linux
+systemd user services set `NoNewPrivileges` while sudo is disabled for a Profile. A machine owner
+may locally enable passwordless sudo; the service is regenerated without that restriction and
+approvals add a root-access warning without replacing the Host Shell warning. Foreground Clients
+have no service-level `NoNewPrivileges` boundary and detect effective `sudo -n` so the same warning
+appears when the operating-system user can reach root. Odyshell does not claim an equivalent
+enforcement boundary on macOS or Windows. Cloud, the dashboard, and Agents cannot enable sudo
+remotely. Structured filesystem Operations continue to run as the Client user.
 
 ## Privacy
 
-Privacy-minimal Session Timeline events contain verified lifecycle metadata, operation kind and
-exit status, but no commands, paths, stdout or stderr. Operational logging adds those details with
-automatic secret redaction. Redaction is defense in depth, not a guarantee. Diagnostic logging is
-complete and can contain secrets, so enabling it requires explicit confirmation.
+Privacy-minimal Session Timeline events contain verified lifecycle metadata, Operation kind and
+exit status, but no commands, paths, stdout or stderr. Operational logging can add those details
+with automatic secret redaction while temporary Operation data remains available. Redaction is
+defense in depth, not a guarantee. Diagnostic logging can expose raw temporary values and contain
+secrets, so enabling it requires explicit confirmation. Environment values and standard input are
+never persisted.
 
 Event Sink detail is independent from Workspace Timeline logging. Signing secrets are encrypted at
 rest and never returned after configuration. Sink delivery resolves and pins a public HTTPS address
-for every attempt, does not follow redirects and signs the exact body.
+for every attempt, does not follow redirects and signs the exact body. Event Sinks never export
+command text, stdout, stderr, environment values or standard input at any detail level.
 
-Full operation requests and results pass through the Server and are temporarily stored for
-delivery. They become eligible for deletion after one hour by default. Control Events become
-eligible for deletion after 30 days by default. Infrastructure logs and backups can have
-independent retention.
+Persistable Operation action fields and results pass through the Server and are temporarily stored
+for delivery. Environment values and standard input are excluded. The retained data becomes
+eligible for deletion after one hour by default. Control Events become eligible for deletion after
+30 days by default. Infrastructure logs and backups can have independent retention.
 
 The hosted website uses Vercel Web Analytics for page-view counts and aggregate traffic data.
 Vercel describes the service as cookie-free and based on anonymized data. Odyshell does not send

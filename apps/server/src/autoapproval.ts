@@ -48,7 +48,7 @@ export function autoapprovalDecision(input: {
   }
   if (
     input.requestedScopes.some((scope) =>
-      scope.capabilities.includes("process.shell"),
+      scope.capabilities.includes("host.shell"),
     )
   ) {
     return { approved: false, reason: "unsafe_capability" };

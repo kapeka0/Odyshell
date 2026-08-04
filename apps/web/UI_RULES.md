@@ -257,20 +257,28 @@ particular component, library or interaction pattern.
   multi-machine Sessions show one machine and a compact remaining count.
 - Session detail uses a chronological live Timeline. Show lifecycle and
   Operation events with their human, Agent or Odyshell actor. Privacy-minimal
-  stays structural; Operational renders automatically redacted commands, paths,
-  stdout and stderr; Diagnostic may render raw values, including secrets.
-  Auto-scroll only while the viewer remains at the bottom.
+  stays structural; Operational may render automatically redacted commands,
+  paths, stdout and stderr while temporary Operation data remains available;
+  Diagnostic may render raw temporary values, including secrets. Environment
+  and standard input are never persisted. Auto-scroll only while the viewer
+  remains at the bottom.
 - Manual Session creation starts from the Sessions table toolbar and uses a
   right-side Sheet with title, optional purpose, Agent, machine, duration and
   capabilities. Do not ask for a filesystem path or Docker container there.
   Filesystem capabilities apply across the machine subject to its local policy;
   Docker log access remains outside this manual flow. Offline machines and
-  Agents without an active credential remain visible but disabled. Use the
-  intent-level Read only, Shell access and Full access presets. Shell access
-  selects only `process.shell`; Full access combines it with every manual
-  filesystem capability allowed locally. Do not expose exact process programs
-  or arguments in this form. Keep `process.exec` for Agent, MCP and API flows.
-  Shell access includes an explicit warning and is never autoapproved.
+  Agents without an active credential remain visible but disabled. Read only is
+  the sole convenience preset. Host Shell is a separate, explicit `host.shell`
+  selection; no preset bundles it with structured capabilities. Members may
+  select both explicitly when the task requires both. Do not expose exact
+  process programs or arguments in this form. Keep `process.exec` for Agent,
+  MCP and API flows. Whenever Host Shell is selected or requested, warn
+  that commands run as the Client's operating-system user, start in that user's
+  Home by default, and can choose another working directory without narrowing
+  access. State that they have no sandbox or isolation, can reach that user's
+  files, credentials, network and services, and may persist changes after the
+  Session ends. A sudo warning is additive and must not replace this base
+  warning. Host Shell is never autoapproved.
 - Session nodes on the canvas show the requesting Agent first, otherwise the
   responsible human, in a quiet footer. Use System when no actor exists.
 - Personal settings and workspace settings have separate destinations.
@@ -289,7 +297,9 @@ particular component, library or interaction pattern.
 - Timeline exports and Event Sinks may use Privacy-minimal, Operational or
   Diagnostic detail. Keep Control Events privacy-minimal, automatically redact
   Operational detail, warn that Diagnostic may contain raw secrets, and make
-  broader Timeline output an explicit workspace choice.
+  broader Timeline output an explicit workspace choice. Event Sinks never
+  export command text, stdout, stderr, environment values or standard input at
+  any detail level.
 - Keep public documentation outside the authenticated workspace and make it usable
   without a Clerk session.
 - Documentation starts with the Cloud workflow, uses progressive disclosure and

@@ -10,7 +10,7 @@ const runtime = {
   profiles: [{
     name: "default",
     runner: "host",
-    capabilities: ["fs.read", "fs.write", "process.shell", "not-real"],
+    capabilities: ["fs.read", "fs.write", "host.shell", "not-real"],
   }],
 };
 
@@ -19,7 +19,7 @@ describe("machine capability policy", () => {
     expect(machineLocalCapabilities(runtime)).toEqual([
       "fs.read",
       "fs.write",
-      "process.shell",
+      "host.shell",
     ]);
   });
 
@@ -29,7 +29,7 @@ describe("machine capability policy", () => {
     expect(effectiveMachineCapabilities(runtime, null)).toEqual([
       "fs.read",
       "fs.write",
-      "process.shell",
+      "host.shell",
     ]);
     expect(deniedMachineCapability(runtime, ["fs.read", "docker.logs"]))
       .toBe("docker.logs");
@@ -59,5 +59,29 @@ describe("machine capability policy", () => {
       capabilities: ["docker.logs"],
       restrictions: {},
     }])).toBe(true);
+  });
+
+  it("rejects Host Shell structurally for Docker Profiles without a Server policy", () => {
+    const machineId = "2dc24de7-ec0e-45b3-88c1-acbb900e51f8";
+    const dockerRuntime = {
+      profiles: [{
+        name: "workspace",
+        runner: "docker",
+        // A compromised or stale advertisement must not turn a capability
+        // bit into native host authority for a Docker Profile.
+        capabilities: ["fs.read", "host.shell"],
+      }],
+    };
+
+    expect(machineScopesAllowed([{
+      id: machineId,
+      runtime: dockerRuntime,
+      capabilityPolicy: null,
+    }], [{
+      machineId,
+      profile: "workspace",
+      capabilities: ["host.shell"],
+      restrictions: {},
+    }])).toBe(false);
   });
 });

@@ -1,6 +1,6 @@
 ---
 title: Self-hosting
-description: Run the Odyshell Server and PostgreSQL on infrastructure you control.
+description: Run Odyshell's Server, PostgreSQL, and human approval flow on your infrastructure.
 ---
 
 Odyshell needs one Server reachable by agents and Clients, plus PostgreSQL. Private-machine
@@ -16,11 +16,22 @@ npm install --global @odyshell/cli
 
 ```bash
 pnpm install
+cp .env.example .env
+cp apps/web/.env.example apps/web/.env.local
+```
+
+Create a Clerk application with Organizations enabled. Replace the Clerk keys in the web file and
+set the same random `ODYSHELL_WEB_KEY` in both files. Then start the backend and web app:
+
+```bash
 docker compose up -d --build
+pnpm dev:web
 curl --fail http://127.0.0.1:4100/health
 ```
 
-The bundled credentials are development-only. Do not expose this Compose setup to the internet.
+Keep `ODYSHELL_WEB_URL=http://localhost:3000`, open that address, and create a Clerk Organization.
+The bundled backend credentials are development-only. They do not let normal CLI commands bypass
+browser-approved Sessions. Do not expose this Compose setup to the internet.
 
 ## Production configuration
 
@@ -38,6 +49,8 @@ HOST=0.0.0.0
 PORT=4100
 DATABASE_URL=postgresql://USER:PASSWORD@DB_HOST:5432/DB_NAME?sslmode=verify-full
 ODYSHELL_ADMIN_KEY=GENERATE_A_STRONG_RANDOM_VALUE
+ODYSHELL_WEB_KEY=SHARED_RANDOM_SECRET_AT_LEAST_32_CHARACTERS
+ODYSHELL_WEB_URL=https://ods.example.com
 ODYSHELL_OPERATION_RETENTION_SECONDS=3600
 ODYSHELL_AUDIT_RETENTION_DAYS=30
 ODYSHELL_EVENT_SINK_ENCRYPTION_KEY=BASE64URL_ENCODED_32_BYTE_KEY
@@ -46,6 +59,37 @@ ODYSHELL_EVENT_SINK_ENCRYPTION_KEY=BASE64URL_ENCODED_32_BYTE_KEY
 Put the Server behind HTTPS/WSS. Never enable `ODYSHELL_ALLOW_DEV_CREDENTIALS` in production.
 The Event Sink key is required only when using signed Timeline delivery. Keep it stable and in a
 secret manager; changing it makes existing sink secrets unreadable.
+
+Normal Agent execution also requires the repository web app and Clerk Organizations. Configure
+the web app's Clerk keys, `NEXT_PUBLIC_ODYSHELL_SERVER_URL`, `ODYSHELL_SERVER_URL`, and the same
+`ODYSHELL_WEB_KEY`, then build and start `@odyshell/web`. A Server without that bridge can expose
+health, enrollment, and administrator endpoints, but cannot register Agents or approve Sessions;
+execution fails closed instead of silently using development credentials.
+
+## Connect through the supported flow
+
+After deploying both services, authorize an administrator CLI, enroll a machine, and register the
+Agent runtime:
+
+```bash
+ods login --server https://api.ods.example.com
+ods token create
+# Run ods up with that one-time token on the private machine.
+ods agent login "My Agent" --server https://api.ods.example.com
+ods exec my-machine -- uname -a
+```
+
+Open each URL printed by `ods login`, `ods agent login`, and `ods exec` and approve it in the web
+app. Legacy `ods agent create` and direct Session creation intentionally return migration errors;
+development credentials are not a production substitute for these approvals.
+
+## Protocol v3 upgrade
+
+Protocol v3 rejects protocol v2 Client Profile configuration. Remove each old Profile and its
+stale machine record, then recreate and re-enroll it. Host Profiles no longer accept
+`workspaceRoot` and start in the operating-system user's Home. Docker Profiles require an explicit
+`mountSource` supplied with `--runner docker --mount-source <absolute-path>`. Do not copy or
+hand-edit old Profile configuration.
 
 ## Current scaling boundary
 

@@ -1,18 +1,35 @@
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { PROTOCOL_VERSION } from "@odyshell/protocol";
 import {
   clientConfigPathFor,
   clientConfigPathForProfile,
   containerUser,
+  hostAccountShell,
   hostPlatform,
 } from "../apps/client/src/platform.js";
 import { parseDockerRuntime } from "../apps/client/src/docker-runner.js";
+import { OperationJournal } from "../apps/client/src/journal.js";
 import {
   adjustedSessionDeadline,
+  ClientMessageBuffer,
   inspectClientRuntime,
+  operationTimeoutMilliseconds,
+  reportedPrivilegeEscalation,
+  terminalMachineClose,
+  supportedCapabilitiesForRunners,
   terminateLocalAuthority,
 } from "../apps/client/src/index.js";
+import { PendingOperation } from "../apps/client/src/operation-control.js";
+import {
+  assertLocalAuthorityNotQuarantined,
+  localAuthorityQuarantinePath,
+  quarantineLocalAuthority,
+} from "../apps/client/src/quarantine.js";
+import { SERVER_HTTP_BODY_LIMIT_BYTES } from "../apps/server/src/http-limits.js";
 import { clientCompatibility } from "../apps/server/src/compatibility.js";
 import {
   MachineLifecycleQueue,
@@ -58,6 +75,137 @@ describe("client platform support", () => {
     ).toThrow("outside the allowed Session skew");
   });
 
+  it("clamps Operations to both local policy and remaining Session authority", () => {
+    const now = Date.parse("2026-08-04T10:00:00.000Z");
+    expect(
+      operationTimeoutMilliseconds(7_200, 3_600, new Date(now + 10_000), now),
+    ).toBe(10_000);
+    expect(
+      operationTimeoutMilliseconds(120, 30, new Date(now + 60_000), now),
+    ).toBe(30_000);
+    expect(
+      operationTimeoutMilliseconds(120, 30, new Date(now), now),
+    ).toBe(0);
+  });
+
+  it("accepts the documented one MiB Host Shell stdin through HTTP", () => {
+    const body = JSON.stringify({
+      sessionId: crypto.randomUUID(),
+      action: {
+        kind: "host.shell",
+        command: "process input",
+        cwd: ".",
+        env: {},
+        stdinBase64: Buffer.alloc(1024 * 1024).toString("base64"),
+      },
+      timeoutSeconds: 60,
+      maxOutputBytes: 1024 * 1024,
+    });
+    expect(Buffer.byteLength(body)).toBeLessThan(SERVER_HTTP_BODY_LIMIT_BYTES);
+
+    const server = readFileSync(
+      resolve(process.cwd(), "apps/server/src/index.ts"),
+      "utf8",
+    );
+    expect(server).toContain("bodyLimit: SERVER_HTTP_BODY_LIMIT_BYTES");
+  });
+
+  it("buffers disconnected output within a hard bound while retaining completion", () => {
+    const buffer = new ClientMessageBuffer(4, 3);
+    expect(buffer.enqueue({
+      type: "operation.started",
+      operationId: "operation-a",
+      at: new Date(0).toISOString(),
+    })).toBe(true);
+    expect(buffer.enqueue({
+      type: "operation.event",
+      operationId: "operation-a",
+      sequence: 0,
+      stream: "stdout",
+      dataBase64: Buffer.from("abc").toString("base64"),
+    })).toBe(true);
+    expect(buffer.enqueue({
+      type: "operation.event",
+      operationId: "operation-a",
+      sequence: 1,
+      stream: "stdout",
+      dataBase64: Buffer.from("d").toString("base64"),
+    })).toBe(false);
+    expect(buffer.enqueue({
+      type: "operation.completed",
+      operationId: "operation-a",
+      status: "succeeded",
+      exitCode: 0,
+      outputTruncated: true,
+      at: new Date(1).toISOString(),
+    })).toBe(true);
+    expect(buffer.drain().map((message) => message.type)).toEqual([
+      "operation.started",
+      "operation.event",
+      "operation.completed",
+    ]);
+  });
+
+  it("acknowledges a retained Client completion even after Server retention", () => {
+    const gateway = readFileSync(
+      resolve(process.cwd(), "apps/server/src/gateway.ts"),
+      "utf8",
+    );
+    const completion = gateway.slice(
+      gateway.indexOf('case "operation.completed":'),
+      gateway.indexOf('case "authenticate":'),
+    );
+
+    expect(completion).toContain('type: "operation.acknowledged"');
+    expect(completion).not.toMatch(
+      /if \(result\) \{[\s\S]*type: "operation\.acknowledged"/u,
+    );
+    expect(completion).toContain("if (result?.newlyCompleted)");
+  });
+
+  it("remembers cancellation that arrives before process registration", async () => {
+    const pending = new PendingOperation("session-a");
+    let cancelled = false;
+    const cancellation = pending.cancel();
+    pending.attach({
+      cancel: async () => {
+        cancelled = true;
+      },
+      done: Promise.resolve({ exitCode: null }),
+    });
+
+    await cancellation;
+    expect(cancelled).toBe(true);
+    expect(pending.cancelRequested).toBe(true);
+  });
+
+  it("propagates cancellation failure and quarantines future Client restarts", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "odyshell-quarantine-"));
+    try {
+      const pending = new PendingOperation("session-a");
+      pending.attach({
+        cancel: async () => {
+          throw new Error("sensitive process detail");
+        },
+        done: new Promise(() => {}),
+      });
+      const cancellationFailure = pending.waitForCancellationFailure();
+
+      await expect(pending.cancel()).rejects.toThrow("sensitive process detail");
+      await expect(cancellationFailure).rejects.toThrow("sensitive process detail");
+      quarantineLocalAuthority(directory);
+
+      expect(() => assertLocalAuthorityNotQuarantined(directory)).toThrow(
+        "authority_termination_unconfirmed",
+      );
+      expect(
+        await readFile(localAuthorityQuarantinePath(directory), "utf8"),
+      ).not.toContain("sensitive process detail");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("maps Node platform names to public Odyshell platform names", () => {
     expect(hostPlatform("linux")).toBe("linux");
     expect(hostPlatform("darwin")).toBe("macos");
@@ -65,13 +213,33 @@ describe("client platform support", () => {
     expect(() => hostPlatform("freebsd")).toThrow("Unsupported host platform");
   });
 
+  it("uses the account login shell consistently for advertised host execution", () => {
+    const posixShell = hostAccountShell("linux", {}, "/bin/zsh");
+    expect(posixShell.program).toBe("/bin/zsh");
+    expect(posixShell.argsForCommand("pwd")).toEqual(["-l", "-c", "pwd"]);
+
+    const windowsShell = hostAccountShell(
+      "win32",
+      { ComSpec: "C:\\Windows\\System32\\cmd.exe" },
+      null,
+    );
+    expect(windowsShell.program).toBe("C:\\Windows\\System32\\cmd.exe");
+    expect(windowsShell.argsForCommand("cd")).toEqual([
+      "/d",
+      "/s",
+      "/c",
+      "cd",
+    ]);
+  });
+
   it("reports profile capabilities without exposing local paths", async () => {
     const runtime = await inspectClientRuntime(["host"], {
       workspace: {
         runner: "host",
-        workspaceRoot: "C:\\Users\\ada\\private",
         maxSessionTtlSeconds: 900,
         maxConcurrentSessions: 2,
+        maxConcurrentOperations: 4,
+        maxOperationTimeoutSeconds: 3_600,
         maxOutputBytes: 1024 * 1024,
         capabilities: ["fs.read"],
       },
@@ -84,8 +252,21 @@ describe("client platform support", () => {
         capabilities: ["fs.read"],
       },
     ]);
-    expect(JSON.stringify(runtime)).not.toContain("private");
-    expect(JSON.stringify(runtime)).not.toContain("workspaceRoot");
+    expect(runtime.defaultShell).toBe(hostAccountShell().program);
+    expect(JSON.stringify(runtime)).not.toContain("mountSource");
+  });
+
+  it("never advertises host shell authority from a Docker-only Client", () => {
+    expect(supportedCapabilitiesForRunners(["docker"])).not.toContain(
+      "host.shell",
+    );
+    expect(supportedCapabilitiesForRunners(["host"])).toContain("host.shell");
+  });
+
+  it("reports effective passwordless sudo even outside the managed service", () => {
+    expect(reportedPrivilegeEscalation(false, false)).toBe("none");
+    expect(reportedPrivilegeEscalation(false, true)).toBe("sudo");
+    expect(reportedPrivilegeEscalation(true, false)).toBe("sudo");
   });
 
   it("uses the native application configuration directory", () => {
@@ -134,14 +315,14 @@ describe("client platform support", () => {
     });
     expect(
       clientCompatibility({
-        protocolVersion: 2,
+        protocolVersion: PROTOCOL_VERSION,
         clientVersion: "0.9.0",
       }),
     ).toMatchObject({
       compatible: true,
       upgradeRequired: false,
       clientVersion: "0.9.0",
-      protocolVersion: 2,
+      protocolVersion: PROTOCOL_VERSION,
     });
     expect(
       clientCompatibility({
@@ -161,7 +342,7 @@ describe("client platform support", () => {
       gateway.indexOf("message.protocolVersion !== PROTOCOL_VERSION"),
     );
     expect(gateway).toContain("setMachineIncompatible");
-    expect(gateway).toContain("queueMachineLifecycle(");
+    expect(gateway).toContain("runMachineLifecycle(");
     expect(gateway).toContain("this.connections.get(state.machineId!) !== socket");
   });
 
@@ -211,6 +392,37 @@ describe("client platform support", () => {
     expect(order).toEqual(["disconnect:start", "disconnect:end", "reconnect"]);
   });
 
+  it("treats only machine revocation as a terminal transport close", () => {
+    expect(terminalMachineClose(4004)).toBe(true);
+    expect(terminalMachineClose(1006)).toBe(false);
+    expect(terminalMachineClose(4003)).toBe(false);
+  });
+
+  it("drains queued transport messages before terminal authority cleanup", () => {
+    const client = readFileSync(
+      resolve(process.cwd(), "apps/client/src/index.ts"),
+      "utf8",
+    );
+    const connect = client.slice(
+      client.indexOf("private async connect()"),
+      client.indexOf("private beginTerminalRevocation()"),
+    );
+    const revocation = client.slice(
+      client.indexOf("private beginTerminalRevocation()"),
+      client.indexOf("private send("),
+    );
+    const handler = client.slice(
+      client.indexOf("private async handle("),
+      client.indexOf("private async openSession("),
+    );
+
+    expect(connect).toContain("if (this.socket !== socket || this.stopped) return");
+    expect(revocation.indexOf("await this.messageQueue")).toBeLessThan(
+      revocation.indexOf("await this.dropLocalAuthority()"),
+    );
+    expect(handler).toContain("if (this.stopped) return");
+  });
+
   it("does not activate a socket that closes while authentication is queued", async () => {
     const queue = new MachineLifecycleQueue();
     const socket: { readyState: 0 | 1 | 2 | 3 } = { readyState: 1 };
@@ -242,12 +454,17 @@ describe("client platform support", () => {
       "utf8",
     );
     expect(gateway.indexOf("state.machineId = message.machineId")).toBeLessThan(
-      gateway.indexOf("await this.queueMachineLifecycle(message.machineId"),
+      gateway.indexOf("await this.runMachineLifecycle(message.machineId"),
     );
     expect(gateway).toContain("if (!socketReadyForAuthentication(socket)) return");
+    expect(gateway).toContain("if (current.revoked)");
+    expect(gateway).toContain('socket.close(4004, "Machine access revoked")');
+    expect(gateway.indexOf("await this.db.setMachineOnline")).toBeLessThan(
+      gateway.indexOf("state.authenticated = true"),
+    );
   });
 
-  it("resumes an identical local Session after transport reconnect", () => {
+  it("keeps bounded local authority across a transport reconnect", () => {
     const client = readFileSync(
       resolve(process.cwd(), "apps/client/src/index.ts"),
       "utf8",
@@ -257,14 +474,39 @@ describe("client platform support", () => {
     expect(client).toContain("sessionScopeSubsetDecision(requested, current)");
     expect(client).toContain("sessionScopeSubsetDecision(current, requested)");
     expect(client).toContain("Session retry scope does not match active local authority");
+    expect(client).toContain("this.authenticated = false");
+    expect(client).toContain("this.bufferedMessages.enqueue(message)");
+    expect(client).toContain("this.flushBufferedMessages()");
+    expect(client).toContain("this.reconcileJournalResults()");
+    expect(client).toContain("private messageQueue = Promise.resolve()");
+    expect(client).toContain("this.messageQueue = this.messageQueue");
+    expect(client).toContain("return this.handle(parseServerMessage(data.toString()))");
+    expect(client).not.toContain("void this.dropLocalAuthority()");
     expect(client).toContain("await this.dropLocalAuthority()");
-    expect(client).toContain("void this.dropLocalAuthority()");
-    expect(client).toContain("this.operations.clear()");
-    expect(client).toContain("this.sessions.clear()");
-    expect(client).toContain("Local authority cleanup could not be verified; Client stopped");
   });
 
-  it("terminates Operations and local Session state before reconnect", async () => {
+  it("closes superseded local authority before reopening reconnect targets", () => {
+    const gateway = readFileSync(
+      resolve(process.cwd(), "apps/server/src/gateway.ts"),
+      "utf8",
+    );
+    const authentication = gateway.slice(
+      gateway.indexOf("private async authenticate("),
+      gateway.indexOf("private async persistMessage("),
+    );
+    expect(authentication.indexOf("for (const target of closeTargets)")).toBeLessThan(
+      authentication.indexOf("for (const target of reconnectTargets)"),
+    );
+    expect(authentication).toContain("pendingOperationCancellations(");
+    expect(
+      authentication.indexOf("for (const operationId of pendingCancellations)"),
+    ).toBeLessThan(
+      authentication.indexOf("for (const target of reconnectTargets)"),
+    );
+    expect(authentication).toContain('type: "operation.cancel"');
+  });
+
+  it("terminates Operations and local Session state during graceful stop", async () => {
     const events: string[] = [];
     await terminateLocalAuthority(
       [async () => { events.push("operation:cancelled"); }],
@@ -272,6 +514,133 @@ describe("client platform support", () => {
     );
 
     expect(events).toEqual(["operation:cancelled", "session:closed"]);
+  });
+
+  it("fails the Client closed when bounded process termination cannot be proved", () => {
+    const client = readFileSync(
+      resolve(process.cwd(), "apps/client/src/index.ts"),
+      "utf8",
+    );
+
+    expect(client).toContain("Promise.race([running.done, cancellationFailure])");
+    expect(client).toContain("this.beginTerminalFailure(");
+    expect(client).toContain("process.exit(1)");
+    expect(client).not.toContain("client.stop().finally(() => process.exit(0))");
+    expect(client.match(/void this\.closeSession\(/gu)).toHaveLength(1);
+    expect(client.match(/this\.closeSessionSafely\(/gu)).toHaveLength(3);
+    const operation = client.slice(
+      client.indexOf("private async startOperation("),
+      client.indexOf("private async cancelOperation("),
+    );
+    expect(operation.indexOf("operationTimeoutMilliseconds(")).toBeLessThan(
+      operation.indexOf("active.executor.execute("),
+    );
+    expect(operation).toContain("control.executionSignal()");
+    expect(operation).toContain("Promise.race([executionPreparation, deadlineReached])");
+    expect(operation).toContain('status: terminationUnconfirmed');
+    expect(operation).toContain('? "execution_unknown"');
+    const closeSession = client.slice(
+      client.indexOf("private async closeSession("),
+      client.indexOf("private async startOperation("),
+    );
+    expect(closeSession.indexOf("await closing")).toBeLessThan(
+      closeSession.indexOf("this.sessions.delete(sessionId)"),
+    );
+  });
+
+  it("terminalizes a cancellation that reconnects without an in-memory Operation", () => {
+    const source = readFileSync("apps/client/src/index.ts", "utf8");
+    const cancellation = source.slice(
+      source.indexOf("private async cancelOperation("),
+      source.indexOf("private sendCompletion("),
+    );
+
+    expect(source).not.toContain("cancellationsBeforeStart");
+    expect(cancellation).toContain("this.journal.receive(operationId)");
+    expect(cancellation).toContain(
+      'status: receipt === "new" ? "cancelled" : "execution_unknown"',
+    );
+    expect(cancellation).toContain("this.journal.complete(operationId, result)");
+    expect(cancellation).toContain("this.sendCompletion(operationId, result)");
+  });
+
+  it("marks interrupted journal entries execution_unknown and reconciles them after restart", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "odyshell-journal-recovery-"));
+    const path = join(directory, "operations.sqlite");
+    try {
+      const beforeRestart = new OperationJournal(path);
+      expect(beforeRestart.receive("running-operation")).toBe("new");
+      beforeRestart.markRunning("running-operation");
+      expect(beforeRestart.receive("received-operation")).toBe("new");
+      beforeRestart.close();
+
+      const afterRestart = new OperationJournal(path);
+      expect(afterRestart.recoverInterrupted()).toBe(2);
+      expect(afterRestart.receive("running-operation")).toBe("completed");
+      expect(afterRestart.receive("received-operation")).toBe("completed");
+      expect(afterRestart.result("running-operation")).toMatchObject({
+        status: "execution_unknown",
+        error: "Client restarted before it could prove the Operation outcome",
+      });
+      expect(afterRestart.resultsForReconciliation()).toEqual([
+        expect.objectContaining({
+          operationId: "running-operation",
+          result: expect.objectContaining({ status: "execution_unknown" }),
+        }),
+        expect.objectContaining({
+          operationId: "received-operation",
+          result: expect.objectContaining({ status: "execution_unknown" }),
+        }),
+      ]);
+      afterRestart.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("retains terminal results only until the Server acknowledges persistence", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "odyshell-journal-ack-"));
+    const path = join(directory, "operations.sqlite");
+    try {
+      const journal = new OperationJournal(path);
+      try {
+        journal.receive("operation-a");
+        journal.complete("operation-a", {
+          status: "succeeded",
+          exitCode: 0,
+          outputTruncated: false,
+        });
+        expect(journal.resultsForReconciliation()).toHaveLength(1);
+
+        journal.acknowledge("operation-a");
+
+        expect(journal.resultsForReconciliation()).toEqual([]);
+        expect(journal.result("operation-a")).toBeUndefined();
+      } finally {
+        journal.close();
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("treats a duplicate start for an in-process Operation as idempotent", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "odyshell-journal-duplicate-"));
+    const path = join(directory, "operations.sqlite");
+    try {
+      const journal = new OperationJournal(path);
+      try {
+        expect(journal.receive("operation-id")).toBe("new");
+        journal.markRunning("operation-id");
+
+        expect(journal.receive("operation-id")).toBe("running");
+        expect(journal.result("operation-id")).toBeUndefined();
+      } finally {
+        journal.close();
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("renders a restartable Linux user service without relying on PATH", () => {

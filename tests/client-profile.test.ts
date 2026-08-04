@@ -10,6 +10,7 @@ import {
   removeAllClientProfiles,
   removeClientProfile,
 } from "../apps/client/src/index.js";
+import { sudoListingGrantsPasswordlessCommand } from "../apps/client/src/profile.js";
 
 const stoppedService = {
   supported: true,
@@ -186,6 +187,21 @@ describe("Client Profile removal", () => {
 });
 
 describe("Client Profile privilege escalation", () => {
+  it("detects narrow NOPASSWD rules without requiring sudo true", () => {
+    expect(
+      sudoListingGrantsPasswordlessCommand(`
+User developer may run the following commands:
+    (root) NOPASSWD: /usr/bin/systemctl restart odyshell-worker
+      `),
+    ).toBe(true);
+    expect(
+      sudoListingGrantsPasswordlessCommand(`
+User developer may run the following commands:
+    (root) PASSWD: /usr/bin/systemctl restart odyshell-worker
+      `),
+    ).toBe(false);
+  });
+
   it("keeps sudo blocked unless the local owner explicitly enables it", async () => {
     const home = await mkdtemp(join(tmpdir(), "odyshell-profile-sudo-"));
     const configPath = clientConfigPathForProfile("work", "linux", home, {});
@@ -252,8 +268,10 @@ describe("Client Profile privilege escalation", () => {
         runner: "docker",
         image: "alpine:3.22",
         network: "none",
-        workspaceRoot: "/workspace",
+        mountSource: "/workspace",
         maxConcurrentSessions: 1,
+        maxConcurrentOperations: 4,
+        maxOperationTimeoutSeconds: 3600,
         maxOutputBytes: 1024,
         maxSessionTtlSeconds: 300,
         capabilities: ["process.exec"],
@@ -323,8 +341,9 @@ async function writeProfileConfig(
       profiles: {
         host: {
           runner: "host",
-          workspaceRoot: "/srv/app",
           maxConcurrentSessions: 2,
+          maxConcurrentOperations: 4,
+          maxOperationTimeoutSeconds: 3600,
           maxOutputBytes: 1024 * 1024,
           maxSessionTtlSeconds: 3600,
           capabilities: ["fs.read"],

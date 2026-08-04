@@ -8,7 +8,7 @@ import {
   agentSessionRequestInputSchema,
   agentTokenRequestSchema,
   capabilitySchema,
-  manualSessionCapabilities,
+  manualSessionSelectableCapabilities,
 } from "@odyshell/protocol";
 import { z } from "zod";
 
@@ -102,7 +102,8 @@ export const cloudManualSessionSchema = cloudIdentitySchema
     request.scopes.forEach((scope, index) => {
       if (
         scope.capabilities.some(
-          (capability) => !manualSessionCapabilities.includes(capability),
+          (capability) =>
+            !manualSessionSelectableCapabilities.includes(capability),
         )
       ) {
         context.addIssue({

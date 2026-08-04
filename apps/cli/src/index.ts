@@ -30,11 +30,10 @@ import {
   ApiError,
   Odyshell,
   OdyshellApi,
-  type Operation,
   type OperationResult,
 } from "@odyshell/sdk";
 import { parseDuration } from "./duration.js";
-import { parseCapabilities } from "./capabilities.js";
+import { parseCapabilities, warnForHostShell } from "./capabilities.js";
 import { ExpectedError, printCliError } from "./errors.js";
 import {
   defaultConfigPath,
@@ -47,7 +46,6 @@ import {
 } from "./config.js";
 import { updateClientPackage } from "./update.js";
 import {
-  colorStatus,
   operationJson,
   printAgents,
   printAudit,
@@ -175,32 +173,15 @@ function requiredValue(value: string | undefined, flag: string): string {
   );
 }
 
-async function finishOperation(
-  api: OdyshellApi,
-  operationId: string,
-  json: boolean,
-): Promise<Operation> {
-  const operation = await api.waitForOperation(operationId, json ? undefined : streamEvent);
-  if (json) printJson(operationJson(operation));
-  else if (operation.error) console.error(pc.red(`\n${operation.error}`));
-  if (operation.status !== "succeeded") process.exitCode = 1;
-  return operation;
-}
-
 async function runInTemporarySession(
   command: Command,
   machineReference: string,
   action: OperationAction,
   ttlSeconds: number,
   timeoutSeconds: number,
+  requestMetadata?: { title?: string; purpose?: string },
 ): Promise<void> {
   const options = globals(command);
-  if (action.kind === "process.shell") {
-    throw new ExpectedError(
-      'The "ods shell" flow is deprecated because free-form shell text cannot be safely scoped. Use "ods exec <machine> <program> [args...]" instead.',
-      "process_shell_unsupported",
-    );
-  }
   const configPath = options.configFile
     ? resolve(options.configFile)
     : defaultConfigPath();
@@ -224,13 +205,21 @@ async function runInTemporarySession(
     );
   }
   const agent = api.agent(identity);
-  const request = await agent.requestOperationSession({
-    machineId: machine.id,
-    title: `Run ${action.kind} on ${machine.name}`,
-    purpose: `Run ${action.kind} on ${machine.name}`,
-    action,
-    durationSeconds: ttlSeconds,
-  });
+  const request = await (action.kind === "host.shell"
+    ? agent.requestHostShellSession({
+        machineId: machine.id,
+        title: requestMetadata?.title ?? `Run Host Shell on ${machine.name}`,
+        purpose: requestMetadata?.purpose ??
+          `Run dependent native shell commands on ${machine.name}`,
+        durationSeconds: ttlSeconds,
+      })
+    : agent.requestOperationSession({
+        machineId: machine.id,
+        title: `Run ${action.kind} on ${machine.name}`,
+        purpose: `Run ${action.kind} on ${machine.name}`,
+        action,
+        durationSeconds: ttlSeconds,
+      }));
   if (request.status === "pending" && request.approvalUrl) {
     console.error("Approve this Session:");
     console.error(`  ${request.approvalUrl}`);
@@ -248,14 +237,23 @@ async function runInTemporarySession(
   }
   const claim = await agent.claim(request.id);
   try {
-    const result = await api.claimedSession(claim).execute(
-      machine.id,
-      action,
-      {
-        timeoutSeconds,
-        ...(options.json ? {} : { onEvent: streamEvent }),
-      },
-    );
+    const session = api.claimedSession(claim);
+    const operationOptions = {
+      timeoutSeconds,
+      ...(options.json ? {} : { onEvent: streamEvent }),
+    };
+    const result = action.kind === "host.shell"
+      ? await session.host.shell({
+          machineId: machine.id,
+          command: action.command,
+          cwd: action.cwd,
+          env: action.env,
+          ...(action.stdinBase64 === undefined
+            ? {}
+            : { stdinBase64: action.stdinBase64 }),
+          ...operationOptions,
+        })
+      : await session.execute(machine.id, action, operationOptions);
     finishOperationResult(result, options.json ?? false);
   } finally {
     await agent.cancel(claim.sessionId).catch(() => undefined);
@@ -545,7 +543,7 @@ machine
       console.log(`${pc.green("âœ“")} Revoked ${result.name} (${result.id})`);
       console.log(
         pc.dim(
-          `  closed ${result.closedSessions} session(s), cancelled ${result.cancelledOperations} operation(s)`,
+          `  closed ${result.closedSessions} session(s), marked ${result.operationsMarkedUnknown} operation(s) unknown`,
         ),
       );
     }
@@ -711,8 +709,8 @@ agent
       command: Command,
     ) => {
       void name;
-      void options;
       void command;
+      warnForHostShell(parseCapabilities(options.allow));
       throw new ExpectedError(
         'Agent Access was migrated. Register once with "ods agent login", then request temporary Sessions.',
         "legacy_agent_access_migrated",
@@ -798,72 +796,6 @@ program
     );
   });
 
-const session = program.command("session").description("manage persistent sessions");
-session
-  .command("create <machine>")
-  .description("legacy command; Agents now request Sessions")
-  .option("--ttl <seconds>", "session lifetime", "600")
-  .requiredOption("--capabilities <items>", "comma-separated capabilities")
-  .action(async (machineReference: string, options: { ttl: string; capabilities: string }, command: Command) => {
-    void machineReference;
-    void options;
-    void command;
-    throw new ExpectedError(
-      'Direct Session creation was migrated. Use "ods exec" or the Agent Session request interface.',
-      "legacy_session_creation_migrated",
-    );
-  });
-
-session
-  .command("inspect <session-id>")
-  .description("show a session")
-  .action(async (sessionId: string, _options, command: Command) => {
-    const global = globals(command);
-    const result = await (await apiFor(command)).session(sessionId);
-    if (global.json) printJson(result);
-    else {
-      console.log(`${colorStatus(result.status)}  ${result.id}`);
-      console.log(`machine       ${result.machineName ?? result.machineId}`);
-      console.log(`profile       ${result.profile}`);
-      console.log(`capabilities  ${result.capabilities.join(", ")}`);
-      console.log(`expires       ${new Date(result.expiresAt).toLocaleString()}`);
-    }
-  });
-
-session
-  .command("close <session-id>")
-  .description("close a session")
-  .action(async (sessionId: string, _options, command: Command) => {
-    const global = globals(command);
-    const result = await (await apiFor(command)).closeSession(sessionId);
-    if (global.json) printJson(result);
-    else console.log(`${pc.green("✓")} Closing ${sessionId}`);
-  });
-
-session
-  .command("exec <session-id> <program> [args...]")
-  .description("execute a program in an existing session")
-  .option("--timeout <seconds>", "operation timeout", "120")
-  .passThroughOptions()
-  .action(
-    async (
-      sessionId: string,
-      executable: string,
-      args: string[],
-      options: { timeout: string },
-      command: Command,
-    ) => {
-      const global = globals(command);
-      const api = await apiFor(command);
-      const operation = await api.createOperation(
-        sessionId,
-        { kind: "process.exec", program: executable, args, cwd: ".", env: {} },
-        Number(options.timeout),
-      );
-      await finishOperation(api, operation.id, global.json ?? false);
-    },
-  );
-
 program
   .command("exec <machine> <program> [args...]")
   .description("run a program in a disposable session")
@@ -881,35 +813,46 @@ program
       runInTemporarySession(
         command,
         machine,
-        { kind: "process.exec", program: executable, args, cwd: ".", env: {} },
+        { kind: "process.exec", program: executable, args, cwd: "." },
         Number(options.ttl),
         Number(options.timeout),
       ),
   );
 
 program
-  .command("shell <machine> <command...>")
-  .description("run a shell command in a disposable session")
+  .command("shell <machine> <command>")
+  .description("run a native host shell command in a disposable session")
+  .requiredOption(
+    "--purpose <purpose>",
+    "human-readable goal shown before Host Shell approval",
+  )
+  .option("--title <title>", "approval title")
   .option("--ttl <seconds>", "session lifetime", "300")
   .option("--timeout <seconds>", "operation timeout", "120")
   .passThroughOptions()
   .action(
     async (
       machine: string,
-      commandParts: string[],
-      options: { ttl: string; timeout: string },
+      shellCommand: string,
+      options: { purpose: string; title?: string; ttl: string; timeout: string },
       command: Command,
     ) =>
       runInTemporarySession(
         command,
         machine,
-        { kind: "process.shell", command: commandParts.join(" "), cwd: ".", env: {} },
+        { kind: "host.shell", command: shellCommand, cwd: ".", env: {} },
         Number(options.ttl),
         Number(options.timeout),
+        {
+          ...(options.title ? { title: options.title } : {}),
+          purpose: options.purpose,
+        },
       ),
   );
 
-const fsCommand = program.command("fs").description("access a machine workspace");
+const fsCommand = program
+  .command("fs")
+  .description("access a machine's Home and filesystem");
 fsCommand
   .command("stat <machine> <path>")
   .description("inspect a file or directory")
@@ -1088,7 +1031,7 @@ program
   .description("enroll this machine if needed and start its background Client")
   .option("--token <token>", "one-time enrollment token")
   .option("--name <name>", "machine name")
-  .option("--cwd <path>", "base directory for relative paths", ".")
+  .option("--mount-source <path>", "host directory mounted by the Docker runner")
   .option("--allow <capabilities>", "comma-separated local capabilities")
   .option("--runner <runner>", "host or docker", "host")
   .option("--image <image>", "Docker profile image", "alpine:3.22")
@@ -1099,7 +1042,7 @@ program
       options: {
         token?: string;
         name?: string;
-        cwd: string;
+        mountSource?: string;
         allow?: string;
         runner: string;
         image: string;
@@ -1109,6 +1052,10 @@ program
       command: Command,
     ) => {
       const global = globals(command);
+      const requestedCapabilities = options.allow === undefined
+        ? undefined
+        : parseCapabilities(options.allow);
+      if (requestedCapabilities) warnForHostShell(requestedCapabilities);
       assertProfileSelection(options.profile, options.config);
       const profileName = options.profile ?? "default";
       const {
@@ -1129,8 +1076,9 @@ program
           serverUrl: apiConfig.serverUrl,
           token: requiredValue(options.token, "--token"),
           machineName: requiredValue(options.name, "--name"),
-          workspaceRoot: resolve(options.cwd),
-          allowedCapabilities: parseCapabilities(requiredValue(options.allow, "--allow")),
+          ...(options.mountSource ? { mountSource: options.mountSource } : {}),
+          allowedCapabilities: requestedCapabilities ??
+            parseCapabilities(requiredValue(options.allow, "--allow")),
           runner: parseRunner(options.runner),
           image: options.image,
           configPath,
@@ -1470,7 +1418,7 @@ client
   .description("enroll this machine with an Odyshell server")
   .requiredOption("--token <token>", "one-time enrollment token")
   .requiredOption("--name <name>", "machine name")
-  .option("--cwd <path>", "base directory for relative paths", ".")
+  .option("--mount-source <path>", "host directory mounted by the Docker runner")
   .requiredOption("--allow <capabilities>", "comma-separated capabilities allowed by this machine")
   .option("--runner <runner>", "host or docker", "host")
   .option("--image <image>", "sandbox image", "alpine:3.22")
@@ -1480,7 +1428,7 @@ client
       options: {
         token: string;
         name: string;
-        cwd: string;
+        mountSource?: string;
         allow: string;
         runner: string;
         image: string;
@@ -1490,12 +1438,14 @@ client
     ) => {
       const global = globals(command);
       const config = await resolveConfig(global);
+      const allowedCapabilities = parseCapabilities(options.allow);
+      warnForHostShell(allowedCapabilities);
       const result = await enrollClient({
         serverUrl: config.serverUrl,
         token: options.token,
         machineName: options.name,
-        workspaceRoot: resolve(options.cwd),
-        allowedCapabilities: parseCapabilities(options.allow),
+        ...(options.mountSource ? { mountSource: options.mountSource } : {}),
+        allowedCapabilities,
         runner: parseRunner(options.runner),
         image: options.image,
         configPath: options.config,

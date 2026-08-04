@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import type {
   Capability,
   OperationAction,
@@ -11,6 +11,7 @@ import {
   clientConfigSchema,
   humanIdentitySchema,
   operationRequestSchema,
+  mergeSessionMachineScopes,
   normalizeOperationPath,
   normalizeRelativePath,
   operationSessionScope,
@@ -26,7 +27,7 @@ import {
 describe("protocol validation", () => {
   it.each([
     [
-      { kind: "process.exec", program: "git", args: ["status"], cwd: ".", env: {} },
+      { kind: "process.exec", program: "git", args: ["status"], cwd: "." },
       "process.exec",
       "process",
     ],
@@ -49,18 +50,118 @@ describe("protocol validation", () => {
     },
   );
 
-  it("models shell as an explicit broad Session capability", () => {
-    expect(
-      operationSessionScope("7a354999-6a6c-42db-9467-e1416da255f1", {
-        kind: "process.shell",
+  it("keeps Host Shell execution separate from structured scope derivation", () => {
+    const request = operationRequestSchema.parse({
+      action: {
+        kind: "host.shell",
+        command: "git status",
+        env: { CI: "true" },
+        stdinBase64: Buffer.from("confirm\n").toString("base64"),
+      },
+    });
+
+    expect(request).toEqual({
+      action: {
+        kind: "host.shell",
         command: "git status",
         cwd: ".",
-        env: {},
-      }),
-    ).toMatchObject({
-      capabilities: ["process.shell"],
-      restrictions: {},
+        env: { CI: "true" },
+        stdinBase64: Buffer.from("confirm\n").toString("base64"),
+      },
+      timeoutSeconds: 600,
+      maxOutputBytes: 1024 * 1024,
     });
+    type ScopedAction = Parameters<typeof operationSessionScope>[1];
+    expectTypeOf<
+      Extract<ScopedAction, { kind: "host.shell" }>
+    >().toEqualTypeOf<never>();
+    expect(() =>
+      operationSessionScope(
+        "7a354999-6a6c-42db-9467-e1416da255f1",
+        request.action as ScopedAction,
+      ),
+    ).toThrow(/request Host Shell authority/i);
+    expect(() =>
+      operationSessionScopes([
+        {
+          machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
+          action: request.action as ScopedAction,
+        },
+      ]),
+    ).toThrow(/request Host Shell authority/i);
+    expect(
+      operationRequestSchema.safeParse({
+        action: { kind: "process.shell", command: "git status" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("treats Host Shell cwd as execution context instead of a path boundary", () => {
+    const parent = operationRequestSchema.parse({
+      action: { kind: "host.shell", command: "pwd", cwd: ".." },
+    });
+    const networkPath = String.raw`\\server\share\project`;
+    const unc = operationRequestSchema.parse({
+      action: { kind: "host.shell", command: "cd", cwd: networkPath },
+    });
+
+    expect(parent.action).toMatchObject({ cwd: ".." });
+    expect(unc.action).toMatchObject({ cwd: networkPath });
+    expect(
+      operationRequestSchema.safeParse({
+        action: { kind: "host.shell", command: "pwd", cwd: "bad\0path" },
+      }).success,
+    ).toBe(false);
+    expect(
+      operationRequestSchema.safeParse({
+        action: {
+          kind: "process.exec",
+          program: "pwd",
+          args: [],
+          cwd: "..",
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("bounds host shell stdin and operation timeouts", () => {
+    const maximumStdin = Buffer.alloc(1024 * 1024).toString("base64");
+    const excessiveStdin = Buffer.alloc(1024 * 1024 + 1).toString("base64");
+
+    expect(
+      operationRequestSchema.safeParse({
+        action: {
+          kind: "host.shell",
+          command: "cat",
+          stdinBase64: maximumStdin,
+        },
+        timeoutSeconds: 86_400,
+      }).success,
+    ).toBe(true);
+    expect(
+      operationRequestSchema.safeParse({
+        action: {
+          kind: "host.shell",
+          command: "cat",
+          stdinBase64: excessiveStdin,
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      operationRequestSchema.safeParse({
+        action: {
+          kind: "host.shell",
+          command: "cat",
+          stdinBase64: "not base64!",
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      operationRequestSchema.safeParse({
+        action: { kind: "host.shell", command: "sleep forever" },
+        timeoutSeconds: 86_401,
+      }).success,
+    ).toBe(false);
   });
 
   it("models an unrestricted filesystem capability without a path selector", () => {
@@ -95,7 +196,6 @@ describe("protocol validation", () => {
         program: process.execPath,
         args: ["--version"],
         cwd,
-        env: {},
       },
     });
 
@@ -129,6 +229,66 @@ describe("protocol validation", () => {
         },
       },
     });
+  });
+
+  it("merges predecessor authority with host shell without widening typed restrictions", () => {
+    const machineId = "7a354999-6a6c-42db-9467-e1416da255f1";
+    expect(
+      mergeSessionMachineScopes([
+        {
+          machineId,
+          profile: "workspace",
+          capabilities: ["fs.read"],
+          restrictions: {
+            filesystem: {
+              paths: [{ path: "config/app.json", includeDescendants: false }],
+            },
+          },
+        },
+        {
+          machineId,
+          profile: "workspace",
+          capabilities: ["host.shell"],
+          restrictions: {},
+        },
+      ]),
+    ).toEqual([
+      {
+        machineId,
+        profile: "workspace",
+        capabilities: ["fs.read", "host.shell"],
+        restrictions: {
+          filesystem: {
+            paths: [{ path: "config/app.json", includeDescendants: false }],
+          },
+        },
+      },
+    ]);
+
+    expect(() =>
+      mergeSessionMachineScopes([
+        {
+          machineId,
+          profile: "workspace",
+          capabilities: ["fs.read"],
+          restrictions: {
+            filesystem: {
+              paths: [{ path: "public.txt", includeDescendants: false }],
+            },
+          },
+        },
+        {
+          machineId,
+          profile: "workspace",
+          capabilities: ["fs.write"],
+          restrictions: {
+            filesystem: {
+              paths: [{ path: "output.txt", includeDescendants: false }],
+            },
+          },
+        },
+      ]),
+    ).toThrow(/widen filesystem authority/i);
   });
 
   it("rejects filesystem scope merges that create capability-path cross products", () => {
@@ -168,41 +328,40 @@ describe("protocol validation", () => {
     ).toBe(false);
   });
 
-  it("accepts a bounded structured process request", () => {
+  it("accepts a bounded process request without an environment surface", () => {
+    const request = operationRequestSchema.parse({
+      action: {
+        kind: "process.exec",
+        program: "printf",
+        args: ["hello"],
+        cwd: ".",
+      },
+    });
+
+    expect(request.action).toEqual({
+      kind: "process.exec",
+      program: "printf",
+      args: ["hello"],
+      cwd: ".",
+    });
     expect(
       operationRequestSchema.safeParse({
-        action: { kind: "process.exec", program: "printf", args: ["hello"], cwd: ".", env: {} },
+        action: {
+          kind: "process.exec",
+          program: "printf",
+          env: {},
+        },
       }).success,
-    ).toBe(true);
+    ).toBe(false);
     expect(
       operationRequestSchema.safeParse({
         action: {
           kind: "process.exec",
           program: "env",
-          env: { "BAD-NAME": "value" },
+          env: { CI: "true" },
         },
       }).success,
     ).toBe(false);
-    for (const key of [
-      "PATH",
-      "LD_AUDIT",
-      "BASH_ENV",
-      "PYTHONPATH",
-      "NODE_PATH",
-      "CI",
-    ]) {
-      expect(
-        operationRequestSchema.safeParse({
-          action: {
-            kind: "process.exec",
-            program: "git",
-            args: ["status"],
-            cwd: ".",
-            env: { [key]: "/tmp/attacker-controlled" },
-          },
-        }).success,
-      ).toBe(false);
-    }
   });
 
   it("accepts structured filesystem search and Docker log operations", () => {
@@ -501,12 +660,18 @@ describe("protocol validation", () => {
         scopes: [
           {
             ...request.scopes[0],
-            capabilities: ["process.shell"],
+            capabilities: ["host.shell"],
             restrictions: {},
           },
         ],
       }).success,
     ).toBe(true);
+    expect(
+      agentSessionRequestInputSchema.parse({
+        ...request,
+        predecessorSessionId: "e8f54e08-651b-47d9-8c61-801c420d11df",
+      }).predecessorSessionId,
+    ).toBe("e8f54e08-651b-47d9-8c61-801c420d11df");
   });
 
   it("fails closed when a Session scope exceeds local typed restrictions", () => {
@@ -569,6 +734,12 @@ describe("protocol validation", () => {
         ceiling,
       ),
     ).toEqual({ allowed: false, code: "restriction_widening" });
+    expect(
+      sessionScopeSubsetDecision(
+        { ...ceiling, profile: "sandbox" },
+        ceiling,
+      ),
+    ).toEqual({ allowed: false, code: "profile_mismatch" });
   });
 
   it("accepts canonical tenant slugs and rejects ambiguous identifiers", () => {
@@ -595,7 +766,7 @@ describe("protocol validation", () => {
       profiles: {
         workspace: {
           runner: "docker",
-          workspaceRoot: "/tmp/workspace",
+          mountSource: "/tmp/workspace",
           image: "alpine:3.22",
           network: "bridge",
           maxSessionTtlSeconds: 1800,
@@ -629,29 +800,56 @@ describe("protocol validation", () => {
         profiles: {
           workspace: {
             runner: "host",
-            workspaceRoot: "/srv/app",
             maxSessionTtlSeconds: 1800,
             maxConcurrentSessions: 2,
             maxOutputBytes: 1024 * 1024,
-            capabilities: ["process.exec", "fs.read", "fs.write"],
+            capabilities: ["process.exec", "host.shell", "fs.read", "fs.write"],
           },
         },
       });
     expect(parsed.success).toBe(true);
     if (!parsed.success) throw new Error("Client config should parse");
     expect(parsed.data.allowPrivilegeEscalation).toBe(false);
+    expect(parsed.data.profiles.workspace).toMatchObject({
+      maxConcurrentOperations: 4,
+      maxOperationTimeoutSeconds: 3_600,
+    });
+    expect(
+      clientConfigSchema.safeParse({
+        ...parsed.data,
+        profiles: {
+          workspace: {
+            ...parsed.data.profiles.workspace,
+            workspaceRoot: "/obsolete/root",
+          },
+        },
+      }).success,
+    ).toBe(false);
     expect(
       clientConfigSchema.safeParse({
         ...parsed.data,
         allowPrivilegeEscalation: true,
       }).success,
     ).toBe(true);
+    expect(
+      clientConfigSchema.safeParse({
+        ...parsed.data,
+        profiles: {
+          workspace: {
+            ...parsed.data.profiles.workspace,
+            runner: "docker",
+            image: "alpine:3.22",
+            mountSource: "/srv/app",
+            network: "none",
+          },
+        },
+      }).success,
+    ).toBe(false);
   });
 
   it("keeps Client policy compatible with the 24-hour Session boundary", () => {
     const profile = {
       runner: "host" as const,
-      workspaceRoot: "/srv/app",
       maxConcurrentSessions: 2,
       maxOutputBytes: 1024 * 1024,
       capabilities: ["process.exec" as const],

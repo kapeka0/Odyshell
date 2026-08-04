@@ -23,32 +23,40 @@ Every request has a short title used in tables, notifications and the canvas. A 
 optional.
 
 Workspace members can also select **New** on the Sessions page. Choose an Agent with an active
-credential, an online machine, a duration, and an access preset:
+credential, an online machine, a duration, and explicit capabilities:
 
 - **Read only** grants structured filesystem inspection and reading.
-- **Shell access** lets the Agent run successive shell commands and use each result to decide the
-  next command.
-- **Full access** combines shell access with structured filesystem reading, writing, directory
-  creation, and removal.
+- **Host Shell** separately grants successive native shell commands under `host.shell`. Selecting
+  it adds no structured capabilities; members can select those independently when the task needs
+  both kinds of authority.
 
-The capability list can narrow a preset further. Presets are intersected with the machine's Client
-policy and normally run as its operating-system user. If the machine owner explicitly enabled
-passwordless sudo, Shell access and Full access can reach root and the form shows a warning. Manual
-filesystem capabilities still run without automatic elevation. Exact `process.exec` and Docker
-requests remain available through Agent, MCP, and API flows instead of exposing low-level program
-arguments or container restrictions in this form. A manual Session is approved by its creator and opens
-immediately when that Agent has an active MCP installation. Otherwise, the Agent claims the
-approved request when it next connects.
+Every selection is intersected with the machine's Client policy. Host Shell runs as the Client's
+operating-system user, starts each command in that user's Home by default, has no sandbox or
+isolation, can reach that user's files, credentials, network, and services, and may persist changes
+after the Session ends. If the installed Linux service has sudo enabled, or a foreground Client
+detects effective `sudo -n`, the form adds a separate root-access warning. Manual filesystem
+capabilities still run without automatic elevation.
+Exact `process.exec` and Docker requests remain available through Agent, MCP, and API flows instead of
+exposing low-level program arguments or container restrictions in this form. A manual Session is
+approved by its creator and opens immediately when that Agent has an active MCP installation.
+Otherwise, the Agent claims the approved request when it next connects.
 
-Durations are 5 minutes, 15 minutes, 1 hour, 4 hours, 8 hours, or 24 hours. Sessions cannot be widened,
-extended, or made permanent. Create a new Session when authority must change.
+The dashboard offers 5 minutes, 15 minutes, 1 hour, 4 hours, 8 hours, or 24 hours and defaults to
+1 hour. API, SDK, and MCP requests can instead supply any whole-second duration from 60 seconds to
+24 hours; MCP defaults to 1 hour when omitted. Sessions cannot be widened, extended, or made
+permanent. Create a new Session when authority must change.
 If the Client does not acknowledge a target within 60 seconds, Odyshell fails that target closed.
 Other ready targets remain usable. A disconnected target can retry the same approved authority if
 its Client reconnects before the Session expires.
 
-Transport loss terminates local Operations and closes local execution state before the Client
-reconnects. The Server marks interrupted Operations as having an unknown execution result; it does
-not assume that an interrupted command succeeded.
+Transport loss alone does not terminate an already authorized Operation. The disconnected Client
+accepts no new Operations, continues enforcing the local Operation timeout and Session expiry, and
+keeps only bounded output. It reconciles the result after reauthentication; the Server does not
+assume that a disconnected command succeeded or failed.
+
+Graceful authority loss cancels the active process group. This is different from an abrupt Client
+crash: without a separate Operation supervisor, a detached POSIX command can continue until it
+exits or is stopped externally. After restart, Odyshell records its execution result as unknown.
 
 ## Timeline
 
@@ -58,10 +66,16 @@ the page is open and attributes actions to the Agent, the responsible member, or
 The Workspace logging level is captured when the Session is requested and never changes for that
 Session:
 
-- **Privacy-minimal** keeps lifecycle, operation kind, status and exit code. It excludes commands,
+- **Privacy-minimal** keeps lifecycle, Operation kind, status and exit code. It excludes commands,
   paths, stdout and stderr.
-- **Operational** adds commands, paths, stdout and stderr with automatic secret redaction.
+- **Operational** adds commands, paths and available stdout and stderr with automatic secret
+  redaction.
 - **Diagnostic** keeps complete available details and can contain secrets.
+
+Environment values and standard input are never persisted. Host Shell inherits an allowlisted base
+environment rather than all Client variables; explicit values apply only to one Operation. The
+POSIX login shell can still load user startup files. Command and output detail remains temporary
+and becomes unavailable when Operation retention expires.
 
 Operation output remains temporary and is eligible for deletion after one hour by default. Older
 Timeline events keep their structural result without recreating deleted output.

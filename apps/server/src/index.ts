@@ -59,13 +59,16 @@ import {
   type CliTokenRecord,
 } from "./database.js";
 import {
+  clampSessionOperationTimeout,
   sessionOperationDecision,
   type AgentSessionPrincipal,
 } from "./agent-sessions.js";
 import { clientCompatibility } from "./compatibility.js";
 import { ClientGateway } from "./gateway.js";
+import { SERVER_HTTP_BODY_LIMIT_BYTES } from "./http-limits.js";
 import { machinePrivilegeEscalation } from "./machine-policy.js";
 import { dataRetentionPolicy } from "./privacy.js";
+import { deliverOperation } from "./operation-delivery.js";
 import { registerRemoteMcp } from "./remote-mcp.js";
 import { createRemoteMcpRuntime } from "./remote-mcp-runtime.js";
 import {
@@ -141,6 +144,16 @@ const agentPolicyProposalSchema = z
       ),
   })
   .superRefine((value, context) => {
+    value.scopes.forEach((scope, index) => {
+      if (scope.capabilities.includes("host.shell")) {
+        context.addIssue({
+          code: "custom",
+          path: ["scopes", index, "capabilities"],
+          message:
+            "Host Shell cannot be included in autoapproval or delegation policies",
+        });
+      }
+    });
     if (value.kind === "delegation" && value.maxManagedAgents === undefined) {
       context.addIssue({
         code: "custom",
@@ -172,7 +185,10 @@ const attributedAgentSessionRequestSchema = agentSessionRequestInputSchema
   .extend({ runId: z.string().trim().min(1).max(128).optional() })
   .strict();
 
-const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
+const app = Fastify({
+  logger: { level: process.env.LOG_LEVEL ?? "info" },
+  bodyLimit: SERVER_HTTP_BODY_LIMIT_BYTES,
+});
 await app.register(websocket, { options: { maxPayload: 2 * 1024 * 1024 } });
 
 const db = createDatabase(process.env);
@@ -180,21 +196,29 @@ await db.initialize();
 const retention = dataRetentionPolicy(process.env);
 const eventSinkEncryptionKey =
   process.env.ODYSHELL_EVENT_SINK_ENCRYPTION_KEY;
+let purgingExpiredData = false;
 const purgeExpiredData = async (): Promise<void> => {
-  const now = Date.now();
-  const purged = await db.purgeExpiredData({
-    operationDataBefore: now - retention.operationDataMilliseconds,
-    auditBefore: now - retention.auditMilliseconds,
-  });
-  if (
-    purged.agentTokens +
-      purged.enrollmentTokens +
-      purged.operations +
-      purged.sessions +
-      purged.auditEvents >
-    0
-  ) {
-    app.log.info(purged, "Expired retained operation and audit data");
+  if (purgingExpiredData) return;
+  purgingExpiredData = true;
+  try {
+    const now = Date.now();
+    const purged = await db.purgeExpiredData({
+      operationDataBefore: now - retention.operationDataMilliseconds,
+      auditBefore: now - retention.auditMilliseconds,
+    });
+    if (
+      purged.agentTokens +
+        purged.enrollmentTokens +
+        purged.operations +
+        purged.idempotencyKeys +
+        purged.sessions +
+        purged.auditEvents >
+      0
+    ) {
+      app.log.info(purged, "Expired retained operation and audit data");
+    }
+  } finally {
+    purgingExpiredData = false;
   }
 };
 await purgeExpiredData();
@@ -627,41 +651,59 @@ async function revokeWorkspaceMachine(
   name: string;
   status: "revoked";
   revokedAt: string | null;
-  cancelledOperations: number;
+  operationsMarkedUnknown: number;
   closedSessions: number;
   disconnected: boolean;
 } | null> {
-  const machine = await db.revokeMachine(workspaceId, machineId);
-  if (!machine) return null;
+  const revoked = await gateway.runMachineLifecycle(machineId, async () => {
+    const machine = await db.revokeMachine(workspaceId, machineId);
+    if (!machine) return null;
 
-  for (const operationId of machine.operationIds) {
-    gateway.send(machine.id, { type: "operation.cancel", operationId });
-    gateway.events.emit(`operation:${operationId}`);
-  }
-  for (const sessionId of machine.sessionIds) {
-    gateway.send(machine.id, {
-      type: "session.close",
-      sessionId,
-      reason: "machine_revoked",
-    });
-    gateway.events.emit(`session:${sessionId}`);
-  }
-  const disconnected = gateway.disconnect(machine.id);
-  await audit(db, workspaceId, principalId, "machine.revoked", "machine", machine.id, {
-    name: machine.name,
-    revokedAt: isoTimestamp(machine.revokedAt),
-    cancelledOperations: machine.operationIds.length,
-    closedSessions: machine.sessionIds.length,
-    disconnected,
+    for (const operation of machine.operations) {
+      gateway.send(operation.machineId, {
+        type: "operation.cancel",
+        operationId: operation.id,
+      });
+      gateway.events.emit(`operation:${operation.id}`);
+    }
+    for (const target of machine.targets) {
+      gateway.send(target.machineId, {
+        type: "session.close",
+        sessionId: target.runtimeSessionId,
+        reason: "machine_revoked",
+      });
+      gateway.events.emit(`session:${target.runtimeSessionId}`);
+    }
+    return {
+      machine,
+      disconnected: gateway.disconnect(machine.id),
+    };
   });
+  if (!revoked) return null;
+  const { machine, disconnected } = revoked;
+  await audit(
+    db,
+    workspaceId,
+    principalId,
+    "machine.revoked",
+    "machine",
+    machine.id,
+    {
+      name: machine.name,
+      revokedAt: isoTimestamp(machine.revokedAt),
+      operationsMarkedUnknown: machine.operations.length,
+      closedSessions: machine.targets.length,
+      disconnected,
+    },
+  );
   gateway.notifyWorkspace(workspaceId);
   return {
     id: machine.id,
     name: machine.name,
     status: "revoked",
     revokedAt: isoTimestamp(machine.revokedAt),
-    cancelledOperations: machine.operationIds.length,
-    closedSessions: machine.sessionIds.length,
+    operationsMarkedUnknown: machine.operations.length,
+    closedSessions: machine.targets.length,
     disconnected,
   };
 }
@@ -2204,6 +2246,7 @@ app.post(
     return {
       id: sessionRequest.id,
       agent: { id: sessionRequest.agentId, name: sessionRequest.agentName },
+      title: sessionRequest.title,
       purpose: sessionRequest.purpose,
       predecessorSessionId: sessionRequest.predecessorSessionId ?? null,
       scopes: sessionRequest.scopes.map((scope) => {
@@ -3096,6 +3139,12 @@ app.post(
       durationSeconds: parsed.data.durationSeconds,
       approvalCodeHash: hashToken(requestId),
       expiresAt,
+      ...(parsed.data.predecessorSessionId
+        ? {
+            predecessorSessionId: parsed.data.predecessorSessionId,
+            predecessorMode: "host_shell_escalation" as const,
+          }
+        : {}),
     });
     if (!created) {
       return reply.code(403).send({ error: "agent_or_machine_denied" });
@@ -3108,7 +3157,7 @@ app.post(
       "session_request",
       requestId,
       {
-        scopes: parsed.data.scopes.map((scope) => ({
+        scopes: created.scopes.map((scope) => ({
           machineId: scope.machineId,
           capabilities: scope.capabilities,
         })),
@@ -3118,13 +3167,16 @@ app.post(
           ? { requesterAgentId: principal.agent.agentId }
           : {}),
         ...(parsed.data.runId ? { runId: parsed.data.runId } : {}),
+        ...(parsed.data.predecessorSessionId
+          ? { predecessorSessionId: parsed.data.predecessorSessionId }
+          : {}),
       },
     );
     gateway.notifyWorkspace(principal.workspaceId);
     return reply.code(201).send({
       id: requestId,
       status: created.status,
-      scopes: parsed.data.scopes.map((scope) => ({
+      scopes: created.scopes.map((scope) => ({
         machineId: scope.machineId,
         readiness: gateway.isOnline(scope.machineId)
           ? { ready: true }
@@ -3142,6 +3194,9 @@ app.post(
               version: created.autoapprovalPolicyVersion,
             },
           }
+        : {}),
+      ...(created.predecessorSessionId
+        ? { predecessorSessionId: created.predecessorSessionId }
         : {}),
       expiresAt: isoTimestamp(created.expiresAt),
     });
@@ -3283,6 +3338,9 @@ app.post<{ Params: { requestId: string } }>(
     if (result.status === "machine_unavailable") {
       return reply.code(409).send({ error: "machine_unavailable" });
     }
+    if (result.status === "predecessor_unavailable") {
+      return reply.code(409).send({ error: "predecessor_session_unavailable" });
+    }
     if (result.status !== "claimed") {
       return reply.code(500).send({ error: "session_claim_failed" });
     }
@@ -3291,6 +3349,21 @@ app.post<{ Params: { requestId: string } }>(
       ready: boolean;
       reason?: string;
     }> = [];
+    if (result.superseded) {
+      for (const operation of result.superseded.operations) {
+        gateway.send(operation.machineId, {
+          type: "operation.cancel",
+          operationId: operation.id,
+        });
+      }
+      for (const target of result.superseded.targets) {
+        gateway.send(target.machineId, {
+          type: "session.close",
+          sessionId: target.runtimeSessionId,
+          reason: "revoked",
+        });
+      }
+    }
     for (const target of result.targets) {
       const sent = gateway.send(target.machineId, {
         type: "session.open",
@@ -3855,6 +3928,7 @@ app.post<{ Params: { sessionId: string } }>(
       approvalCodeHash: hashToken(requestId),
       expiresAt,
       predecessorSessionId: request.params.sessionId,
+      predecessorMode: "renewal",
     });
     if (!created) {
       return reply.code(403).send({ error: "session_renewal_denied" });
@@ -3922,12 +3996,22 @@ app.post<{ Params: { sessionId: string } }>(
       if (!machineId) {
         return reply.code(400).send({ error: "machine_id_required" });
       }
+      const decisionTime = Date.now();
+      const timeoutSeconds = clampSessionOperationTimeout(
+        parsed.data.timeoutSeconds,
+        principal.sessionScope.expiresAt,
+        decisionTime,
+      );
+      if (timeoutSeconds === null) {
+        return reply.code(410).send({ error: "session_expired" });
+      }
       const decision = sessionOperationDecision(
         principal.sessionScope,
         request.params.sessionId,
         machineId,
         parsed.data.action,
-        parsed.data.timeoutSeconds,
+        timeoutSeconds,
+        decisionTime,
       );
       if (!decision.allowed) {
         await audit(
@@ -3970,57 +4054,32 @@ app.post<{ Params: { sessionId: string } }>(
           .code(409)
           .send({ error: "session_not_ready", status: target.status });
       }
-      if (!gateway.isOnline(target.machineId)) {
-        return reply.code(409).send({ error: "machine_offline" });
-      }
-      if (idempotencyKey) {
-        const existing = await db.findOperationByIdempotency(
-          principal.workspaceId,
-          target.runtimeSessionId,
-          principal.id,
+      const delivery = await deliverOperation(
+        { database: db, gateway },
+        {
+          workspaceId: principal.workspaceId,
+          machineId: target.machineId,
+          sessionId: target.runtimeSessionId,
+          idempotencyScopeId: request.params.sessionId,
+          principalId: principal.id,
+          action: parsed.data.action,
+          timeoutSeconds,
+          requestedTimeoutSeconds: parsed.data.timeoutSeconds,
+          maxOutputBytes: parsed.data.maxOutputBytes,
           idempotencyKey,
-        );
-        if (existing) {
-          return reply
-            .code(200)
-            .send({ id: existing.id, status: existing.status });
-        }
+        },
+      );
+      if (delivery.kind === "replay") {
+        return reply.code(200).send({ id: delivery.id, status: delivery.status });
       }
-      const operationId = randomUUID();
-      const created = await db.createOperation({
-        workspaceId: principal.workspaceId,
-        id: operationId,
-        sessionId: target.runtimeSessionId,
-        principalId: principal.id,
-        action: parsed.data.action,
-        timeoutSeconds: parsed.data.timeoutSeconds,
-        maxOutputBytes: parsed.data.maxOutputBytes,
-        idempotencyKey,
-      });
-      if (!created && idempotencyKey) {
-        const existing = await db.findOperationByIdempotency(
-          principal.workspaceId,
-          target.runtimeSessionId,
-          principal.id,
-          idempotencyKey,
-        );
-        if (existing) {
-          return reply
-            .code(200)
-            .send({ id: existing.id, status: existing.status });
-        }
+      if (delivery.kind === "idempotency_conflict") {
+        return reply.code(409).send({ error: "idempotency_conflict" });
+      }
+      if (delivery.kind === "session_not_active") {
         return reply.code(409).send({ error: "session_not_active" });
       }
-      const sent = gateway.send(target.machineId, {
-        type: "operation.start",
-        operationId,
-        sessionId: target.runtimeSessionId,
-        action: parsed.data.action,
-        timeoutSeconds: parsed.data.timeoutSeconds,
-        maxOutputBytes: parsed.data.maxOutputBytes,
-      });
-      if (sent) {
-        await db.markOperationDelivered(principal.workspaceId, operationId);
+      if (delivery.kind === "machine_offline") {
+        return reply.code(409).send({ error: "machine_offline" });
       }
       await audit(
         db,
@@ -4028,7 +4087,7 @@ app.post<{ Params: { sessionId: string } }>(
         principal.id,
         "operation.created",
         "operation",
-        operationId,
+        delivery.id,
         {
           sessionId: request.params.sessionId,
           kind: parsed.data.action.kind,
@@ -4037,23 +4096,14 @@ app.post<{ Params: { sessionId: string } }>(
         },
       );
       gateway.notifyWorkspace(principal.workspaceId);
-      return reply
-        .code(202)
-        .send({ id: operationId, status: sent ? "delivered" : "queued" });
+      return reply.code(202).send({ id: delivery.id, status: delivery.status });
     }
     if (principal.kind !== "development") {
       return reply.code(403).send({ error: "session_credential_required" });
     }
-    if (idempotencyKey) {
-      const existing = await db.findOperationByIdempotency(
-        principal.workspaceId,
-        request.params.sessionId,
-        principal.id,
-        idempotencyKey,
-      );
-      if (existing) return reply.code(200).send({ id: existing.id, status: existing.status });
+    if (parsed.data.action.kind === "host.shell") {
+      return reply.code(403).send({ error: "session_credential_required" });
     }
-
     const session = await db.sessionForOperation(
       principal.workspaceId,
       request.params.sessionId,
@@ -4076,50 +4126,49 @@ app.post<{ Params: { sessionId: string } }>(
       });
       return reply.code(403).send({ error: "capability_denied", capability: neededCapability });
     }
-    if (!gateway.isOnline(session.machineId)) {
-      return reply.code(409).send({ error: "machine_offline" });
-    }
-
-    const operationId = randomUUID();
-    const created = await db.createOperation({
-      workspaceId: principal.workspaceId,
-      id: operationId,
-      sessionId: request.params.sessionId,
-      principalId: principal.id,
-      action: parsed.data.action,
-      timeoutSeconds: parsed.data.timeoutSeconds,
-      maxOutputBytes: parsed.data.maxOutputBytes,
-      idempotencyKey,
-    });
-    if (!created && idempotencyKey) {
-      const existing = await db.findOperationByIdempotency(
-        principal.workspaceId,
-        request.params.sessionId,
-        principal.id,
+    const delivery = await deliverOperation(
+      { database: db, gateway },
+      {
+        workspaceId: principal.workspaceId,
+        machineId: session.machineId,
+        sessionId: request.params.sessionId,
+        idempotencyScopeId: request.params.sessionId,
+        principalId: principal.id,
+        action: parsed.data.action,
+        timeoutSeconds: parsed.data.timeoutSeconds,
+        requestedTimeoutSeconds: parsed.data.timeoutSeconds,
+        maxOutputBytes: parsed.data.maxOutputBytes,
         idempotencyKey,
-      );
-      if (existing) return reply.code(200).send({ id: existing.id, status: existing.status });
+      },
+    );
+    if (delivery.kind === "replay") {
+      return reply.code(200).send({ id: delivery.id, status: delivery.status });
+    }
+    if (delivery.kind === "idempotency_conflict") {
+      return reply.code(409).send({ error: "idempotency_conflict" });
+    }
+    if (delivery.kind === "session_not_active") {
       return reply.code(409).send({ error: "session_not_active" });
     }
-    const sent = gateway.send(session.machineId, {
-      type: "operation.start",
-      operationId,
-      sessionId: request.params.sessionId,
-      action: parsed.data.action,
-      timeoutSeconds: parsed.data.timeoutSeconds,
-      maxOutputBytes: parsed.data.maxOutputBytes,
-    });
-    if (sent) {
-      await db.markOperationDelivered(principal.workspaceId, operationId);
+    if (delivery.kind === "machine_offline") {
+      return reply.code(409).send({ error: "machine_offline" });
     }
-    await audit(db, principal.workspaceId, principal.id, "operation.created", "operation", operationId, {
-      sessionId: request.params.sessionId,
-      kind: parsed.data.action.kind,
-      machineId: session.machineId,
-      operation: operationAuditMetadata(parsed.data.action),
-    });
+    await audit(
+      db,
+      principal.workspaceId,
+      principal.id,
+      "operation.created",
+      "operation",
+      delivery.id,
+      {
+        sessionId: request.params.sessionId,
+        kind: parsed.data.action.kind,
+        machineId: session.machineId,
+        operation: operationAuditMetadata(parsed.data.action),
+      },
+    );
     gateway.notifyWorkspace(principal.workspaceId);
-    return reply.code(202).send({ id: operationId, status: sent ? "delivered" : "queued" });
+    return reply.code(202).send({ id: delivery.id, status: delivery.status });
   },
 );
 
@@ -4166,29 +4215,25 @@ app.post<{ Params: { operationId: string } }>(
     if (principal.kind !== "session" && principal.kind !== "development") {
       return reply.code(403).send({ error: "session_credential_required" });
     }
-    const operation = await db.getOperationTarget(
+    const operation = await db.requestOperationCancellation(
       principal.workspaceId,
       request.params.operationId,
       principal.id,
       principal.sessionScope?.sessionId,
     );
     if (!operation) return reply.code(404).send({ error: "operation_not_found" });
-    if (!["queued", "delivered", "running"].includes(operation.status)) {
+    if (
+      !operation.transitioned &&
+      operation.status !== "cancellation_requested"
+    ) {
       return reply.code(409).send({ error: "operation_not_cancellable", status: operation.status });
     }
-    gateway.send(operation.machineId, {
-      type: "operation.cancel",
-      operationId: request.params.operationId,
+    await gateway.runMachineLifecycle(operation.machineId, async () => {
+      gateway.send(operation.machineId, {
+        type: "operation.cancel",
+        operationId: request.params.operationId,
+      });
     });
-    await audit(
-      db,
-      principal.workspaceId,
-      principal.id,
-      "operation.cancel_requested",
-      "operation",
-      request.params.operationId,
-      { machineId: operation.machineId },
-    );
     return reply.code(202).send({ id: request.params.operationId, status: "cancellation_requested" });
   },
 );
@@ -4240,7 +4285,12 @@ app.get<{ Params: { operationId: string }; Querystring: { after?: string } }>(
         principal.workspaceId,
         request.params.operationId,
       );
-      if (status && !["queued", "delivered", "running"].includes(status)) {
+      if (
+        status &&
+        !["queued", "delivered", "running", "cancellation_requested"].includes(
+          status,
+        )
+      ) {
         reply.raw.write(`event: completed\ndata: ${JSON.stringify({ status })}\n\n`);
         cleanup();
       }
@@ -4303,7 +4353,10 @@ app.get<{ Querystring: { limit?: string } }>(
   },
 );
 
+let sweepingExpiry = false;
 const expiryTimer = setInterval(() => {
+  if (sweepingExpiry) return;
+  sweepingExpiry = true;
   void (async () => {
     const staleOpenings = await db.failStaleSessionOpenings();
     const changedWorkspaces = new Set<string>();
@@ -4331,6 +4384,31 @@ const expiryTimer = setInterval(() => {
     for (const workspaceId of await db.notifyStaleOfflineMachines()) {
       changedWorkspaces.add(workspaceId);
     }
+    const expiredOperations = await db.expireStaleOperations();
+    for (const operation of expiredOperations) {
+      gateway.send(operation.machineId, {
+        type: "operation.cancel",
+        operationId: operation.id,
+      });
+      gateway.events.emit(`operation:${operation.id}`);
+      changedWorkspaces.add(operation.workspaceId);
+      await audit(
+        db,
+        operation.workspaceId,
+        operation.principalId,
+        "operation.completed",
+        "operation",
+        operation.id,
+        {
+          kind: operation.kind,
+          machineId: operation.machineId,
+          status: "execution_unknown",
+          exitCode: null,
+          outputTruncated: false,
+          error: "completion_not_received",
+        },
+      );
+    }
     const expired = await db.expireSessions();
     for (const session of expired) {
       gateway.send(session.machineId, {
@@ -4342,7 +4420,11 @@ const expiryTimer = setInterval(() => {
     for (const workspaceId of changedWorkspaces) {
       gateway.notifyWorkspace(workspaceId);
     }
-  })().catch((error: unknown) => app.log.error(error, "Session expiry sweep failed"));
+  })()
+    .catch((error: unknown) => app.log.error(error, "Session expiry sweep failed"))
+    .finally(() => {
+      sweepingExpiry = false;
+    });
 }, 10_000);
 
 const retentionTimer = setInterval(() => {

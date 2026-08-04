@@ -26,7 +26,7 @@ private network.
 | Area | MVP behavior |
 | --- | --- |
 | Platforms | Linux, macOS, and Windows Clients |
-| Processes | Structured executable calls and explicit shell commands |
+| Processes | Structured executable calls and explicit Host Shell commands |
 | Filesystem | Stat, list, search, read, write, mkdir, and remove |
 | Docker | Container log access and an optional Docker execution profile |
 | Identity | Ed25519 machine identity |
@@ -40,7 +40,7 @@ private network.
 
 Host execution is the default because the product is intended to operate on a real machine. The
 Client process should run as a dedicated operating-system user with only the privileges required
-for the configured workspace and operations.
+for its approved Operations.
 
 ## Security boundary
 
@@ -53,13 +53,21 @@ An operation is accepted only when:
 5. the session is active and unexpired;
 6. the machine is online;
 7. the Client's local policy allows the same capability;
-8. filesystem paths remain inside the configured local directory.
+8. structured filesystem Operations satisfy any exact path restriction in the Session.
 
 The model cannot override these checks with a prompt.
 
-An allowed direct process or shell command can still perform anything available to the operating
-system user running the Client. Odyshell restricts authority; it does not prove that an allowed
-command is safe.
+An allowed Host Shell command starts in the Client user's Home by default. An explicit per-command
+working directory does not narrow its authority. It can perform anything available to that
+operating-system user, including accessing files, credentials, network, and services. There is no
+sandbox or isolation, and changes may persist after the Session ends. Odyshell restricts authority;
+it does not prove that an allowed command is safe. The command process inherits an allowlisted
+base environment rather than every Client variable; explicit environment values are ephemeral to
+one Operation and never persisted. On POSIX, a login shell can still load same-user startup files.
+
+Graceful cancellation stops the active process group. On POSIX, an abrupt Client crash can leave a
+detached command running until it exits by itself or is stopped externally because the MVP has no
+separate Operation supervisor. Restart reconciliation reports that execution as unknown.
 
 ## Privacy behavior
 
@@ -67,8 +75,9 @@ Odyshell is not a session recorder.
 
 - Durable control events store lifecycle metadata, not command text, arguments, paths, file
   contents, stdout, or stderr.
-- Full operation requests and result events are temporary delivery data. They become eligible for
-  deletion after one hour by default.
+- Persistable Operation action fields and result events are temporary delivery data. Environment
+  values and standard input are excluded. The retained data becomes eligible for deletion after
+  one hour by default.
 - Content-minimal control events become eligible for deletion after 30 days by default.
 - Both retention periods are configurable by the self-hosting administrator.
 
@@ -81,7 +90,7 @@ See [Privacy and event data](./privacy.md) for the exact boundary.
 - object-storage or native SIEM event destinations beyond the signed HTTPS Event Sink;
 - SSO, SCIM, billing, or compliance certification;
 - high-availability routing across multiple Server replicas;
-- semantic tracking of every side effect made by a shell command;
+- semantic tracking of every side effect made by a Host Shell command;
 - Kubernetes, browser automation, mobile devices, or GPU orchestration.
 
 These are not implied by the current API.

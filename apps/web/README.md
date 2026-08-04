@@ -6,11 +6,13 @@
 
 <p align="center"><strong>The human control plane for Odyshell Cloud.</strong></p>
 
-The web app is where workspace members approve CLI access, connect or remove machines, create,
-revoke, or delete temporary Agent Access, and review privacy-minimal Control Events.
-Organization administrators additionally manage people and organization settings.
+The web app is where workspace members approve CLI and Agent enrollment, connect or remove
+machines, approve temporary Sessions, manage persistent Agents and their policies, and review
+privacy-minimal Control Events. Organization administrators additionally manage people and
+organization settings.
 
-Agents do not use this interface. They use Agent Access through the API, SDK, CLI, or MCP server.
+Agents do not use this interface. They use Agent Credentials and claimed Session Credentials
+through the API, SDK, CLI, or MCP server.
 
 Public product documentation lives in `content/docs` and is served at `/docs` with local search.
 The same reviewed source is available to agents through `/llms.txt`, `/llms-full.txt`, and a
@@ -24,11 +26,12 @@ Create a Clerk application with Organizations enabled, then copy this file:
 cp apps/web/.env.example apps/web/.env.local
 ```
 
-Set the Clerk keys and use the same `ODYSHELL_WEB_KEY` in the web app and Server. Start both
-processes from the monorepo root:
+Set the Clerk keys and use the same `ODYSHELL_WEB_KEY` in the web app and Server. For the Compose
+Server, copy `.env.example` to `.env`; Compose forwards its key and
+`ODYSHELL_WEB_URL=http://localhost:3000`. Start the backend and web app from the monorepo root:
 
 ```bash
-pnpm dev:server
+docker compose up -d --build
 pnpm dev:web
 ```
 
@@ -44,11 +47,12 @@ ods login --server http://localhost:4100
 
 The CLI opens `/activate?code=...` with its short-lived device code already filled in. Approval
 creates a workspace-bound CLI token. The dashboard can then issue single-use machine enrollment
-commands and scoped Agent Access credentials.
+commands, approve persistent Agent identities, and review their temporary Session requests.
 
-Agent Access always targets explicit machines and capabilities, expires after at most one year,
-and is shown once. Control Events never include command text, arguments, paths, file contents,
-stdout, or stderr.
+An Agent Credential identifies a persistent Agent but grants no machine authority. Each task uses
+an immutable Session for explicit machines and capabilities and expires within 24 hours. Host Shell
+authority is broad, explicit, and always requires manual approval. Control Events never include
+command text, arguments, paths, file contents, stdout, or stderr.
 
 ## Trust boundary
 

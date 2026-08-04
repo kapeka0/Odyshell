@@ -40,7 +40,8 @@ terminal for that request.
 
 An administrator-approved ceiling for an Independent Agent. It can automatically approve only
 Session requests that are strict subsets of its machines, capabilities, typed restrictions,
-maximum duration, and validity.
+maximum duration, and validity. `host.shell` cannot appear in an Autoapproval or Delegation Policy;
+Host Shell always requires a human decision.
 
 ## Operation
 
@@ -58,4 +59,5 @@ paths, stdout or stderr.
 The chronological record for one Session. The workspace logging level captured
 by the Session controls its detail: Operational can show automatically redacted
 commands, paths, stdout and stderr, while Diagnostic can show raw values that
-may include secrets. Privacy-minimal remains structural.
+may include secrets. Privacy-minimal remains structural. Environment values and
+standard input are never persisted.

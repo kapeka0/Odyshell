@@ -15,8 +15,10 @@ Odyshell records the minimum information required to answer:
 It does not place command text, arguments, environment values, file paths, file contents, stdout,
 or stderr in the durable control-event trail. A Session Timeline is a separate, scoped record. Its
 Workspace level is captured when the Session is requested: Privacy-minimal excludes commands,
-paths and output; Operational adds them with automatic secret redaction; Diagnostic keeps complete
-available details and can contain secrets. Changing the Workspace setting affects only new Sessions.
+paths and output; Operational adds available details with automatic secret redaction; Diagnostic
+keeps complete available details and can contain secrets. Command and output detail remains
+temporary. Environment values and standard input are never persisted. Changing the Workspace
+setting affects only new Sessions.
 
 ## Data classes
 
@@ -31,13 +33,28 @@ Event history.
 
 ### Temporary operation data
 
-The Server temporarily stores the full structured operation and its output events so an
-asynchronous agent can retrieve a result and retry safely.
+The Server temporarily stores the persistable Operation action fields and output events so an
+asynchronous Agent can retrieve a result and retry safely. Environment values and standard input
+are transport-only and are never written to the database or Timeline. Their values are excluded
+from the deterministic idempotency fingerprint; only a boolean recording whether transient input
+was present is retained so a retry cannot add or remove it. Idempotency keys should be opaque,
+unique values; they are delivery identifiers, not credentials.
 
 This data may contain sensitive content. It becomes eligible for deletion after one hour by
 default, together with completed session state that is no longer referenced. The Server runs the
 purge at startup and every 15 minutes, so deletion can occur up to approximately 15 minutes after
-the configured threshold. It is operational delivery state, not an audit recording.
+the configured threshold. It is operational delivery state, not an audit recording. The purge
+deletes the action, output and idempotency fingerprint with the Operation row.
+
+The Server atomically reserves every idempotency key in a separate payload-free registry when it
+creates the Operation. The registry contains only Workspace, Operation, machine, principal and
+capability identifiers plus a domain-separated hash of the key. That single reservation remains
+after payload purge, preventing cross-machine races and late retries from executing the Operation
+again without retaining command or output content. It follows the control-event retention window.
+Once only the reservation remains, the result cannot be replayed and a retry fails closed with
+`idempotency_conflict`. An authenticated Client completion is acknowledged even after all Server
+retention has elapsed, without recreating or auditing unknown state, so its local journal can stop
+retrying.
 
 Configure the window with:
 
@@ -50,9 +67,10 @@ late asynchronous result retrieval more reliable.
 
 ### Content-minimal control events
 
-Control events contain identifiers, lifecycle actions, timestamps, result status, and minimal
-policy metadata. They are isolated by Workspace, become eligible for deletion after 30 days by
-default, and use the same periodic purge.
+Control events and Operation idempotency reservations contain identifiers, lifecycle actions or
+capability kind, timestamps, result status where applicable, and minimal policy metadata. They are
+isolated by Workspace, become eligible for deletion after 30 days by default, and use the same
+periodic purge.
 
 Configure the window with:
 
@@ -76,6 +94,8 @@ Odyshell Cloud should not require customers to buy long-term centralized storage
 Delivery uses bounded retries and a dead-letter state. Endpoint validation blocks loopback,
 private-network, link-local, and metadata-service destinations; redirects are not followed.
 Event Sink detail is selected independently from the Workspace Timeline level.
+Event Sinks never export command text, stdout, stderr, environment values or standard input at any
+detail level.
 
 ## Website analytics
 
@@ -89,9 +109,9 @@ command arguments, file paths, stdout, or stderr.
 - Operation content passes through the Server while the operation is active.
 - Temporary payloads are stored in PostgreSQL until the configured purge window expires.
 - TLS is required whenever the Server is reachable over a network.
-- An arbitrary shell command can have side effects that Odyshell cannot infer. The control event
-  can identify that shell execution occurred, but it cannot claim to enumerate every file or
-  process changed by the shell.
+- A Host Shell command can have side effects that Odyshell cannot infer. The control event can
+  identify that Host Shell execution occurred, but it cannot claim to enumerate every file,
+  process, service, or external system changed by the command.
 - Infrastructure operators may have independent database, proxy, container, or platform logs.
   Those systems have their own retention policies.
 

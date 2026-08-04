@@ -179,7 +179,16 @@ describe("cloud identity and device authorization boundaries", () => {
       scopes: [{
         machineId,
         profile: "default",
-        capabilities: ["process.shell", "fs.read", "fs.write"],
+        capabilities: [
+          "host.shell",
+          "fs.stat",
+          "fs.list",
+          "fs.search",
+          "fs.read",
+          "fs.write",
+          "fs.mkdir",
+          "fs.remove",
+        ],
         restrictions: {},
       }],
     };

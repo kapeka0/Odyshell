@@ -80,20 +80,20 @@ export class ClientGateway {
       socket.on("close", () => {
         clearTimeout(authTimer);
         if (state.machineId) {
-          void this.queueMachineLifecycle(state.machineId, async () => {
+          void this.runMachineLifecycle(state.machineId, async () => {
             if (this.connections.get(state.machineId!) !== socket) return;
             this.connections.delete(state.machineId!);
             const result = await this.db.markMachineDisconnected(state.machineId!);
-              if (result && (result.operations > 0 || result.targets > 0)) {
-                app.log.info(
-                  {
-                    machineId: state.machineId,
-                    operations: result.operations,
-                    targets: result.targets,
-                  },
-                  "Machine disconnect terminated active authority",
-                );
-              }
+            if (result && (result.operations > 0 || result.targets > 0)) {
+              app.log.info(
+                {
+                  machineId: state.machineId,
+                  operations: result.operations,
+                  targets: result.targets,
+                },
+                "Machine disconnected with active authority retained",
+              );
+            }
             if (state.workspaceId) this.notifyWorkspace(state.workspaceId);
           });
         }
@@ -150,7 +150,7 @@ export class ClientGateway {
     socket.send(JSON.stringify(message));
   }
 
-  private async queueMachineLifecycle<T>(
+  async runMachineLifecycle<T>(
     machineId: string,
     operation: () => Promise<T>,
   ): Promise<T> {
@@ -207,18 +207,66 @@ export class ClientGateway {
     // cleanup for the same machine lifecycle.
     state.machineId = message.machineId;
     state.workspaceId = machine.workspaceId;
-    await this.queueMachineLifecycle(message.machineId, async () => {
+    await this.runMachineLifecycle(message.machineId, async () => {
       if (!socketReadyForAuthentication(socket)) return;
+      const current = await this.db.machinePublicKey(message.machineId);
+      if (
+        !current ||
+        current.publicKey !== machine.publicKey ||
+        current.workspaceId !== machine.workspaceId
+      ) {
+        throw new Error("Machine identity changed during authentication");
+      }
+      if (current.revoked) {
+        socket.close(4004, "Machine access revoked");
+        return;
+      }
       const previous = this.connections.get(message.machineId);
       if (previous && previous !== socket) previous.close(4003, "Superseded connection");
 
+      const online = await this.db.setMachineOnline(
+        message.machineId,
+        message.runtime,
+      );
+      if (!online) {
+        socket.close(4004, "Machine access revoked");
+        return;
+      }
+      if (!socketReadyForAuthentication(socket)) {
+        await this.db.setMachineOffline(message.machineId);
+        return;
+      }
+      const reconnectTargets = await this.db.reconnectAgentSessionTargets(
+        message.machineId,
+      );
+      if (!socketReadyForAuthentication(socket)) {
+        await this.db.setMachineOffline(message.machineId);
+        return;
+      }
+      this.connections.set(message.machineId, socket);
       state.authenticated = true;
       state.lastHeartbeatPersistedAt = Date.now();
-      this.connections.set(message.machineId, socket);
-      await this.db.setMachineOnline(message.machineId, message.runtime);
       this.sendSocket(socket, { type: "authenticated", machineId: message.machineId });
-      const retryTargets = await this.db.retryAgentSessionTargets(message.machineId);
-      for (const target of retryTargets) {
+      const closeTargets = await this.db.agentSessionTargetsPendingClose(
+        message.machineId,
+      );
+      for (const target of closeTargets) {
+        this.sendSocket(socket, {
+          type: "session.close",
+          sessionId: target.runtimeSessionId,
+          reason: target.reason,
+        });
+      }
+      const pendingCancellations = await this.db.pendingOperationCancellations(
+        message.machineId,
+      );
+      for (const operationId of pendingCancellations) {
+        this.sendSocket(socket, {
+          type: "operation.cancel",
+          operationId,
+        });
+      }
+      for (const target of reconnectTargets) {
         this.sendSocket(socket, {
           type: "session.open",
           sessionId: target.runtimeSessionId,
@@ -377,7 +425,7 @@ export class ClientGateway {
             outputTruncated: message.outputTruncated,
           });
           const principalId = result?.principalId;
-          if (principalId) {
+          if (principalId && result.newlyCompleted) {
             await audit(
               this.db,
               result.workspaceId,
@@ -394,8 +442,18 @@ export class ClientGateway {
               },
             );
           }
-          this.events.emit(`operation:${message.operationId}`);
-          this.notifyWorkspace(state.workspaceId);
+          // The authenticated Client may replay a durable completion after the
+          // Server's Operation and idempotency retention have both elapsed.
+          // ACK unknown ids without recreating state or audit data so the local
+          // journal can terminate instead of retrying forever.
+          this.send(state.machineId, {
+            type: "operation.acknowledged",
+            operationId: message.operationId,
+          });
+          if (result?.newlyCompleted) {
+            this.events.emit(`operation:${message.operationId}`);
+            this.notifyWorkspace(state.workspaceId);
+          }
         }
         break;
       case "authenticate":
