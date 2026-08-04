@@ -1,6 +1,9 @@
-import { access, readFile, readdir, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { access, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, posix, win32 } from "node:path";
+import { promisify } from "node:util";
 import process from "node:process";
 import { clientConfigSchema } from "@odyshell/protocol";
 import {
@@ -15,6 +18,8 @@ import {
   type ClientServiceStatus,
 } from "./service.js";
 
+const execFileAsync = promisify(execFile);
+
 export type ListedClientProfile = {
   profileName: string;
   configPath: string;
@@ -22,6 +27,7 @@ export type ListedClientProfile = {
   machineId?: string;
   machineName?: string;
   serverUrl?: string;
+  allowPrivilegeEscalation?: boolean;
   service: ClientServiceStatus;
 };
 
@@ -44,6 +50,16 @@ export type RemoveAllClientProfilesOptions = Omit<
   RemoveClientProfileOptions,
   "profileName"
 >;
+
+export type ConfigureClientPrivilegeEscalationOptions = {
+  profileName: string;
+  allow: boolean;
+  platform?: SupportedNodePlatform;
+  home?: string;
+  environment?: NodeJS.ProcessEnv;
+  verifyPasswordlessSudo?: () => Promise<void>;
+  applyService: (configPath: string) => Promise<void>;
+};
 
 export async function listClientProfiles(
   options: ListClientProfilesOptions = {},
@@ -100,6 +116,7 @@ export async function listClientProfiles(
         machineId: config.data.machineId,
         machineName: config.data.machineName,
         serverUrl: config.data.serverUrl,
+        allowPrivilegeEscalation: config.data.allowPrivilegeEscalation,
         service,
       };
     }),
@@ -107,6 +124,87 @@ export async function listClientProfiles(
   return profiles
     .filter((profile): profile is ListedClientProfile => profile !== undefined)
     .sort((left, right) => left.profileName.localeCompare(right.profileName));
+}
+
+export async function configureClientPrivilegeEscalation(
+  options: ConfigureClientPrivilegeEscalationOptions,
+): Promise<{
+  profileName: string;
+  configPath: string;
+  allowPrivilegeEscalation: boolean;
+}> {
+  const platform = options.platform ??
+    (process.platform as SupportedNodePlatform);
+  if (platform !== "linux") {
+    throw new Error("Sudo access is only available for Linux Client Profiles");
+  }
+  const profileName = normalizeClientProfileName(options.profileName);
+  const configPath = clientConfigPathForProfile(
+    profileName,
+    platform,
+    options.home ?? homedir(),
+    options.environment ?? process.env,
+  );
+  let original: string;
+  try {
+    original = await readFile(configPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error(`Client Profile "${profileName}" does not exist`);
+    }
+    throw error;
+  }
+  const parsed = clientConfigSchema.safeParse(JSON.parse(original));
+  if (!parsed.success) {
+    throw new Error(`Client Profile "${profileName}" has invalid configuration`);
+  }
+  if (options.allow) {
+    const hasHostRunner = Object.values(parsed.data.profiles).some(
+      (profile) => profile.runner === "host",
+    );
+    if (!hasHostRunner) {
+      throw new Error("Sudo access requires a host runner");
+    }
+    await (options.verifyPasswordlessSudo ?? verifyPasswordlessSudo)();
+  }
+
+  const next = `${JSON.stringify({
+    ...parsed.data,
+    allowPrivilegeEscalation: options.allow,
+  }, null, 2)}\n`;
+  await replacePrivateConfig(configPath, next);
+  try {
+    await options.applyService(configPath);
+  } catch (error) {
+    await replacePrivateConfig(configPath, original);
+    try {
+      await options.applyService(configPath);
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        "Could not apply or restore the Client privilege policy",
+      );
+    }
+    throw error;
+  }
+  return {
+    profileName,
+    configPath,
+    allowPrivilegeEscalation: options.allow,
+  };
+}
+
+export async function verifyPasswordlessSudo(): Promise<void> {
+  try {
+    await execFileAsync("sudo", ["-n", "true"], {
+      windowsHide: true,
+      timeout: 10_000,
+    });
+  } catch {
+    throw new Error(
+      "Passwordless sudo is unavailable. Configure a narrow NOPASSWD sudoers policy before enabling sudo access.",
+    );
+  }
 }
 
 export async function removeClientProfile(
@@ -207,6 +305,21 @@ export async function removeAllClientProfiles(
 async function removeInstalledClientService(configPath: string): Promise<void> {
   const service = await clientServiceStatus(configPath);
   if (service.installed) await removeClientService(configPath);
+}
+
+async function replacePrivateConfig(path: string, contents: string): Promise<void> {
+  const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporaryPath, contents, {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx",
+      flush: true,
+    });
+    await rename(temporaryPath, path);
+  } finally {
+    await rm(temporaryPath, { force: true });
+  }
 }
 
 async function fileExists(path: string): Promise<boolean> {

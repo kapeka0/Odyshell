@@ -619,8 +619,7 @@ describe("protocol validation", () => {
   });
 
   it("accepts direct host execution as an explicit local profile", () => {
-    expect(
-      clientConfigSchema.safeParse({
+    const parsed = clientConfigSchema.safeParse({
         serverUrl: "https://api.odyshell.test",
         workspaceId: "workspace-a",
         machineId: "2dc24de7-ec0e-45b3-88c1-acbb900e51f8",
@@ -637,6 +636,14 @@ describe("protocol validation", () => {
             capabilities: ["process.exec", "fs.read", "fs.write"],
           },
         },
+      });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error("Client config should parse");
+    expect(parsed.data.allowPrivilegeEscalation).toBe(false);
+    expect(
+      clientConfigSchema.safeParse({
+        ...parsed.data,
+        allowPrivilegeEscalation: true,
       }).success,
     ).toBe(true);
   });

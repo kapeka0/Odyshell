@@ -64,6 +64,11 @@ List Profiles with `ods profiles ls` and remove one with `ods profiles remove <n
 `ods reset --yes` to sign out and remove every local Profile on the host. Cloud machine records
 remain in the dashboard.
 
+Linux services block privilege escalation by default. A machine owner can explicitly allow
+passwordless sudo for one Profile with `ods profiles configure <name> --allow-sudo`, and restore
+the secure default with `--deny-sudo`. Enabling verifies `sudo -n`, regenerates the service, and
+warns that approved process Sessions may then run as root.
+
 ## Security baseline
 
 - Client configuration is validated locally and fails closed.

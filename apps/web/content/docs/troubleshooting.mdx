@@ -95,3 +95,16 @@ Client logs, reconnect it, and confirm that Server and Client versions match.
 Compare the capability required by the operation with both the agent credential and the
 machine's local `--allow` policy. Also check credential expiry, machine assignment, filesystem
 workspace boundaries, and operating-system permissions.
+
+## `sudo` cannot gain privileges
+
+Linux Client services set `NoNewPrivileges` unless the machine owner opts in for that Profile.
+First configure a narrow passwordless sudoers rule, then run locally:
+
+```bash
+ods profiles configure default --allow-sudo
+```
+
+The command fails closed when `sudo -n true` does not succeed. Use `--deny-sudo` to restore the
+default. A Profile with sudo enabled makes approved process Sessions root-capable; structured
+filesystem operations remain unprivileged.

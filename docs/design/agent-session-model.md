@@ -189,8 +189,10 @@ persistent terminal or PTY: every Operation has an explicit working directory an
 Manual dashboard creation uses intent-level presets rather than process restrictions. `Read only`
 maps to structured filesystem reads, `Shell access` maps only to `process.shell`, and `Full access`
 maps to `process.shell` plus structured filesystem reads and writes. Every mapping is intersected
-with the Client Local Policy and runs without privilege elevation. Exact `process.exec` program and
-argument restrictions remain an Agent, MCP, API, SDK, and CLI concern. The Server validates the
+with the Client Local Policy. Linux privilege escalation remains blocked unless the machine owner
+explicitly enables passwordless sudo for that local Client Profile. When enabled, process Sessions
+can reach root and every creation or approval surface must disclose that fact. Exact `process.exec`
+program and argument restrictions remain an Agent, MCP, API, SDK, and CLI concern. The Server validates the
 manual allowlist independently; the dashboard is not an authorization boundary.
 
 ### Duration and renewal

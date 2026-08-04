@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import type { SessionApproval } from "@/lib/session-approval";
@@ -17,6 +18,11 @@ export function SessionApprovalForm({
 }) {
   const router = useRouter();
   const [pending, setPending] = useState<"approve" | "deny" | null>(null);
+  const rootAccessPossible = approval.scopes.some(
+    (scope) =>
+      scope.machine.privilegeEscalation === "sudo" &&
+      scope.capabilities.some((capability) => capability.startsWith("process.")),
+  );
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -94,6 +100,14 @@ export function SessionApprovalForm({
           value={new Date(approval.expiresAt).toLocaleString()}
         />
       </dl>
+      {rootAccessPossible ? (
+        <Alert>
+          <AlertTitle>Root access possible</AlertTitle>
+          <AlertDescription>
+            This machine allows passwordless sudo from approved process Sessions.
+          </AlertDescription>
+        </Alert>
+      ) : null}
       <Separator />
       <p className="text-sm text-muted-foreground">{approval.purpose}</p>
       <div className="flex justify-end gap-2">

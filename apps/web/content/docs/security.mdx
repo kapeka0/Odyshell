@@ -72,8 +72,10 @@ removal, or Docker access only when the task requires them.
 
 Dashboard access presets are convenience mappings, not new authority. **Shell access** grants only
 `process.shell`; **Full access** adds the structured filesystem capabilities available in the
-Client Local Policy. Neither preset bypasses that policy, changes the operating-system user, or
-grants `sudo`, administrator, or root privileges.
+Client Local Policy. Linux Clients block privilege escalation by default. A machine owner may
+locally enable passwordless sudo for one Profile; when enabled, approvals warn that process access
+can reach root. Cloud, the dashboard, and Agents cannot enable it remotely. Structured filesystem
+operations continue to run as the Client user.
 
 ## Privacy
 

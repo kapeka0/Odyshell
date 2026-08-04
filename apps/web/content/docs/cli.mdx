@@ -40,6 +40,8 @@ ods audit
 - `ods client start` runs the Client in the foreground.
 - `ods profiles ls` lists local Profiles and their service state.
 - `ods profiles status <name>` inspects one Profile.
+- `ods profiles configure <name> --allow-sudo` explicitly permits passwordless sudo on Linux.
+- `ods profiles configure <name> --deny-sudo` restores privilege blocking.
 - `ods profiles remove <name>` stops a Profile and deletes its local identity.
 - `ods reset --yes` signs out and removes every local Profile, including legacy identities.
 

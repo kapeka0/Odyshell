@@ -31,11 +31,12 @@ credential, an online machine, a duration, and an access preset:
 - **Full access** combines shell access with structured filesystem reading, writing, directory
   creation, and removal.
 
-The capability list can narrow a preset further. These presets never elevate privileges: they are
-intersected with the machine's Client policy and run as its operating-system user. Manual
-filesystem capabilities apply across that machine. Exact `process.exec` and Docker requests remain
-available through Agent, MCP, and API flows instead of exposing low-level program arguments or
-container restrictions in this form. A manual Session is approved by its creator and opens
+The capability list can narrow a preset further. Presets are intersected with the machine's Client
+policy and normally run as its operating-system user. If the machine owner explicitly enabled
+passwordless sudo, Shell access and Full access can reach root and the form shows a warning. Manual
+filesystem capabilities still run without automatic elevation. Exact `process.exec` and Docker
+requests remain available through Agent, MCP, and API flows instead of exposing low-level program
+arguments or container restrictions in this form. A manual Session is approved by its creator and opens
 immediately when that Agent has an active MCP installation. Otherwise, the Agent claims the
 approved request when it next connects.
 

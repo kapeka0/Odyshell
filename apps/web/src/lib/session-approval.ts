@@ -10,7 +10,11 @@ export type SessionApproval = {
   predecessorSessionId: string | null;
   scopes: Array<
     SessionMachineScope & {
-      machine: { id: string; name: string };
+      machine: {
+        id: string;
+        name: string;
+        privilegeEscalation: "none" | "sudo" | "unknown";
+      };
       readiness: { ready: true } | { ready: false; reason: string };
     }
   >;

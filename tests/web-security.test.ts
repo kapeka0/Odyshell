@@ -1207,4 +1207,33 @@ describe("dashboard navigation performance boundary", () => {
     expect(cloudApi).toContain("createdAt: string;");
     expect(server).toContain("createdAt: isoTimestamp(agent.createdAt)");
   });
+
+  it("shows locally enabled sudo before a process Session is approved", () => {
+    const webRoot = resolve(process.cwd(), "apps/web/src");
+    const machineList = readFileSync(
+      resolve(webRoot, "components/machine-list.tsx"),
+      "utf8",
+    );
+    const createSession = readFileSync(
+      resolve(webRoot, "components/create-session-sheet.tsx"),
+      "utf8",
+    );
+    const approval = readFileSync(
+      resolve(webRoot, "components/session-approval.tsx"),
+      "utf8",
+    );
+    const server = readFileSync(
+      resolve(process.cwd(), "apps/server/src/index.ts"),
+      "utf8",
+    );
+
+    expect(machineList).toContain('label="Sudo"');
+    expect(machineList).toContain("machinePrivilegeEscalation(machine.runtime)");
+    expect(createSession).toContain("Root access possible");
+    expect(approval).toContain("rootAccessPossible");
+    expect(approval).toContain("passwordless sudo");
+    expect(server).toContain(
+      "privilegeEscalation: machinePrivilegeEscalation(machine?.runtime)",
+    );
+  });
 });

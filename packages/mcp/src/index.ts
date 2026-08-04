@@ -66,10 +66,10 @@ export function createApprovedMcpServer(
 ): McpServer {
   const operationNamespace = randomUUID();
   const server = new McpServer(
-    { name: "odyshell", version: "0.13.1" },
+    { name: "odyshell", version: "0.14.0" },
     {
       instructions:
-        "Inspect machines before choosing platform-specific operations. Before requesting authority, call sessions_list and reuse a ready Session that already covers the machine and action. session_request also reuses compatible authority server-side. Machine and Session results include platform, architecture, runner, capabilities and default shell. Prefer typed filesystem, Docker and process.exec operations. Request process.shell only for multi-step work that must use prior stdout or stderr; it grants broad shell access for a short Session, is never autoapproved and every command is audited. Show approval links verbatim, then call session_status. Always pass the explicit sessionId to operation_execute. Credentials stay inside Odyshell.",
+        "Inspect machines before choosing platform-specific operations. Before requesting authority, call sessions_list and reuse a ready Session that already covers the machine and action. session_request also reuses compatible authority server-side. Machine and Session results include platform, architecture, runner, capabilities, default shell and privilegeEscalation. Prefer typed filesystem, Docker and process.exec operations. Request process.shell only for multi-step work that must use prior stdout or stderr; it grants broad shell access for a short Session, is never autoapproved and every command is audited. When privilegeEscalation is sudo, explicitly mention root access in the Session title or purpose before requesting a sudo command. Show approval links verbatim, then call session_status. Always pass the explicit sessionId to operation_execute. Credentials stay inside Odyshell.",
     },
   );
 
@@ -78,7 +78,7 @@ export function createApprovedMcpServer(
     {
       title: "List Odyshell machines",
       description:
-        "List machines and inspect their description, platform, runner and effective capabilities before requesting platform-specific operations.",
+        "List machines and inspect their description, platform, runner, effective capabilities and privilege-escalation policy before requesting operations.",
       inputSchema: z.object({}),
       annotations: readOnlyAnnotations,
     },
@@ -102,7 +102,7 @@ export function createApprovedMcpServer(
     {
       title: "Request operation access",
       description:
-        "Call sessions_list first and reuse compatible ready authority. Otherwise request a temporary Session scoped to one or more operations; the Server performs a final reuse check before creating approval. Prefer structured operations. Use process.shell only when a multi-step task must inspect output before choosing the next command; it grants broad shell access, requires manual approval and remains temporary. Use machine platform and defaultShell metadata before composing OS-specific commands. If approval is required, show the returned link and follow nextAction.",
+        "Call sessions_list first and reuse compatible ready authority. Otherwise request a temporary Session scoped to one or more operations; the Server performs a final reuse check before creating approval. Prefer structured operations. Use process.shell only when a multi-step task must inspect output before choosing the next command; it grants broad shell access, requires manual approval and remains temporary. Use machine platform, defaultShell and privilegeEscalation metadata before composing OS-specific commands. If sudo is available, explicitly disclose intended root access in the title or purpose. If approval is required, show the returned link and follow nextAction.",
       inputSchema: z.object({
         operations: z
           .array(

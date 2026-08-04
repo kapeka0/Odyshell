@@ -5,6 +5,7 @@ import { mkdtemp } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
   clientConfigPathForProfile,
+  configureClientPrivilegeEscalation,
   listClientProfiles,
   removeAllClientProfiles,
   removeClientProfile,
@@ -181,6 +182,126 @@ describe("Client Profile removal", () => {
     );
     await expect(access(profileConfig)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(access(legacyConfig)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
+describe("Client Profile privilege escalation", () => {
+  it("keeps sudo blocked unless the local owner explicitly enables it", async () => {
+    const home = await mkdtemp(join(tmpdir(), "odyshell-profile-sudo-"));
+    const configPath = clientConfigPathForProfile("work", "linux", home, {});
+    await writeProfileConfig(configPath, "work", "server");
+    const events: string[] = [];
+
+    const result = await configureClientPrivilegeEscalation({
+      profileName: "work",
+      allow: true,
+      platform: "linux",
+      home,
+      environment: {},
+      verifyPasswordlessSudo: async () => {
+        events.push("verified");
+      },
+      applyService: async (path) => {
+        events.push(`applied:${path}`);
+      },
+    });
+
+    expect(result).toEqual({
+      profileName: "work",
+      configPath,
+      allowPrivilegeEscalation: true,
+    });
+    expect(events).toEqual(["verified", `applied:${configPath}`]);
+    const saved = JSON.parse(await readFile(configPath, "utf8"));
+    expect(saved.allowPrivilegeEscalation).toBe(true);
+    expect(saved.privateKeyPem).toBe("private-key");
+  });
+
+  it("fails closed when passwordless sudo is unavailable", async () => {
+    const home = await mkdtemp(join(tmpdir(), "odyshell-profile-sudo-deny-"));
+    const configPath = clientConfigPathForProfile("work", "linux", home, {});
+    await writeProfileConfig(configPath, "work", "server");
+
+    await expect(
+      configureClientPrivilegeEscalation({
+        profileName: "work",
+        allow: true,
+        platform: "linux",
+        home,
+        environment: {},
+        verifyPasswordlessSudo: async () => {
+          throw new Error("sudo requires a password");
+        },
+        applyService: async () => {
+          throw new Error("must not run");
+        },
+      }),
+    ).rejects.toThrow("sudo requires a password");
+
+    const saved = JSON.parse(await readFile(configPath, "utf8"));
+    expect(saved.allowPrivilegeEscalation).toBeUndefined();
+  });
+
+  it("refuses sudo for a Profile without a host runner", async () => {
+    const home = await mkdtemp(join(tmpdir(), "odyshell-profile-sudo-docker-"));
+    const configPath = clientConfigPathForProfile("work", "linux", home, {});
+    await writeProfileConfig(configPath, "work", "server");
+    const config = JSON.parse(await readFile(configPath, "utf8"));
+    config.profiles = {
+      container: {
+        runner: "docker",
+        image: "alpine:3.22",
+        network: "none",
+        workspaceRoot: "/workspace",
+        maxConcurrentSessions: 1,
+        maxOutputBytes: 1024,
+        maxSessionTtlSeconds: 300,
+        capabilities: ["process.exec"],
+      },
+    };
+    await writeFile(configPath, JSON.stringify(config), "utf8");
+
+    await expect(
+      configureClientPrivilegeEscalation({
+        profileName: "work",
+        allow: true,
+        platform: "linux",
+        home,
+        environment: {},
+        verifyPasswordlessSudo: async () => {
+          throw new Error("must not verify sudo");
+        },
+        applyService: async () => {
+          throw new Error("must not apply service");
+        },
+      }),
+    ).rejects.toThrow("Sudo access requires a host runner");
+  });
+
+  it("restores the secure policy when service regeneration fails", async () => {
+    const home = await mkdtemp(join(tmpdir(), "odyshell-profile-sudo-rollback-"));
+    const configPath = clientConfigPathForProfile("work", "linux", home, {});
+    await writeProfileConfig(configPath, "work", "server");
+    let applications = 0;
+
+    await expect(
+      configureClientPrivilegeEscalation({
+        profileName: "work",
+        allow: true,
+        platform: "linux",
+        home,
+        environment: {},
+        verifyPasswordlessSudo: async () => {},
+        applyService: async () => {
+          applications += 1;
+          if (applications === 1) throw new Error("systemd unavailable");
+        },
+      }),
+    ).rejects.toThrow("systemd unavailable");
+
+    const saved = JSON.parse(await readFile(configPath, "utf8"));
+    expect(saved.allowPrivilegeEscalation).toBeUndefined();
+    expect(applications).toBe(2);
   });
 });
 

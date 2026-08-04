@@ -687,7 +687,7 @@ export type AgentPolicyApprovalResult =
 
 export type SessionApprovalView = AgentSessionRequestRecord & {
   agentName: string;
-  machines: Array<{ id: string; name: string }>;
+  machines: Array<{ id: string; name: string; runtime?: unknown }>;
 };
 
 export type SessionApprovalResult =
@@ -5192,7 +5192,7 @@ export class PostgresDatabase {
     const scopes = request.scopes;
     const machines = await this.db
       .selectFrom("machines")
-      .select(["id", "name"])
+      .select(["id", "name", "runtime"])
       .where("workspaceId", "=", workspaceId)
       .where("id", "in", scopes.map((scope) => scope.machineId))
       .execute();
@@ -5200,7 +5200,11 @@ export class PostgresDatabase {
     return {
       ...agentSessionRequestRecord(request),
       agentName: request.agentName,
-      machines,
+      machines: machines.map((machine) => ({
+        id: machine.id,
+        name: machine.name,
+        ...(machine.runtime === null ? {} : { runtime: machine.runtime }),
+      })),
     };
   }
 

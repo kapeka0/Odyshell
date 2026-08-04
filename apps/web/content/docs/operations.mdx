@@ -51,7 +51,10 @@ shell syntax. Shell access permits multiple independent Operations for the Sessi
 does not create a persistent terminal or preserve `cd` and environment changes between commands.
 The Agent receives stdout and stderr live and may issue more Operations inside the same Session.
 The dashboard records sanitized commands and exit status, not output. Operations run with the
-permissions of the operating-system user running the Client.
+permissions of the operating-system user running the Client. Linux Profiles block privilege
+escalation unless their machine owner explicitly enables passwordless sudo. When enabled,
+`process.exec` can approve an exact sudo command and `process.shell` can run sudo for the Session
+duration; approval surfaces warn about possible root access.
 
 ## Docker
 

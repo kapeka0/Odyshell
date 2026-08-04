@@ -7,6 +7,7 @@ import { dirname, posix, resolve, win32 } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import process from "node:process";
+import { clientConfigSchema } from "@odyshell/protocol";
 import { defaultClientConfigPath } from "./platform.js";
 
 const execFileAsync = promisify(execFile);
@@ -291,6 +292,7 @@ export function renderLinuxUserService(options: {
   nodePath: string;
   cliPath: string;
   configPath: string;
+  allowPrivilegeEscalation?: boolean;
 }): string {
   return `[Unit]
 Description=Odyshell outbound machine client
@@ -303,7 +305,7 @@ ExecStart=${quoteSystemd(options.nodePath)} ${quoteSystemd(options.cliPath)} cli
 Restart=always
 RestartSec=3
 KillMode=control-group
-NoNewPrivileges=true
+NoNewPrivileges=${options.allowPrivilegeEscalation ? "false" : "true"}
 
 [Install]
 WantedBy=default.target
@@ -426,13 +428,22 @@ export async function installLinuxUserService(options: {
 }): Promise<{ servicePath: string; lingering: boolean | undefined }> {
   assertLinuxSystemd();
   const configPath = resolve(options.configPath);
-  await readFile(configPath, "utf8");
+  const parsed = clientConfigSchema.safeParse(
+    JSON.parse(await readFile(configPath, "utf8")),
+  );
+  if (!parsed.success) {
+    throw new Error(`Invalid Client configuration at ${configPath}`);
+  }
   const serviceName = linuxServiceNameForConfig(configPath);
   const servicePath = linuxUserServicePath(homedir(), process.env, serviceName);
   await mkdir(dirname(servicePath), { recursive: true });
   await writeFile(
     servicePath,
-    renderLinuxUserService({ ...options, configPath }),
+    renderLinuxUserService({
+      ...options,
+      configPath,
+      allowPrivilegeEscalation: parsed.data.allowPrivilegeEscalation,
+    }),
     { mode: 0o644 },
   );
   await activateLinuxUserService(serviceName);

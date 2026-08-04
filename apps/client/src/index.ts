@@ -36,7 +36,7 @@ import {
   normalizeServerUrl,
 } from "./platform.js";
 
-export const CLIENT_VERSION = "0.13.1";
+export const CLIENT_VERSION = "0.14.0";
 
 export {
   clientConfigPathForProfile,
@@ -89,9 +89,12 @@ export {
   windowsTaskNameForConfig,
 } from "./service.js";
 export {
+  configureClientPrivilegeEscalation,
   listClientProfiles,
   removeAllClientProfiles,
   removeClientProfile,
+  verifyPasswordlessSudo,
+  type ConfigureClientPrivilegeEscalationOptions,
   type ListedClientProfile,
   type ListClientProfilesOptions,
   type RemoveAllClientProfilesOptions,
@@ -178,6 +181,7 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
     machineName: options.machineName,
     privateKeyPem: privateKey,
     stateDirectory: resolve(dirname(configPath), "state"),
+    allowPrivilegeEscalation: false,
     profiles: {
       workspace: profile,
     },
@@ -194,6 +198,7 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
 export async function inspectClientRuntime(
   runners: Array<"host" | "docker"> = ["host"],
   profiles?: ClientConfig["profiles"],
+  allowPrivilegeEscalation = false,
 ): Promise<ClientRuntimeInfo> {
   const uniqueRunners = [...new Set(runners)];
   const runtime: ClientRuntimeInfo = {
@@ -203,6 +208,7 @@ export async function inspectClientRuntime(
       process.platform === "win32"
         ? (process.env.ComSpec ?? "cmd.exe")
         : (process.env.SHELL ?? "/bin/sh"),
+    privilegeEscalation: allowPrivilegeEscalation ? "sudo" : "none",
     nodeVersion: process.version,
     protocolVersion: PROTOCOL_VERSION,
     clientVersion: CLIENT_VERSION,
@@ -286,6 +292,7 @@ export class Client {
     this.runtime = await inspectClientRuntime(
       [...this.executors.keys()],
       this.config.profiles,
+      this.config.allowPrivilegeEscalation,
     );
     await Promise.all([...this.executors.values()].map((executor) => executor.cleanupOrphans()));
     await this.connect();

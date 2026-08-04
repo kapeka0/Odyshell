@@ -40,6 +40,7 @@ import {
   manualSessionSelectionIsValid,
   type ManualAccessPreset,
 } from "@/lib/manual-session-access";
+import { machinePrivilegeEscalation } from "@/lib/machine-platform";
 
 const durations = [
   { value: "300", label: "5 minutes" },
@@ -261,10 +262,20 @@ export function CreateSessionSheet() {
                   ))}
                 </div>
               </Field>
-              {capabilities.includes("process.shell") ? (
+              {capabilities.some((capability) => capability.startsWith("process.")) ? (
                 <Alert>
-                  <AlertTitle>Shell access</AlertTitle>
-                  <AlertDescription>Commands run as the local Client user until this Session expires.</AlertDescription>
+                  <AlertTitle>
+                    {machinePrivilegeEscalation(machine?.runtime) === "sudo"
+                      ? "Root access possible"
+                      : "Shell access"}
+                  </AlertTitle>
+                  <AlertDescription>
+                    {machinePrivilegeEscalation(machine?.runtime) === "sudo"
+                      ? "This machine allows passwordless sudo during the Session."
+                      : capabilities.includes("process.shell")
+                        ? "Commands run as the local Client user until this Session expires."
+                        : "Programs run as the local Client user until this Session expires."}
+                  </AlertDescription>
                 </Alert>
               ) : null}
             </FieldGroup>

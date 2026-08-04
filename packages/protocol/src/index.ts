@@ -675,6 +675,7 @@ export type ClientRuntimeInfo = {
   hostPlatform: HostPlatform;
   architecture: string;
   defaultShell: string;
+  privilegeEscalation?: "none" | "sudo";
   nodeVersion: string;
   /** Additive runtime metadata used for compatibility diagnostics. */
   protocolVersion?: number;
@@ -730,6 +731,7 @@ export const clientConfigSchema = z.object({
   machineName: z.string().min(1).max(128),
   privateKeyPem: z.string().min(1),
   stateDirectory: z.string().min(1).max(4096),
+  allowPrivilegeEscalation: z.boolean().default(false),
   profiles: z
     .record(z.string().min(1).max(64), clientProfileSchema)
     .refine((profiles) => Object.keys(profiles).length > 0, "At least one profile is required"),

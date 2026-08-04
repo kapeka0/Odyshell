@@ -130,7 +130,11 @@ Inspect the local Client Profiles and their background status:
 
 ```bash
 ods profiles ls
+ods profiles configure default --allow-sudo
 ```
+
+Linux Profiles block privilege escalation by default. Enabling sudo is a local,
+explicit policy change and requires passwordless sudo on that host.
 
 Check that the complete path to a machine is working:
 

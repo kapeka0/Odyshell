@@ -288,6 +288,14 @@ describe("client platform support", () => {
     );
     expect(unit).toContain("Restart=always");
     expect(unit).toContain("NoNewPrivileges=true");
+
+    const sudoUnit = renderLinuxUserService({
+      nodePath: "/usr/bin/node",
+      cliPath: "/opt/odyshell/dist/index.js",
+      configPath: "/home/ada/.config/odyshell/client.json",
+      allowPrivilegeEscalation: true,
+    });
+    expect(sudoUnit).toContain("NoNewPrivileges=false");
   });
 
   it("uses an isolated systemd service for every Client identity", () => {

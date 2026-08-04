@@ -14,6 +14,7 @@ import {
 import {
   CLIENT_VERSION,
   clientConfigPathForProfile,
+  configureClientPrivilegeEscalation,
   defaultClientConfigPath,
   clientServiceStatus,
   enrollClient,
@@ -70,7 +71,7 @@ const program = new Command();
 program
   .name("ods")
   .description("Agent-first access to private machines")
-  .version("0.13.1")
+  .version("0.14.0")
   .option("-j, --json", "emit stable JSON output")
   .option("--server <url>", "override the Odyshell server URL")
   .option("--workspace-id <id>", "select the administrator workspace")
@@ -1306,6 +1307,63 @@ profiles
     if (global.json) printJson(profile);
     else printClientProfiles([profile]);
   });
+
+profiles
+  .command("configure <name>")
+  .description("configure the local security policy for one Client Profile")
+  .option("--allow-sudo", "allow passwordless sudo from approved process Sessions")
+  .option("--deny-sudo", "block privilege escalation for process Sessions")
+  .action(
+    async (
+      name: string,
+      options: { allowSudo?: boolean; denySudo?: boolean },
+      command: Command,
+    ) => {
+      if (Boolean(options.allowSudo) === Boolean(options.denySudo)) {
+        throw new ExpectedError(
+          'Choose exactly one of "--allow-sudo" or "--deny-sudo".',
+          "client_profile_sudo_selection_required",
+        );
+      }
+      const global = globals(command);
+      let result;
+      try {
+        result = await configureClientPrivilegeEscalation({
+          profileName: name,
+          allow: options.allowSudo ?? false,
+          applyService: async (configPath) => {
+            await installClientService({
+              nodePath: process.execPath,
+              cliPath: fileURLToPath(import.meta.url),
+              configPath,
+            });
+          },
+        });
+      } catch (error) {
+        throw new ExpectedError(
+          `Could not update Client Profile "${name}": ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          "client_profile_sudo_update_failed",
+        );
+      }
+      if (global.json) {
+        printJson(result);
+        return;
+      }
+      console.log(`${pc.green("✓")} Updated Client Profile ${result.profileName}`);
+      console.log(
+        `  sudo     ${result.allowPrivilegeEscalation ? pc.yellow("allowed") : pc.dim("blocked")}`,
+      );
+      if (result.allowPrivilegeEscalation) {
+        console.log(
+          pc.yellow(
+            "  warning  Approved process Sessions can run commands as root",
+          ),
+        );
+      }
+    },
+  );
 
 profiles
   .command("remove <name>")

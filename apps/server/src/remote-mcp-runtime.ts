@@ -585,6 +585,7 @@ function mcpMachineExecutionFacts(runtime: unknown): {
   capabilities: Capability[] | null;
   clientVersion: string | null;
   defaultShell: string | null;
+  privilegeEscalation: "none" | "sudo" | null;
 } {
   if (!isRecord(runtime)) {
     return {
@@ -594,6 +595,7 @@ function mcpMachineExecutionFacts(runtime: unknown): {
       capabilities: null,
       clientVersion: null,
       defaultShell: null,
+      privilegeEscalation: null,
     };
   }
   const platform =
@@ -622,6 +624,11 @@ function mcpMachineExecutionFacts(runtime: unknown): {
     capabilities,
     clientVersion: safeRuntimeString(runtime.clientVersion),
     defaultShell: safeRuntimeString(runtime.defaultShell),
+    privilegeEscalation:
+      runtime.privilegeEscalation === "sudo" ||
+      runtime.privilegeEscalation === "none"
+        ? runtime.privilegeEscalation
+        : null,
   };
 }
 

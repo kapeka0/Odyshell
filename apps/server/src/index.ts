@@ -62,6 +62,7 @@ import {
 } from "./agent-sessions.js";
 import { clientCompatibility } from "./compatibility.js";
 import { ClientGateway } from "./gateway.js";
+import { machinePrivilegeEscalation } from "./machine-policy.js";
 import { dataRetentionPolicy } from "./privacy.js";
 import { registerRemoteMcp } from "./remote-mcp.js";
 import { createRemoteMcpRuntime } from "./remote-mcp-runtime.js";
@@ -2191,6 +2192,7 @@ app.post(
           machine: {
             id: scope.machineId,
             name: machine?.name ?? scope.machineId,
+            privilegeEscalation: machinePrivilegeEscalation(machine?.runtime),
           },
           readiness: gateway.isOnline(scope.machineId)
             ? { ready: true }

@@ -49,10 +49,11 @@ export function printClientProfiles(profiles: ListedClientProfile[]): void {
     return;
   }
   printTable(
-    ["PROFILE", "STATUS", "MACHINE", "SERVER"],
+    ["PROFILE", "STATUS", "SUDO", "MACHINE", "SERVER"],
     profiles.map((profile) => [
       profile.profileName,
       clientProfileStatus(profile),
+      profile.allowPrivilegeEscalation ? pc.yellow("allowed") : pc.dim("blocked"),
       profile.machineName ?? pc.dim("unknown"),
       profile.serverUrl ?? pc.dim("unknown"),
     ]),

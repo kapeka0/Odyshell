@@ -14,6 +14,15 @@ export function machineLocalCapabilities(runtime: unknown): Capability[] {
   return uniqueCapabilities(profile.capabilities);
 }
 
+export function machinePrivilegeEscalation(
+  runtime: unknown,
+): "none" | "sudo" | "unknown" {
+  if (!isRecord(runtime)) return "unknown";
+  if (runtime.privilegeEscalation === "sudo") return "sudo";
+  if (runtime.privilegeEscalation === "none") return "none";
+  return "unknown";
+}
+
 export function effectiveMachineCapabilities(
   runtime: unknown,
   capabilityPolicy: unknown,

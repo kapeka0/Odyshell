@@ -69,7 +69,7 @@ Session Credential stays in MCP memory and is never returned in a tool result.
 The approval-based workflow exposes eight tools:
 
 1. `machines_list` finds the target machine and reports its description, platform, architecture,
-   runner and effective capabilities.
+   runner, effective capabilities, and privilege-escalation policy.
 2. `machine_ping` checks the complete connection path.
 3. `sessions_list` returns pending requests and active Sessions. Call it before requesting access
    so existing ready authority can be reused after an interrupted response, tool-host restart, new
@@ -101,8 +101,10 @@ an opening status points back to `session_status` while the Client finishes open
 
 Agents should inspect `machines_list` before choosing commands. Machine, Session, and status
 results expose the machine description, allowlisted platform, architecture, runner, effective
-capabilities, and default shell so
+capabilities, default shell, and whether sudo is locally allowed so
 a Windows machine does not receive Linux-only commands such as `df -h`.
+Before requesting a sudo command, the Agent must disclose intended root access in the Session title
+or purpose so the approval is unambiguous.
 If an executable is unavailable, `operation_execute` directs the Agent back to `machines_list`
 instead of encouraging another platform guess.
 

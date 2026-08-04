@@ -52,6 +52,8 @@ List, inspect, or remove local Profiles:
 ```bash
 ods profiles ls
 ods profiles status personal
+ods profiles configure personal --allow-sudo
+ods profiles configure personal --deny-sudo
 ods profiles remove personal
 ```
 
@@ -80,7 +82,7 @@ ods --json exec raspberry -- uname -a
 - `ods exec`, `ods fs`, and `ods docker` request a narrowly scoped Session and perform one typed
   operation.
 - `ods session` inspects and operates an already approved Session.
-- `ods profiles` lists, inspects, and removes local Client Profiles.
+- `ods profiles` lists, inspects, configures, and removes local Client Profiles.
 - `ods client` diagnoses and updates the Client running on a private machine.
 - `ods audit` shows actions visible to the current agent.
 - `ods mcp` lets a signed-in agent request temporary access over MCP stdio.

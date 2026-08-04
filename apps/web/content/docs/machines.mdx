@@ -59,6 +59,17 @@ from the web. Machine editing can only choose a Server-side subset of that local
 Sessions must pass both boundaries; an existing immutable Session keeps its approved scope until
 it expires or is revoked.
 
+Linux Profiles also block privilege escalation by default. To let approved process Sessions use
+passwordless sudo, the machine owner must opt in locally:
+
+```bash
+ods profiles configure default --allow-sudo
+```
+
+The command verifies `sudo -n`, persists the setting, and restarts only that Profile. Restore the
+default with `ods profiles configure default --deny-sudo`. Machine details and MCP discovery report
+the current policy. Typed filesystem operations never gain sudo automatically.
+
 ## Client Profiles
 
 A host can run several named Client Profiles at the same time. Each Profile keeps an independent

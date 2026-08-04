@@ -69,6 +69,7 @@ describe("remote MCP security boundary", () => {
           protocolVersion: 1,
           executionRunners: ["host"],
           supportedCapabilities: ["process.exec", "fs.read"],
+          privilegeEscalation: "sudo",
           defaultShell: "cmd.exe",
           profiles: [
             {
@@ -97,6 +98,7 @@ describe("remote MCP security boundary", () => {
           capabilities: ["fs.read"],
           clientVersion: "0.10.2",
           defaultShell: "cmd.exe",
+          privilegeEscalation: "sudo",
           lastSeenAt: "1970-01-01T00:00:00.000Z",
         },
       ],
@@ -569,6 +571,7 @@ describe("remote MCP security boundary", () => {
               capabilities: ["process.exec"],
               clientVersion: null,
               defaultShell: "powershell.exe",
+              privilegeEscalation: null,
             },
           ],
         },

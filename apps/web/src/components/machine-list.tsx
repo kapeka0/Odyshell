@@ -31,6 +31,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
@@ -60,7 +61,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { capabilityGroups } from "@/lib/agent-access-options";
 import type { CloudMachine } from "@/lib/cloud-api";
-import { machinePlatform } from "@/lib/machine-platform";
+import {
+  machinePlatform,
+  machinePrivilegeEscalation,
+} from "@/lib/machine-platform";
 
 export function MachineList({
   machines,
@@ -409,6 +413,21 @@ function MachineActions({
             </Detail>
             <Detail label="Enrolled">
               {formatTimestamp(machine.enrolledAt)}
+            </Detail>
+            <Detail label="Sudo">
+              <Badge
+                variant={
+                  machinePrivilegeEscalation(machine.runtime) === "sudo"
+                    ? "warning"
+                    : "outline"
+                }
+              >
+                {machinePrivilegeEscalation(machine.runtime) === "sudo"
+                  ? "Allowed"
+                  : machinePrivilegeEscalation(machine.runtime) === "none"
+                    ? "Blocked"
+                    : "Unknown"}
+              </Badge>
             </Detail>
             <Detail label="Machine ID">
               <CopyableValue
