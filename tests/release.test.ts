@@ -162,6 +162,9 @@ describe("0.14.0 release contract", () => {
     expect(workflow).toContain("contents: write");
     expect(workflow).toContain("id-token: write");
     expect(workflow).not.toContain("NPM_TOKEN");
+    expect(workflow.indexOf("ODYSHELL_RELEASE_ARTIFACTS")).toBeGreaterThan(
+      workflow.indexOf("Publish verified npm packages"),
+    );
     expect(workflow).not.toMatch(/uses: actions\/.+@v\d/u);
     expect(workflow.match(/uses: actions\/.+@[a-f0-9]{40}/gu)).toHaveLength(2);
     expect(workflow.indexOf("pnpm test:e2e")).toBeLessThan(

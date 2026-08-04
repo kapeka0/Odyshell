@@ -134,6 +134,7 @@ describe("HostExecutor", () => {
   it("executes a scoped process from an absolute working directory", async () => {
     const absoluteCwd = await mkdtemp(join(tmpdir(), "odyshell-cwd-"));
     try {
+      const canonicalCwd = await realpath(absoluteCwd);
       await executor.closeSession(session);
       session = await executor.openSession(
         crypto.randomUUID(),
@@ -144,7 +145,7 @@ describe("HostExecutor", () => {
             programs: [{
               program: process.execPath,
               args: ["-e", "process.stdout.write(process.cwd())"],
-              cwd: { path: absoluteCwd, includeDescendants: false },
+              cwd: { path: canonicalCwd, includeDescendants: false },
             }],
           },
         },
@@ -159,7 +160,7 @@ describe("HostExecutor", () => {
           kind: "process.exec",
           program: process.execPath,
           args: ["-e", "process.stdout.write(process.cwd())"],
-          cwd: absoluteCwd,
+          cwd: canonicalCwd,
           env: {},
         },
         hooks({ stdout: (data) => output.push(data) }),
@@ -167,7 +168,7 @@ describe("HostExecutor", () => {
 
       expect((await running.done).exitCode).toBe(0);
       expect(await realpath(Buffer.concat(output).toString())).toBe(
-        await realpath(absoluteCwd),
+        canonicalCwd,
       );
     } finally {
       await rm(absoluteCwd, { recursive: true, force: true });

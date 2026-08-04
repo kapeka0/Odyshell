@@ -26,7 +26,6 @@ jobs:
     env:
       RELEASE_TAG: v${{ inputs.version }}
       RELEASE_VERSION: ${{ inputs.version }}
-      ODYSHELL_RELEASE_ARTIFACTS: ${{ runner.temp }}/odyshell-release
 
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -84,6 +83,8 @@ jobs:
           fi
           git push origin "refs/tags/$RELEASE_TAG"
       - name: Publish verified npm packages
+        env:
+          ODYSHELL_RELEASE_ARTIFACTS: ${{ runner.temp }}/odyshell-release
         run: node scripts/publish-release-packages.mjs "$RELEASE_TAG"
       - name: Create GitHub Release
         env:

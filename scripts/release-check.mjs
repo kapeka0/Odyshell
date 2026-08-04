@@ -14,7 +14,7 @@ await coordinatedReleaseVersion(version);
 
 const notesPath = resolve(repositoryRoot, `docs/releases/${version}.md`);
 const notes = await readFile(notesPath, "utf8");
-if (!notes.startsWith(`# Odyshell ${version}\n`)) {
+if (notes.split(/\r?\n/u, 1)[0] !== `# Odyshell ${version}`) {
   throw new Error(`${notesPath} does not start with the release title`);
 }
 
