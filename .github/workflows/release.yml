@@ -1,0 +1,105 @@
+name: Release
+run-name: Release v${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Coordinated version without the v prefix
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'kapeka0/Odyshell' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: Production
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      RELEASE_TAG: v${{ inputs.version }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      ODYSHELL_RELEASE_ARTIFACTS: ${{ runner.temp }}/odyshell-release
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: corepack enable
+      - name: Validate release contract
+        run: node scripts/release-check.mjs "$RELEASE_TAG"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm --filter @odyshell/web lint
+      - run: pnpm build
+      - name: Test public documentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter @odyshell/web start > "$RUNNER_TEMP/odyshell-web.log" 2>&1 &
+          web_pid=$!
+          trap 'kill "$web_pid" 2>/dev/null || true' EXIT
+          ready=false
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:3000/docs > /dev/null; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != true ]; then
+            cat "$RUNNER_TEMP/odyshell-web.log"
+            exit 1
+          fi
+          node scripts/docs-smoke.mjs
+      - run: pnpm test:e2e
+      - name: Create immutable release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --tags origin
+          if git rev-parse --verify "refs/tags/$RELEASE_TAG" > /dev/null 2>&1; then
+            existing_commit=$(git rev-list -n 1 "$RELEASE_TAG")
+            if [ "$existing_commit" != "$GITHUB_SHA" ]; then
+              echo "$RELEASE_TAG already points to $existing_commit instead of $GITHUB_SHA" >&2
+              exit 1
+            fi
+          else
+            git -c user.name=github-actions[bot] \
+              -c user.email=41898282+github-actions[bot]@users.noreply.github.com \
+              tag --annotate "$RELEASE_TAG" --message "Release $RELEASE_VERSION" "$GITHUB_SHA"
+          fi
+          git push origin "refs/tags/$RELEASE_TAG"
+      - name: Publish verified npm packages
+        run: node scripts/publish-release-packages.mjs "$RELEASE_TAG"
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            echo "$RELEASE_TAG already has a GitHub Release"
+          else
+            gh release create "$RELEASE_TAG" \
+              --verify-tag \
+              --title "Odyshell $RELEASE_VERSION" \
+              --notes-file "docs/releases/$RELEASE_VERSION.md"
+          fi
+      - name: Audit published release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/release-audit.mjs

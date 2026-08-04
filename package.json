@@ -9,6 +9,8 @@
     "test": "vitest run",
     "test:docs": "node scripts/docs-smoke.mjs",
     "test:e2e": "node scripts/e2e.mjs",
+    "release:check": "node scripts/release-check.mjs",
+    "release:audit": "node scripts/release-audit.mjs",
     "install:ods": "pnpm --filter @odyshell/client build && pnpm --filter @odyshell/cli build && npm install --global ./apps/cli",
     "dev:server": "pnpm --filter @odyshell/server dev",
     "dev:web": "pnpm --filter @odyshell/web dev",

@@ -12,20 +12,42 @@ protocol package.
 
 ## Release checklist
 
-1. Confirm no credentials, enrollment tokens, Client identities, local state, or environment files
-   are staged.
-2. Run `pnpm test`, `pnpm typecheck`, `pnpm build`, `pnpm test:docs`, and `pnpm test:e2e`.
-3. Confirm the E2E report covers Workspace isolation, expiry, revocation, replay, Local Policy,
-   migration failure, rollback safety, and secret leakage.
-4. Pack every public package into a temporary directory and inspect the archive contents.
-5. Publish protocol, SDK, then CLI with public access.
-6. Tag the verified commit and create a GitHub Release with compatibility and migration notes.
-7. Deploy the Server first. Confirm its migration and health before deploying the web app.
-8. Validate registration, approval, execution, Timeline, expiry, cancellation, and credential
+1. Prepare one commit on `main` with every coordinated package version and
+   `docs/releases/<version>.md`. Confirm no credentials, enrollment tokens, Client identities,
+   local state, or environment files are staged.
+2. Run `pnpm release:check`, push the commit, and wait for the cross-platform CI workflow.
+3. Deploy the Server first. Confirm its migration and health before deploying the web app.
+4. From the GitHub Actions page, run the `Release` workflow from `main` with the version number
+   and approve its protected `Production` environment.
+5. The workflow repeats type checking, tests, lint, build, documentation smoke tests and E2E;
+   packs protocol, SDK and CLI; creates the immutable tag; publishes the packages through npm
+   Trusted Publishing; creates the GitHub Release; and audits all public version surfaces.
+6. Validate registration, approval, execution, Timeline, expiry, cancellation, and credential
    revocation from a desktop and Raspberry Pi.
-9. If the Server migration fails, stop the rollout. Restore the pre-cutover PostgreSQL snapshot
+7. If the Server migration fails, stop the rollout. Restore the pre-cutover PostgreSQL snapshot
    only if no new Session was accepted; otherwise fix forward. A schema rollback must never
    reactivate revoked authority.
+
+Manual `npm publish`, release-tag pushes and GitHub Release creation are not supported. The
+release workflow is idempotent: it skips an existing package only when its SHA-512 integrity
+matches the package built from the release commit, and fails closed on any mismatch. A scheduled
+read-only audit compares the coordinated repository version with npm, the git tag and GitHub's
+latest release every day.
+
+## Trusted Publishing setup
+
+Each public npm package trusts only `.github/workflows/release.yml` in `kapeka0/Odyshell`, bound
+to the `Production` GitHub environment:
+
+```bash
+npm trust github @odyshell/protocol --file release.yml --repo kapeka0/Odyshell --env Production --yes
+npm trust github @odyshell/sdk --file release.yml --repo kapeka0/Odyshell --env Production --yes
+npm trust github @odyshell/cli --file release.yml --repo kapeka0/Odyshell --env Production --yes
+```
+
+After the trusted publishers are verified, configure npm publishing access to require two-factor
+authentication and disallow tokens. The workflow receives only a short-lived OIDC identity and
+the minimum GitHub permissions needed to create the tag and release.
 
 Release evidence belongs in the release notes and Linear ticket. Never paste plaintext
 credentials, operation content, or private infrastructure details into either.

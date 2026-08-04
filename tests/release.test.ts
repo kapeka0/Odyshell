@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 type PackageManifest = {
@@ -123,6 +125,99 @@ describe("0.14.0 release contract", () => {
         "utf8",
       ),
     ).not.toContain("not published");
+  });
+
+  it("rejects malformed release tags before packaging", () => {
+    const check = resolve(process.cwd(), "scripts/release-check.mjs");
+    expect(
+      JSON.parse(
+        execFileSync(process.execPath, [check, `v${releaseVersion}`], {
+          encoding: "utf8",
+        }),
+      ),
+    ).toMatchObject({ ok: true, tag: `v${releaseVersion}` });
+    expect(() =>
+      execFileSync(process.execPath, [check, `${releaseVersion};npm publish`], {
+        stdio: "pipe",
+      }),
+    ).toThrow();
+  });
+
+  it("publishes through one protected and idempotent release workflow", () => {
+    const root = process.cwd();
+    const workflow = readFileSync(
+      resolve(root, ".github/workflows/release.yml"),
+      "utf8",
+    );
+    const publisher = readFileSync(
+      resolve(root, "scripts/publish-release-packages.mjs"),
+      "utf8",
+    );
+    const shared = readFileSync(
+      resolve(root, "scripts/release-shared.mjs"),
+      "utf8",
+    );
+
+    expect(workflow).toContain("environment: Production");
+    expect(workflow).toContain("contents: write");
+    expect(workflow).toContain("id-token: write");
+    expect(workflow).not.toContain("NPM_TOKEN");
+    expect(workflow).not.toMatch(/uses: actions\/.+@v\d/u);
+    expect(workflow.match(/uses: actions\/.+@[a-f0-9]{40}/gu)).toHaveLength(2);
+    expect(workflow.indexOf("pnpm test:e2e")).toBeLessThan(
+      workflow.indexOf("Create immutable release tag"),
+    );
+    expect(workflow.indexOf("Publish verified npm packages")).toBeLessThan(
+      workflow.indexOf("Create GitHub Release"),
+    );
+    expect(workflow).toContain("--verify-tag");
+    expect(publisher).toContain("assertPublishedIntegrity");
+    expect(publisher).toContain('"publish"');
+    expect(shared).toContain("already published with different contents");
+    expect(shared).toContain("@odyshell/protocol");
+    expect(shared.indexOf("@odyshell/protocol")).toBeLessThan(
+      shared.indexOf("@odyshell/sdk"),
+    );
+    expect(shared.indexOf("@odyshell/sdk")).toBeLessThan(
+      shared.indexOf("@odyshell/cli"),
+    );
+
+    const sharedUrl = pathToFileURL(
+      resolve(root, "scripts/release-shared.mjs"),
+    ).href;
+    const verifyIntegrity = (actual: string) =>
+      execFileSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          `import { assertPublishedIntegrity } from ${JSON.stringify(sharedUrl)}; assertPublishedIntegrity("@odyshell/test@1.0.0", "sha512-expected", ${JSON.stringify(actual)});`,
+        ],
+        { stdio: "pipe" },
+      );
+    expect(() => verifyIntegrity("sha512-expected")).not.toThrow();
+    expect(() => verifyIntegrity("sha512-hostile")).toThrow();
+  });
+
+  it("audits release coherence with read-only GitHub permissions", () => {
+    const workflow = readFileSync(
+      resolve(process.cwd(), ".github/workflows/release-audit.yml"),
+      "utf8",
+    );
+    const audit = readFileSync(
+      resolve(process.cwd(), "scripts/release-audit.mjs"),
+      "utf8",
+    );
+
+    expect(workflow).toContain("schedule:");
+    expect(workflow).toContain("contents: read");
+    expect(workflow).not.toContain("contents: write");
+    expect(workflow).not.toContain("id-token: write");
+    expect(workflow).not.toMatch(/uses: actions\/.+@v\d/u);
+    expect(workflow.match(/uses: actions\/.+@[a-f0-9]{40}/gu)).toHaveLength(2);
+    expect(audit).toContain("releases/latest");
+    expect(audit).toContain("/latest");
+    expect(audit).toContain("refs/tags/");
   });
 });
 

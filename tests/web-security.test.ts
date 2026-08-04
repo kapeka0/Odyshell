@@ -853,9 +853,10 @@ describe("dashboard navigation performance boundary", () => {
     expect(agentList).not.toContain("Agent Access");
     expect(agentsPage).not.toContain('href="/dashboard/agents/add"');
     expect(machineForm).toContain("justify-end");
-    expect(machineForm.indexOf("Cancel")).toBeLessThan(
-      machineForm.lastIndexOf("Add\n                </Button>"),
-    );
+    const cancelAction = machineForm.search(/>\s*Cancel\s*<\/Link>/u);
+    const addAction = machineForm.search(/\sAdd\s*<\/Button>/u);
+    expect(cancelAction).toBeGreaterThan(-1);
+    expect(addAction).toBeGreaterThan(cancelAction);
     expect(machineForm).not.toContain("ArrowLeftIcon");
   });
 
