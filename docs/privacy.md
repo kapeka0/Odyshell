@@ -76,6 +76,13 @@ Odyshell Cloud should not require customers to buy long-term centralized storage
 Delivery uses bounded retries and a dead-letter state. Endpoint validation blocks loopback,
 private-network, link-local, and metadata-service destinations; redirects are not followed.
 
+## Website analytics
+
+The hosted Odyshell website uses Vercel Web Analytics for page-view counts and aggregate traffic
+information. Vercel describes this service as cookie-free and based on anonymized data. Odyshell
+does not emit custom analytics events containing credentials, operation payloads, Timeline data,
+command arguments, file paths, stdout, or stderr.
+
 ## Important limits
 
 - Operation content passes through the Server while the operation is active.

@@ -940,6 +940,24 @@ describe("dashboard navigation performance boundary", () => {
     expect(rootLayout).toContain("odyshell-square-dark.svg");
   });
 
+  it("loads page-view analytics once from the global Next.js boundary", () => {
+    const rootLayout = readFileSync(
+      resolve(process.cwd(), "apps/web/src/app/layout.tsx"),
+      "utf8",
+    );
+    const webManifest = JSON.parse(
+      readFileSync(resolve(process.cwd(), "apps/web/package.json"), "utf8"),
+    ) as { dependencies?: Record<string, string> };
+
+    expect(rootLayout).toContain(
+      'import { Analytics } from "@vercel/analytics/next"',
+    );
+    expect(rootLayout.match(/<Analytics \/>/gu)).toHaveLength(1);
+    expect(rootLayout).not.toContain("beforeSend=");
+    expect(rootLayout).not.toContain("track(");
+    expect(webManifest.dependencies?.["@vercel/analytics"]).toBe("^2.0.1");
+  });
+
   it("shows persistent Agents and temporary Sessions without leaking Timeline payloads", () => {
     const webRoot = resolve(process.cwd(), "apps/web/src");
     const canvas = readFileSync(
