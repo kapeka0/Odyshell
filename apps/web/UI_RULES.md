@@ -135,6 +135,8 @@ particular component, library or interaction pattern.
   internal value.
 - Default Input, Select and Button controls share one height and internal
   spacing scale. Compact variants use the same smaller scale.
+- Text areas follow the surrounding layout and never expose browser resize
+  handles.
 - Pending state stays visually attached to the initiating action. Completion
   feedback announces success or failure once without duplicating progress.
 - Identity-provider actions use the provider's recognizable mark beside a clear

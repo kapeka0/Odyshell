@@ -706,6 +706,23 @@ describe("dashboard navigation performance boundary", () => {
     expect(styles).toContain("--sidebar-active: oklch(0.22 0 0)");
   });
 
+  it("keeps every text area fixed to its surrounding layout", () => {
+    const webRoot = resolve(process.cwd(), "apps/web");
+    const styles = readFileSync(
+      resolve(webRoot, "src/app/globals.css"),
+      "utf8",
+    );
+    const interfaceRules = readFileSync(
+      resolve(webRoot, "UI_RULES.md"),
+      "utf8",
+    );
+
+    expect(styles).toMatch(/textarea\s*\{\s*resize:\s*none;/u);
+    expect(interfaceRules).toMatch(
+      /never expose browser resize\s+handles/u,
+    );
+  });
+
   it("keeps operational status colors semantic and fail-safe", () => {
     expect(statusTone("active")).toBe("success");
     expect(statusTone("recorded")).toBe("info");
