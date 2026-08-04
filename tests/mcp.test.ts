@@ -9,19 +9,74 @@ import {
   ApiError,
   type Odyshell,
   type OperationResult,
+  type ListedAgentSession,
 } from "../packages/sdk/src/index.js";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import type {
+  SessionMachineScope,
+} from "../packages/protocol/src/index.js";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
   createApprovedOdyshellMcpServer,
 } from "../apps/cli/src/mcp.js";
+import {
+  createApprovedMcpServer,
+  type ApprovedMcpSessionRequestInput,
+  type ApprovedMcpRuntime,
+} from "../packages/mcp/src/index.js";
 
 const closeCallbacks: Array<() => Promise<void>> = [];
+const localAgentIdentity = {
+  id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+  name: "Codex",
+};
+const localRequestId = "7d8730ef-075c-40d5-a72d-8101abe17260";
+const localSessionId = "c837dd55-fdf0-47bb-887f-e4f857245dc7";
+const localMachineId = "29f34f33-418c-4624-84c3-25818db42023";
+
+type JsonSchemaNode = {
+  additionalProperties?: boolean;
+  const?: unknown;
+  properties?: Record<string, JsonSchemaNode>;
+  [key: string]: unknown;
+};
+
+function findSchemaBranch(
+  value: unknown,
+  kind: string,
+): JsonSchemaNode | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const schema = value as JsonSchemaNode;
+  if (schema.properties?.kind?.const === kind) return schema;
+  for (const nested of Object.values(schema)) {
+    if (Array.isArray(nested)) {
+      for (const candidate of nested) {
+        const found = findSchemaBranch(candidate, kind);
+        if (found) return found;
+      }
+      continue;
+    }
+    const found = findSchemaBranch(nested, kind);
+    if (found) return found;
+  }
+  return undefined;
+}
 
 afterEach(async () => {
   await Promise.all(closeCallbacks.splice(0).map((close) => close()));
 });
 
 describe("Odyshell MCP server", () => {
+  it("excludes Host Shell commands from the operations request contract", () => {
+    type OperationsRequest = Extract<
+      ApprovedMcpSessionRequestInput,
+      { operations: unknown }
+    >;
+    type RequestedAction = OperationsRequest["operations"][number]["action"];
+    expectTypeOf<
+      Extract<RequestedAction, { kind: "host.shell" }>
+    >().toEqualTypeOf<never>();
+  });
+
   it("publishes the approval-based typed operation workflow", async () => {
     const ods = fakeApprovedOdyshell();
     const server = createApprovedOdyshellMcpServer(ods, {
@@ -52,6 +107,126 @@ describe("Odyshell MCP server", () => {
     expect(
       tools.find((tool) => tool.name === "session_request")?.description,
     ).toContain("Call sessions_list first");
+    expect(client.getInstructions()).toContain("dependent multi-command host work");
+    expect(client.getInstructions()).not.toContain("interactive multi-step");
+  });
+
+  it("publishes mutually exclusive typed and Host Shell request schemas", async () => {
+    const { client } = await connectServer(
+      createApprovedOdyshellMcpServer(fakeApprovedOdyshell(), localAgentIdentity),
+    );
+    const { tools } = await client.listTools();
+    const schema = tools.find((tool) => tool.name === "session_request")
+      ?.inputSchema as { oneOf?: Array<{ required?: string[] }> } | undefined;
+
+    expect(schema?.oneOf).toHaveLength(2);
+    expect(schema?.oneOf?.map((branch) => branch.required)).toEqual(
+      expect.arrayContaining([
+        expect.arrayContaining(["operations", "title"]),
+        expect.arrayContaining(["hostShell", "title"]),
+      ]),
+    );
+    expect(JSON.stringify(schema)).not.toContain('"const":"host.shell"');
+    expect(JSON.stringify(schema)).not.toContain('"env"');
+    expect(JSON.stringify(schema).match(/predecessorSessionId/gu)).toHaveLength(1);
+  });
+
+  it("publishes process execution without an environment property", async () => {
+    const { client } = await connectServer(
+      createApprovedOdyshellMcpServer(fakeApprovedOdyshell(), localAgentIdentity),
+    );
+    const { tools } = await client.listTools();
+    const operationSchema = tools.find(
+      (tool) => tool.name === "operation_execute",
+    )?.inputSchema;
+    const processSchema = findSchemaBranch(operationSchema, "process.exec");
+    const hostShellSchema = findSchemaBranch(operationSchema, "host.shell");
+
+    expect(processSchema).toBeDefined();
+    expect(processSchema?.properties).not.toHaveProperty("env");
+    expect(processSchema?.additionalProperties).toBe(false);
+    expect(hostShellSchema?.properties).toHaveProperty("env");
+  });
+
+  it("requests Host Shell authority without anticipating a command", async () => {
+    const request = vi.fn<ApprovedMcpRuntime["request"]>(async () => ({
+      id: "7d8730ef-075c-40d5-a72d-8101abe17260",
+      status: "pending",
+      approvalUrl: "https://odyshell.test/approve",
+      expiresAt: "2026-08-04T18:00:00.000Z",
+    }));
+    const runtime: ApprovedMcpRuntime = {
+      machines: async () => [],
+      ping: async () => ({ online: true }),
+      request,
+      sessions: async () => [],
+      status: async () => ({ status: "pending" }),
+      execute: async (input) => ({
+        operation: {
+          id: "server-operation-id",
+          sessionId: input.sessionId,
+          status: "succeeded",
+          exitCode: 0,
+          outputTruncated: false,
+        },
+        stdout: "",
+        stderr: "",
+      }),
+      complete: async () => ({ status: "completed" }),
+      timeline: async () => [],
+    };
+    const { client } = await connectServer(createApprovedMcpServer(runtime));
+
+    const result = await client.callTool({
+      name: "session_request",
+      arguments: {
+        hostShell: { machine: "desktop" },
+        predecessorSessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
+        title: "Escalate to Host Shell",
+      },
+    });
+
+    expect(result.isError, textOf(result)).not.toBe(true);
+    expect(request).toHaveBeenCalledWith({
+      hostShell: { machine: "desktop" },
+      predecessorSessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
+      title: "Escalate to Host Shell",
+      durationSeconds: 3_600,
+    });
+
+    for (const arguments_ of [
+      { title: "Missing request mode" },
+      {
+        title: "Ambiguous request mode",
+        hostShell: { machine: "desktop" },
+        operations: [{
+          machine: "desktop",
+          action: { kind: "fs.read", path: "README.md" },
+        }],
+      },
+      {
+        title: "Anticipated Host Shell command",
+        operations: [{
+          machine: "desktop",
+          action: { kind: "host.shell", command: "whoami" },
+        }],
+      },
+      {
+        title: "Typed predecessor request",
+        predecessorSessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
+        operations: [{
+          machine: "desktop",
+          action: { kind: "fs.read", path: "README.md" },
+        }],
+      },
+    ]) {
+      const invalid = await client.callTool({
+        name: "session_request",
+        arguments: arguments_,
+      });
+      expect(invalid.isError).toBe(true);
+    }
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
   it("recovers a Session request when the original tool response is lost", async () => {
@@ -124,7 +299,7 @@ describe("Odyshell MCP server", () => {
       compatible: true,
       upgradeRequired: false,
       clientVersion: "0.13.1",
-      protocolVersion: 2,
+      protocolVersion: 3,
     });
     const server = createApprovedOdyshellMcpServer(ods, {
       id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
@@ -243,6 +418,125 @@ describe("Odyshell MCP server", () => {
     expect(textOf(result)).not.toContain("ods_session_secret");
   });
 
+  it("reuses exact typed authority claimed by the same local MCP process", async () => {
+    const { ods, requestSession } = localClaimedMcpFixture(
+      localFilesystemScope(),
+    );
+    const { client } = await connectServer(
+      createApprovedOdyshellMcpServer(ods, localAgentIdentity),
+    );
+    await claimLocalSession(client);
+
+    const result = await requestLocalFile(client, "config/app.json");
+
+    expect(result.isError, textOf(result)).not.toBe(true);
+    expect(JSON.parse(textOf(result))).toMatchObject({
+      id: localSessionId,
+      sessionId: localSessionId,
+      status: "ready",
+      reused: true,
+    });
+    expect(requestSession).not.toHaveBeenCalled();
+
+    const differentScope = await requestLocalFile(client, "secrets.env");
+    expect(differentScope.isError, textOf(differentScope)).not.toBe(true);
+    expect(textOf(differentScope)).toContain("Approval required");
+    expect(requestSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses broad Host Shell authority claimed by the same local MCP process", async () => {
+    const { ods, requestSession } = localClaimedMcpFixture(
+      localHostShellScope(),
+    );
+    const { client } = await connectServer(
+      createApprovedOdyshellMcpServer(ods, localAgentIdentity),
+    );
+    await claimLocalSession(client);
+
+    const result = await client.callTool({
+      name: "session_request",
+      arguments: {
+        hostShell: { machine: "rpi5" },
+        title: "Continue host diagnostics",
+      },
+    });
+
+    expect(result.isError, textOf(result)).not.toBe(true);
+    expect(JSON.parse(textOf(result))).toMatchObject({
+      id: localSessionId,
+      sessionId: localSessionId,
+      status: "ready",
+      reused: true,
+    });
+    expect(requestSession).not.toHaveBeenCalled();
+  });
+
+  it("never reuses claimed authority for a linked Host Shell escalation", async () => {
+    const predecessorSessionId = "40d867e5-a2a1-4cd2-8753-9928b737dcfa";
+    const predecessor = localCanonicalSession(
+      predecessorSessionId,
+      [localFilesystemScope()],
+    );
+    const { ods, requestSession } = localClaimedMcpFixture(
+      localHostShellScope(),
+      { additionalSessions: [predecessor] },
+    );
+    const { client } = await connectServer(
+      createApprovedOdyshellMcpServer(ods, localAgentIdentity),
+    );
+    await claimLocalSession(client);
+
+    const result = await client.callTool({
+      name: "session_request",
+      arguments: {
+        hostShell: { machine: "rpi5" },
+        predecessorSessionId,
+        title: "Escalate configuration inspection",
+      },
+    });
+
+    expect(result.isError, textOf(result)).not.toBe(true);
+    expect(textOf(result)).toContain("Approval required");
+    expect(requestSession).toHaveBeenCalledWith(
+      expect.objectContaining({ predecessorSessionId }),
+    );
+  });
+
+  it("does not reuse local claimed authority across MCP process restarts", async () => {
+    const { ods, requestSession } = localClaimedMcpFixture(
+      localFilesystemScope(),
+    );
+    const first = await connectServer(
+      createApprovedOdyshellMcpServer(ods, localAgentIdentity),
+    );
+    await claimLocalSession(first.client);
+    const restarted = await connectServer(
+      createApprovedOdyshellMcpServer(ods, localAgentIdentity),
+    );
+
+    const result = await requestLocalFile(restarted.client, "config/app.json");
+
+    expect(result.isError, textOf(result)).not.toBe(true);
+    expect(textOf(result)).toContain("Approval required");
+    expect(requestSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when local Session state cannot be revalidated", async () => {
+    const { ods, requestSession } = localClaimedMcpFixture(
+      localFilesystemScope(),
+      { failSessionRevalidation: true },
+    );
+    const { client } = await connectServer(
+      createApprovedOdyshellMcpServer(ods, localAgentIdentity),
+    );
+    await claimLocalSession(client);
+
+    const result = await requestLocalFile(client, "config/app.json");
+
+    expect(result.isError).toBe(true);
+    expect(requestSession).not.toHaveBeenCalled();
+  });
+
   it("rejects a request that would broaden capability-path combinations", async () => {
     const server = createApprovedOdyshellMcpServer(fakeApprovedOdyshell(), {
       id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
@@ -296,8 +590,9 @@ describe("Odyshell MCP server", () => {
     const result = await client.callTool({
       name: "operation_execute",
       arguments: {
+        idempotencyKey: "a6e9dd35-5882-4167-a30b-9aa0382d2630",
         sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
-        machine: "machine-id",
+        machine: "rpi5",
         action: { kind: "fs.read", path: "config/app.json" },
       },
     });
@@ -307,14 +602,14 @@ describe("Odyshell MCP server", () => {
       "machine-id",
       { kind: "fs.read", path: "config/app.json" },
       {
-        timeoutSeconds: 120,
-        idempotencyKey: expect.stringMatching(/^[0-9a-f-]{36}$/u),
+        timeoutSeconds: 600,
+        idempotencyKey: "a6e9dd35-5882-4167-a30b-9aa0382d2630",
       },
     );
     expect(textOf(result)).not.toContain("ods_session_secret");
   });
 
-  it("owns Operation idempotency keys instead of asking the Agent to reuse them", async () => {
+  it("rejects operation_execute without an explicit UUID idempotency key", async () => {
     const execute = vi.fn(
       async (_machineId: string, _action: unknown, _options: unknown) =>
         successfulOperation("ok"),
@@ -329,41 +624,77 @@ describe("Odyshell MCP server", () => {
     const { client } = await connectServer(server);
     const { tools } = await client.listTools();
     const operationTool = tools.find((tool) => tool.name === "operation_execute");
-    expect(JSON.stringify(operationTool?.inputSchema)).not.toContain(
-      "operationId",
-    );
+    expect(JSON.stringify(operationTool?.inputSchema)).toContain("idempotencyKey");
     await client.callTool({
       name: "session_status",
       arguments: { requestId: "7d8730ef-075c-40d5-a72d-8101abe17260" },
     });
 
-    const first = await client.callTool({
+    const result = await client.callTool({
       name: "operation_execute",
       arguments: {
         sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
         machine: "machine-id",
-        action: { kind: "process.shell", command: "node -v" },
-        timeoutSeconds: 120,
-      },
-    });
-    const second = await client.callTool({
-      name: "operation_execute",
-      arguments: {
-        sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
-        machine: "machine-id",
-        action: { kind: "process.shell", command: "npm -v" },
+        action: { kind: "host.shell", command: "node -v" },
         timeoutSeconds: 120,
       },
     });
 
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("idempotencyKey");
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("forwards the same UUID on retry and a new UUID for identical new work", async () => {
+    const execute = vi.fn(
+      async (_machineId: string, _action: unknown, _options: unknown) =>
+        successfulOperation("ok"),
+    );
+    const { client } = await connectServer(
+      createApprovedOdyshellMcpServer(
+        fakeApprovedOdyshell({ execute }),
+        localAgentIdentity,
+      ),
+    );
+    await client.callTool({
+      name: "session_status",
+      arguments: { requestId: localRequestId },
+    });
+    const retryKey = "a6e9dd35-5882-4167-a30b-9aa0382d2630";
+    const newKey = "2bb990a0-beb5-45ac-9086-88cdb3e579a6";
+    const logicalOperation = {
+      sessionId: localSessionId,
+      machine: "machine-id",
+      action: { kind: "host.shell" as const, command: "node -v" },
+      timeoutSeconds: 120,
+    };
+
+    const first = await client.callTool({
+      name: "operation_execute",
+      arguments: { idempotencyKey: retryKey, ...logicalOperation },
+    });
+    const retry = await client.callTool({
+      name: "operation_execute",
+      arguments: { idempotencyKey: retryKey, ...logicalOperation },
+    });
+    const newLogicalOperation = await client.callTool({
+      name: "operation_execute",
+      arguments: { idempotencyKey: newKey, ...logicalOperation },
+    });
+
     expect(first.isError).not.toBe(true);
-    expect(second.isError).not.toBe(true);
-    expect(execute).toHaveBeenCalledTimes(2);
-    const firstKey = execute.mock.calls[0]?.[2] as { idempotencyKey?: string };
-    const secondKey = execute.mock.calls[1]?.[2] as { idempotencyKey?: string };
-    expect(firstKey.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/u);
-    expect(secondKey.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/u);
-    expect(secondKey.idempotencyKey).not.toBe(firstKey.idempotencyKey);
+    expect(retry.isError).not.toBe(true);
+    expect(newLogicalOperation.isError).not.toBe(true);
+    expect(execute).toHaveBeenCalledTimes(3);
+    expect(
+      execute.mock.calls.map(
+        (call) => (call[2] as { idempotencyKey: string }).idempotencyKey,
+      ),
+    ).toEqual([retryKey, retryKey, newKey]);
+    expect(execute.mock.calls[0]?.[1]).toEqual(execute.mock.calls[2]?.[1]);
+    expect(textOf(first)).toContain(`"idempotencyKey": "${retryKey}"`);
+    expect(textOf(first)).toContain('"operationId": "operation-id"');
+    expect(retryKey).not.toBe("operation-id");
   });
 
   it("rejects an operation outside the claimed scope without leaking it", async () => {
@@ -386,6 +717,7 @@ describe("Odyshell MCP server", () => {
     const result = await client.callTool({
       name: "operation_execute",
       arguments: {
+        idempotencyKey: "f8ad5ef8-6a3f-4c92-b521-0a1a2642d797",
         sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
         machine: "machine-id",
         action: { kind: "fs.read", path: "secrets.env" },
@@ -418,6 +750,7 @@ describe("Odyshell MCP server", () => {
     const result = await client.callTool({
       name: "operation_execute",
       arguments: {
+        idempotencyKey: "6ca103cb-daad-481d-828f-b29b62348d6a",
         sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
         machine: "desktop",
         action: { kind: "process.exec", program: "df", args: ["-h"] },
@@ -511,6 +844,118 @@ async function connectServer(
   return { client };
 }
 
+function localFilesystemScope(): SessionMachineScope {
+  return {
+    machineId: localMachineId,
+    profile: "workspace",
+    capabilities: ["fs.read"],
+    restrictions: {
+      filesystem: {
+        paths: [{ path: "config/app.json", includeDescendants: false }],
+      },
+    },
+  };
+}
+
+function localHostShellScope(): SessionMachineScope {
+  return {
+    machineId: localMachineId,
+    profile: "workspace",
+    capabilities: ["host.shell"],
+    restrictions: {},
+  };
+}
+
+function localCanonicalSession(
+  sessionId: string,
+  scopes: SessionMachineScope[],
+): ListedAgentSession {
+  return {
+    id: sessionId,
+    agentId: localAgentIdentity.id,
+    agentName: localAgentIdentity.name,
+    title: "Local MCP authority",
+    status: "active",
+    expiresAt: "2099-08-04T19:00:00.000Z",
+    scopes,
+    targets: [
+      { machineId: localMachineId, machineName: "rpi5", status: "ready" },
+    ],
+    createdAt: "2099-08-04T18:00:00.000Z",
+    updatedAt: "2099-08-04T18:00:01.000Z",
+  };
+}
+
+function localClaimedMcpFixture(
+  scope: SessionMachineScope,
+  options: {
+    additionalSessions?: ListedAgentSession[];
+    failSessionRevalidation?: boolean;
+  } = {},
+): { ods: Odyshell; requestSession: ReturnType<typeof vi.fn> } {
+  const requestSession = vi.fn(async () => ({
+    id: "837544aa-ad50-4c8c-a3c8-8a41b25a14db",
+    status: "pending" as const,
+    approvalUrl: "https://odyshell.test/approve-new-session",
+    expiresAt: "2099-08-04T18:10:00.000Z",
+    scopes: [],
+  }));
+  const canonical = localCanonicalSession(localSessionId, [scope]);
+  let sessionReads = 0;
+  const ods = fakeApprovedOdyshell({
+    requestSession,
+    claim: async () => ({
+      sessionId: localSessionId,
+      sessionToken: "ods_session_secret",
+      scopes: [scope],
+      status: "opening" as const,
+      expiresAt: "2099-08-04T19:00:00.000Z",
+    }),
+    sessions: async () => {
+      sessionReads += 1;
+      if (options.failSessionRevalidation && sessionReads > 1) {
+        throw new Error("Session state unavailable");
+      }
+      return [canonical, ...(options.additionalSessions ?? [])];
+    },
+  });
+  vi.spyOn(ods, "resolveMachine").mockResolvedValue({
+    id: localMachineId,
+    name: "rpi5",
+    status: "online",
+    online: true,
+    lastSeenAt: null,
+    enrolledAt: "2099-08-04T18:00:00.000Z",
+    compatible: true,
+    upgradeRequired: false,
+    clientVersion: "0.14.0",
+    protocolVersion: 3,
+  });
+  return { ods, requestSession };
+}
+
+function claimLocalSession(client: Client): Promise<CallToolResult> {
+  return client.callTool({
+    name: "session_status",
+    arguments: { requestId: localRequestId },
+  });
+}
+
+function requestLocalFile(
+  client: Client,
+  path: string,
+): Promise<CallToolResult> {
+  return client.callTool({
+    name: "session_request",
+    arguments: {
+      operations: [
+        { machine: "rpi5", action: { kind: "fs.read", path } },
+      ],
+      title: `Read ${path}`,
+    },
+  });
+}
+
 function fakeApprovedOdyshell(
   overrides: {
     execute?: (
@@ -527,6 +972,7 @@ function fakeApprovedOdyshell(
     requests?: () => Promise<unknown[]>;
     sessions?: () => Promise<unknown[]>;
     requestSession?: (...args: unknown[]) => Promise<unknown>;
+    claim?: (...args: unknown[]) => Promise<unknown>;
   } = {},
 ): Odyshell {
   const requestAgentSession = overrides.requestSession ?? vi.fn(async () => ({
@@ -542,7 +988,7 @@ function fakeApprovedOdyshell(
     status: "approved" as const,
     expiresAt: "2026-07-29T18:10:00.000Z",
   }));
-  const claim = vi.fn(async () => ({
+  const claim = vi.fn(overrides.claim ?? (async () => ({
     sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
     sessionToken: "ods_session_secret",
     scopes: [
@@ -559,7 +1005,7 @@ function fakeApprovedOdyshell(
     ],
     status: "opening" as const,
     expiresAt: "2026-07-29T19:00:00.000Z",
-  }));
+  })));
   return {
     machines: vi.fn(async () => []),
     resolveMachine: vi.fn(async () => ({
@@ -618,7 +1064,6 @@ function successfulOperation(stdout: string): OperationResult {
         program: "printf",
         args: [],
         cwd: ".",
-        env: {},
       },
       status: "succeeded",
       exitCode: 0,

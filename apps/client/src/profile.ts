@@ -195,16 +195,26 @@ export async function configureClientPrivilegeEscalation(
 }
 
 export async function verifyPasswordlessSudo(): Promise<void> {
+  if (await passwordlessSudoAvailable()) return;
+  throw new Error(
+    "Passwordless sudo is unavailable. Configure a narrow NOPASSWD sudoers policy before enabling sudo access.",
+  );
+}
+
+export async function passwordlessSudoAvailable(): Promise<boolean> {
   try {
-    await execFileAsync("sudo", ["-n", "true"], {
+    const { stdout, stderr } = await execFileAsync("sudo", ["-n", "-l"], {
       windowsHide: true,
       timeout: 10_000,
     });
+    return sudoListingGrantsPasswordlessCommand(`${stdout}\n${stderr}`);
   } catch {
-    throw new Error(
-      "Passwordless sudo is unavailable. Configure a narrow NOPASSWD sudoers policy before enabling sudo access.",
-    );
+    return false;
   }
+}
+
+export function sudoListingGrantsPasswordlessCommand(listing: string): boolean {
+  return /(?:^|\s)NOPASSWD\s*:/mu.test(listing);
 }
 
 export async function removeClientProfile(

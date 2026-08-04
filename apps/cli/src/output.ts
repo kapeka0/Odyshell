@@ -141,7 +141,16 @@ export function operationJson(operation: Operation): Record<string, unknown> {
 export function colorStatus(status: string): string {
   if (["active", "ready", "online", "succeeded"].includes(status)) return pc.green(status);
   if (["failed", "timed_out", "execution_unknown"].includes(status)) return pc.red(status);
-  if (["opening", "queued", "delivered", "running", "closing"].includes(status)) {
+  if (
+    [
+      "opening",
+      "queued",
+      "delivered",
+      "running",
+      "cancellation_requested",
+      "closing",
+    ].includes(status)
+  ) {
     return pc.yellow(status);
   }
   return pc.dim(status);

@@ -11,6 +11,28 @@ defines capabilities, Session requests, typed process, filesystem and Docker Ope
 messages exchanged between the Server and Client. It also defines the strict Human, Agent, and
 task Session identity contracts used by the current authority model.
 
+The `host.shell` capability is intentionally available only to host Client Profiles. Its action
+accepts one command, an optional working directory (`.` means the Client Profile home),
+per-command environment variables, and up to 1 MiB of base64-encoded standard input. Operation
+requests default to a 600-second timeout and 1 MiB of output; the timeout may be requested up to
+24 hours and is reduced by the Server to the Session lifetime remaining.
+
+The executor supplies an allowlisted base environment rather than inheriting every Client process
+variable. Explicit environment values apply only to that Operation and are never persisted; a
+POSIX login shell can still load same-user startup files. Graceful cancellation terminates the
+process group, but an abrupt Client crash can leave a detached POSIX command running without a
+separate Operation supervisor. Reconciliation reports that result as unknown.
+
+Host Profiles operate from the Client process home and do not configure a filesystem root.
+Docker Profiles instead require an explicit `mountSource`. Every Profile defaults to four
+concurrent Operations and a local one-hour Operation timeout ceiling.
+
+Protocol v3 is a breaking Client configuration upgrade. Protocol v2 Profiles are not migrated:
+remove and re-enroll them. A host Profile must omit the obsolete `workspaceRoot` field and starts
+relative work in the operating-system user's Home. A Docker Profile must provide `mountSource`.
+Do not copy or hand-edit an old Profile into the v3 shape because re-enrollment also replaces its
+local identity and state.
+
 The package keeps both sides aligned without containing transport, authentication, or execution
 logic.
 

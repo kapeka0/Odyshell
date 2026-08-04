@@ -186,7 +186,7 @@ Deliver:
 - automatic policy intersection for Session Requests;
 - manual fallback for out-of-policy requests.
 
-`process.shell` always follows the manual path.
+`host.shell` always follows the manual path and remains separate from structured access presets.
 
 ## Vertical 6: Managed Agents
 
@@ -246,8 +246,9 @@ Sink delivery requires:
 - response-body and error redaction.
 
 Operational and Diagnostic stdout and stderr can be reconstructed from temporary Operation
-delivery data for the Timeline or an independent Event Sink. They are not copied into durable
-Timeline events and disappear when that temporary data expires.
+delivery data for the Session Timeline. They are not copied into durable Timeline events and
+disappear when that temporary data expires. Event Sinks never export command text, stdout, stderr,
+environment values, or standard input at any detail level.
 
 ## Documentation rollout
 

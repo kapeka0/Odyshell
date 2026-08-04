@@ -11,22 +11,23 @@ describe("HostExecutor", () => {
   let workspace: string;
   let executor: HostExecutor;
   let session: RunningSession;
-  const profile = (root: string): HostClientProfile => ({
+  const profile = (_root: string): HostClientProfile => ({
     runner: "host",
-    workspaceRoot: root,
     maxSessionTtlSeconds: 300,
     maxConcurrentSessions: 2,
+    maxConcurrentOperations: 4,
+    maxOperationTimeoutSeconds: 60,
     maxOutputBytes: 1024 * 1024,
-    capabilities: ["process.exec", "fs.write", "fs.read", "fs.search"],
+    capabilities: ["process.exec", "host.shell", "fs.write", "fs.read", "fs.search"],
   });
 
   beforeEach(async () => {
     workspace = await mkdtemp(join(tmpdir(), "odyshell-host-"));
-    executor = new HostExecutor();
+    executor = new HostExecutor({ homeDirectory: workspace });
     session = await executor.openSession(
       crypto.randomUUID(),
       profile(workspace),
-      ["process.exec", "fs.write", "fs.read", "fs.search"],
+      ["process.exec", "host.shell", "fs.write", "fs.read", "fs.search"],
       undefined,
       new Date(Date.now() + 60_000),
       () => {},
@@ -38,7 +39,7 @@ describe("HostExecutor", () => {
     await rm(workspace, { recursive: true, force: true });
   });
 
-  it("executes a structured process in the configured host workspace", async () => {
+  it("executes a structured process relative to the account Home", async () => {
     const output: Buffer[] = [];
     const running = await executor.execute(
       crypto.randomUUID(),
@@ -48,7 +49,6 @@ describe("HostExecutor", () => {
         program: process.execPath,
         args: ["-e", "process.stdout.write(process.cwd())"],
         cwd: ".",
-        env: {},
       },
       hooks({ stdout: (data) => output.push(data) }),
     );
@@ -57,6 +57,239 @@ describe("HostExecutor", () => {
     expect(await realpath(Buffer.concat(output).toString())).toBe(
       await realpath(resolve(workspace)),
     );
+  });
+
+  it("runs each host shell command in a fresh login shell rooted at the account Home", async () => {
+    const environmentKey = `ODYSHELL_HOST_SHELL_${crypto.randomUUID().replaceAll("-", "")}`;
+    const inheritedSecretKey = `ODYSHELL_SECRET_${crypto.randomUUID().replaceAll("-", "")}`;
+    const input = Buffer.from("input from the operation");
+    await executor.closeSession(session);
+    executor = new HostExecutor({
+      homeDirectory: workspace,
+      environment: { ...process.env, [inheritedSecretKey]: "must-not-inherit" },
+      shell: {
+        program: process.execPath,
+        argsForCommand: (command) => ["-e", command],
+      },
+    });
+    session = await executor.openSession(
+      crypto.randomUUID(),
+      profile(workspace),
+      ["host.shell"],
+      undefined,
+      new Date(Date.now() + 60_000),
+      () => {},
+    );
+    const firstOutput: Buffer[] = [];
+    const firstError: Buffer[] = [];
+    const first = await executor.execute(
+      crypto.randomUUID(),
+      session,
+      {
+        kind: "host.shell",
+        command: [
+          "const chunks = []",
+          "process.stdin.on('data', (chunk) => chunks.push(chunk))",
+          `process.stdin.on('end', () => process.stdout.write(JSON.stringify({ cwd: process.cwd(), environment: process.env[${JSON.stringify(environmentKey)}], inheritedSecret: process.env[${JSON.stringify(inheritedSecretKey)}], stdin: Buffer.concat(chunks).toString() })))`,
+        ].join(";"),
+        cwd: ".",
+        env: { [environmentKey]: "temporary" },
+        stdinBase64: input.toString("base64"),
+      },
+      hooks({
+        stdout: (data) => firstOutput.push(data),
+        stderr: (data) => firstError.push(data),
+      }),
+    );
+
+    expect(
+      (await first.done).exitCode,
+      Buffer.concat(firstError).toString(),
+    ).toBe(0);
+    const result = JSON.parse(Buffer.concat(firstOutput).toString()) as {
+      cwd: string;
+      environment: string;
+      inheritedSecret?: string;
+      stdin: string;
+    };
+    expect(await realpath(result.cwd)).toBe(await realpath(workspace));
+    expect(result.environment).toBe("temporary");
+    expect(result.inheritedSecret).toBeUndefined();
+    expect(result.stdin).toBe(input.toString());
+
+    const secondOutput: Buffer[] = [];
+    const second = await executor.execute(
+      crypto.randomUUID(),
+      session,
+      {
+        kind: "host.shell",
+        command: `process.stdout.write(process.env[${JSON.stringify(environmentKey)}] ?? 'missing')`,
+        cwd: ".",
+        env: {},
+      },
+      hooks({ stdout: (data) => secondOutput.push(data) }),
+    );
+
+    expect((await second.done).exitCode).toBe(0);
+    expect(Buffer.concat(secondOutput).toString()).toBe("missing");
+  });
+
+  it.skipIf(process.platform !== "win32")(
+    "passes quoted Host Shell commands to cmd.exe without rewriting them",
+    async () => {
+      const output: Buffer[] = [];
+      const running = await executor.execute(
+        crypto.randomUUID(),
+        session,
+        {
+          kind: "host.shell",
+          command: 'echo "quoted value"',
+          cwd: ".",
+          env: {},
+        },
+        hooks({ stdout: (data) => output.push(data) }),
+      );
+
+      expect((await running.done).exitCode).toBe(0);
+      expect(Buffer.concat(output).toString().trim()).toBe('"quoted value"');
+    },
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "lets explicit environment values override base keys case-insensitively",
+    async () => {
+      await executor.closeSession(session);
+      executor = new HostExecutor({
+        homeDirectory: workspace,
+        environment: { ...process.env, PATH: "base-value" },
+      });
+      session = await executor.openSession(
+        crypto.randomUUID(),
+        profile(workspace),
+        ["host.shell"],
+        undefined,
+        new Date(Date.now() + 60_000),
+        () => {},
+      );
+      const output: Buffer[] = [];
+      const running = await executor.execute(
+        crypto.randomUUID(),
+        session,
+        {
+          kind: "host.shell",
+          command: "echo %PATH%",
+          cwd: ".",
+          env: { Path: "explicit-value" },
+        },
+        hooks({ stdout: (data) => output.push(data) }),
+      );
+
+      expect((await running.done).exitCode).toBe(0);
+      expect(Buffer.concat(output).toString().trim()).toBe("explicit-value");
+    },
+  );
+
+  it("rejects malformed or oversized host shell stdin at the Client boundary", async () => {
+    await expect(
+      executor.execute(
+        crypto.randomUUID(),
+        session,
+        {
+          kind: "host.shell",
+          command: "echo ignored",
+          cwd: ".",
+          env: {},
+          stdinBase64: "not base64",
+        },
+        hooks(),
+      ),
+    ).rejects.toThrow("valid standard base64");
+
+    await expect(
+      executor.execute(
+        crypto.randomUUID(),
+        session,
+        {
+          kind: "host.shell",
+          command: "echo ignored",
+          cwd: ".",
+          env: {},
+          stdinBase64: Buffer.alloc(1024 * 1024 + 1).toString("base64"),
+        },
+        hooks(),
+      ),
+    ).rejects.toThrow("exceeds 1 MiB");
+  });
+
+  it("does not crash when a command exits before consuming bounded stdin", async () => {
+    await executor.closeSession(session);
+    executor = new HostExecutor({
+      homeDirectory: workspace,
+      shell: {
+        program: process.execPath,
+        argsForCommand: () => ["-e", "process.exit(0)"],
+      },
+    });
+    session = await executor.openSession(
+      crypto.randomUUID(),
+      profile(workspace),
+      ["host.shell"],
+      undefined,
+      new Date(Date.now() + 60_000),
+      () => {},
+    );
+
+    const running = await executor.execute(
+      crypto.randomUUID(),
+      session,
+      {
+        kind: "host.shell",
+        command: "ignored by the test shell",
+        cwd: ".",
+        env: {},
+        stdinBase64: Buffer.alloc(1024 * 1024).toString("base64"),
+      },
+      hooks(),
+    );
+
+    await expect(running.done).resolves.toEqual({ exitCode: 0 });
+    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
+  });
+
+  it("does not spawn a Host Shell command after its preparation deadline", async () => {
+    let shellInvocations = 0;
+    await executor.closeSession(session);
+    executor = new HostExecutor({
+      homeDirectory: workspace,
+      shell: {
+        program: process.execPath,
+        argsForCommand: () => {
+          shellInvocations += 1;
+          return ["-e", "process.exit(0)"];
+        },
+      },
+    });
+    session = await executor.openSession(
+      crypto.randomUUID(),
+      profile(workspace),
+      ["host.shell"],
+      undefined,
+      new Date(Date.now() + 60_000),
+      () => {},
+    );
+    const deadline = new AbortController();
+    deadline.abort();
+
+    await expect(
+      executor.execute(
+        crypto.randomUUID(),
+        session,
+        { kind: "host.shell", command: "must not run", cwd: ".", env: {} },
+        hooks(),
+        { signal: deadline.signal },
+      ),
+    ).rejects.toThrow("Operation deadline elapsed before process start");
+    expect(shellInvocations).toBe(0);
   });
 
   it("confirms an uncooperative process is gone before cancellation resolves", async () => {
@@ -75,7 +308,6 @@ describe("HostExecutor", () => {
           "process.on('SIGTERM',()=>{});process.stdout.write('ready');setInterval(()=>{},1000)",
         ],
         cwd: ".",
-        env: {},
       },
       hooks({ stdout: () => ready() }),
     );
@@ -103,13 +335,13 @@ describe("HostExecutor", () => {
           args: [
             "-e",
             [
-              "const { spawn } = require('node:child_process')",
-              "const child = spawn(process.execPath, ['-e', `process.on('SIGTERM',()=>{});process.stdout.write('grandchild:'+process.pid);setInterval(()=>{},1000)`], { stdio: ['ignore', 'inherit', 'inherit'] })",
-              "setInterval(()=>{},1000)",
+               "const { spawn } = require('node:child_process')",
+               "const child = spawn(process.execPath, ['-e', `process.on('SIGTERM',()=>{});process.stdout.write('grandchild:'+process.pid);setInterval(()=>{},1000)`], { stdio: ['ignore', 'inherit', 'inherit'] })",
+               "child.unref()",
+               "setTimeout(() => process.exit(0), 50)",
             ].join(";"),
           ],
           cwd: ".",
-          env: {},
         },
         hooks({
           stdout: (data) => {
@@ -119,10 +351,15 @@ describe("HostExecutor", () => {
             ready();
           },
         }),
-      );
-      await started;
+       );
+       await started;
+       await new Promise<void>((resolveExit) => {
+         if (running.child?.exitCode !== null) resolveExit();
+         else running.child?.once("exit", () => resolveExit());
+       });
 
-      await expect(running.cancel()).resolves.toBeUndefined();
+       await expect(running.cancel()).resolves.toBeUndefined();
+       await expect(running.done).resolves.toHaveProperty("exitCode");
       expect(grandchildPid).toBeDefined();
       expect(() => process.kill(grandchildPid!, 0)).toThrow(
         expect.objectContaining({ code: "ESRCH" }),
@@ -161,7 +398,6 @@ describe("HostExecutor", () => {
           program: process.execPath,
           args: ["-e", "process.stdout.write(process.cwd())"],
           cwd: canonicalCwd,
-          env: {},
         },
         hooks({ stdout: (data) => output.push(data) }),
       );
@@ -208,13 +444,56 @@ describe("HostExecutor", () => {
             program: process.execPath,
             args: ["-e", "process.stdout.write(process.cwd())"],
             cwd: linkedCwd,
-            env: {},
           },
           hooks(),
         ),
       ).rejects.toThrow("Resolved working directory differs from the approved path");
     } finally {
       await rm(approved, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("allows Host Shell to use a working directory reached through a symlink", async () => {
+    const outside = await mkdtemp(join(tmpdir(), "odyshell-shell-cwd-"));
+    const linkedCwd = join(workspace, "linked-cwd");
+    try {
+      await symlink(outside, linkedCwd, "junction");
+      await executor.closeSession(session);
+      executor = new HostExecutor({
+        homeDirectory: workspace,
+        shell: {
+          program: process.execPath,
+          argsForCommand: () => ["-e", "process.stdout.write(process.cwd())"],
+        },
+      });
+      session = await executor.openSession(
+        crypto.randomUUID(),
+        profile(workspace),
+        ["host.shell"],
+        undefined,
+        new Date(Date.now() + 60_000),
+        () => {},
+      );
+      const output: Buffer[] = [];
+
+      const running = await executor.execute(
+        crypto.randomUUID(),
+        session,
+        {
+          kind: "host.shell",
+          command: "ignored by the test shell",
+          cwd: linkedCwd,
+          env: {},
+        },
+        hooks({ stdout: (data) => output.push(data) }),
+      );
+
+      expect((await running.done).exitCode).toBe(0);
+      expect(await realpath(Buffer.concat(output).toString())).toBe(
+        await realpath(outside),
+      );
+    } finally {
       await rm(outside, { recursive: true, force: true });
     }
   });
@@ -284,49 +563,20 @@ describe("HostExecutor", () => {
           program: process.execPath,
           args: ["-e", "process.stdout.write('safe'); process.exit(1)"],
           cwd: ".",
-          env: {},
         },
         hooks(),
       ),
     ).rejects.toThrow("program_scope_denied");
-    await expect(
-      executor.execute(
-        crypto.randomUUID(),
-        session,
-        {
-          kind: "process.exec",
-          program: process.execPath,
-          args: ["-e", "process.stdout.write('safe')"],
-          cwd: ".",
-          env: { PATH: workspace },
-        },
-        hooks(),
-      ),
-    ).rejects.toThrow("not allowed by Session policy");
-    await expect(
-      executor.execute(
-        crypto.randomUUID(),
-        session,
-        {
-          kind: "process.exec",
-          program: process.execPath,
-          args: ["-e", "process.stdout.write('safe')"],
-          cwd: ".",
-          env: { BASH_ENV: "attacker-controlled" },
-        },
-        hooks(),
-      ),
-    ).rejects.toThrow("not allowed by Session policy");
   });
 
-  it("rejects a symlink that resolves outside the workspace", async () => {
+  it("rejects a symlink that resolves outside the account Home", async () => {
     const outside = await mkdtemp(join(tmpdir(), "odyshell-outside-"));
     try {
       await writeFile(join(outside, "secret.txt"), "secret");
       await symlink(outside, join(workspace, "linked"), "junction");
       await expect(
         execute({ kind: "fs.read", path: "linked/secret.txt" }),
-      ).rejects.toThrow("Resolved path escapes the configured workspace");
+      ).rejects.toThrow("Resolved path escapes the account Home");
     } finally {
       await rm(outside, { recursive: true, force: true });
     }
@@ -500,7 +750,6 @@ describe("HostExecutor", () => {
         program: process.execPath,
         args: ["-e", "setInterval(() => {}, 1000)"],
         cwd: ".",
-        env: {},
       },
       hooks(),
     );

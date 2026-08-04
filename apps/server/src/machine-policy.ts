@@ -53,6 +53,16 @@ export function machineScopesAllowed(
   return scopes.every((scope) => {
     const machine = byId.get(scope.machineId);
     if (!machine) return false;
+    // Host Shell is a structural property of a host Profile, not merely a
+    // capability bit. Reject Docker (and unknown) Profiles before creating
+    // approval state, even when the Server has no additional capability
+    // ceiling configured.
+    if (
+      scope.capabilities.includes("host.shell") &&
+      machineProfileRunner(machine.runtime, scope.profile) !== "host"
+    ) {
+      return false;
+    }
     // A null policy means the Server has not added a second ceiling. The
     // Client still enforces its Local Policy when opening the Session.
     if (
@@ -66,6 +76,20 @@ export function machineScopesAllowed(
     );
     return scope.capabilities.every((capability) => allowed.has(capability));
   });
+}
+
+function machineProfileRunner(
+  runtime: unknown,
+  profileName: string,
+): "host" | "docker" | null {
+  if (!isRecord(runtime) || !Array.isArray(runtime.profiles)) return null;
+  const profile = runtime.profiles.find(
+    (candidate) => isRecord(candidate) && candidate.name === profileName,
+  );
+  if (!isRecord(profile)) return null;
+  return profile.runner === "host" || profile.runner === "docker"
+    ? profile.runner
+    : null;
 }
 
 function uniqueCapabilities(value: unknown): Capability[] {

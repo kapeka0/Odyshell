@@ -7,6 +7,8 @@ import type {
   SessionMachineScope,
 } from "@odyshell/protocol";
 import {
+  DEFAULT_MAX_OUTPUT_BYTES,
+  DEFAULT_OPERATION_TIMEOUT_SECONDS,
   operationSessionScope,
   sessionScopeDecision,
 } from "@odyshell/protocol";
@@ -23,7 +25,6 @@ export type OdyshellConfig = {
 };
 
 export type OperationOptions = {
-  ttlSeconds?: number;
   timeoutSeconds?: number;
   maxOutputBytes?: number;
   idempotencyKey?: string;
@@ -38,54 +39,29 @@ export type OperationResult = {
   resultText: string;
 };
 
-type MachineOperation = OperationOptions & {
-  machine: string;
+export type HostShellSessionRequestInput = {
+  machineId: string;
+  title: string;
+  purpose?: string;
+  durationSeconds: number;
+  profile?: string;
+  predecessorSessionId?: string;
+  runId?: string;
 };
 
-export type ProcessExecInput = MachineOperation & {
-  program: string;
-  args?: string[];
-  cwd?: string;
-  env?: Record<string, string>;
+export type AgentPolicyScope = Omit<SessionMachineScope, "capabilities"> & {
+  capabilities: Array<Exclude<Capability, "host.shell">>;
 };
 
-export type ProcessShellInput = MachineOperation & {
+export type ClaimedHostShellInput = Pick<
+  OperationOptions,
+  "timeoutSeconds" | "maxOutputBytes" | "idempotencyKey" | "onEvent"
+> & {
+  machineId: string;
   command: string;
   cwd?: string;
   env?: Record<string, string>;
-};
-
-export type FilesystemPathInput = MachineOperation & {
-  path: string;
-};
-
-export type FilesystemListInput = MachineOperation & {
-  path?: string;
-};
-
-export type FilesystemSearchInput = MachineOperation & {
-  path?: string;
-  query: string;
-  maxResults?: number;
-};
-
-export type FilesystemWriteInput = FilesystemPathInput & {
-  content: string | Uint8Array;
-  createParents?: boolean;
-};
-
-export type FilesystemMkdirInput = FilesystemPathInput & {
-  recursive?: boolean;
-};
-
-export type FilesystemRemoveInput = FilesystemPathInput & {
-  recursive?: boolean;
-};
-
-export type DockerLogsInput = MachineOperation & {
-  container: string;
-  tail?: number;
-  timestamps?: boolean;
+  stdinBase64?: string;
 };
 
 export type Machine = {
@@ -220,6 +196,7 @@ export type AgentSessionRequestInput = {
   purpose?: string;
   scopes: SessionMachineScope[];
   durationSeconds: number;
+  predecessorSessionId?: string;
   runId?: string;
 };
 
@@ -343,7 +320,7 @@ export type OperationSessionRequestInput = {
   machineId: string;
   title: string;
   purpose?: string;
-  action: OperationAction;
+  action: Exclude<OperationAction, { kind: "host.shell" }>;
   durationSeconds: number;
   profile?: string;
   runId?: string;
@@ -376,6 +353,14 @@ export class AgentClient {
   }
 
   requestOperationSession(input: OperationSessionRequestInput) {
+    if ((input.action as OperationAction).kind === "host.shell") {
+      return Promise.reject(
+        new ExpectedError(
+          "Request Host Shell authority without anticipating a command.",
+          "host_shell_request_required",
+        ),
+      );
+    }
     return this.requestSession({
       title: input.title,
       ...(input.purpose ? { purpose: input.purpose } : {}),
@@ -387,6 +372,26 @@ export class AgentClient {
         ),
       ],
       durationSeconds: input.durationSeconds,
+      ...(input.runId ? { runId: input.runId } : {}),
+    });
+  }
+
+  requestHostShellSession(input: HostShellSessionRequestInput) {
+    return this.requestSession({
+      title: input.title,
+      ...(input.purpose ? { purpose: input.purpose } : {}),
+      scopes: [
+        {
+          machineId: input.machineId,
+          profile: input.profile ?? "workspace",
+          capabilities: ["host.shell"],
+          restrictions: {},
+        },
+      ],
+      durationSeconds: input.durationSeconds,
+      ...(input.predecessorSessionId
+        ? { predecessorSessionId: input.predecessorSessionId }
+        : {}),
       ...(input.runId ? { runId: input.runId } : {}),
     });
   }
@@ -443,6 +448,23 @@ export class AgentClient {
 export class SessionClient {
   private readonly scoped: Odyshell;
 
+  readonly host = {
+    shell: (input: ClaimedHostShellInput): Promise<OperationResult> =>
+      this.execute(
+        input.machineId,
+        {
+          kind: "host.shell",
+          command: input.command,
+          cwd: input.cwd ?? ".",
+          env: input.env ?? {},
+          ...(input.stdinBase64 === undefined
+            ? {}
+            : { stdinBase64: input.stdinBase64 }),
+        },
+        input,
+      ),
+  };
+
   constructor(
     serverUrl: string,
     readonly claim: ClaimedAgentSession,
@@ -463,6 +485,18 @@ export class SessionClient {
       "timeoutSeconds" | "maxOutputBytes" | "idempotencyKey" | "onEvent"
     > = {},
   ): Promise<OperationResult> {
+    const operation = await this.createOperation(machineId, action, options);
+    return this.waitForOperation(operation.id, options.onEvent);
+  }
+
+  async createOperation(
+    machineId: string,
+    action: OperationAction,
+    options: Pick<
+      OperationOptions,
+      "timeoutSeconds" | "maxOutputBytes" | "idempotencyKey"
+    > = {},
+  ): Promise<{ id: string; status: string }> {
     const scope = this.claim.scopes.find(
       (candidate) => candidate.machineId === machineId,
     );
@@ -480,125 +514,34 @@ export class SessionClient {
       );
     }
     await this.scoped.waitForSession(this.claim.sessionId);
-    const operation = await this.scoped.createOperation(
+    return this.scoped.createOperation(
       this.claim.sessionId,
       action,
-      options.timeoutSeconds ?? 120,
-      options.maxOutputBytes ?? 1024 * 1024,
+      options.timeoutSeconds ?? DEFAULT_OPERATION_TIMEOUT_SECONDS,
+      options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
       machineId,
       options.idempotencyKey,
     );
+  }
+
+  async waitForOperation(
+    operationId: string,
+    onEvent?: (event: OperationEvent) => void,
+  ): Promise<OperationResult> {
     return decodeOperation(
-      await this.scoped.waitForOperation(operation.id, options.onEvent),
+      await this.scoped.waitForOperation(operationId, onEvent),
     );
+  }
+
+  cancelOperation(
+    operationId: string,
+  ): Promise<{ id: string; status: string }> {
+    return this.scoped.cancelOperation(operationId);
   }
 }
 
 export class Odyshell {
   private readonly fetcher: typeof globalThis.fetch;
-
-  readonly process = {
-    exec: (input: ProcessExecInput): Promise<OperationResult> =>
-      this.execute(
-        input.machine,
-        "process.exec",
-        {
-          kind: "process.exec",
-          program: input.program,
-          args: input.args ?? [],
-          cwd: input.cwd ?? ".",
-          env: input.env ?? {},
-        },
-        input,
-      ),
-    shell: (input: ProcessShellInput): Promise<OperationResult> =>
-      this.execute(
-        input.machine,
-        "process.shell",
-        {
-          kind: "process.shell",
-          command: input.command,
-          cwd: input.cwd ?? ".",
-          env: input.env ?? {},
-        },
-        input,
-      ),
-  };
-
-  readonly fs = {
-    stat: (input: FilesystemPathInput): Promise<OperationResult> =>
-      this.execute(input.machine, "fs.stat", { kind: "fs.stat", path: input.path }, input),
-    list: (input: FilesystemListInput): Promise<OperationResult> =>
-      this.execute(
-        input.machine,
-        "fs.list",
-        { kind: "fs.list", path: input.path ?? "." },
-        input,
-      ),
-    search: (input: FilesystemSearchInput): Promise<OperationResult> =>
-      this.execute(
-        input.machine,
-        "fs.search",
-        {
-          kind: "fs.search",
-          path: input.path ?? ".",
-          query: input.query,
-          maxResults: input.maxResults ?? 100,
-        },
-        input,
-      ),
-    read: (input: FilesystemPathInput): Promise<OperationResult> =>
-      this.execute(input.machine, "fs.read", { kind: "fs.read", path: input.path }, input),
-    write: (input: FilesystemWriteInput): Promise<OperationResult> =>
-      this.execute(
-        input.machine,
-        "fs.write",
-        {
-          kind: "fs.write",
-          path: input.path,
-          contentBase64: Buffer.from(input.content).toString("base64"),
-          createParents: input.createParents ?? false,
-        },
-        input,
-      ),
-    mkdir: (input: FilesystemMkdirInput): Promise<OperationResult> =>
-      this.execute(
-        input.machine,
-        "fs.mkdir",
-        {
-          kind: "fs.mkdir",
-          path: input.path,
-          recursive: input.recursive ?? true,
-        },
-        input,
-      ),
-    remove: (input: FilesystemRemoveInput): Promise<OperationResult> =>
-      this.execute(
-        input.machine,
-        "fs.remove",
-        {
-          kind: "fs.remove",
-          path: input.path,
-          recursive: input.recursive ?? false,
-        },
-        input,
-      ),
-  };
-
-  readonly docker = {
-    logs: (input: DockerLogsInput): Promise<OperationResult> =>
-      this.execute(
-        input.machine,
-        "docker.logs",
-        {
-          kind: "docker.logs",
-          container: input.container,
-          tail: input.tail ?? 200,
-          timestamps: input.timestamps ?? false,
-        },
-        input,
-      ),
-  };
 
   constructor(private readonly config: OdyshellConfig) {
     this.fetcher = config.fetch ?? globalThis.fetch;
@@ -700,11 +643,21 @@ export class Odyshell {
 
   async proposeAgentPolicy(input: {
     kind?: "autoapproval" | "delegation";
-    scopes: SessionMachineScope[];
+    scopes: AgentPolicyScope[];
     maxSessionSeconds: number;
     maxManagedAgents?: number;
     validForSeconds: number;
   }): Promise<AgentPolicy> {
+    if (
+      input.scopes.some((scope) =>
+        (scope.capabilities as Capability[]).includes("host.shell"),
+      )
+    ) {
+      throw new ExpectedError(
+        "Host Shell cannot be included in autoapproval or delegation policies",
+        "unsafe_capability",
+      );
+    }
     return this.request("/v1/agent-policies", {
       method: "POST",
       credential: this.agentCredential(),
@@ -1068,29 +1021,13 @@ export class Odyshell {
     name: string;
     status: "revoked";
     revokedAt: string;
-    cancelledOperations: number;
+    operationsMarkedUnknown: number;
     closedSessions: number;
     disconnected: boolean;
   }> {
     return this.request(`/v1/admin/machines/${machineId}`, {
       method: "DELETE",
       admin: true,
-    });
-  }
-
-  async sessions(): Promise<Session[]> {
-    const response = await this.request<{ data: Session[] }>("/v1/sessions");
-    return response.data;
-  }
-
-  async createSession(
-    machineId: string,
-    capabilities: Capability[],
-    ttlSeconds: number,
-  ): Promise<Session> {
-    return this.request("/v1/sessions", {
-      method: "POST",
-      body: { machineId, profile: "workspace", ttlSeconds, capabilities },
     });
   }
 
@@ -1119,8 +1056,8 @@ export class Odyshell {
   async createOperation(
     sessionId: string,
     action: OperationAction,
-    timeoutSeconds = 120,
-    maxOutputBytes = 1024 * 1024,
+    timeoutSeconds = DEFAULT_OPERATION_TIMEOUT_SECONDS,
+    maxOutputBytes = DEFAULT_MAX_OUTPUT_BYTES,
     machineId?: string,
     idempotencyKey: string = randomUUID(),
   ): Promise<{ id: string; status: string }> {
@@ -1140,8 +1077,12 @@ export class Odyshell {
     return this.request(`/v1/operations/${operationId}`);
   }
 
-  async cancelOperation(operationId: string): Promise<{ id: string; status: string }> {
-    return this.request(`/v1/operations/${operationId}/cancel`, { method: "POST" });
+  async cancelOperation(
+    operationId: string,
+  ): Promise<{ id: string; status: string }> {
+    return this.request(`/v1/operations/${operationId}/cancel`, {
+      method: "POST",
+    });
   }
 
   async waitForOperation(
@@ -1156,36 +1097,14 @@ export class Odyshell {
         lastSequence = event.sequence;
         onEvent?.(event);
       }
-      if (!["queued", "delivered", "running"].includes(operation.status)) return operation;
+      if (
+        !["queued", "delivered", "running", "cancellation_requested"].includes(
+          operation.status,
+        )
+      ) {
+        return operation;
+      }
       await delay(150);
-    }
-  }
-
-  async execute(
-    machineReference: string,
-    capability: Capability,
-    action: OperationAction,
-    options: OperationOptions = {},
-  ): Promise<OperationResult> {
-    const machine = await this.resolveMachine(machineReference);
-    const created = await this.createSession(
-      machine.id,
-      [capability],
-      options.ttlSeconds ?? 600,
-    );
-    const session = await this.waitForSession(created.id);
-    try {
-      const operation = await this.createOperation(
-        session.id,
-        action,
-        options.timeoutSeconds ?? 120,
-        options.maxOutputBytes ?? 1024 * 1024,
-      );
-      return decodeOperation(
-        await this.waitForOperation(operation.id, options.onEvent),
-      );
-    } finally {
-      await this.closeSession(session.id).catch(() => undefined);
     }
   }
 

@@ -2,12 +2,14 @@
 
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
+import { HostShellWarning } from "@/components/host-shell-warning";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import type { SessionApproval } from "@/lib/session-approval";
 import { sessionApprovalErrorPath } from "@/lib/session-approval";
+import { executionWarningState } from "@/lib/host-shell-access";
 
 export function SessionApprovalForm({
   requestId,
@@ -18,10 +20,17 @@ export function SessionApprovalForm({
 }) {
   const router = useRouter();
   const [pending, setPending] = useState<"approve" | "deny" | null>(null);
+  const hostShellRequested = approval.scopes.some((scope) =>
+    executionWarningState(
+      scope.capabilities,
+      scope.machine.privilegeEscalation,
+    ).hostShell,
+  );
   const rootAccessPossible = approval.scopes.some(
-    (scope) =>
-      scope.machine.privilegeEscalation === "sudo" &&
-      scope.capabilities.some((capability) => capability.startsWith("process.")),
+    (scope) => executionWarningState(
+      scope.capabilities,
+      scope.machine.privilegeEscalation,
+    ).rootAccess,
   );
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -61,9 +70,10 @@ export function SessionApprovalForm({
     <form className="space-y-5" onSubmit={submit}>
       <dl className="space-y-3 text-sm">
         <ApprovalRow label="Agent" value={approval.agent.name} />
+        <ApprovalRow label="Task" value={approval.title} />
         {approval.predecessorSessionId ? (
           <ApprovalRow
-            label="Renews"
+            label="Replaces"
             value={
               <code className="break-all font-mono text-xs">
                 {approval.predecessorSessionId}
@@ -100,11 +110,12 @@ export function SessionApprovalForm({
           value={new Date(approval.expiresAt).toLocaleString()}
         />
       </dl>
+      {hostShellRequested ? <HostShellWarning /> : null}
       {rootAccessPossible ? (
         <Alert>
           <AlertTitle>Root access possible</AlertTitle>
           <AlertDescription>
-            This machine allows passwordless sudo from approved process Sessions.
+            This machine allows passwordless sudo during the Session.
           </AlertDescription>
         </Alert>
       ) : null}

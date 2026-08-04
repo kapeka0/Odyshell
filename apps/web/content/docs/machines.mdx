@@ -44,10 +44,10 @@ consumed by that refusal.
 
 ## Local policy
 
-Relative paths resolve from the directory where the Client Profile was first enrolled. Restricted
-Sessions may also request an exact absolute path or process working directory on a host profile;
-that path is shown explicitly for approval. Docker profiles remain limited to their mounted
-directory and cannot use absolute host paths.
+Relative host paths resolve from the Home directory of the operating-system user running the
+Client. Restricted Sessions may also request an exact absolute host path; that path is shown
+explicitly for approval. Docker Profiles instead use their Docker-specific mount source and cannot
+use absolute host paths.
 Capabilities are default-deny and comma-separated:
 
 ```bash
@@ -59,22 +59,27 @@ from the web. Machine editing can only choose a Server-side subset of that local
 Sessions must pass both boundaries; an existing immutable Session keeps its approved scope until
 it expires or is revoked.
 
-Linux Profiles also block privilege escalation by default. To let approved process Sessions use
-passwordless sudo, the machine owner must opt in locally:
+Installed Linux systemd user services set `NoNewPrivileges` while sudo is disabled for a Profile.
+To let approved process Sessions use passwordless sudo through that service, the machine owner
+must opt in locally:
 
 ```bash
 ods profiles configure default --allow-sudo
 ```
 
-The command verifies `sudo -n`, persists the setting, and restarts only that Profile. Restore the
-default with `ods profiles configure default --deny-sudo`. Machine details and MCP discovery report
-the current policy. Typed filesystem operations never gain sudo automatically.
+The command verifies `sudo -n`, persists the setting, regenerates the service without that
+restriction, and restarts only that Profile. Restore the installed-service restriction with
+`ods profiles configure default --deny-sudo`. A foreground `ods client start` process has no
+service-level `NoNewPrivileges` boundary, so the Client detects effective `sudo -n` and reports it
+to approval surfaces even when the Profile setting is disabled. Odyshell does not claim equivalent
+privilege-escalation enforcement on macOS or Windows. Typed filesystem operations never gain sudo
+automatically.
 
 ## Client Profiles
 
 A host can run several named Client Profiles at the same time. Each Profile keeps an independent
-Server, Workspace, machine identity, relative-path base, capabilities, state directory, and background
-service:
+Server, Workspace, machine identity, capabilities, state directory, and background service. Host
+Profiles share the Home directory and operating-system authority of the user that runs them:
 
 ```bash
 ods --server https://personal.example up --profile personal <enrollment-options>

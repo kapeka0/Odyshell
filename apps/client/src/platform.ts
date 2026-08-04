@@ -1,9 +1,34 @@
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { posix, win32 } from "node:path";
 import process from "node:process";
 import type { HostPlatform } from "@odyshell/protocol";
 
 export type SupportedNodePlatform = "linux" | "darwin" | "win32";
+
+export type HostAccountShell = {
+  program: string;
+  argsForCommand: (command: string) => string[];
+  windowsVerbatimArguments?: boolean;
+};
+
+export function hostAccountShell(
+  platform: SupportedNodePlatform = process.platform as SupportedNodePlatform,
+  environment: NodeJS.ProcessEnv = process.env,
+  loginShell: string | null = userInfo().shell,
+): HostAccountShell {
+  if (platform === "win32") {
+    return {
+      program: environment.ComSpec ?? "cmd.exe",
+      argsForCommand: (command) => ["/d", "/s", "/c", command],
+      windowsVerbatimArguments: true,
+    };
+  }
+  const program = loginShell || "/bin/sh";
+  return {
+    program,
+    argsForCommand: (command) => ["-l", "-c", command],
+  };
+}
 
 export function hostPlatform(platform: NodeJS.Platform = process.platform): HostPlatform {
   switch (platform) {

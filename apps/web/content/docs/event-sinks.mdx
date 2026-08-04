@@ -14,13 +14,13 @@ each retained Timeline event in a signed `ods.timeline.v1` envelope.
 Choose a detail level:
 
 - **Privacy-minimal** contains lifecycle, identity and scope metadata.
-- **Operational** can include commands, paths and available output with automatic secret redaction.
-- **Diagnostic** can also include available operation output while it remains in temporary
-  Operation storage.
+- **Operational** can add automatically redacted operation metadata such as paths.
+- **Diagnostic** can add raw non-command operation metadata and may contain secrets.
 
-Event Sink detail is configured independently from the Workspace Timeline level. Diagnostic output
-is delivered verbatim and may contain sensitive text produced by a command.
-Enable it only for an endpoint and retention policy you trust.
+Event Sink detail is configured independently from the Workspace Timeline level. Event Sinks never
+export command text, stdout, stderr, environment values or standard input at any detail level.
+Diagnostic metadata can still contain sensitive values. Enable it only for an endpoint and
+retention policy you trust.
 
 Each request includes:
 

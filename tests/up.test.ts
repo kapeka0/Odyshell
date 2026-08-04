@@ -1,5 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtemp } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
@@ -9,6 +9,18 @@ import {
 } from "../apps/cli/src/up.js";
 
 describe("ods up configuration safety", () => {
+  it("uses a Docker-only mount source and has no legacy common cwd option", async () => {
+    const source = await readFile(
+      resolve(process.cwd(), "apps/cli/src/index.ts"),
+      "utf8",
+    );
+    expect(source).toContain('.option("--mount-source <path>"');
+    expect(source).not.toContain('.option("--cwd <path>"');
+    expect(source).not.toContain("workspaceRoot:");
+    expect(source).toContain('{ kind: "host.shell"');
+    expect(source).not.toContain('{ kind: "process.shell"');
+  });
+
   it("fails before claiming the Client is running when its Server is unreachable", async () => {
     const networkError = new Error(
       "getaddrinfo EAI_AGAIN server-production.example",

@@ -64,8 +64,8 @@ Odyshell should remain:
 - enforceable at the Client, outside the model;
 - embeddable through API, SDK, CLI, and MCP.
 
-Shell execution can remain an explicit high-risk capability, but Odyshell must not claim to infer
-every side effect of an arbitrary shell command.
+Host Shell can remain an explicit high-risk capability, but Odyshell must disclose its same-user,
+unsandboxed boundary and must not claim to infer every side effect of an arbitrary command.
 
 ## Commercial model
 

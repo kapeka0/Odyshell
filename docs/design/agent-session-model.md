@@ -180,25 +180,35 @@ Typed restrictions narrow capability grants:
 - initial policy does not use regular expressions;
 - unknown or malformed restrictions fail closed.
 
-`process.shell` is intentionally broader than typed Operations. It grants shell commands for the
-Session duration, is never autoapproved, is bounded by the machine Local Policy, and records each
-command and status in the Timeline after secret redaction. It is appropriate for multi-step work
-where the Agent must inspect one result before choosing the next command. It does not create a
-persistent terminal or PTY: every Operation has an explicit working directory and deadline.
+`host.shell` is intentionally broader than typed Operations. It grants independent native shell
+commands for the Session duration, is never autoapproved or delegated, and is bounded by the
+machine Local Policy. Each Operation starts in the Client user's Home by default and runs with
+every resource that user can access; a per-command working directory does not narrow that authority.
+It does not create a sandbox, persistent terminal, PTY, or shared shell state, but its changes may
+persist after the Session ends. The process inherits an allowlisted Client base environment;
+explicit environment values are ephemeral to one Operation and never persisted. On POSIX, the
+login shell can still load the user's startup files. See the accepted
+[Host Shell specification](./host-shell.md).
 
-Manual dashboard creation uses intent-level presets rather than process restrictions. `Read only`
-maps to structured filesystem reads, `Shell access` maps only to `process.shell`, and `Full access`
-maps to `process.shell` plus structured filesystem reads and writes. Every mapping is intersected
-with the Client Local Policy. Linux privilege escalation remains blocked unless the machine owner
-explicitly enables passwordless sudo for that local Client Profile. When enabled, process Sessions
-can reach root and every creation or approval surface must disclose that fact. Exact `process.exec`
-program and argument restrictions remain an Agent, MCP, API, SDK, and CLI concern. The Server validates the
-manual allowlist independently; the dashboard is not an authorization boundary.
+Manual dashboard creation uses Read only as its sole structured convenience preset. Host Shell is
+a separate explicit selection and no preset bundles it with structured filesystem authority. A
+member may explicitly select both when the task requires both kinds of authority. Every selection
+is intersected with the Client Local Policy. An installed Linux service sets `NoNewPrivileges`
+unless the machine owner explicitly enables passwordless sudo for that local Client Profile. A
+foreground Client retains the user's actual authority and reports effective `sudo -n`, even when
+the Profile setting is disabled. When root access is effective, every creation or approval surface
+adds a root warning without replacing the same-user warning. Odyshell does not claim an equivalent
+enforcement boundary on macOS or Windows. Exact `process.exec` program and argument restrictions
+remain an Agent, MCP, API, SDK, and CLI concern. The Server validates the manual allowlist
+independently; the dashboard is not an authorization boundary.
 
 ### Duration and renewal
 
-Session presets are 5 minutes, 15 minutes, 1 hour, 4 hours, 8 hours, and 24 hours. The default is
-one hour, the maximum is 24 hours, and no Session can be permanent.
+The dashboard offers Session presets of 5 minutes, 15 minutes, 1 hour, 4 hours, 8 hours, and
+24 hours, with a 1-hour default. MCP also defaults to 1 hour. API, SDK, and MCP requests accept
+whole-second durations from 60 seconds through 24 hours; SDK callers provide the duration
+explicitly. Single-operation CLI commands, including `ods shell`, default to 5 minutes. No Session
+can be permanent.
 
 An active Session is never extended or widened. `renew` creates a successor Session with a new
 identifier, approval decision, and credential. It can preserve or reduce scope; expanding
@@ -226,9 +236,16 @@ work.
 Operation results; the Agent may report `succeeded` or `failed` with an optional summary, which is
 visibly marked as Agent-reported.
 
-`session_cancel`, expiry, and security revocation cancel active Operations. The Client enforces
-the deadline locally even when disconnected from the Server, and process execution must terminate
-the process group so children cannot survive the Session.
+`session_cancel`, expiry, and security revocation cancel active Operations. Transport loss alone
+does not: an already authorized Operation continues under its local timeout and Session deadline,
+the disconnected Client accepts no new Operations, output buffering remains bounded, and the result
+is reconciled after reauthentication. Output remains unconfirmed until the Server acknowledges the
+terminal result; disconnect or restart before that acknowledgement reports it as truncated.
+Process cancellation terminates the process group so children
+cannot survive the Session when the Client performs the cancellation. Without a separate Operation
+supervisor, an abrupt Client crash can leave a detached POSIX command running until it exits or is
+stopped externally; restart reconciliation records an unknown result rather than assuming it was
+terminated.
 
 ## Authorization
 
@@ -249,6 +266,7 @@ Capability from the Operation kind:
 ```text
 filesystem_read → fs.read
 process_exec    → process.exec
+host.shell      → host.shell
 docker_logs     → docker.logs
 ```
 
@@ -321,7 +339,7 @@ Normal rotation and emergency revocation are different operations:
 ## Machine boundary
 
 A physical host can run several Client Profiles, but each Client Profile belongs to exactly one
-Server and Workspace and has an independent identity, root, and Local Policy.
+Server and Workspace and has an independent identity, state, and Local Policy.
 
 ```text
 Physical desktop
@@ -330,8 +348,8 @@ Physical desktop
 ```
 
 The Local Policy can be observed and narrowed remotely, but it can only be expanded through a
-local machine action. A compromised Cloud account therefore cannot widen filesystem roots,
-capabilities, programs, or containers.
+local machine action. A compromised Cloud account therefore cannot add capabilities, programs,
+paths, or containers to that policy.
 
 ## MCP, API, SDK, CLI, and web
 
@@ -404,9 +422,10 @@ Each Session Timeline combines two visibly different sources:
 
 Privacy-minimal is the default. It retains Agent, human actor, machine, Operation kind, status or
 exit code, duration, and timestamps. It excludes commands, paths, stdout, stderr, file contents,
-credentials, authorization headers, and environment values. Operational adds commands, paths and
-temporarily retained output with automatic secret redaction. Diagnostic exposes raw temporary
-detail and may contain secrets.
+credentials, authorization headers, environment values, and standard input. Operational adds
+commands, paths and temporarily retained output with automatic secret redaction. Diagnostic exposes
+raw temporary detail and may contain secrets. Environment values and standard input are never
+persisted, and Event Sinks never export command text or output at any detail level.
 
 Timeline events are immutable and identify their actor as the Agent, the responsible human member,
 or Odyshell for automatic lifecycle changes. The web renders them chronologically and updates a
@@ -442,12 +461,16 @@ answers what security or administrative changes occurred across the Workspace.
 Event Sinks can select:
 
 - `minimal`: identifiers, targets, Operation kinds, results, and times;
-- `operational`: programs, arguments, paths, and containers;
-- `diagnostic`: temporarily retained stdout and stderr while Operation delivery data exists.
+- `operational`: automatically redacted non-command Operation metadata such as paths and
+  containers;
+- `diagnostic`: raw non-command Operation metadata, which may contain sensitive values.
+
+No Event Sink level exports command text, programs, arguments, stdout, stderr, environment values,
+or standard input.
 
 Structured credential fields, authorization headers, and environment variables are never sent.
-Diagnostic output is customer-provided content and may itself contain secrets. Sink endpoints are
-configured in Workspace Settings, receive signed events, and must be protected against private
+Diagnostic metadata is customer-provided content and may itself contain secrets. Sink endpoints
+are configured in Workspace Settings, receive signed events, and must be protected against private
 network targets and other SSRF destinations. Feature availability by commercial plan is deferred
 until the workflow is validated.
 
@@ -505,7 +528,7 @@ revoke only its installation without affecting other customers.
 - remotely expanding Local Policy;
 - implicit Session selection;
 - capabilities supplied by the caller at Operation time;
-- autoapproving `process.shell`;
+- autoapproving or delegating `host.shell`;
 - treating Agent-reported summaries as verified facts;
 - storing full session content by default;
 - deciding commercial plan boundaries before usage is validated.

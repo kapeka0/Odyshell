@@ -11,11 +11,12 @@ import {
 } from "@odyshell/protocol";
 import {
   type OperationExecutor,
+  type OperationExecutionContext,
   type OperationHooks,
   type RunningOperation,
   type RunningSession,
-  validateEnvironment,
   validateSessionPolicy,
+  assertOperationCanStart,
 } from "./executor.js";
 import {
   executeFilesystemOperation,
@@ -127,9 +128,9 @@ export class DockerRunner implements OperationExecutor {
     onExpire: () => void,
   ): Promise<RunningSession> {
     if (profile.runner !== "docker") throw new Error("DockerRunner requires a Docker profile");
-    await mkdir(profile.workspaceRoot, { recursive: true });
+    await mkdir(profile.mountSource, { recursive: true });
     const name = `odyshell-${sessionId}`;
-    const mountSource = resolve(profile.workspaceRoot);
+    const mountSource = resolve(profile.mountSource);
     const ttlMilliseconds = validateSessionPolicy(
       profile,
       capabilities,
@@ -189,7 +190,6 @@ export class DockerRunner implements OperationExecutor {
       id: sessionId,
       runner: "docker",
       runtimeId: containerId,
-      containerId,
       containerName: name,
       profile,
       capabilities: new Set(capabilities),
@@ -217,7 +217,12 @@ export class DockerRunner implements OperationExecutor {
     session: RunningSession,
     action: OperationAction,
     hooks: OperationHooks,
+    context: OperationExecutionContext = {},
   ): Promise<RunningOperation> {
+    assertOperationCanStart(context.signal);
+    if (session.profile.runner !== "docker") {
+      throw new Error("DockerRunner requires a Docker profile");
+    }
     const needed = capabilityForAction(action);
     if (!session.capabilities.has(needed)) throw new Error(`Capability ${needed} is not granted`);
     const restrictionDecision = session.restrictions
@@ -241,7 +246,7 @@ export class DockerRunner implements OperationExecutor {
         throw new Error("Absolute filesystem paths require a host execution profile");
       }
       const done = executeFilesystemOperation(
-        session.profile.workspaceRoot,
+        session.profile.mountSource,
         action,
         hooks,
         session.restrictions?.filesystem?.paths,
@@ -251,37 +256,26 @@ export class DockerRunner implements OperationExecutor {
     if (action.kind === "docker.logs") {
       throw new Error("docker.logs is unavailable inside a Docker execution profile");
     }
+    if (action.kind === "host.shell") {
+      throw new Error("host.shell is unavailable inside a Docker execution profile");
+    }
     const containerName = session.containerName;
     if (!containerName) throw new Error("Docker session has no container");
 
     const pidFile = `/tmp/odyshell-${operationId}.pid`;
     const dockerArgs = ["exec", "-i", "-w", containerWorkspacePath(action.cwd)];
-    validateEnvironment(action.env);
-    for (const [key, value] of Object.entries(action.env)) {
-      dockerArgs.push("-e", `${key}=${value}`);
-    }
     dockerArgs.push(containerName);
-    if (action.kind === "process.exec") {
-      dockerArgs.push(
-        "/bin/sh",
-        "-c",
-        'echo $$ > "$1"; shift; exec "$@"',
-        "odyshell",
-        pidFile,
-        action.program,
-        ...action.args,
-      );
-    } else {
-      dockerArgs.push(
-        "/bin/sh",
-        "-c",
-        'echo $$ > "$1"; shift; exec /bin/sh -lc "$1"',
-        "odyshell",
-        pidFile,
-        action.command,
-      );
-    }
+    dockerArgs.push(
+      "/bin/sh",
+      "-c",
+      'echo $$ > "$1"; shift; exec "$@"',
+      "odyshell",
+      pidFile,
+      action.program,
+      ...action.args,
+    );
 
+    assertOperationCanStart(context.signal);
     const child = spawn("docker", dockerArgs, {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,

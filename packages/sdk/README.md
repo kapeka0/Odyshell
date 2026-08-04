@@ -37,7 +37,6 @@ const request = await agent.requestOperationSession({
     program: "git",
     args: ["status", "--short"],
     cwd: ".",
-    env: {},
   },
 });
 ```
@@ -56,8 +55,11 @@ Store `identity.accessToken` only in the trusted runtime. It proves Agent identi
 Sessions, but cannot execute Operations. `rotateAgentCredential()` issues a successor with a
 bounded ten-minute overlap.
 
-The SDK supports typed process, filesystem, and Docker log operations. Permissions are still
-enforced by the Server, the Session scope, and the Client on the target machine.
+The SDK supports typed process, filesystem, and Docker log Operations plus separately approved
+Host Shell authority. Permissions are still enforced by the Server, the Session scope, and the
+Client on the target machine.
+It does not expose direct runtime Session creation or top-level `process`, `fs`, `docker`, or
+`execute` shortcuts: execution starts only from a claimed canonical Agent Session.
 
 After approval, claim once and execute with the Session client:
 
@@ -76,9 +78,32 @@ const result = await ods.claimedSession(claim).execute(machineId, {
   program: "git",
   args: ["status", "--short"],
   cwd: ".",
-  env: {},
 });
 ```
+
+When later commands depend on earlier results, request broad Host Shell authority without
+anticipating command text:
+
+```ts
+const shellRequest = await agent.requestHostShellSession({
+  machineId,
+  title: "Repair the development environment",
+  purpose: "Inspect failures and choose the next command from each result",
+  durationSeconds: 900,
+});
+
+// Show shellRequest.approvalUrl, wait for approval, then claim once.
+const shellClaim = await agent.claim(shellRequest.id);
+const shell = ods.claimedSession(shellClaim);
+await shell.host.shell({ machineId, command: "node --version" });
+await shell.host.shell({ machineId, command: "npm test" });
+```
+
+Each command is an independent Operation. It runs natively as the Client's operating-system user,
+starts in that user's Home by default, and shares no persistent shell process or state with the
+next command. Host Shell has no sandbox or PTY, is limited to host Profiles, and is never
+autoapproved or delegated. One unavailable command can fail while the approved Session remains
+usable for the next attempt.
 
 An unattended Agent can propose a bounded autoapproval policy:
 
@@ -94,7 +119,8 @@ console.log(policy.approvalUrl);
 
 The policy stays inactive until a workspace administrator approves that URL. Use
 `agentPolicies()`, `pauseAgentPolicy(id)`, and `revokeAgentPolicy(id)` to inspect or reduce future
-authority. Requests outside the ceiling still require human approval.
+authority. Requests outside the ceiling still require human approval. Autoapproval and Delegation
+Policy scopes cannot contain `host.shell`; every Host Shell request remains manual.
 
 An approved Delegation Policy lets the Independent Agent derive one level of Managed Agents:
 
@@ -132,7 +158,33 @@ await agent.complete(claim.sessionId, "succeeded", "Configuration verified");
 
 Completion is rejected while an Operation remains active. Use
 `ods.cancelAgentSession(claim.sessionId, agentId)` only to abort active work. Supply a stable
-`idempotencyKey` to `claimedSession.execute()` when the caller may retry the same request.
+`idempotencyKey` to `claimedSession.execute()` when the caller may retry the same request. Use an
+opaque, unique value and reuse it only for the exact same machine, action, requested timeout and
+output limit. Odyshell returns `idempotency_conflict` instead of replaying or dispatching when a
+retained field differs. A matching retry can redeliver a queued Operation with the same Operation
+id only when it has no transport-only input; the Client journal deduplicates it. Host Shell
+environment and stdin values are excluded from the persisted fingerprint, while a non-secret
+presence bit prevents adding or removing them on retry. Changed transient values passively return
+the first Operation and are never dispatched.
+
+Creation atomically reserves a domain-separated hash of the key in a payload-free registry shared
+across every machine in the canonical Session. The reservation remains through the control-event
+retention window after Operation payload purge, so a late retry fails closed instead of executing
+again. If no verifiable Client completion arrives by the Server deadline, the result becomes
+`execution_unknown`, not a claimed failure. Never reuse an idempotency key for a logically new
+Operation.
+
+Direct Operation cancellation is persisted as `cancellation_requested` before its transport
+signal is sent, so the Operation cannot be redelivered during that race. Keep polling that state:
+a verified Client completion records the concrete result, while the absolute deadline eventually
+converts an unconfirmed cancellation to `execution_unknown`. A machine reconnect also replays any
+still-pending cancellation signal.
+
+Use `ods.cancelOperation(operationId)` for the low-level API, or
+`ods.claimedSession(claim).cancelOperation(operationId)` to keep the Session Credential scoped to
+its own Operations. `SessionClient.createOperation()` and `waitForOperation()` are available when
+the caller needs the Operation ID before waiting for its result; `execute()` remains the combined
+convenience method.
 
 Export a redacted, versioned Timeline with `agent.exportTimeline(sessionId)`. Workspace
 administrators can use `configureEventSink()`, `eventSink()` and `deleteEventSink()` for signed
@@ -147,9 +199,39 @@ const renewal = await ods.renewAgentSession(claim.sessionId, agentId, {
 });
 ```
 
-Prefer `process.exec` with an explicit executable and arguments. Request `process.shell` only for
-dependent multi-command work; it grants broad shell authority, requires manual approval, and
-remains bounded by Session expiry and the Client Local Policy.
+Prefer `process.exec` with an explicit executable and arguments. For dependent multi-command host
+work, request Host Shell authority without including an anticipated command:
+
+```ts
+const shellRequest = await agent.requestHostShellSession({
+  machineId,
+  title: "Diagnose the failing build",
+  purpose: "Run dependent diagnostic commands",
+  durationSeconds: 900,
+});
+
+// After explicit human approval:
+const shellClaim = await agent.claim(shellRequest.id);
+const shell = ods.claimedSession(shellClaim);
+const result = await shell.host.shell({
+  machineId,
+  command: "npm test && git status --short",
+});
+```
+
+There is deliberately no top-level `ods.host.shell(...)`: only a claimed Session Credential can
+execute Host Shell. Host Shell grants broad authority, requires manual approval, and remains
+bounded by Session expiry and the Client Local Policy. Commands run as the Client's
+operating-system user with no sandbox or isolation and may persist changes after the Session ends.
+The working directory defaults to `.` (the Client user's Home), accepts per-command environment
+variables and optional base64 standard input up to 1 MiB, and uses a 600-second timeout plus a 1
+MiB output limit by default. Environment values and standard input are transport-only and never
+persisted. The process inherits an allowlisted base environment rather than every variable held by
+the Client process; on POSIX, the login shell can still load the user's startup files.
+
+Graceful Session closure terminates the active process group. There is no separate Operation
+supervisor, so an abrupt Client crash can leave a detached POSIX command running until it exits or
+is stopped externally. Restart reconciliation reports that Operation as `execution_unknown`.
 
 Administrative SDK calls can select an execution Workspace:
 

@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { OperationAction } from "@odyshell/protocol";
 import {
+  clampSessionOperationTimeout,
+  developmentSessionDecision,
+  hostShellEscalationScopes,
   sessionOperationDecision,
   type AgentSessionPrincipal,
 } from "../apps/server/src/agent-sessions.js";
+
+const machineA = "00000000-0000-4000-8000-00000000000a";
+const machineB = "00000000-0000-4000-8000-00000000000b";
+const machineC = "00000000-0000-4000-8000-00000000000c";
 
 const principal: AgentSessionPrincipal = {
   workspaceId: "workspace-a",
@@ -11,7 +18,7 @@ const principal: AgentSessionPrincipal = {
   sessionId: "session-a",
   scopes: [
     {
-      machineId: "machine-a",
+      machineId: machineA,
       profile: "workspace",
       capabilities: ["fs.read", "process.exec"],
       restrictions: {
@@ -35,7 +42,7 @@ const principal: AgentSessionPrincipal = {
       },
     },
     {
-      machineId: "machine-b",
+      machineId: machineB,
       profile: "workspace",
       capabilities: ["docker.logs"],
       restrictions: {
@@ -47,12 +54,59 @@ const principal: AgentSessionPrincipal = {
 };
 
 describe("typed multi-machine Agent Session authorization", () => {
+  it("requires the browser-approved flow for development Host Shell authority", () => {
+    expect(developmentSessionDecision(["fs.read"])).toEqual({
+      allowed: true,
+    });
+    expect(developmentSessionDecision(["host.shell"])).toEqual({
+      allowed: false,
+      code: "manual_approval_required",
+      capability: "host.shell",
+    });
+    expect(developmentSessionDecision(["process.exec"])).toEqual({
+      allowed: false,
+      code: "manual_approval_required",
+      capability: "process.exec",
+    });
+  });
+
+  it("inherits the predecessor authority and adds Host Shell only on its selected machine", () => {
+    expect(hostShellEscalationScopes(principal.scopes, machineA)).toEqual({
+      allowed: true,
+      scopes: [
+        {
+          machineId: machineA,
+          profile: "workspace",
+          capabilities: ["fs.read", "process.exec", "host.shell"],
+          restrictions: principal.scopes[0]!.restrictions,
+        },
+        principal.scopes[1],
+      ],
+    });
+  });
+
+  it("rejects Host Shell escalation onto a machine outside the predecessor", () => {
+    expect(hostShellEscalationScopes(principal.scopes, machineC)).toEqual({
+      allowed: false,
+      code: "predecessor_machine_denied",
+    });
+  });
+
+  it("clamps operation timeouts to the remaining Session lifetime", () => {
+    const now = Date.parse("2026-07-31T10:29:00.000Z");
+    expect(clampSessionOperationTimeout(600, principal.expiresAt, now)).toBe(60);
+    expect(clampSessionOperationTimeout(30, principal.expiresAt, now)).toBe(30);
+    expect(
+      clampSessionOperationTimeout(30, principal.expiresAt, principal.expiresAt),
+    ).toBeNull();
+  });
+
   it("allows only an operation inside the selected machine scope", () => {
     expect(
       sessionOperationDecision(
         principal,
         "session-a",
-        "machine-a",
+        machineA,
         { kind: "fs.read", path: "config/app.json" },
         60,
         Date.parse("2026-07-31T10:00:00.000Z"),
@@ -62,7 +116,7 @@ describe("typed multi-machine Agent Session authorization", () => {
       sessionOperationDecision(
         principal,
         "session-a",
-        "machine-b",
+        machineB,
         {
           kind: "docker.logs",
           container: "api",
@@ -79,7 +133,7 @@ describe("typed multi-machine Agent Session authorization", () => {
     {
       name: "another Session",
       sessionId: "session-b",
-      machineId: "machine-a",
+      machineId: machineA,
       action: { kind: "fs.read", path: "config/app.json" } as const,
       timeoutSeconds: 60,
       now: Date.parse("2026-07-31T10:00:00.000Z"),
@@ -88,7 +142,7 @@ describe("typed multi-machine Agent Session authorization", () => {
     {
       name: "another machine",
       sessionId: "session-a",
-      machineId: "machine-c",
+      machineId: machineC,
       action: { kind: "fs.read", path: "config/app.json" } as const,
       timeoutSeconds: 60,
       now: Date.parse("2026-07-31T10:00:00.000Z"),
@@ -97,7 +151,7 @@ describe("typed multi-machine Agent Session authorization", () => {
     {
       name: "a sibling path",
       sessionId: "session-a",
-      machineId: "machine-a",
+      machineId: machineA,
       action: { kind: "fs.read", path: "secrets/app.json" } as const,
       timeoutSeconds: 60,
       now: Date.parse("2026-07-31T10:00:00.000Z"),
@@ -106,13 +160,12 @@ describe("typed multi-machine Agent Session authorization", () => {
     {
       name: "command argument injection",
       sessionId: "session-a",
-      machineId: "machine-a",
+      machineId: machineA,
       action: {
         kind: "process.exec",
         program: "git",
         args: ["status", "--short", "; rm -rf ."],
         cwd: "repo",
-        env: {},
       } as OperationAction,
       timeoutSeconds: 60,
       now: Date.parse("2026-07-31T10:00:00.000Z"),
@@ -121,7 +174,7 @@ describe("typed multi-machine Agent Session authorization", () => {
     {
       name: "another container",
       sessionId: "session-a",
-      machineId: "machine-b",
+      machineId: machineB,
       action: {
         kind: "docker.logs",
         container: "database",
@@ -135,7 +188,7 @@ describe("typed multi-machine Agent Session authorization", () => {
     {
       name: "an expired Session",
       sessionId: "session-a",
-      machineId: "machine-a",
+      machineId: machineA,
       action: { kind: "fs.read", path: "config/app.json" } as const,
       timeoutSeconds: 60,
       now: Date.parse("2026-07-31T10:30:00.000Z"),
@@ -144,7 +197,7 @@ describe("typed multi-machine Agent Session authorization", () => {
     {
       name: "a timeout beyond Session expiry",
       sessionId: "session-a",
-      machineId: "machine-a",
+      machineId: machineA,
       action: { kind: "fs.read", path: "config/app.json" } as const,
       timeoutSeconds: 61,
       now: Date.parse("2026-07-31T10:29:00.000Z"),

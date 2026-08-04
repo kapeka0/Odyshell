@@ -27,6 +27,7 @@ ods login
 ods machines
 ods ping raspberry
 ods exec raspberry -- uname -a
+ods shell --purpose "Inspect the user environment" raspberry "pwd && id"
 ods fs search raspberry package.json
 ods fs read raspberry notes/status.txt
 ods audit
@@ -57,6 +58,12 @@ ods profiles configure personal --deny-sudo
 ods profiles remove personal
 ```
 
+On Linux, `--deny-sudo` restores `NoNewPrivileges` for the installed systemd service, while
+`--allow-sudo` verifies `sudo -n` and regenerates that service without the restriction. A
+foreground `ods client start` keeps the operating-system user's real authority instead; the Client
+detects effective `sudo -n` so approvals can warn. Odyshell does not claim equivalent
+privilege-escalation enforcement on macOS or Windows.
+
 Remove one local Profile, or reset every local identity and CLI login:
 
 ```bash
@@ -80,19 +87,24 @@ ods --json exec raspberry -- uname -a
 - `ods up`, `ods status`, and `ods down` manage the outbound Client.
 - `ods ping` checks end-to-end access without running a command.
 - `ods exec`, `ods fs`, and `ods docker` request a narrowly scoped Session and perform one typed
-  operation.
-- `ods session` inspects and operates an already approved Session.
+  Operation.
+- `ods shell` requests separate, explicit Host Shell authority and runs a native command after
+  human approval.
+- `ods sessions` lists canonical Agent Sessions.
 - `ods profiles` lists, inspects, configures, and removes local Client Profiles.
 - `ods client` diagnoses and updates the Client running on a private machine.
 - `ods audit` shows actions visible to the current agent.
 - `ods mcp` lets a signed-in agent request temporary access over MCP stdio.
 
-`ods up` uses the current directory as the base for relative paths. Host Sessions can request an
-exact absolute path, which remains visible in the approval. The Cloud Workspace selected during
-`ods login` is the organization boundary; it is not a filesystem directory.
+Relative paths in structured host Operations start from the Home directory of the operating-system
+user running the Client. Those Operations can request an exact absolute path, which remains visible
+in the approval. Host Shell authority is approved broadly before its commands or paths are known.
+The Cloud Workspace selected during `ods login` is the organization boundary; it is not a
+filesystem directory.
 
-Legacy Agent Access and direct Session creation commands return migration guidance and do not
-authorize work.
+Legacy Agent Access commands return migration guidance and do not authorize work. Direct runtime
+Session creation and mutation commands are not part of the CLI; commands request canonical Agent
+Sessions and operate only with the resulting claimed Session Credential.
 
 Check or update the local Client without replacing its identity or configuration:
 
@@ -123,16 +135,30 @@ Run `ods login`, then configure your agent to launch Odyshell:
 The signed-in flow exposes machine discovery and ping, Session request recovery/status/completion,
 typed operation execution, and the verified Session timeline. Machine discovery lets the agent
 choose operations for the actual platform and locally allowed capabilities.
-The agent receives an approval URL; after a member approves it, MCP claims the Session Credential
+The agent receives an approval URL; after a member approves it, MCP claims the Session Credential.
 If a response is interrupted, the MCP can recover its recent request instead of asking for another
 approval.
+While the same `ods mcp` process remains running, `session_request` reuses a claimed Session only
+when it is still active, unexpired, ready, and covers every requested Operation. The Session
+Credential stays only in that process's memory. Restarting `ods mcp` does not recover already
+claimed authority and requires a new Session request and approval; remote MCP installations use a
+persistent Server-side grant instead.
 
-A request is derived from one or more typed operations: exact paths for filesystem work, exact
-executables and arguments for `process.exec`, or exact containers for `docker.logs`. The MCP process cannot enroll
-or revoke machines, create broader authority, expose credentials, or use administrator controls.
+A request uses either exact typed Operations—exact paths for filesystem work, exact executables and
+arguments for `process.exec`, or exact containers for `docker.logs`—or explicit broad Host Shell
+authority without an advance command list. The MCP process cannot enroll or revoke machines,
+create broader authority, expose credentials, or use administrator controls.
 
-`ods shell` is deprecated for restricted Sessions. Use `ods exec` with an explicit program and
-argument list.
+`ods shell --purpose <purpose> [--title <title>] <machine> <command>` requests `host.shell`, waits
+for human approval, runs one command, and closes the Session. `--purpose` is required and describes
+the goal shown to the approver; the command itself must be passed as one quoted argument. It starts
+in the Client user's Home, can access everything available to that user, has no sandbox or
+isolation, and may persist changes after the Session ends. Prefer `ods exec` when an exact program
+and argument list is sufficient. The shell receives an allowlisted base environment rather than
+every variable in the Client process; explicit environment values are limited to one Operation and
+never persisted, although a POSIX login shell can load user startup files. Graceful cancellation
+stops the process group, but an abrupt Client crash can leave a detached POSIX command running;
+restart reconciliation records an unknown result.
 
 For monorepo development, build and install the local CLI with:
 

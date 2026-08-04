@@ -16,7 +16,6 @@ export type RunningSession = {
   restrictions: SessionRestrictions | undefined;
   expiresAt: Date;
   expiryTimer: NodeJS.Timeout;
-  containerId?: string;
   containerName?: string;
 };
 
@@ -30,6 +29,10 @@ export type RunningOperation = {
   child?: ChildProcessWithoutNullStreams;
   cancel: () => Promise<void>;
   done: Promise<{ exitCode: number | null }>;
+};
+
+export type OperationExecutionContext = {
+  signal?: AbortSignal;
 };
 
 export interface OperationExecutor {
@@ -49,7 +52,14 @@ export interface OperationExecutor {
     session: RunningSession,
     action: OperationAction,
     hooks: OperationHooks,
+    context?: OperationExecutionContext,
   ): Promise<RunningOperation>;
+}
+
+export function assertOperationCanStart(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw new Error("Operation deadline elapsed before process start");
+  }
 }
 
 export function validateSessionPolicy(
@@ -90,15 +100,4 @@ export function validateSessionPolicy(
     }
   }
   return ttlMilliseconds;
-}
-
-export function validateEnvironment(environment: Record<string, string>): void {
-  for (const key of Object.keys(environment)) {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
-      throw new Error(`Invalid environment key: ${key}`);
-    }
-    throw new Error(
-      `Caller-supplied environment variables are not allowed by Session policy: ${key}`,
-    );
-  }
 }

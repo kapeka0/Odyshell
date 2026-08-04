@@ -9,7 +9,13 @@ import {
   type ApprovedMcpSessionRequest,
   type ApprovedMcpRuntime,
 } from "@odyshell/mcp";
-import { operationSessionScopes } from "@odyshell/protocol";
+import {
+  mergeSessionMachineScopes,
+  operationSessionScopes,
+  sessionScopeDecision,
+  type ScopedOperationAction,
+  type SessionMachineScope,
+} from "@odyshell/protocol";
 import {
   ExpectedError,
   Odyshell,
@@ -40,26 +46,109 @@ export function createApprovedOdyshellMcpServer(
       return ods.ping(resolved.id);
     },
     async request(input) {
-      const operations = await Promise.all(
-        input.operations.map(async (operation) => ({
-          machineId: (await ods.resolveMachine(operation.machine)).id,
-          action: operation.action,
-        })),
-      );
-      let scopes;
-      try {
-        scopes = operationSessionScopes(operations);
-      } catch {
-        throw new ExpectedError(
-          "Operations cannot be combined without broadening their scope.",
-          "session_scope_conflict",
+      let scopes: SessionMachineScope[];
+      let operations: Array<{
+        machineId: string;
+        action: ScopedOperationAction;
+      }> = [];
+      let hostShellMachineId: string | undefined;
+      if (input.hostShell) {
+        const machine = await ods.resolveMachine(input.hostShell.machine);
+        hostShellMachineId = machine.id;
+        if (input.predecessorSessionId) {
+          const predecessor = (await ods.agent(identity).sessions()).find(
+            (session) =>
+              session.id === input.predecessorSessionId &&
+              session.status === "active" &&
+              Date.parse(session.expiresAt) > Date.now(),
+          );
+          const inherited = predecessor?.scopes.find(
+            (scope) => scope.machineId === machine.id,
+          );
+          if (!predecessor || !inherited) {
+            throw new ExpectedError(
+              "Host Shell can only be added to an active predecessor machine.",
+              "predecessor_session_unavailable",
+            );
+          }
+          scopes = mergeSessionMachineScopes([
+            ...predecessor.scopes,
+            {
+              machineId: machine.id,
+              profile: inherited.profile,
+              capabilities: ["host.shell"],
+              restrictions: {},
+            },
+          ]);
+        } else {
+          scopes = [
+            {
+              machineId: machine.id,
+              profile: "workspace",
+              capabilities: ["host.shell"],
+              restrictions: {},
+            },
+          ];
+        }
+      } else {
+        if (
+          input.operations.some(
+            (operation) =>
+              (operation.action as { kind: string }).kind === "host.shell",
+          )
+        ) {
+          throw new ExpectedError(
+            "Request Host Shell authority without anticipating a command.",
+            "host_shell_request_required",
+          );
+        }
+        operations = await Promise.all(
+          input.operations.map(async (operation) => ({
+            machineId: (await ods.resolveMachine(operation.machine)).id,
+            action: operation.action,
+          })),
         );
+        try {
+          scopes = operationSessionScopes(operations);
+        } catch {
+          throw new ExpectedError(
+            "Operations cannot be combined without broadening their scope.",
+            "session_scope_conflict",
+          );
+        }
       }
-      const requested = await ods.agent(identity).requestSession({
+      const agent = ods.agent(identity);
+      if (!input.predecessorSessionId && claims.size > 0) {
+        const sessions = await agent.sessions();
+        const reusableClaim = hostShellMachineId
+          ? findReusableLocalHostShellClaim(
+              claims.values(),
+              sessions,
+              hostShellMachineId,
+            )
+          : findReusableLocalOperationClaim(
+              claims.values(),
+              sessions,
+              operations,
+            );
+        if (reusableClaim) {
+          return {
+            id: reusableClaim.sessionId,
+            sessionId: reusableClaim.sessionId,
+            status: "ready",
+            reused: true,
+            expiresAt: reusableClaim.expiresAt,
+          };
+        }
+      }
+      const requested = await agent.requestSession({
         title: input.title,
         ...(input.purpose ? { purpose: input.purpose } : {}),
         scopes,
         durationSeconds: input.durationSeconds,
+        ...(input.predecessorSessionId
+          ? { predecessorSessionId: input.predecessorSessionId }
+          : {}),
         ...(input.runId ? { runId: input.runId } : {}),
       });
       const safeRequest = {
@@ -171,9 +260,10 @@ export function createApprovedOdyshellMcpServer(
           "session_claim_unavailable",
         );
       }
-      return ods.claimedSession(claim).execute(input.machine, input.action, {
+      const machine = await ods.resolveMachine(input.machine);
+      return ods.claimedSession(claim).execute(machine.id, input.action, {
         timeoutSeconds: input.timeoutSeconds,
-        idempotencyKey: input.operationId,
+        idempotencyKey: input.idempotencyKey,
       });
     },
     complete(input) {
@@ -188,6 +278,79 @@ export function createApprovedOdyshellMcpServer(
     },
   };
   return createApprovedMcpServer(runtime, reportUnexpectedError);
+}
+
+function findReusableLocalOperationClaim(
+  claims: Iterable<ClaimedAgentSession>,
+  sessions: ListedAgentSession[],
+  operations: Array<{ machineId: string; action: ScopedOperationAction }>,
+): ClaimedAgentSession | undefined {
+  return findReusableLocalClaim(
+    claims,
+    sessions,
+    (claim, session) =>
+      operations.every(
+        ({ machineId, action }) =>
+          session.targets.some(
+            (target) =>
+              target.machineId === machineId && target.status === "ready",
+          ) &&
+          claim.scopes.some(
+            (scope) => sessionScopeDecision(scope, machineId, action).allowed,
+          ),
+      ),
+  );
+}
+
+function findReusableLocalHostShellClaim(
+  claims: Iterable<ClaimedAgentSession>,
+  sessions: ListedAgentSession[],
+  machineId: string,
+): ClaimedAgentSession | undefined {
+  return findReusableLocalClaim(
+    claims,
+    sessions,
+    (claim, session) =>
+      session.targets.some(
+        (target) =>
+          target.machineId === machineId && target.status === "ready",
+      ) &&
+      claim.scopes.some(
+        (scope) =>
+          scope.machineId === machineId &&
+          scope.capabilities.includes("host.shell"),
+      ),
+  );
+}
+
+function findReusableLocalClaim(
+  claims: Iterable<ClaimedAgentSession>,
+  sessions: ListedAgentSession[],
+  isCompatible: (
+    claim: ClaimedAgentSession,
+    session: ListedAgentSession,
+  ) => boolean,
+): ClaimedAgentSession | undefined {
+  const now = Date.now();
+  for (const claim of claims) {
+    const session = sessions.find((candidate) => candidate.id === claim.sessionId);
+    if (
+      !session ||
+      session.status !== "active" ||
+      !isFutureTimestamp(claim.expiresAt, now) ||
+      !isFutureTimestamp(session.expiresAt, now) ||
+      !isCompatible(claim, session)
+    ) {
+      continue;
+    }
+    return claim;
+  }
+  return undefined;
+}
+
+function isFutureTimestamp(value: string, now: number): boolean {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && timestamp > now;
 }
 
 function safeClaim(

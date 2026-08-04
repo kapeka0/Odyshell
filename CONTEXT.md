@@ -81,8 +81,8 @@ _Avoid_: Administrator role, recursive delegation
 ## Machine execution
 
 **Client Profile**:
-One local Client identity bound to exactly one Server and Workspace, with its own root and Local
-Policy. A physical host can run multiple isolated Client Profiles.
+One local Client identity bound to exactly one Server and Workspace, with its own machine identity,
+state, and Local Policy. A physical host can run multiple independently configured Client Profiles.
 _Avoid_: Global machine identity, shared client.json
 
 **Local Policy**:
@@ -98,6 +98,12 @@ _Avoid_: Implicit permission, unrestricted access
 A typed action performed on one machine through an active Session. Its required Capability is
 derived from the Operation kind rather than declared by the caller.
 _Avoid_: SSH command, unrestricted tool call
+
+**Host Shell**:
+An explicitly selected, high-risk Capability that runs independent native shell commands with the
+full authority of the operating-system user running the Client, starting each Operation in that
+user's Home by default.
+_Avoid_: Sandboxed shell, terminal, SSH session
 
 **Machine Enrollment**:
 The one-time act of admitting a Client Profile into a Workspace and binding its machine identity.

@@ -8,21 +8,21 @@ description: The typed process, filesystem, and Docker operations supported by O
 | Capability | Purpose |
 | --- | --- |
 | `process.exec` | Run one executable with an argument array |
-| `process.shell` | Run explicit shell text |
+| `host.shell` | Run independent native shell commands as the Client user |
 | `fs.stat` | Inspect file metadata |
 | `fs.list` | List a directory |
-| `fs.search` | Search filenames below the workspace |
+| `fs.search` | Search filenames below a selected directory |
 | `fs.read` | Read a file |
 | `fs.write` | Write a file |
 | `fs.mkdir` | Create a directory |
 | `fs.remove` | Remove a file or directory |
 | `docker.logs` | Read logs from a Docker container |
 
-Filesystem paths can be relative to the machine's configured root or absolute on a host profile.
-An Agent can request an exact path restriction so that approving one file does not grant its
-parent directory. A Session without filesystem path restrictions grants its selected filesystem
-capabilities across the host as the Client's operating-system user. Docker profiles do not expose
-absolute host paths.
+Relative filesystem paths on a host Profile start from the Client user's Home. An Agent can request
+an exact path restriction so that approving one file does not grant its parent directory. A Session
+without filesystem path restrictions grants its selected filesystem capabilities across the host
+as the Client's operating-system user. A Docker Profile instead uses its Docker-specific mount
+source and does not expose absolute host paths.
 
 Restricted Agent Sessions fail closed:
 
@@ -30,10 +30,41 @@ Restricted Agent Sessions fail closed:
   tree;
 - `process.exec` requires an exact executable, argument array, and working-directory rule;
 - `docker.logs` requires an exact container name;
-- `process.shell` is an explicit broad capability and is never autoapproved.
+- `host.shell` is an explicit broad capability and is never autoapproved or delegated.
 
 The Server checks the selected machine scope, and the Client enforces the same restrictions again
 before executing locally.
+
+Operation retries must use an opaque, unique idempotency key and reuse it only with the exact same
+machine, action, requested timeout, and output limit. A changed payload returns
+`idempotency_conflict` (`409`) instead of the earlier Operation. A retry of a matching `queued` or
+`delivered` Operation without transport-only input resends the same persisted action and Operation
+id; the Client journal deduplicates it. Operations that originally carried Host Shell environment
+or stdin, plus running and terminal Operations, are never redispatched.
+
+The Server compares deterministic SHA-256 fingerprints across every target in the canonical
+Session. The fingerprint lives in the temporary Operation row and is deleted with that row by the
+retention purge. Host Shell environment and stdin values are excluded so they leave no persistent
+dictionary oracle; a non-secret presence bit prevents adding or removing transient input on a
+retry. Reusing a key with different transient values passively returns the first Operation and
+never dispatches the changed input.
+
+Creation also atomically claims the key in a payload-free registry using a domain-separated hash.
+The same reservation protects every machine in a canonical Session and remains after Operation
+payload purge. A later retry then fails closed with `idempotency_conflict` instead of executing
+again. Never reuse an idempotency key for a logically new Operation.
+
+The Client enforces the execution timeout locally. If the Server does not receive a verifiable
+completion by the absolute Operation deadline plus a short delivery grace period, it records
+`execution_unknown` and requests cancellation; it does not claim that an unobserved side effect
+failed or timed out. A delayed completion is acknowledged, including after Server retention, so
+the Client journal does not retry forever.
+
+A direct cancellation first moves the Operation to `cancellation_requested` in PostgreSQL, before
+the Server sends the cancellation signal. That state cannot be dispatched again. A verified Client
+completion then records `cancelled` (or the concrete outcome that won the race); if no completion
+arrives by the same absolute deadline, the Server records `execution_unknown` instead. The Server
+replays a still-pending cancellation when that machine reconnects.
 
 ## Process execution
 
@@ -46,15 +77,34 @@ ods exec my-machine -- git status --short
 Agents can request exact `process.exec` operations through MCP or the API. The dashboard's manual
 Session form stays intent-based and does not ask members to encode exact program arguments.
 
-Use `process.shell` only when the task genuinely needs several dependent commands, pipelines, or
-shell syntax. Shell access permits multiple independent Operations for the Session duration; it
-does not create a persistent terminal or preserve `cd` and environment changes between commands.
-The Agent receives stdout and stderr live and may issue more Operations inside the same Session.
-The dashboard records sanitized commands and exit status, not output. Operations run with the
-permissions of the operating-system user running the Client. Linux Profiles block privilege
-escalation unless their machine owner explicitly enables passwordless sudo. When enabled,
-`process.exec` can approve an exact sudo command and `process.shell` can run sudo for the Session
-duration; approval surfaces warn about possible root access.
+Use `host.shell` only when the task genuinely needs dependent commands, pipelines, or shell syntax.
+The Session approves Host Shell authority rather than an advance command list. It permits multiple
+independent Operations for the Session duration; every command starts in the Client user's Home by
+default, and the shell does not preserve `cd` or environment changes between commands. Selecting a
+different working directory for one Operation does not narrow the same-user authority. It is not a
+persistent terminal or PTY.
+
+Host Shell commands run with the full authority of the operating-system user running the Client.
+They can reach that user's files, credentials, network, and services, have no sandbox or isolation,
+and may make changes that persist after the Session ends. Privacy-minimal Timeline data records the
+Operation kind and exit status without command text or output. Broader logging levels can use the
+temporary command and output data according to the workspace privacy setting. Environment values
+and standard input are never persisted, and Event Sinks never export commands or output. A command
+inherits an allowlisted base environment rather than every Client process variable. Explicit
+environment values last only for that Operation; a POSIX login shell can still load user
+startup files.
+
+An installed Linux service sets `NoNewPrivileges` while sudo is disabled for its Profile. Enabling
+passwordless sudo locally removes that service restriction and makes approved process Sessions
+root-capable. A foreground Client has no service-level restriction and reports effective `sudo -n`
+so approval surfaces add the root warning when needed. Odyshell does not promise equivalent
+privilege-escalation enforcement on macOS or Windows.
+
+Graceful cancellation terminates the command's process group. Without a separate Operation
+supervisor, an abrupt Client crash can leave a detached POSIX command running until it exits or is
+stopped externally; restart reconciliation reports an unknown result. Windows tree termination is
+best effort after the command leader exits. A Client that cannot confirm graceful termination
+quarantines the local Profile and will not reconnect it after restart.
 
 ## Docker
 

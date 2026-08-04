@@ -143,6 +143,19 @@ describe("remote MCP security boundary", () => {
     expect(cancellation).toContain('status: "revoked"');
   });
 
+  it("keeps Host Shell behind canonical approval and clamps its timeout", async () => {
+    const server = await readFile("apps/server/src/index.ts", "utf8");
+    const operations = server.slice(
+      server.indexOf('"/v1/sessions/:sessionId/operations"'),
+      server.indexOf('app.get<{ Params: { operationId: string } }>',),
+    );
+    expect(operations).toContain("clampSessionOperationTimeout(");
+    expect(operations).toContain("developmentSessionDecision([");
+    expect(operations).toContain("capabilityForAction(parsed.data.action)");
+    expect(operations).toContain("error: developmentDecision.code");
+    expect(operations).toContain("timeoutSeconds,");
+  });
+
   it("rejects an MCP installation whose persistent Agent was deleted", async () => {
     const database = await readFile("apps/server/src/database.ts", "utf8");
     const installation = database.slice(
@@ -231,10 +244,74 @@ describe("remote MCP security boundary", () => {
     expect(toolsResponse.payload).toContain('"name":"machines_list"');
     expect(toolsResponse.payload).toContain('"name":"session_request"');
     expect(toolsResponse.payload).toContain(
-      "Relative paths resolve from the Client working directory",
+      "Relative paths resolve from the Client Home",
     );
-    expect(toolsResponse.payload).toContain('"const":"process.shell"');
+    expect(toolsResponse.payload).toContain('"const":"host.shell"');
+    expect(toolsResponse.payload).not.toContain('"const":"process.shell"');
     expect(toolsResponse.payload).toContain("requires manual approval");
+  });
+
+  it("uses the explicit idempotency key across stateless HTTP calls", async () => {
+    const execute = vi.fn<ApprovedMcpRuntime["execute"]>(async (input) => ({
+      operation: {
+        id: "server-operation-id",
+        sessionId: input.sessionId,
+        status: "succeeded",
+        exitCode: 0,
+        outputTruncated: false,
+      },
+      stdout: "ok",
+      stderr: "",
+    }));
+    const app = remoteMcpApp({ runtime: fakeRuntime({ execute }) });
+    const request = {
+      method: "POST" as const,
+      url: "/mcp/workspace-id",
+      headers: {
+        accept: "application/json, text/event-stream",
+        authorization: "Bearer safe-oauth-token",
+        "mcp-protocol-version": "2025-11-25",
+      },
+      payload: {
+        jsonrpc: "2.0",
+        id: 73,
+        method: "tools/call",
+        params: {
+          name: "operation_execute",
+          arguments: {
+            idempotencyKey: "d7afba47-a504-4aa3-b37e-68782364aab3",
+            sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
+            machine: "rpi5",
+            action: { kind: "fs.read", path: "README.md" },
+          },
+        },
+      },
+    };
+
+    expect((await app.inject(request)).statusCode).toBe(200);
+    expect((await app.inject(request)).statusCode).toBe(200);
+    expect(
+      (await app.inject({
+        ...request,
+        payload: {
+          ...request.payload,
+          params: {
+            ...request.payload.params,
+            arguments: {
+              ...request.payload.params.arguments,
+              idempotencyKey: "0f8f60f9-dd80-465c-961f-c3007d006f75",
+            },
+          },
+        },
+      })).statusCode,
+    ).toBe(200);
+
+    expect(execute).toHaveBeenCalledTimes(3);
+    expect(execute.mock.calls.map(([input]) => input.idempotencyKey)).toEqual([
+      "d7afba47-a504-4aa3-b37e-68782364aab3",
+      "d7afba47-a504-4aa3-b37e-68782364aab3",
+      "0f8f60f9-dd80-465c-961f-c3007d006f75",
+    ]);
   });
 
   it("requests exact absolute filesystem paths and exact host commands", async () => {
@@ -321,7 +398,6 @@ describe("remote MCP security boundary", () => {
                   program: "cat",
                   args: ["/etc/network/interfaces"],
                   cwd: ".",
-                  env: {},
                 },
               },
             ],
@@ -346,7 +422,6 @@ describe("remote MCP security boundary", () => {
             program: "cat",
             args: ["/etc/network/interfaces"],
             cwd: ".",
-            env: {},
           },
         },
       ],
@@ -627,7 +702,7 @@ describe("remote MCP security boundary", () => {
   it("does not reuse a Session whose scope misses the requested operation", async () => {
     const machineId = "9d0cb00d-8665-4a33-bd3f-308c42d6070d";
     const principal = sessionPrincipal(machineId);
-    const createAgentSessionRequest = vi.fn(async () => ({
+    const createAgentSessionRequest = vi.fn(async (_input: unknown) => ({
       status: "pending",
       expiresAt: Date.now() + 10 * 60_000,
     }));
@@ -688,6 +763,130 @@ describe("remote MCP security boundary", () => {
       humanId: "user-id",
       requestId: request.id,
     }));
+  });
+
+  it("links Host Shell escalation without asking the agent to predict a command", async () => {
+    const machineId = "9d0cb00d-8665-4a33-bd3f-308c42d6070d";
+    const predecessorSessionId = "29f34f33-418c-4624-84c3-25818db42023";
+    const predecessorScopes = [
+      {
+        machineId,
+        profile: "workspace",
+        capabilities: ["fs.read" as const],
+        restrictions: {
+          filesystem: {
+            paths: [{ path: "config", includeDescendants: true }],
+          },
+        },
+      },
+    ];
+    const createAgentSessionRequest = vi.fn(async (_input: unknown) => ({
+      status: "pending" as const,
+      expiresAt: Date.now() + 10 * 60_000,
+    }));
+    const runtime = remoteRuntime({
+      listMachines: vi.fn(async () => [{ ...machineRecord(), id: machineId }]),
+      agentSessionForRenewal: vi.fn(async () => ({
+        agentName: "Test MCP",
+        title: "Inspect configuration",
+        scopes: predecessorScopes,
+        durationSeconds: 900,
+      })),
+      createAgentSessionRequest,
+      audit: vi.fn(async () => undefined),
+    });
+
+    await expect(
+      runtime.request({
+        hostShell: { machine: "rpi5" },
+        predecessorSessionId,
+        title: "Continue with Host Shell",
+        purpose: "Typed capabilities were insufficient",
+        durationSeconds: 3_600,
+      }),
+    ).resolves.toMatchObject({ status: "pending" });
+
+    expect(createAgentSessionRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        predecessorSessionId,
+        scopes: [
+          {
+            machineId,
+            profile: "workspace",
+            capabilities: ["fs.read", "host.shell"],
+            restrictions: predecessorScopes[0]!.restrictions,
+          },
+        ],
+      }),
+    );
+    expect(JSON.stringify(createAgentSessionRequest.mock.calls[0]?.[0])).not.toContain(
+      "command",
+    );
+  });
+
+  it("cancels predecessor commands before opening a claimed replacement", async () => {
+    const send = vi.fn((_machineId: string, _message: unknown) => true);
+    const runtime = remoteRuntime(
+      {
+        mcpSessionForRequest: vi.fn(async () => null),
+        mcpGrantedSessionForRequest: vi.fn(async () => null),
+        getAgentSessionRequest: vi.fn(async () => ({
+          status: "approved",
+          expiresAt: Date.now() + 60_000,
+        })),
+        claimAgentSessionRequest: vi.fn(async () => ({
+          status: "claimed" as const,
+          session: {
+            id: "99de9879-3be8-42a1-8bd5-13cbf6866fd0",
+            expiresAt: Date.now() + 3_600_000,
+          },
+          targets: [
+            {
+              machineId: "machine-id",
+              runtimeSessionId: "replacement-runtime-id",
+              scope: {
+                machineId: "machine-id",
+                profile: "workspace",
+                capabilities: ["fs.read", "host.shell"],
+                restrictions: {},
+              },
+            },
+          ],
+          superseded: {
+            id: "29f34f33-418c-4624-84c3-25818db42023",
+            status: "revoked" as const,
+            transitioned: true,
+            operations: [{ id: "old-operation", machineId: "machine-id" }],
+            targets: [
+              { machineId: "machine-id", runtimeSessionId: "old-runtime-id" },
+            ],
+          },
+        })),
+        markSessionOpenFailed: vi.fn(async () => undefined),
+        findMcpSessionPrincipal: vi.fn(async () => ({
+          ...sessionPrincipal(),
+          sessionId: "99de9879-3be8-42a1-8bd5-13cbf6866fd0",
+        })),
+        listAgentSessionTargetRuntimes: vi.fn(async () => [
+          { machineId: "machine-id", capabilities: ["host.shell"], status: "ready" },
+        ]),
+      },
+      { send },
+    );
+
+    await runtime.status("7d8730ef-075c-40d5-a72d-8101abe17260");
+
+    expect(send.mock.calls.slice(0, 2)).toEqual([
+      ["machine-id", { type: "operation.cancel", operationId: "old-operation" }],
+      [
+        "machine-id",
+        { type: "session.close", sessionId: "old-runtime-id", reason: "revoked" },
+      ],
+    ]);
+    expect(send.mock.calls[2]?.[1]).toMatchObject({
+      type: "session.open",
+      sessionId: "replacement-runtime-id",
+    });
   });
 
   it("waits for the Client to acknowledge a newly opened Session", async () => {
@@ -768,11 +967,38 @@ describe("remote MCP security boundary", () => {
         machine: "rpi5",
         action: { kind: "fs.read", path: "secrets.env" },
         timeoutSeconds: 120,
-        operationId: "a6e9dd35-5882-4167-a30b-9aa0382d2630",
+        idempotencyKey: "a6e9dd35-5882-4167-a30b-9aa0382d2630",
       }),
     ).rejects.toMatchObject({ code: "path_scope_denied", status: 403 });
     expect(createOperation).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it("rejects Host Shell commands smuggled into a direct operations request", async () => {
+    const runtime = remoteRuntime({
+      listMachines: vi.fn(async () => [machineRecord()]),
+    });
+
+    await expect(
+      runtime.request({
+        operations: [
+          {
+            machine: "rpi5",
+            action: {
+              kind: "host.shell",
+              command: "whoami",
+              cwd: ".",
+              env: {},
+            },
+          },
+        ],
+        title: "Smuggled Host Shell command",
+        durationSeconds: 600,
+      } as Parameters<ApprovedMcpRuntime["request"]>[0]),
+    ).rejects.toMatchObject({
+      code: "host_shell_request_required",
+      status: 400,
+    });
   });
 
   it("bounds an MCP Operation timeout to the remaining Session lifetime", async () => {
@@ -781,12 +1007,39 @@ describe("remote MCP security boundary", () => {
       scopes: [{
         machineId: "machine-id",
         profile: "workspace",
-        capabilities: ["process.shell" as const],
+        capabilities: ["host.shell" as const],
         restrictions: {},
       }],
       expiresAt: Date.now() + 5 * 60_000,
     };
     const createOperation = vi.fn(async (_input: unknown) => true);
+    const replayOperationByIdempotency = vi.fn<
+      Database["replayOperationByIdempotency"]
+    >(async (replayInput, dispatch) => {
+      if (replayInput.freshOperationId === undefined) return { kind: "missing" };
+      const created = createOperation.mock.calls[0]?.[0] as {
+        timeoutSeconds: number;
+        maxOutputBytes: number;
+      };
+      const sent = dispatch({
+        id: replayInput.freshOperationId,
+        sessionId: "runtime-session-id",
+        action: { kind: "host.shell", command: "npm -v", cwd: ".", env: {} },
+        timeoutSeconds: created.timeoutSeconds,
+        maxOutputBytes: created.maxOutputBytes,
+      });
+      return sent
+        ? {
+            kind: "dispatched",
+            id: replayInput.freshOperationId,
+            status: "delivered",
+          }
+        : {
+            kind: "send_failed",
+            id: replayInput.freshOperationId,
+            status: "queued",
+          };
+    });
     const send = vi.fn(() => true);
     const runtime = remoteRuntime(
       {
@@ -796,14 +1049,13 @@ describe("remote MCP security boundary", () => {
           status: "ready",
           runtimeSessionId: "runtime-session-id",
         })),
-        findOperationByIdempotency: vi.fn(async () => null),
+        replayOperationByIdempotency,
         createOperation,
-        markOperationDelivered: vi.fn(async () => undefined),
         getOperation: vi.fn(async () => ({
           id: "created-operation-id",
           sessionId: "runtime-session-id",
           principalId: principal.agentId,
-          action: { kind: "process.shell", command: "npm -v" },
+          action: { kind: "host.shell", command: "npm -v", cwd: ".", env: {} },
           status: "succeeded",
           timeoutSeconds: 299,
           maxOutputBytes: 1024,
@@ -822,28 +1074,49 @@ describe("remote MCP security boundary", () => {
       sessionId: principal.sessionId,
       machine: "rpi5",
       action: {
-        kind: "process.shell",
+        kind: "host.shell",
         command: "npm -v",
         cwd: ".",
-        env: {},
+        env: { DEPLOY_TOKEN: "ephemeral-env-value" },
+        stdinBase64: Buffer.from("ephemeral-stdin-value").toString("base64"),
       },
       timeoutSeconds: 600,
-      operationId: "a6e9dd35-5882-4167-a30b-9aa0382d2630",
+      idempotencyKey: "a6e9dd35-5882-4167-a30b-9aa0382d2630",
     })).resolves.toMatchObject({ operation: { status: "succeeded" } });
     const created = createOperation.mock.calls[0]?.[0] as {
       timeoutSeconds: number;
+      action: Record<string, unknown>;
     };
     expect(created.timeoutSeconds).toBeGreaterThanOrEqual(295);
-    expect(created.timeoutSeconds).toBeLessThanOrEqual(299);
+    expect(created.timeoutSeconds).toBeLessThanOrEqual(300);
+    expect(JSON.stringify(created.action)).not.toMatch(
+      /DEPLOY_TOKEN|ephemeral-env-value|stdinBase64|ephemeral-stdin-value/u,
+    );
     expect(send).toHaveBeenCalledWith(
       "machine-id",
-      expect.objectContaining({ timeoutSeconds: created.timeoutSeconds }),
+      expect.objectContaining({
+        timeoutSeconds: created.timeoutSeconds,
+        action: expect.objectContaining({
+          kind: "host.shell",
+          env: { DEPLOY_TOKEN: "ephemeral-env-value" },
+          stdinBase64: Buffer.from("ephemeral-stdin-value").toString("base64"),
+        }),
+      }),
     );
   });
 
   it("returns the original operation for an idempotent replay", async () => {
     const send = vi.fn();
     const createOperation = vi.fn();
+    const sessionId = "29f34f33-418c-4624-84c3-25818db42023";
+    const action = { kind: "fs.read" as const, path: "config/app.json" };
+    const replayOperationByIdempotency = vi.fn<
+      Database["replayOperationByIdempotency"]
+    >(async () => ({
+      kind: "replay",
+      id: "existing-operation-id",
+      status: "succeeded",
+    }));
     const runtime = remoteRuntime(
       {
         findMcpSessionPrincipal: vi.fn(async () => sessionPrincipal()),
@@ -852,10 +1125,7 @@ describe("remote MCP security boundary", () => {
           status: "ready",
           runtimeSessionId: "runtime-session-id",
         })),
-        findOperationByIdempotency: vi.fn(async () => ({
-          id: "existing-operation-id",
-          status: "succeeded",
-        })),
+        replayOperationByIdempotency,
         getOperation: vi.fn(async () => ({
           id: "existing-operation-id",
           sessionId: "runtime-session-id",
@@ -877,14 +1147,55 @@ describe("remote MCP security boundary", () => {
     );
 
     const result = await runtime.execute({
-      sessionId: "29f34f33-418c-4624-84c3-25818db42023",
+      sessionId,
       machine: "rpi5",
-      action: { kind: "fs.read", path: "config/app.json" },
+      action,
       timeoutSeconds: 120,
-      operationId: "a6e9dd35-5882-4167-a30b-9aa0382d2630",
+      idempotencyKey: "a6e9dd35-5882-4167-a30b-9aa0382d2630",
     });
 
     expect(result.operation.id).toBe("existing-operation-id");
+    expect(createOperation).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(replayOperationByIdempotency).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "workspace-id",
+        idempotencyScopeId: sessionId,
+        principalId: "7e5e118e-07ce-430a-a20a-b89562acae61",
+        idempotencyKey: "a6e9dd35-5882-4167-a30b-9aa0382d2630",
+      }),
+      expect.any(Function),
+    );
+  });
+
+  it("returns a conflict when an MCP Operation key belongs to another payload", async () => {
+    const send = vi.fn();
+    const createOperation = vi.fn();
+    const runtime = remoteRuntime(
+      {
+        findMcpSessionPrincipal: vi.fn(async () => sessionPrincipal()),
+        listMachines: vi.fn(async () => [machineRecord()]),
+        getAgentSessionTargetRuntime: vi.fn(async () => ({
+          status: "ready",
+          runtimeSessionId: "runtime-session-id",
+        })),
+        replayOperationByIdempotency: vi.fn(async () => ({
+          kind: "idempotency_conflict",
+        })),
+        createOperation,
+      },
+      { send, isOnline: vi.fn(() => true) },
+    );
+
+    await expect(
+      runtime.execute({
+        sessionId: "29f34f33-418c-4624-84c3-25818db42023",
+        machine: "rpi5",
+        action: { kind: "fs.read", path: "config/app.json" },
+        timeoutSeconds: 120,
+        idempotencyKey: "a6e9dd35-5882-4167-a30b-9aa0382d2630",
+      }),
+    ).rejects.toMatchObject({ code: "idempotency_conflict", status: 409 });
     expect(createOperation).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
   });
@@ -1027,6 +1338,11 @@ function remoteRuntime(
       gateway: {
         isOnline: vi.fn(() => true),
         send: vi.fn(() => true),
+        runMachineLifecycle: vi.fn(
+          async (_machineId: string, operation: () => Promise<unknown>) =>
+            await operation(),
+        ),
+        events: { emit: vi.fn() },
         notifyWorkspace: vi.fn(),
         ...gateway,
       } as unknown as ClientGateway,

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
-import { createHash, generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import process from "node:process";
 
@@ -30,7 +31,7 @@ let client;
 let e2eMachineId;
 const allCapabilities = [
   "process.exec",
-  "process.shell",
+  "host.shell",
   "fs.stat",
   "fs.list",
   "fs.read",
@@ -39,7 +40,7 @@ const allCapabilities = [
   "fs.remove",
 ];
 const clientCapabilities = allCapabilities.filter(
-  (capability) => capability !== "process.shell",
+  (capability) => capability !== "host.shell",
 );
 
 if (!configDirectory.startsWith(resolve(root, ".odyshell"))) {
@@ -54,13 +55,23 @@ async function api(path, options = {}) {
     ...options,
     headers: {
       ...(options.body ? { "content-type": "application/json" } : {}),
-      "x-odyshell-agent-key": agentKey,
+      authorization: `Bearer ${agentKey}`,
       ...options.headers,
     },
   });
   const body = await response.json();
   if (!response.ok) throw new Error(`${response.status} ${JSON.stringify(body)}`);
   return body;
+}
+
+async function credentialApi(token, path, options = {}) {
+  return await api(path, {
+    ...options,
+    headers: {
+      ...options.headers,
+      authorization: `Bearer ${token}`,
+    },
+  });
 }
 
 function run(command, args, options = {}) {
@@ -101,15 +112,93 @@ async function waitUntil(read, predicate, description) {
   throw new Error(`Timed out waiting for ${description}`);
 }
 
-async function operation(sessionId, action, expectedStatus = "succeeded") {
-  const created = await api(`/v1/sessions/${sessionId}/operations`, {
+async function supersedeMachineConnection(config) {
+  const url = new URL("/v1/connect", apiUrl);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  const socket = new WebSocket(url);
+  const observedCancellations = new Set();
+  const cancellationWaiters = new Map();
+  await new Promise((resolvePromise, reject) => {
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (error) reject(error);
+      else resolvePromise();
+    };
+    const timeout = setTimeout(
+      () => finish(new Error("Timed out superseding the E2E machine connection")),
+      10_000,
+    );
+    socket.addEventListener("message", (event) => {
+      const message = JSON.parse(String(event.data));
+      if (message.type === "challenge") {
+        const signature = sign(
+          null,
+          Buffer.from(`odyshell:${message.connectionId}:${message.nonce}`),
+          config.privateKeyPem,
+        ).toString("base64url");
+        socket.send(
+          JSON.stringify({
+            type: "authenticate",
+            machineId: config.machineId,
+            protocolVersion: 3,
+            signature,
+          }),
+        );
+      } else if (message.type === "authenticated") {
+        finish();
+      } else if (message.type === "operation.cancel") {
+        observedCancellations.add(message.operationId);
+        cancellationWaiters.get(message.operationId)?.();
+      } else if (message.type === "error") {
+        finish(new Error(`${message.code}: ${message.message}`));
+      }
+    });
+    socket.addEventListener("error", () =>
+      finish(new Error("Replacement E2E machine socket failed")),
+    );
+    socket.addEventListener("close", () =>
+      finish(new Error("Replacement E2E machine socket closed before authentication")),
+    );
+  });
+  return {
+    socket,
+    waitForCancellation(operationId) {
+      if (observedCancellations.has(operationId)) return Promise.resolve();
+      return new Promise((resolvePromise, reject) => {
+        const timeout = setTimeout(() => {
+          cancellationWaiters.delete(operationId);
+          reject(new Error(`Timed out waiting for cancellation ${operationId}`));
+        }, 10_000);
+        cancellationWaiters.set(operationId, () => {
+          clearTimeout(timeout);
+          cancellationWaiters.delete(operationId);
+          resolvePromise();
+        });
+      });
+    },
+  };
+}
+
+async function operation(
+  sessionId,
+  action,
+  expectedStatus = "succeeded",
+  token = agentKey,
+) {
+  const created = await credentialApi(token, `/v1/sessions/${sessionId}/operations`, {
     method: "POST",
     headers: { "idempotency-key": crypto.randomUUID() },
     body: JSON.stringify({ action, timeoutSeconds: 10, maxOutputBytes: 1024 * 1024 }),
   });
   const completed = await waitUntil(
-    () => api(`/v1/operations/${created.id}`),
-    (value) => !["queued", "delivered", "running"].includes(value.status),
+    () => credentialApi(token, `/v1/operations/${created.id}`),
+    (value) =>
+      !["queued", "delivered", "running", "cancellation_requested"].includes(
+        value.status,
+      ),
     `operation ${created.id}`,
   );
   if (completed.status !== expectedStatus) {
@@ -362,7 +451,7 @@ try {
         enrollment.token,
         "--name",
         "e2e-docker",
-        "--cwd",
+        "--mount-source",
         workspace,
         "--allow",
         clientCapabilities.join(","),
@@ -380,6 +469,24 @@ try {
   ) {
     throw new Error("Client Profile did not retain its Workspace and machine identity");
   }
+  const dockerWorkspaceProfile = enrolledClientConfig.profiles?.workspace;
+  if (!dockerWorkspaceProfile || dockerWorkspaceProfile.runner !== "docker") {
+    throw new Error("E2E enrollment did not create its Docker workspace profile");
+  }
+  enrolledClientConfig.profiles.host = {
+    runner: "host",
+    maxSessionTtlSeconds: dockerWorkspaceProfile.maxSessionTtlSeconds,
+    maxConcurrentSessions: dockerWorkspaceProfile.maxConcurrentSessions,
+    maxConcurrentOperations: dockerWorkspaceProfile.maxConcurrentOperations,
+    maxOperationTimeoutSeconds: dockerWorkspaceProfile.maxOperationTimeoutSeconds,
+    maxOutputBytes: dockerWorkspaceProfile.maxOutputBytes,
+    capabilities: ["host.shell"],
+  };
+  await writeFile(
+    configPath,
+    `${JSON.stringify(enrolledClientConfig, null, 2)}\n`,
+    { mode: 0o600 },
+  );
 
   client = spawn(
     process.execPath,
@@ -413,9 +520,16 @@ try {
     !["linux", "macos", "windows"].includes(machine.runtime?.hostPlatform) ||
     !machine.runtime?.architecture ||
     machine.runtime?.containerOs !== "linux" ||
-    machine.runtime?.protocolVersion !== 2 ||
+    machine.runtime?.protocolVersion !== 3 ||
     !/^\d+\.\d+\.\d+$/u.test(machine.runtime?.clientVersion ?? "") ||
     !machine.runtime?.supportedCapabilities?.includes("fs.read") ||
+    !machine.runtime?.supportedCapabilities?.includes("host.shell") ||
+    !machine.runtime?.profiles?.some(
+      (profile) =>
+        profile.name === "host" &&
+        profile.runner === "host" &&
+        profile.capabilities?.includes("host.shell"),
+    ) ||
     machine.compatible !== true ||
     machine.upgradeRequired !== false
   ) {
@@ -1737,6 +1851,9 @@ try {
   const crossSessionId = crypto.randomUUID();
   const crossSessionOperationId = crypto.randomUUID();
   const crossSessionIdempotencyKey = crypto.randomUUID();
+  const crossSessionIdempotencyKeyHash = createHash("sha256")
+    .update(crossSessionIdempotencyKey)
+    .digest("hex");
   await compose([
     "exec",
     "-T",
@@ -1755,9 +1872,12 @@ try {
       `values ('default', '${crossSessionId}', '${machine.id}', '${approvedAgentId}',`,
       "'workspace', '[\"fs.read\"]'::jsonb, 'ready', now() + interval '10 minutes');",
       "insert into odyshell.operations",
-      "(workspace_id, id, session_id, principal_id, action, status, timeout_seconds, max_output_bytes, idempotency_key)",
+      "(workspace_id, id, session_id, principal_id, action, status, timeout_seconds, max_output_bytes, idempotency_scope_id, idempotency_fingerprint)",
       `values ('default', '${crossSessionOperationId}', '${crossSessionId}', '${approvedAgentId}',`,
-      `'{"kind":"fs.read","path":"approved.txt"}'::jsonb, 'queued', 10, 1024, '${crossSessionIdempotencyKey}');`,
+      `'{"kind":"fs.read","path":"approved.txt"}'::jsonb, 'queued', 10, 1024, '${crossSessionId}', '${"0".repeat(64)}');`,
+      "insert into odyshell.operation_idempotency_keys",
+      "(workspace_id, operation_id, machine_id, idempotency_scope_id, principal_id, operation_kind, idempotency_key_hash)",
+      `values ('default', '${crossSessionOperationId}', '${machine.id}', '${crossSessionId}', '${approvedAgentId}', 'fs.read', '${crossSessionIdempotencyKeyHash}');`,
     ].join(" "),
   ]);
   const approvedReadResponse = await scopedOperation({
@@ -1787,7 +1907,10 @@ try {
       );
       return response.json();
     },
-    (value) => !["queued", "delivered", "running"].includes(value.status),
+    (value) =>
+      !["queued", "delivered", "running", "cancellation_requested"].includes(
+        value.status,
+      ),
     "approved read operation",
   );
   const approvedOutput = approvedRead.events
@@ -1806,11 +1929,12 @@ try {
     program: "sleep",
     args: ["30"],
     cwd: ".",
-    env: {},
   });
   const longOperation = await longOperationResponse.json();
   if (longOperationResponse.status !== 202) {
-    throw new Error("Bounded process did not start before cancellation");
+    throw new Error(
+      `Bounded process did not start before cancellation: ${longOperationResponse.status} ${JSON.stringify(longOperation)}`,
+    );
   }
   await waitUntil(
     async () =>
@@ -1876,21 +2000,26 @@ try {
   if (cancelActiveResponse.status !== 200 || cancelActive.transitioned !== true) {
     throw new Error("Active Session cancellation failed");
   }
-  const cancelledOperationStatus = (
-    await compose([
-      "exec",
-      "-T",
-      "postgres",
-      "psql",
-      "-U",
-      "odyshell",
-      "-d",
-      "odyshell",
-      "-At",
-      "-c",
-      `select status from odyshell.operations where id = '${longOperation.id}';`,
-    ])
-  ).trim();
+  const cancelledOperationStatus = await waitUntil(
+    async () =>
+      (
+        await compose([
+          "exec",
+          "-T",
+          "postgres",
+          "psql",
+          "-U",
+          "odyshell",
+          "-d",
+          "odyshell",
+          "-At",
+          "-c",
+          `select status from odyshell.operations where id = '${longOperation.id}';`,
+        ])
+      ).trim(),
+    (status) => status === "cancelled" || status === "execution_unknown",
+    "Operation result after Session cancellation",
+  );
   if (cancelledOperationStatus !== "cancelled") {
     throw new Error("Session cancellation did not terminate active authority");
   }
@@ -1966,9 +2095,126 @@ try {
   ) {
     throw new Error("Versioned Timeline export was invalid or leaked data");
   }
+  const renewalPredecessorRequestResponse = await fetch(
+    new URL("/v1/agent-session-requests", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${cliToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        agentId: approvedAgentId,
+        agentName: "E2E MCP Agent",
+        title: "Create an active renewal predecessor",
+        purpose: "Verify linked Session renewal from active authority",
+        scopes: [
+          {
+            machineId: machine.id,
+            profile: "workspace",
+            capabilities: ["fs.read", "process.exec"],
+            restrictions: {
+              filesystem: {
+                paths: [
+                  { path: "approved.txt", includeDescendants: false },
+                ],
+              },
+              process: {
+                programs: [
+                  {
+                    program: "sleep",
+                    args: ["30"],
+                    cwd: { path: ".", includeDescendants: false },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+        durationSeconds: 600,
+      }),
+    },
+  );
+  const renewalPredecessorRequest =
+    await renewalPredecessorRequestResponse.json();
+  if (
+    renewalPredecessorRequestResponse.status !== 201 ||
+    !renewalPredecessorRequest.approvalUrl
+  ) {
+    throw new Error(
+      `Renewal predecessor request failed: ${renewalPredecessorRequestResponse.status} ${JSON.stringify(renewalPredecessorRequest)}`,
+    );
+  }
+  const renewalPredecessorCode = new URL(
+    renewalPredecessorRequest.approvalUrl,
+  ).searchParams.get("request");
+  if (!renewalPredecessorCode) {
+    throw new Error("Renewal predecessor approval omitted its code");
+  }
+  const renewalPredecessorApproval = await fetch(
+    new URL("/v1/internal/cloud/session-requests/approve", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        ...approvalBody,
+        requestId: renewalPredecessorCode,
+      }),
+    },
+  );
+  if (renewalPredecessorApproval.status !== 200) {
+    throw new Error("Renewal predecessor approval failed");
+  }
+  const renewalPredecessorClaimResponse = await fetch(
+    new URL(
+      `/v1/agent-session-requests/${renewalPredecessorRequest.id}/claim`,
+      apiUrl,
+    ),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${cliToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ agentId: approvedAgentId }),
+    },
+  );
+  const renewalPredecessor = await renewalPredecessorClaimResponse.json();
+  if (
+    renewalPredecessorClaimResponse.status !== 201 ||
+    !renewalPredecessor.sessionId ||
+    !renewalPredecessor.sessionToken
+  ) {
+    throw new Error(
+      `Renewal predecessor claim failed: ${renewalPredecessorClaimResponse.status} ${JSON.stringify(renewalPredecessor)}`,
+    );
+  }
+  const renewalPredecessorReady = await waitUntil(
+    async () => {
+      const response = await fetch(
+        new URL(`/v1/sessions/${renewalPredecessor.sessionId}`, apiUrl),
+        {
+          headers: {
+            authorization: `Bearer ${renewalPredecessor.sessionToken}`,
+          },
+        },
+      );
+      return response.json();
+    },
+    (value) => value.status === "ready" || value.status === "failed",
+    "active renewal predecessor",
+  );
+  if (renewalPredecessorReady.status !== "ready") {
+    throw new Error(
+      `Renewal predecessor failed to open: ${renewalPredecessorReady.error ?? "unknown"}`,
+    );
+  }
   const renewalResponse = await fetch(
     new URL(
-      `/v1/agent-sessions/${claimedSession.sessionId}/renew`,
+      `/v1/agent-sessions/${renewalPredecessor.sessionId}/renew`,
       apiUrl,
     ),
     {
@@ -1986,7 +2232,7 @@ try {
   const renewalRequest = await renewalResponse.json();
   if (
     renewalResponse.status !== 201 ||
-    renewalRequest.predecessorSessionId !== claimedSession.sessionId
+    renewalRequest.predecessorSessionId !== renewalPredecessor.sessionId
   ) {
     throw new Error(
       `Session renewal failed: ${renewalResponse.status} ${JSON.stringify(renewalRequest)}`,
@@ -2030,7 +2276,7 @@ try {
   const renewedSession = await renewalClaimResponse.json();
   if (
     renewalClaimResponse.status !== 201 ||
-    renewedSession.sessionId === claimedSession.sessionId
+    renewedSession.sessionId === renewalPredecessor.sessionId
   ) {
     throw new Error("Renewal did not create a successor Session");
   }
@@ -2049,7 +2295,7 @@ try {
       `select predecessor_session_id from odyshell.agent_sessions where id = '${renewedSession.sessionId}';`,
     ])
   ).trim();
-  if (predecessorLink !== claimedSession.sessionId) {
+  if (predecessorLink !== renewalPredecessor.sessionId) {
     throw new Error("Renewed Session did not retain its predecessor link");
   }
   const cloudIdentityBody = {
@@ -2190,7 +2436,6 @@ try {
             program: "sleep",
             args: ["30"],
             cwd: ".",
-            env: {},
           },
           timeoutSeconds: 60,
           maxOutputBytes: 1024,
@@ -2232,7 +2477,9 @@ try {
         return response.json();
       },
       (operation) =>
-        !["queued", "delivered", "running"].includes(operation.status),
+        !["queued", "delivered", "running", "cancellation_requested"].includes(
+          operation.status,
+        ),
       "completion race Operation cancellation",
     );
   } else if (raceCompletionResponse.status !== 200) {
@@ -2687,22 +2934,355 @@ try {
     throw new Error("Administrator machine list did not include the enrolled client");
   }
 
-  const locallyDenied = await api("/v1/development/sessions", {
-    method: "POST",
-    body: JSON.stringify({
-      machineId: machine.id,
-      profile: "workspace",
-      ttlSeconds: 120,
-      capabilities: ["process.shell"],
-    }),
-  });
-  const locallyDeniedSession = await waitUntil(
-    () => api(`/v1/sessions/${locallyDenied.id}`),
-    (value) => value.status === "failed",
-    "client policy denial",
+  const hostShellRequestResponse = await fetch(
+    new URL("/v1/agent-session-requests", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${cliToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        agentId: approvedAgentId,
+        agentName: "E2E MCP Agent",
+        title: "Verify native Host Shell",
+        purpose: "Run two harmless native commands in independent shells",
+        scopes: [
+          {
+            machineId: machine.id,
+            profile: "host",
+            capabilities: ["host.shell"],
+            restrictions: {},
+          },
+        ],
+        durationSeconds: 300,
+      }),
+    },
   );
-  if (!locallyDeniedSession.error?.includes("denied by local policy")) {
-    throw new Error("Client did not enforce its local capability policy");
+  const hostShellRequest = await hostShellRequestResponse.json();
+  if (
+    hostShellRequestResponse.status !== 201 ||
+    hostShellRequest.status !== "pending" ||
+    !hostShellRequest.approvalUrl
+  ) {
+    throw new Error(
+      `Host Shell Session request failed: ${hostShellRequestResponse.status} ${JSON.stringify(hostShellRequest)}`,
+    );
+  }
+  const hostShellApprovalCode = new URL(
+    hostShellRequest.approvalUrl,
+  ).searchParams.get("request");
+  if (!hostShellApprovalCode) {
+    throw new Error("Host Shell approval URL omitted its request code");
+  }
+  const hostShellApprovalResponse = await fetch(
+    new URL("/v1/internal/cloud/session-requests/approve", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        ...approvalBody,
+        requestId: hostShellApprovalCode,
+      }),
+    },
+  );
+  if (hostShellApprovalResponse.status !== 200) {
+    throw new Error(
+      `Host Shell Session approval failed: ${hostShellApprovalResponse.status} ${await hostShellApprovalResponse.text()}`,
+    );
+  }
+  const hostShellClaimResponse = await fetch(
+    new URL(
+      `/v1/agent-session-requests/${hostShellRequest.id}/claim`,
+      apiUrl,
+    ),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${cliToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ agentId: approvedAgentId }),
+    },
+  );
+  const hostShellSession = await hostShellClaimResponse.json();
+  if (
+    hostShellClaimResponse.status !== 201 ||
+    !hostShellSession.sessionId ||
+    !hostShellSession.sessionToken
+  ) {
+    throw new Error(
+      `Host Shell Session claim failed: ${hostShellClaimResponse.status} ${JSON.stringify(hostShellSession)}`,
+    );
+  }
+  const hostShellReady = await waitUntil(
+    async () => {
+      const response = await fetch(
+        new URL(`/v1/sessions/${hostShellSession.sessionId}`, apiUrl),
+        {
+          headers: {
+            authorization: `Bearer ${hostShellSession.sessionToken}`,
+          },
+        },
+      );
+      return response.json();
+    },
+    (value) => value.status === "ready" || value.status === "failed",
+    "Host Shell Session readiness",
+  );
+  if (hostShellReady.status !== "ready") {
+    throw new Error(`Host Shell Session failed to open: ${hostShellReady.error ?? "unknown"}`);
+  }
+  const startHostShell = async (action) => {
+    const response = await fetch(
+      new URL(
+        `/v1/sessions/${hostShellSession.sessionId}/operations`,
+        apiUrl,
+      ),
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${hostShellSession.sessionToken}`,
+          "content-type": "application/json",
+          "idempotency-key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          machineId: machine.id,
+          action,
+          timeoutSeconds: 10,
+          maxOutputBytes: 1024,
+        }),
+      },
+    );
+    const created = await response.json();
+    if (response.status !== 202 || !created.id) {
+      throw new Error(
+        `Host Shell Operation failed to start: ${response.status} ${JSON.stringify(created)}`,
+      );
+    }
+    return created.id;
+  };
+  const readHostShell = async (operationId) => {
+    const operationResponse = await fetch(
+      new URL(`/v1/operations/${operationId}`, apiUrl),
+      {
+        headers: {
+          authorization: `Bearer ${hostShellSession.sessionToken}`,
+        },
+      },
+    );
+    return operationResponse.json();
+  };
+  const waitForHostShell = async (operationId, expectedStatus) => {
+    const completed = await waitUntil(
+      () => readHostShell(operationId),
+      (value) =>
+        !["queued", "delivered", "running", "cancellation_requested"].includes(
+          value.status,
+        ),
+      `Host Shell Operation ${operationId}`,
+    );
+    if (completed.status !== expectedStatus) {
+      throw new Error(
+        `Host Shell Operation ${operationId} produced ${completed.status}: ${completed.error ?? ""}`,
+      );
+    }
+    const output = (stream) => completed.events
+      .filter((event) => event.stream === stream)
+      .map((event) => Buffer.from(event.dataBase64, "base64").toString("utf8"))
+      .join("");
+    return {
+      id: operationId,
+      status: completed.status,
+      stdout: output("stdout"),
+      stderr: output("stderr"),
+    };
+  };
+  const runHostShell = async (action, expectedStatus = "succeeded") =>
+    waitForHostShell(await startHostShell(action), expectedStatus);
+  const lastOutputLine = (output) =>
+    output.trim().split(/\r?\n/u).filter(Boolean).at(-1) ?? "";
+  const workingDirectoryCommand = machine.runtime.hostPlatform === "windows"
+    ? "cd"
+    : "pwd";
+  const hostShellWorkspace = await runHostShell({
+    kind: "host.shell",
+    command: workingDirectoryCommand,
+    cwd: workspace,
+    env: {},
+  });
+  const hostShellHome = await runHostShell({
+    kind: "host.shell",
+    command: workingDirectoryCommand,
+    env: {},
+  });
+  const stateMutationCommand = machine.runtime.hostPlatform === "windows"
+    ? "set ODYSHELL_E2E_STATE=leaked"
+    : "export ODYSHELL_E2E_STATE=leaked";
+  const stateReadCommand = machine.runtime.hostPlatform === "windows"
+    ? "if defined ODYSHELL_E2E_STATE (echo leaked) else (echo missing)"
+    : "printf '%s' \"${ODYSHELL_E2E_STATE:-missing}\"";
+  await runHostShell({
+    kind: "host.shell",
+    command: stateMutationCommand,
+    env: {},
+  });
+  const isolatedState = await runHostShell({
+    kind: "host.shell",
+    command: stateReadCommand,
+    env: {},
+  });
+  const missingProgram = `odyshell-command-not-installed-${process.pid}`;
+  await runHostShell({
+    kind: "host.shell",
+    command: missingProgram,
+    env: {},
+  }, "failed");
+  const continuedAfterFailure = await runHostShell({
+    kind: "host.shell",
+    command: "echo odyshell-shell-still-usable",
+    env: {},
+  });
+  const identityCommand = machine.runtime.hostPlatform === "windows"
+    ? "whoami"
+    : "id -u";
+  const hostShellIdentity = await runHostShell({
+    kind: "host.shell",
+    command: identityCommand,
+    env: {},
+  });
+  const expectedIdentity = machine.runtime.hostPlatform === "windows"
+    ? (await run("whoami", [])).trim().toLowerCase()
+    : String(process.getuid());
+  const comparablePath = (path) => {
+    const normalized = resolve(path);
+    return machine.runtime.hostPlatform === "windows"
+      ? normalized.toLowerCase()
+      : normalized;
+  };
+  if (
+    hostShellWorkspace.id === hostShellHome.id ||
+    comparablePath(lastOutputLine(hostShellWorkspace.stdout)) !==
+      comparablePath(workspace) ||
+    comparablePath(lastOutputLine(hostShellHome.stdout)) !==
+      comparablePath(homedir()) ||
+    lastOutputLine(isolatedState.stdout) !== "missing" ||
+    lastOutputLine(continuedAfterFailure.stdout) !==
+      "odyshell-shell-still-usable" ||
+    lastOutputLine(hostShellIdentity.stdout).toLowerCase() !== expectedIdentity
+  ) {
+    throw new Error(
+      "Host Shell Operations did not preserve independent native same-user execution from Home",
+    );
+  }
+  const hostShellCancellableId = await startHostShell({
+    kind: "host.shell",
+    command: 'node -e "setTimeout(() => {}, 30000)"',
+    env: {},
+  });
+  await waitUntil(
+    () => readHostShell(hostShellCancellableId),
+    (operation) => operation.status === "running",
+    "Host Shell cancellation startup",
+  );
+  const hostShellCancelResponse = await fetch(
+    new URL(`/v1/operations/${hostShellCancellableId}/cancel`, apiUrl),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${hostShellSession.sessionToken}`,
+      },
+    },
+  );
+  if (hostShellCancelResponse.status !== 202) {
+    throw new Error(`Host Shell cancellation returned ${hostShellCancelResponse.status}`);
+  }
+  await waitForHostShell(hostShellCancellableId, "cancelled");
+  const hostShellCompletionResponse = await fetch(
+    new URL(
+      `/v1/agent-sessions/${hostShellSession.sessionId}/complete`,
+      apiUrl,
+    ),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${cliToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        agentId: approvedAgentId,
+        outcome: "succeeded",
+        summary: "Verified two independent native Host Shell Operations",
+      }),
+    },
+  );
+  const hostShellCompletion = await hostShellCompletionResponse.json();
+  if (
+    hostShellCompletionResponse.status !== 200 ||
+    hostShellCompletion.status !== "completed" ||
+    hostShellCompletion.transitioned !== true
+  ) {
+    throw new Error(
+      `Host Shell Session completion failed: ${hostShellCompletionResponse.status} ${JSON.stringify(hostShellCompletion)}`,
+    );
+  }
+  await waitUntil(
+    async () =>
+      (
+        await compose([
+          "exec",
+          "-T",
+          "postgres",
+          "psql",
+          "-U",
+          "odyshell",
+          "-d",
+          "odyshell",
+          "-At",
+          "-c",
+          `select status from odyshell.agent_session_targets where session_id = '${hostShellSession.sessionId}';`,
+        ])
+      ).trim(),
+    (status) => status === "closed",
+    "Host Shell target cleanup",
+  );
+
+  const locallyDeniedResponse = await fetch(
+    new URL("/v1/agent-session-requests", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${cliToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        agentId: approvedAgentId,
+        agentName: "E2E MCP Agent",
+        title: "Reject Host Shell through the Docker profile",
+        purpose: "Verify profile-scoped capability enforcement",
+        scopes: [
+          {
+            machineId: machine.id,
+            profile: "workspace",
+            capabilities: ["host.shell"],
+            restrictions: {},
+          },
+        ],
+        durationSeconds: 120,
+      }),
+    },
+  );
+  const locallyDenied = await locallyDeniedResponse.json();
+  if (
+    locallyDeniedResponse.status !== 403 ||
+    locallyDenied.error !== "agent_or_machine_denied"
+  ) {
+    throw new Error(
+      `Docker profile accepted Host Shell authority: ${locallyDeniedResponse.status} ${JSON.stringify(locallyDenied)}`,
+    );
   }
 
   const machineUpdateResponse = await fetch(
@@ -2726,7 +3306,7 @@ try {
   if (
     machineUpdateResponse.status !== 200 ||
     machineUpdate.description !== "Docker-backed E2E machine" ||
-    machineUpdate.capabilities.includes("process.shell")
+    machineUpdate.capabilities.includes("host.shell")
   ) {
     throw new Error("Cloud machine metadata update failed");
   }
@@ -2743,7 +3323,7 @@ try {
         machineId: machine.id,
         name: "e2e-machine-edited",
         description: "Docker-backed E2E machine",
-        capabilities: [...clientCapabilities, "process.shell"],
+        capabilities: [...clientCapabilities, "host.shell"],
       }),
     },
   );
@@ -2995,20 +3575,208 @@ try {
     throw new Error("ods one-shot execution did not return expected output");
   }
 
-  const readOnlyCreated = await api("/v1/development/sessions", {
-    method: "POST",
-    body: JSON.stringify({
-      machineId: machine.id,
-      profile: "workspace",
-      ttlSeconds: 120,
-      capabilities: ["process.exec"],
-    }),
-  });
-  const readOnlySession = await waitUntil(
-    () => api(`/v1/sessions/${readOnlyCreated.id}`),
-    (value) => value.status === "ready" || value.status === "failed",
-    "read-only sandbox creation",
+  const legacyDevelopmentSessionId = crypto.randomUUID();
+  await compose([
+    "exec",
+    "-T",
+    "postgres",
+    "psql",
+    "-U",
+    "odyshell",
+    "-d",
+    "odyshell",
+    "-v",
+    "ON_ERROR_STOP=1",
+    "-c",
+    [
+      "insert into odyshell.sessions",
+      "(workspace_id, id, machine_id, principal_id, profile, capabilities, status, expires_at)",
+      `values ('default', '${legacyDevelopmentSessionId}', '${machine.id}', 'dev-agent',`,
+      "'host', '[\"process.exec\"]'::jsonb, 'ready', now() + interval '10 minutes');",
+    ].join(" "),
+  ]);
+  const legacyDevelopmentExecution = await fetch(
+    new URL(
+      `/v1/sessions/${legacyDevelopmentSessionId}/operations`,
+      apiUrl,
+    ),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${agentKey}`,
+        "content-type": "application/json",
+        "idempotency-key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({
+        action: {
+          kind: "process.exec",
+          program: process.platform === "win32" ? "cmd.exe" : "/bin/bash",
+          args: process.platform === "win32"
+            ? ["/d", "/s", "/c", "whoami"]
+            : ["-lc", "id"],
+          cwd: ".",
+        },
+        timeoutSeconds: 10,
+        maxOutputBytes: 1024,
+      }),
+    },
   );
+  const legacyDevelopmentExecutionBody =
+    await legacyDevelopmentExecution.json();
+  if (
+    legacyDevelopmentExecution.status !== 403 ||
+    legacyDevelopmentExecutionBody.error !== "manual_approval_required" ||
+    legacyDevelopmentExecutionBody.capability !== "process.exec"
+  ) {
+    throw new Error(
+      `A retained Development Session could execute natively: ${legacyDevelopmentExecution.status} ${JSON.stringify(legacyDevelopmentExecutionBody)}`,
+    );
+  }
+  await compose([
+    "exec",
+    "-T",
+    "postgres",
+    "psql",
+    "-U",
+    "odyshell",
+    "-d",
+    "odyshell",
+    "-v",
+    "ON_ERROR_STOP=1",
+    "-c",
+    `delete from odyshell.sessions where workspace_id = 'default' and id = '${legacyDevelopmentSessionId}';`,
+  ]);
+
+  const createApprovedSandboxSession = async ({
+    title,
+    purpose,
+    capabilities,
+    restrictions,
+  }) => {
+    const requestResponse = await fetch(
+      new URL("/v1/agent-session-requests", apiUrl),
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${cliToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          agentId: approvedAgentId,
+          agentName: "E2E MCP Agent",
+          title,
+          purpose,
+          scopes: [
+            {
+              machineId: machine.id,
+              profile: "workspace",
+              capabilities,
+              restrictions,
+            },
+          ],
+          durationSeconds: 300,
+        }),
+      },
+    );
+    const requested = await requestResponse.json();
+    if (
+      requestResponse.status !== 201 ||
+      requested.status !== "pending" ||
+      !requested.approvalUrl
+    ) {
+      throw new Error(
+        `Sandbox Session request failed: ${requestResponse.status} ${JSON.stringify(requested)}`,
+      );
+    }
+    const requestId = new URL(requested.approvalUrl).searchParams.get(
+      "request",
+    );
+    if (!requestId) throw new Error("Sandbox approval URL omitted its request");
+    const approval = await fetch(
+      new URL("/v1/internal/cloud/session-requests/approve", apiUrl),
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-odyshell-web-key": webKey,
+        },
+        body: JSON.stringify({ ...approvalBody, requestId }),
+      },
+    );
+    if (approval.status !== 200) {
+      throw new Error(`Sandbox Session approval failed: ${approval.status}`);
+    }
+    const claimResponse = await fetch(
+      new URL(`/v1/agent-session-requests/${requested.id}/claim`, apiUrl),
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${cliToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ agentId: approvedAgentId }),
+      },
+    );
+    const claimed = await claimResponse.json();
+    if (
+      claimResponse.status !== 201 ||
+      !claimed.sessionId ||
+      !claimed.sessionToken
+    ) {
+      throw new Error(
+        `Sandbox Session claim failed: ${claimResponse.status} ${JSON.stringify(claimed)}`,
+      );
+    }
+    const ready = await waitUntil(
+      () => credentialApi(
+        claimed.sessionToken,
+        `/v1/sessions/${claimed.sessionId}`,
+      ),
+      (value) => value.status === "ready" || value.status === "failed",
+      `${title} readiness`,
+    );
+    return {
+      ...ready,
+      id: claimed.sessionId,
+      token: claimed.sessionToken,
+    };
+  };
+  const waitForRuntimeSessionClosed = async (sessionId, description) =>
+    await waitUntil(
+      () =>
+        compose([
+          "exec",
+          "-T",
+          "postgres",
+          "psql",
+          "-U",
+          "odyshell",
+          "-d",
+          "odyshell",
+          "-tA",
+          "-c",
+          `select status from odyshell.sessions where workspace_id = 'default' and id = '${sessionId}';`,
+        ]),
+      (status) => status.trim() === "closed",
+      description,
+    );
+
+  const readOnlySession = await createApprovedSandboxSession({
+    title: "Verify read-only Docker isolation",
+    purpose: "Prove the read-only mount rejects writes",
+    capabilities: ["process.exec"],
+    restrictions: {
+      process: {
+        programs: [
+          {
+            program: "touch",
+            args: ["should-not-be-written"],
+            cwd: { path: ".", includeDescendants: false },
+          },
+        ],
+      },
+    },
+  });
   if (readOnlySession.status !== "ready") {
     const activeSessionRows = await compose([
       "exec",
@@ -3044,31 +3812,42 @@ try {
       program: "touch",
       args: ["should-not-be-written"],
       cwd: ".",
-      env: {},
     },
     "failed",
+    readOnlySession.token,
   );
-  await api(`/v1/sessions/${readOnlySession.id}`, { method: "DELETE" });
-  await waitUntil(
-    () => api(`/v1/sessions/${readOnlySession.id}`),
-    (value) => value.status === "closed",
+  await credentialApi(readOnlySession.token, `/v1/sessions/${readOnlySession.id}`, {
+    method: "DELETE",
+  });
+  await waitForRuntimeSessionClosed(
+    readOnlySession.id,
     "read-only sandbox cleanup",
   );
 
-  const createdSession = await api("/v1/development/sessions", {
-    method: "POST",
-    body: JSON.stringify({
-      machineId: machine.id,
-      profile: "workspace",
-      ttlSeconds: 120,
-      capabilities: clientCapabilities,
-    }),
+  const processCwd = { path: ".", includeDescendants: false };
+  const session = await createApprovedSandboxSession({
+    title: "Verify isolated Docker execution",
+    purpose: "Exercise structured execution and filesystem Operations",
+    capabilities: clientCapabilities,
+    restrictions: {
+      process: {
+        programs: [
+          { program: "printf", args: ["idempotent"], cwd: processCwd },
+          {
+            program: "printf",
+            args: ["hello from isolated Odyshell\\n"],
+            cwd: processCwd,
+          },
+          {
+            program: "wget",
+            args: ["-T", "2", "-qO-", "http://example.com"],
+            cwd: processCwd,
+          },
+          { program: "sleep", args: ["30"], cwd: processCwd },
+        ],
+      },
+    },
   });
-  const session = await waitUntil(
-    () => api(`/v1/sessions/${createdSession.id}`),
-    (value) => value.status === "ready" || value.status === "failed",
-    "sandbox creation",
-  );
   if (session.status !== "ready") throw new Error(`Sandbox failed: ${session.error}`);
 
   const idempotencyKey = crypto.randomUUID();
@@ -3077,7 +3856,7 @@ try {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-odyshell-agent-key": agentKey,
+        authorization: `Bearer ${session.token}`,
         "idempotency-key": idempotencyKey,
       },
       body: JSON.stringify({
@@ -3086,7 +3865,6 @@ try {
           program: "printf",
           args: ["idempotent"],
           cwd: ".",
-          env: {},
         },
         timeoutSeconds: 10,
         maxOutputBytes: 1024,
@@ -3106,7 +3884,7 @@ try {
     throw new Error("Concurrent idempotent requests created multiple operations");
   }
   await waitUntil(
-    () => api(`/v1/operations/${idempotentOperations[0].id}`),
+    () => credentialApi(session.token, `/v1/operations/${idempotentOperations[0].id}`),
     (value) => value.status === "succeeded",
     "idempotent operation",
   );
@@ -3127,24 +3905,38 @@ try {
     throw new Error("Session container does not match the required sandbox policy");
   }
 
-  const execResult = await operation(session.id, {
-    kind: "process.exec",
-    program: "printf",
-    args: ["hello from isolated Odyshell\\n"],
-    cwd: ".",
-    env: {},
-  });
+  const execResult = await operation(
+    session.id,
+    {
+      kind: "process.exec",
+      program: "printf",
+      args: ["hello from isolated Odyshell\\n"],
+      cwd: ".",
+    },
+    "succeeded",
+    session.token,
+  );
   if (!execResult.output.includes("hello from isolated Odyshell")) {
     throw new Error("Structured execution output was not relayed");
   }
 
-  await operation(session.id, {
-    kind: "fs.write",
-    path: "odyshell-e2e.txt",
-    contentBase64: Buffer.from("filesystem round trip").toString("base64"),
-    createParents: true,
-  });
-  const readResult = await operation(session.id, { kind: "fs.read", path: "odyshell-e2e.txt" });
+  await operation(
+    session.id,
+    {
+      kind: "fs.write",
+      path: "odyshell-e2e.txt",
+      contentBase64: Buffer.from("filesystem round trip").toString("base64"),
+      createParents: true,
+    },
+    "succeeded",
+    session.token,
+  );
+  const readResult = await operation(
+    session.id,
+    { kind: "fs.read", path: "odyshell-e2e.txt" },
+    "succeeded",
+    session.token,
+  );
   if (readResult.output !== "filesystem round trip") throw new Error("Filesystem round trip failed");
 
   const networkResult = await operation(
@@ -3154,16 +3946,16 @@ try {
       program: "wget",
       args: ["-T", "2", "-qO-", "http://example.com"],
       cwd: ".",
-      env: {},
     },
     "failed",
+    session.token,
   );
 
   const traversal = await fetch(new URL(`/v1/sessions/${session.id}/operations`, apiUrl), {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-odyshell-agent-key": agentKey,
+      authorization: `Bearer ${session.token}`,
       "idempotency-key": crypto.randomUUID(),
     },
     body: JSON.stringify({
@@ -3174,27 +3966,77 @@ try {
   });
   if (traversal.status !== 400) throw new Error("Path traversal request was not rejected");
 
-  const cancellable = await api(`/v1/sessions/${session.id}/operations`, {
+  const cancellable = await credentialApi(session.token, `/v1/sessions/${session.id}/operations`, {
     method: "POST",
     headers: { "idempotency-key": crypto.randomUUID() },
     body: JSON.stringify({
-      action: { kind: "process.exec", program: "sleep", args: ["30"], cwd: ".", env: {} },
+      action: { kind: "process.exec", program: "sleep", args: ["30"], cwd: "." },
       timeoutSeconds: 60,
       maxOutputBytes: 1024,
     }),
   });
   await waitUntil(
-    () => api(`/v1/operations/${cancellable.id}`),
+    () => credentialApi(session.token, `/v1/operations/${cancellable.id}`),
     (value) => value.status === "running",
     "cancellable operation startup",
   );
-  await api(`/v1/operations/${cancellable.id}/cancel`, { method: "POST" });
+  await credentialApi(session.token, `/v1/operations/${cancellable.id}/cancel`, {
+    method: "POST",
+  });
   const cancelled = await waitUntil(
-    () => api(`/v1/operations/${cancellable.id}`),
-    (value) => !["queued", "delivered", "running"].includes(value.status),
+    () => credentialApi(session.token, `/v1/operations/${cancellable.id}`),
+    (value) =>
+      !["queued", "delivered", "running", "cancellation_requested"].includes(
+        value.status,
+      ),
     "operation cancellation",
   );
   if (cancelled.status !== "cancelled") throw new Error(`Cancellation produced ${cancelled.status}`);
+
+  const reconnectCancellable = await credentialApi(session.token, `/v1/sessions/${session.id}/operations`, {
+    method: "POST",
+    headers: { "idempotency-key": crypto.randomUUID() },
+    body: JSON.stringify({
+      action: { kind: "process.exec", program: "sleep", args: ["30"], cwd: "." },
+      timeoutSeconds: 60,
+      maxOutputBytes: 1024,
+    }),
+  });
+  await waitUntil(
+    () => credentialApi(session.token, `/v1/operations/${reconnectCancellable.id}`),
+    (value) => value.status === "running",
+    "reconnect cancellation startup",
+  );
+  const replacementConnection = await supersedeMachineConnection(
+    enrolledClientConfig,
+  );
+  await credentialApi(session.token, `/v1/operations/${reconnectCancellable.id}/cancel`, {
+    method: "POST",
+  });
+  await replacementConnection.waitForCancellation(reconnectCancellable.id);
+  const cancellationRequested = await credentialApi(
+    session.token,
+    `/v1/operations/${reconnectCancellable.id}`,
+  );
+  if (cancellationRequested.status !== "cancellation_requested") {
+    throw new Error(
+      `Disconnected cancellation produced ${cancellationRequested.status}`,
+    );
+  }
+  replacementConnection.socket.close();
+  const reconnectCancelled = await waitUntil(
+    () => credentialApi(session.token, `/v1/operations/${reconnectCancellable.id}`),
+    (value) =>
+      !["queued", "delivered", "running", "cancellation_requested"].includes(
+        value.status,
+      ),
+    "cancellation recovery after reconnect",
+  );
+  if (reconnectCancelled.status !== "cancelled") {
+    throw new Error(
+      `Reconnect cancellation produced ${reconnectCancelled.status}`,
+    );
+  }
 
   const scopedAudit = await waitUntil(
     () =>
@@ -3279,10 +4121,11 @@ try {
     throw new Error("Durable audit metadata retained operation content");
   }
 
-  await api(`/v1/sessions/${session.id}`, { method: "DELETE" });
-  await waitUntil(
-    () => api(`/v1/sessions/${session.id}`),
-    (value) => value.status === "closed",
+  await credentialApi(session.token, `/v1/sessions/${session.id}`, {
+    method: "DELETE",
+  });
+  await waitForRuntimeSessionClosed(
+    session.id,
     "session cleanup",
   );
 
@@ -3344,7 +4187,7 @@ try {
     [
       "update odyshell.operations",
       "set updated_at = now() - interval '2 hours'",
-      "where status not in ('queued', 'delivered', 'running');",
+      "where status not in ('queued', 'delivered', 'running', 'cancellation_requested');",
       "update odyshell.sessions",
       "set updated_at = now() - interval '2 hours'",
       "where status not in ('opening', 'ready', 'closing');",
@@ -3483,7 +4326,7 @@ try {
       [
         "select",
         "(select count(*) from odyshell.operations",
-        "where status not in ('queued', 'delivered', 'running')",
+        "where status not in ('queued', 'delivered', 'running', 'cancellation_requested')",
         "and updated_at < now() - interval '1 hour'),",
         "(select count(*) from odyshell.operation_events),",
         "(select count(*) from odyshell.sessions",
@@ -3543,6 +4386,14 @@ try {
           sessionCredentialCannotMintSessions: true,
           manualSessionExecDenied: true,
           manualSessionDockerDenied: true,
+          developmentNativeExecDenied: true,
+          hostShellApproved: true,
+          hostShellIndependentCommands: true,
+          hostShellHomeDefault: true,
+          hostShellSameUser: true,
+          hostShellContinuesAfterMissingCommand: true,
+          hostShellProcessTreeCancellation: true,
+          hostShellSessionCompleted: true,
           sessionTimeline: true,
           timelineExport: true,
           eventSinkSsrfDenied: true,
@@ -3579,6 +4430,7 @@ try {
           privacyRetention: true,
           credentialRetention: true,
           cancellation: true,
+          cancellationRecoveredAfterReconnect: true,
           sessionDestroyed: true,
           administratorMachineList: true,
           machineNamesInAgentScopes: true,

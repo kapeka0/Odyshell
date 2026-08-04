@@ -35,22 +35,22 @@ export function isFilesystemAction(action: OperationAction): action is Filesyste
   return action.kind.startsWith("fs.");
 }
 
-export async function resolveWorkspacePath(
-  workspaceRoot: string,
+export async function resolveHomePath(
+  homeDirectory: string,
   requestedPath: string,
   allowMissing = false,
 ): Promise<string> {
   if (isAbsolute(requestedPath)) throw new Error("Path must be relative");
-  const root = await realpath(workspaceRoot);
+  const root = await realpath(homeDirectory);
   const candidate = resolve(root, requestedPath);
   if (candidate !== root && !candidate.startsWith(`${root}${sep}`)) {
-    throw new Error("Path escapes the configured workspace");
+    throw new Error("Path escapes the account Home");
   }
 
   if (!allowMissing) {
     const actual = await realpath(candidate);
     if (actual !== root && !actual.startsWith(`${root}${sep}`)) {
-      throw new Error("Resolved path escapes the configured workspace");
+      throw new Error("Resolved path escapes the account Home");
     }
     return actual;
   }
@@ -60,7 +60,7 @@ export async function resolveWorkspacePath(
     try {
       const actualAncestor = await realpath(ancestor);
       if (actualAncestor !== root && !actualAncestor.startsWith(`${root}${sep}`)) {
-        throw new Error("Parent path escapes the configured workspace");
+        throw new Error("Parent path escapes the account Home");
       }
       break;
     } catch (error) {
@@ -76,7 +76,7 @@ export async function resolveProcessWorkingDirectory(
   requestedPath: string,
 ): Promise<string> {
   if (!isAbsolute(requestedPath)) {
-    return resolveWorkspacePath(workingDirectory, requestedPath);
+    return resolveHomePath(workingDirectory, requestedPath);
   }
   const approved = resolve(requestedPath);
   const actual = await realpath(approved);
@@ -86,14 +86,24 @@ export async function resolveProcessWorkingDirectory(
   return actual;
 }
 
+export async function resolveHostShellWorkingDirectory(
+  homeDirectory: string,
+  requestedPath: string,
+): Promise<string> {
+  const candidate = isAbsolute(requestedPath)
+    ? resolve(requestedPath)
+    : resolve(await realpath(homeDirectory), requestedPath);
+  return realpath(candidate);
+}
+
 export async function resolveFilesystemPath(
-  workspaceRoot: string,
+  homeDirectory: string,
   requestedPath: string,
   restrictions: SessionPathRestriction[] | undefined,
   allowMissing = false,
 ): Promise<string> {
   if (!isAbsolute(requestedPath)) {
-    return resolveWorkspacePath(workspaceRoot, requestedPath, allowMissing);
+    return resolveHomePath(homeDirectory, requestedPath, allowMissing);
   }
   const candidate = resolve(requestedPath);
   if (restrictions === undefined) {
@@ -194,7 +204,7 @@ export async function resolveFilesystemPath(
 }
 
 export async function executeFilesystemOperation(
-  workspaceRoot: string,
+  homeDirectory: string,
   action: FilesystemAction,
   hooks: OperationHooks,
   restrictions?: SessionPathRestriction[],
@@ -202,7 +212,7 @@ export async function executeFilesystemOperation(
   switch (action.kind) {
     case "fs.read": {
       const path = await resolveFilesystemPath(
-        workspaceRoot,
+        homeDirectory,
         action.path,
         restrictions,
       );
@@ -211,7 +221,7 @@ export async function executeFilesystemOperation(
     }
     case "fs.list": {
       const path = await resolveFilesystemPath(
-        workspaceRoot,
+        homeDirectory,
         action.path,
         restrictions,
       );
@@ -235,13 +245,13 @@ export async function executeFilesystemOperation(
     }
     case "fs.search": {
       const root = await resolveFilesystemPath(
-        workspaceRoot,
+        homeDirectory,
         action.path,
         restrictions,
       );
       const resultRoot = isAbsolute(action.path)
         ? dirname(root)
-        : await realpath(workspaceRoot);
+        : await realpath(homeDirectory);
       const query = action.query.toLocaleLowerCase();
       const results: Array<{ path: string; type: "directory" | "file" | "symlink"; size: number }> =
         [];
@@ -251,7 +261,7 @@ export async function executeFilesystemOperation(
     }
     case "fs.stat": {
       const path = await resolveFilesystemPath(
-        workspaceRoot,
+        homeDirectory,
         action.path,
         restrictions,
       );
@@ -261,7 +271,7 @@ export async function executeFilesystemOperation(
           JSON.stringify({
             path: isAbsolute(action.path)
               ? path.replaceAll("\\", "/")
-              : relative(await realpath(workspaceRoot), path),
+              : relative(await realpath(homeDirectory), path),
             type: info.isDirectory()
               ? "directory"
               : info.isSymbolicLink()
@@ -276,7 +286,7 @@ export async function executeFilesystemOperation(
     }
     case "fs.write": {
       const path = await resolveFilesystemPath(
-        workspaceRoot,
+        homeDirectory,
         action.path,
         restrictions,
         true,
@@ -301,7 +311,7 @@ export async function executeFilesystemOperation(
     }
     case "fs.mkdir": {
       const path = await resolveFilesystemPath(
-        workspaceRoot,
+        homeDirectory,
         action.path,
         restrictions,
         true,
@@ -316,16 +326,16 @@ export async function executeFilesystemOperation(
         action.path === "" ||
         dirname(resolve(action.path)) === resolve(action.path)
       ) {
-        throw new Error("Removing the configured workspace is denied");
+        throw new Error("Removing the account Home is denied");
       }
       const lexicalPath = isAbsolute(action.path)
         ? resolve(action.path)
-        : resolve(await realpath(workspaceRoot), action.path);
+        : resolve(await realpath(homeDirectory), action.path);
       if ((await lstat(lexicalPath)).isSymbolicLink()) {
         throw new Error("Removing symbolic links is denied");
       }
       const path = await resolveFilesystemPath(
-        workspaceRoot,
+        homeDirectory,
         action.path,
         restrictions,
       );

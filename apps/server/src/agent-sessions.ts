@@ -1,5 +1,7 @@
 import {
+  mergeSessionMachineScopes,
   sessionScopeDecision,
+  type Capability,
   type OperationAction,
   type SessionMachineScope,
 } from "@odyshell/protocol";
@@ -27,6 +29,76 @@ export type SessionOperationDecision =
         | "timeout_exceeds_session";
       machineId?: string;
     };
+
+export type HostShellEscalationDecision =
+  | { allowed: true; scopes: SessionMachineScope[] }
+  | { allowed: false; code: "predecessor_machine_denied" };
+
+export type DevelopmentSessionDecision =
+  | { allowed: true }
+  | {
+      allowed: false;
+      code: "manual_approval_required";
+      capability: "host.shell" | "process.exec";
+    };
+
+/** Keeps broad native execution out of the approval-free development path. */
+export function developmentSessionDecision(
+  capabilities: readonly Capability[],
+): DevelopmentSessionDecision {
+  const unsafeCapability = capabilities.includes("host.shell")
+    ? "host.shell"
+    : capabilities.includes("process.exec")
+      ? "process.exec"
+      : undefined;
+  return unsafeCapability
+    ? {
+        allowed: false,
+        code: "manual_approval_required",
+        capability: unsafeCapability,
+      }
+    : { allowed: true };
+}
+
+/**
+ * Builds the exact authority for a linked Host Shell escalation. The new
+ * Session inherits every predecessor scope unchanged and adds host.shell only
+ * to a machine that the predecessor already covers.
+ */
+export function hostShellEscalationScopes(
+  predecessorScopes: SessionMachineScope[],
+  machineId: string,
+): HostShellEscalationDecision {
+  const predecessor = predecessorScopes.find(
+    (scope) => scope.machineId === machineId,
+  );
+  if (!predecessor) {
+    return { allowed: false, code: "predecessor_machine_denied" };
+  }
+  return {
+    allowed: true,
+    scopes: mergeSessionMachineScopes([
+      ...predecessorScopes,
+      {
+        machineId,
+        profile: predecessor.profile,
+        capabilities: ["host.shell"],
+        restrictions: {},
+      },
+    ]),
+  };
+}
+
+/** Bounds a requested timeout to the remaining canonical Session lifetime. */
+export function clampSessionOperationTimeout(
+  requestedSeconds: number,
+  expiresAt: number,
+  now = Date.now(),
+): number | null {
+  const remainingSeconds = Math.floor((expiresAt - now) / 1_000);
+  if (remainingSeconds < 1) return null;
+  return Math.min(requestedSeconds, remainingSeconds);
+}
 
 export function sessionOperationDecision(
   principal: AgentSessionPrincipal,

@@ -1,11 +1,15 @@
 import { z } from "zod";
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 export const DEFAULT_CLOUD_SERVER_URL =
   "https://server.odyshell.com";
 export const MAX_AGENT_ACCESS_SECONDS = 365 * 24 * 60 * 60;
 export const MAX_AGENT_SESSION_SECONDS = 24 * 60 * 60;
 export const MAX_CLIENT_CLOCK_SKEW_MILLISECONDS = 30_000;
+export const DEFAULT_OPERATION_TIMEOUT_SECONDS = 600;
+export const MAX_OPERATION_TIMEOUT_SECONDS = 24 * 60 * 60;
+export const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
+export const MAX_HOST_SHELL_STDIN_BYTES = 1024 * 1024;
 
 const identityIdSchema = z.string().trim().min(1).max(256);
 const identityStatusSchema = z.enum(["active", "disabled"]);
@@ -98,7 +102,7 @@ export type AgentSession = z.infer<typeof agentSessionSchema>;
 
 export const capabilitySchema = z.enum([
   "process.exec",
-  "process.shell",
+  "host.shell",
   "fs.stat",
   "fs.list",
   "fs.search",
@@ -112,7 +116,7 @@ export type Capability = z.infer<typeof capabilitySchema>;
 
 export const allCapabilities: Capability[] = [
   "process.exec",
-  "process.shell",
+  "host.shell",
   "fs.stat",
   "fs.list",
   "fs.search",
@@ -130,23 +134,16 @@ export const manualSessionReadOnlyCapabilities: readonly Capability[] = [
   "fs.read",
 ];
 
-export const manualSessionShellCapabilities: readonly Capability[] = [
-  "process.shell",
+export const manualSessionHostShellCapabilities: readonly Capability[] = [
+  "host.shell",
 ];
 
-export const manualSessionFullAccessCapabilities: readonly Capability[] = [
-  "process.shell",
-  "fs.stat",
-  "fs.list",
-  "fs.search",
-  "fs.read",
+export const manualSessionSelectableCapabilities: readonly Capability[] = [
+  ...manualSessionReadOnlyCapabilities,
+  ...manualSessionHostShellCapabilities,
   "fs.write",
   "fs.mkdir",
   "fs.remove",
-];
-
-export const manualSessionCapabilities: readonly Capability[] = [
-  ...manualSessionFullAccessCapabilities,
 ];
 
 export const resourceSlugSchema = z
@@ -202,7 +199,16 @@ export const filesystemPathSchema = scopedPathSchema
     "Network paths are not allowed",
   )
   .describe(
-    "Exact filesystem path. Relative paths resolve from the Client working directory; local absolute paths require an exact approved Session scope.",
+    "Exact filesystem path. Relative paths resolve from the Client Home; local absolute paths require an exact approved Session scope.",
+  );
+
+export const hostShellWorkingDirectorySchema = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine((value) => !value.includes("\0"), "Path cannot contain NUL bytes")
+  .describe(
+    "Working directory under broad Host Shell authority. Relative paths resolve from the Client Home; parent, absolute and network paths are allowed when accessible to the Client user. This value does not narrow Host Shell authority.",
   );
 
 export const relativePathSchema = scopedPathSchema
@@ -212,7 +218,7 @@ export const relativePathSchema = scopedPathSchema
     "Path must be relative",
   )
   .describe(
-    "Path relative to the Client working directory. Absolute paths and parent traversal are not allowed.",
+    "Path relative to the Client Home. Absolute paths and parent traversal are not allowed.",
   );
 
 export function normalizeRelativePath(value: string): string {
@@ -356,6 +362,7 @@ export const agentSessionRequestInputSchema = z
     agentName: z.string().trim().min(1).max(128),
     title: z.string().trim().min(1).max(96),
     purpose: z.string().trim().min(1).max(280).optional(),
+    predecessorSessionId: z.string().uuid().optional(),
     scopes: z.array(sessionMachineScopeSchema).min(1).max(16),
     durationSeconds: z
       .number()
@@ -394,7 +401,10 @@ export type SessionScopeSubsetDecision =
   | { allowed: true }
   | {
       allowed: false;
-      code: "capability_widening" | "restriction_widening";
+      code:
+        | "profile_mismatch"
+        | "capability_widening"
+        | "restriction_widening";
     };
 
 function pathMatchesRestriction(
@@ -438,6 +448,9 @@ export function sessionScopeSubsetDecision(
   requested: SessionMachineScope,
   ceiling: SessionMachineScope,
 ): SessionScopeSubsetDecision {
+  if (requested.profile !== ceiling.profile) {
+    return { allowed: false, code: "profile_mismatch" };
+  }
   if (
     requested.machineId !== ceiling.machineId ||
     requested.capabilities.some(
@@ -547,7 +560,7 @@ export function sessionScopeDecision(
       ? { allowed: true }
       : { allowed: false, code: "program_scope_denied" };
   }
-  if (action.kind === "process.shell") {
+  if (action.kind === "host.shell") {
     return { allowed: true };
   }
   if (action.kind === "docker.logs") {
@@ -561,24 +574,47 @@ export function sessionScopeDecision(
   return { allowed: false, code: "capability_denied" };
 }
 
-export const operationEnvironmentSchema = z.record(
+const hostShellEnvironmentSchema = z.record(
   z
     .string()
     .min(1)
     .max(256)
     .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "Invalid environment variable name"),
   z.string().max(65_536),
-).superRefine((environment, context) => {
-  const key = Object.keys(environment)[0];
-  if (key !== undefined) {
-    context.addIssue({
-      code: "custom",
-      path: [key],
-      message:
-        "Caller-supplied environment variables require an explicit Session policy and are not supported",
-    });
-  }
-});
+);
+
+const maximumHostShellStdinBase64Length =
+  4 * Math.ceil(MAX_HOST_SHELL_STDIN_BYTES / 3);
+const standardBase64Pattern =
+  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+const hostShellStdinBase64Schema = z
+  .string()
+  .max(maximumHostShellStdinBase64Length)
+  .superRefine((value, context) => {
+    if (!standardBase64Pattern.test(value)) {
+      context.addIssue({
+        code: "custom",
+        message: "stdinBase64 must be valid standard base64",
+      });
+      return;
+    }
+    const paddingBytes = value.endsWith("==")
+      ? 2
+      : value.endsWith("=")
+        ? 1
+        : 0;
+    const decodedBytes = (value.length / 4) * 3 - paddingBytes;
+    if (decodedBytes > MAX_HOST_SHELL_STDIN_BYTES) {
+      context.addIssue({
+        code: "too_big",
+        maximum: MAX_HOST_SHELL_STDIN_BYTES,
+        origin: "string",
+        inclusive: true,
+        message: "Decoded stdinBase64 exceeds 1 MiB",
+      });
+    }
+  });
 
 const processExecOperationActionSchema = z
   .object({
@@ -594,22 +630,22 @@ const processExecOperationActionSchema = z
       .default([])
       .describe("Exact argument array to authorize and run."),
     cwd: filesystemPathSchema.transform(normalizeOperationPath).default("."),
-    env: operationEnvironmentSchema.default({}),
   })
+  .strict()
   .describe(
-    "Run one exact executable. Use this for an explicitly approved host path outside the Client working directory; do not use a shell command.",
+    "Run one exact executable. Use this for an explicitly approved host path outside the Client Home; do not use a shell command.",
   );
 
-const processShellOperationActionSchema = z.object({
-  kind: z.literal("process.shell"),
+const hostShellOperationActionSchema = z.object({
+  kind: z.literal("host.shell"),
   command: z.string().min(1).max(65_536),
-  cwd: filesystemPathSchema.transform(normalizeOperationPath).default("."),
-  env: operationEnvironmentSchema.default({}),
+  cwd: hostShellWorkingDirectorySchema.default("."),
+  env: hostShellEnvironmentSchema.default({}),
+  stdinBase64: hostShellStdinBase64Schema.optional(),
 });
 
-const sessionOperationActionSchemas = [
+const scopedOperationActionSchemas = [
   processExecOperationActionSchema,
-  processShellOperationActionSchema,
   z.object({ kind: z.literal("fs.stat"), path: filesystemPathSchema }),
   z.object({ kind: z.literal("fs.list"), path: filesystemPathSchema.default(".") }),
   z.object({
@@ -639,6 +675,19 @@ const sessionOperationActionSchemas = [
   }),
 ] as const;
 
+export const scopedOperationActionSchema = z.discriminatedUnion(
+  "kind",
+  scopedOperationActionSchemas,
+);
+export type ScopedOperationAction = z.infer<
+  typeof scopedOperationActionSchema
+>;
+
+const sessionOperationActionSchemas = [
+  ...scopedOperationActionSchemas,
+  hostShellOperationActionSchema,
+] as const;
+
 export const sessionOperationActionSchema = z.discriminatedUnion(
   "kind",
   sessionOperationActionSchemas,
@@ -654,8 +703,18 @@ export type OperationAction = z.infer<typeof operationActionSchema>;
 
 export const operationRequestSchema = z.object({
   action: operationActionSchema,
-  timeoutSeconds: z.number().int().min(1).max(1800).default(120),
-  maxOutputBytes: z.number().int().min(1024).max(16 * 1024 * 1024).default(1024 * 1024),
+  timeoutSeconds: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_OPERATION_TIMEOUT_SECONDS)
+    .default(DEFAULT_OPERATION_TIMEOUT_SECONDS),
+  maxOutputBytes: z
+    .number()
+    .int()
+    .min(1024)
+    .max(16 * 1024 * 1024)
+    .default(DEFAULT_MAX_OUTPUT_BYTES),
 });
 export type OperationRequest = z.infer<typeof operationRequestSchema>;
 
@@ -663,6 +722,7 @@ export type OperationStatus =
   | "queued"
   | "delivered"
   | "running"
+  | "cancellation_requested"
   | "succeeded"
   | "failed"
   | "cancelled"
@@ -693,32 +753,48 @@ export type ClientRuntimeInfo = {
   containerEngineVersion?: string;
 };
 
-const profilePolicySchema = z.object({
-  workspaceRoot: z.string().min(1).max(4096),
-  maxSessionTtlSeconds: z.number().int().min(10).max(MAX_AGENT_SESSION_SECONDS),
-  maxConcurrentSessions: z.number().int().min(1).max(32),
-  maxOutputBytes: z.number().int().min(1024).max(16 * 1024 * 1024),
-  capabilities: z.array(capabilitySchema).min(1),
-  restrictions: sessionRestrictionsSchema.optional(),
-});
+const profilePolicySchema = z
+  .object({
+    maxSessionTtlSeconds: z.number().int().min(10).max(MAX_AGENT_SESSION_SECONDS),
+    maxConcurrentSessions: z.number().int().min(1).max(32),
+    maxConcurrentOperations: z.number().int().min(1).max(16).default(4),
+    maxOperationTimeoutSeconds: z
+      .number()
+      .int()
+      .min(1)
+      .max(MAX_OPERATION_TIMEOUT_SECONDS)
+      .default(3_600),
+    maxOutputBytes: z.number().int().min(1024).max(16 * 1024 * 1024),
+    capabilities: z.array(capabilitySchema).min(1),
+    restrictions: sessionRestrictionsSchema.optional(),
+  })
+  .strict();
 
 export const hostClientProfileSchema = profilePolicySchema.extend({
   runner: z.literal("host"),
 });
 
-export const dockerClientProfileSchema = profilePolicySchema.extend({
-  runner: z.literal("docker"),
-  image: z.string().min(1).max(512),
-  network: z.literal("none"),
-});
+export const dockerClientProfileSchema = profilePolicySchema
+  .extend({
+    runner: z.literal("docker"),
+    mountSource: z.string().min(1).max(4096),
+    image: z.string().min(1).max(512),
+    network: z.literal("none"),
+  })
+  .superRefine((profile, context) => {
+    for (const capability of ["docker.logs", "host.shell"] as const) {
+      if (profile.capabilities.includes(capability)) {
+        context.addIssue({
+          code: "custom",
+          message: `${capability} is only available through the host runner`,
+          path: ["capabilities"],
+        });
+      }
+    }
+  });
 
 export const clientProfileSchema = z
-  .discriminatedUnion("runner", [hostClientProfileSchema, dockerClientProfileSchema])
-  .refine(
-    (profile) =>
-      profile.runner !== "docker" || !profile.capabilities.includes("docker.logs"),
-    "docker.logs is only available through the host runner",
-  );
+  .discriminatedUnion("runner", [hostClientProfileSchema, dockerClientProfileSchema]);
 export type ClientProfile = z.infer<typeof clientProfileSchema>;
 export type HostClientProfile = z.infer<typeof hostClientProfileSchema>;
 export type DockerClientProfile = z.infer<typeof dockerClientProfileSchema>;
@@ -772,6 +848,7 @@ export type ServerToClientMessage =
       timeoutSeconds: number;
       maxOutputBytes: number;
     }
+  | { type: "operation.acknowledged"; operationId: string }
   | { type: "operation.cancel"; operationId: string };
 
 export type ClientToServerMessage =
@@ -787,10 +864,8 @@ export type ClientToServerMessage =
   | {
       type: "session.opened";
       sessionId: string;
-      runner?: "host" | "docker";
-      runtimeId?: string;
-      /** @deprecated Kept for protocol v1 Docker clients. */
-      containerId?: string;
+      runner: "host" | "docker";
+      runtimeId: string;
     }
   | { type: "session.open_failed"; sessionId: string; error: string }
   | { type: "session.closed"; sessionId: string; reason: string }
@@ -805,7 +880,10 @@ export type ClientToServerMessage =
   | {
       type: "operation.completed";
       operationId: string;
-      status: Exclude<OperationStatus, "queued" | "delivered" | "running">;
+      status: Exclude<
+        OperationStatus,
+        "queued" | "delivered" | "running" | "cancellation_requested"
+      >;
       exitCode: number | null;
       error?: string;
       outputTruncated: boolean;
@@ -817,15 +895,20 @@ export function capabilityForAction(action: OperationAction): Capability {
 }
 
 /**
- * Builds the narrowest Agent Session scope capable of executing one typed
- * operation. Free-form shell text is intentionally not translatable because
- * it cannot be bounded with structured program restrictions.
+ * Builds the narrowest Agent Session scope capable of executing one
+ * structured operation. Host Shell authority must be requested explicitly
+ * without anticipating command text.
  */
 export function operationSessionScope(
   machineId: string,
-  action: OperationAction,
+  action: ScopedOperationAction,
   profile = "workspace",
 ): SessionMachineScope {
+  if ((action as OperationAction).kind === "host.shell") {
+    throw new Error(
+      "Request Host Shell authority explicitly instead of deriving it from command text.",
+    );
+  }
   const capability = capabilityForAction(action);
   switch (action.kind) {
     case "process.exec":
@@ -845,13 +928,6 @@ export function operationSessionScope(
             }],
           },
         },
-      };
-    case "process.shell":
-      return {
-        machineId,
-        profile,
-        capabilities: [capability],
-        restrictions: {},
       };
     case "fs.stat":
     case "fs.list":
@@ -894,66 +970,127 @@ export function operationSessionScope(
 export function operationSessionScopes(
   operations: Array<{
     machineId: string;
-    action: OperationAction;
+    action: ScopedOperationAction;
     profile?: string;
   }>,
 ): SessionMachineScope[] {
-  const grouped = new Map<string, SessionMachineScope>();
-  for (const operation of operations) {
-    const scope = operationSessionScope(
-      operation.machineId,
-      operation.action,
-      operation.profile ?? "workspace",
-    );
-    const key = scope.machineId;
-    const existing = grouped.get(key);
-    if (!existing) {
-      grouped.set(key, scope);
-      continue;
-    }
-    if (existing.profile !== scope.profile) {
+  return mergeSessionMachineScopes(
+    operations.map((operation) =>
+      operationSessionScope(
+        operation.machineId,
+        operation.action,
+        operation.profile ?? "workspace",
+      ),
+    ),
+  );
+}
+
+/**
+ * Combines already-valid Session scopes while rejecting any merge that would
+ * create new capability/restriction combinations. This is useful when linked
+ * escalation inherits a predecessor Session and adds one explicit capability.
+ */
+export function mergeSessionMachineScopes(
+  scopes: SessionMachineScope[],
+): SessionMachineScope[] {
+  const grouped = new Map<string, SessionMachineScope[]>();
+  for (const input of scopes) {
+    const scope = sessionMachineScopeSchema.parse(input);
+    const existing = grouped.get(scope.machineId) ?? [];
+    if (
+      existing.length > 0 &&
+      existing.some((candidate) => candidate.profile !== scope.profile)
+    ) {
       throw new Error("A machine cannot use multiple profiles in one Session");
     }
-    existing.capabilities = unique([
-      ...existing.capabilities,
-      ...scope.capabilities,
-    ]);
-    const filesystemPaths = uniqueObjects([
-      ...(existing.restrictions.filesystem?.paths ?? []),
-      ...(scope.restrictions.filesystem?.paths ?? []),
-    ]);
-    const processPrograms = uniqueObjects([
-      ...(existing.restrictions.process?.programs ?? []),
-      ...(scope.restrictions.process?.programs ?? []),
-    ]);
-    const dockerContainers = unique([
-      ...(existing.restrictions.docker?.containers ?? []),
-      ...(scope.restrictions.docker?.containers ?? []),
-    ]);
-    const filesystemCapabilities = unique(
-      [...existing.capabilities, ...scope.capabilities].filter((capability) =>
-        capability.startsWith("fs."),
+    existing.push(scope);
+    grouped.set(scope.machineId, existing);
+  }
+
+  return [...grouped.values()].map((machineScopes) => {
+    const first = machineScopes[0]!;
+    const capabilities = unique(
+      machineScopes.flatMap((scope) => scope.capabilities),
+    );
+    const mergedFilesystemCapabilities = capabilities.filter((capability) =>
+      filesystemCapabilities.has(capability),
+    );
+    const filesystemScopes = machineScopes.filter((scope) =>
+      scope.capabilities.some((capability) =>
+        filesystemCapabilities.has(capability),
       ),
     );
-    if (filesystemCapabilities.length > 1 && filesystemPaths.length > 1) {
-      throw new Error(
-        "Different filesystem capabilities cannot target different paths in one machine scope",
-      );
+    const filesystemIsUnrestricted = filesystemScopes.some(
+      (scope) => scope.restrictions.filesystem === undefined,
+    );
+    const filesystemPaths = filesystemIsUnrestricted
+      ? []
+      : uniqueObjects(
+          filesystemScopes.flatMap(
+            (scope) => scope.restrictions.filesystem?.paths ?? [],
+          ),
+        );
+
+    for (const capability of mergedFilesystemCapabilities) {
+      if (filesystemIsUnrestricted) {
+        const capabilityWasUnrestricted = filesystemScopes.some(
+          (scope) =>
+            scope.capabilities.includes(capability) &&
+            scope.restrictions.filesystem === undefined,
+        );
+        if (!capabilityWasUnrestricted) {
+          throwFilesystemMergeWidening();
+        }
+        continue;
+      }
+      for (const path of filesystemPaths) {
+        const combinationWasAuthorized = filesystemScopes.some(
+          (scope) =>
+            scope.capabilities.includes(capability) &&
+            (scope.restrictions.filesystem === undefined ||
+              scope.restrictions.filesystem.paths.some((allowed) =>
+                pathRestrictionIsSubset(path, allowed),
+              )),
+        );
+        if (!combinationWasAuthorized) {
+          throwFilesystemMergeWidening();
+        }
+      }
     }
-    existing.restrictions = {
-      ...(filesystemPaths.length > 0
-        ? { filesystem: { paths: filesystemPaths } }
-        : {}),
-      ...(processPrograms.length > 0
-        ? { process: { programs: processPrograms } }
-        : {}),
-      ...(dockerContainers.length > 0
-        ? { docker: { containers: dockerContainers } }
-        : {}),
-    };
-  }
-  return [...grouped.values()].map((scope) =>
-    sessionMachineScopeSchema.parse(scope),
+
+    const processPrograms = uniqueObjects(
+      machineScopes
+        .filter((scope) => scope.capabilities.includes("process.exec"))
+        .flatMap((scope) => scope.restrictions.process?.programs ?? []),
+    );
+    const dockerContainers = unique(
+      machineScopes
+        .filter((scope) => scope.capabilities.includes("docker.logs"))
+        .flatMap((scope) => scope.restrictions.docker?.containers ?? []),
+    );
+
+    return sessionMachineScopeSchema.parse({
+      machineId: first.machineId,
+      profile: first.profile,
+      capabilities,
+      restrictions: {
+        ...(!filesystemIsUnrestricted && filesystemPaths.length > 0
+          ? { filesystem: { paths: filesystemPaths } }
+          : {}),
+        ...(processPrograms.length > 0
+          ? { process: { programs: processPrograms } }
+          : {}),
+        ...(dockerContainers.length > 0
+          ? { docker: { containers: dockerContainers } }
+          : {}),
+      },
+    });
+  });
+}
+
+function throwFilesystemMergeWidening(): never {
+  throw new Error(
+    "Different filesystem capabilities cannot be merged when that would widen filesystem authority",
   );
 }
 

@@ -16,19 +16,6 @@ export const readOnlyCapabilities: Capability[] = [
   "docker.logs",
 ];
 
-export const fullAccessCapabilities: Capability[] = [
-  "process.exec",
-  "process.shell",
-  "fs.stat",
-  "fs.list",
-  "fs.search",
-  "fs.read",
-  "fs.write",
-  "fs.mkdir",
-  "fs.remove",
-  "docker.logs",
-];
-
 export function isReadOnlyPreset(capabilities: Capability[]): boolean {
   return (
     capabilities.length === readOnlyCapabilities.length &&
@@ -44,19 +31,6 @@ export function toggleReadOnlyPreset(
   return isReadOnlyPreset(capabilities) ? [] : [...readOnlyCapabilities];
 }
 
-export function isFullAccessPreset(capabilities: Capability[]): boolean {
-  return (
-    capabilities.length === fullAccessCapabilities.length &&
-    fullAccessCapabilities.every((capability) =>
-      capabilities.includes(capability),
-    )
-  );
-}
-
-export function toggleFullAccessPreset(capabilities: Capability[]): Capability[] {
-  return isFullAccessPreset(capabilities) ? [] : [...fullAccessCapabilities];
-}
-
 export const capabilityGroups: Array<{
   name: string;
   capabilities: Array<{
@@ -66,7 +40,7 @@ export const capabilityGroups: Array<{
   }>;
 }> = [
   {
-    name: "Processes",
+    name: "Execution",
     capabilities: [
       {
         value: "process.exec",
@@ -74,9 +48,9 @@ export const capabilityGroups: Array<{
         description: "Execute a program with structured arguments.",
       },
       {
-        value: "process.shell",
-        label: "Run shell commands",
-        description: "Execute an arbitrary shell command.",
+        value: "host.shell",
+        label: "Host Shell",
+        description: "Run native shell commands with the Client user's authority.",
       },
     ],
   },

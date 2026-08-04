@@ -6,6 +6,7 @@ export const sessionApprovalRequestIdSchema = z.string().trim().uuid();
 export type SessionApproval = {
   id: string;
   agent: { id: string; name: string };
+  title: string;
   purpose?: string;
   predecessorSessionId: string | null;
   scopes: Array<

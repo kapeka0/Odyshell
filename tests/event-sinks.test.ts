@@ -134,8 +134,24 @@ describe("Timeline Event Sinks", () => {
       path: "config/app.json",
       stdout: "safe output",
       token: "ods_secret_value",
-      env: { API_KEY: "secret" },
     });
+  });
+
+  it("never exports Host Shell environment or stdin payloads", () => {
+    const metadata = {
+      machineId: "machine-id",
+      kind: "host.shell",
+      command: "deploy",
+      env: { DEPLOY_TOKEN: "environment-secret" },
+      stdinBase64: Buffer.from("stdin-secret").toString("base64"),
+    };
+
+    for (const level of ["privacy-minimal", "operational", "diagnostic"] as const) {
+      const exported = redactTimelineMetadata(metadata, level);
+      expect(JSON.stringify(exported)).not.toMatch(
+        /DEPLOY_TOKEN|environment-secret|stdinBase64|stdin-secret/u,
+      );
+    }
   });
 
   it("removes nested operation constraints from privacy-minimal scopes", () => {
@@ -172,7 +188,6 @@ describe("Timeline Event Sinks", () => {
         program: "git",
         args: ["status"],
         cwd: ".",
-        env: { CI: "true" },
       }),
     ).toEqual({
       kind: "process.exec",
@@ -193,7 +208,7 @@ describe("Timeline Event Sinks", () => {
   it("keeps command text and bounded output operational with redaction", () => {
     const metadata = {
       ...operationTimelineMetadata({
-        kind: "process.shell",
+        kind: "host.shell",
         command: "printf safe",
         cwd: ".",
         env: {},
@@ -205,13 +220,13 @@ describe("Timeline Event Sinks", () => {
     };
 
     expect(redactTimelineMetadata(metadata, "operational")).toEqual({
-      kind: "process.shell",
+      kind: "host.shell",
       cwd: ".",
       command: "printf safe",
       stdout: "safe output",
     });
     expect(redactTimelineMetadata(metadata, "diagnostic")).toEqual({
-      kind: "process.shell",
+      kind: "host.shell",
       cwd: ".",
       command: "printf safe",
       stdout: "safe output",
@@ -271,6 +286,10 @@ describe("Timeline Event Sinks", () => {
       program: "git",
       args: ["status"],
       command: "git status",
+      stdout: "secret output",
+      stderr: "secret error",
+      env: { TOKEN: "secret" },
+      stdinBase64: "c2VjcmV0",
       summary: "Agent-authored detail",
     };
 
@@ -287,11 +306,32 @@ describe("Timeline Event Sinks", () => {
       actorAgentId: "agent-a",
       status: "succeeded",
       exitCode: 0,
-      program: "git",
-      args: ["status"],
-      command: "git status",
     });
-    expect(redactEventSinkMetadata(metadata, "diagnostic")).toEqual(metadata);
+    expect(redactEventSinkMetadata(metadata, "diagnostic")).toEqual({
+      kind: "process.exec",
+      machineId: "machine-a",
+      actorAgentId: "agent-a",
+      status: "succeeded",
+      exitCode: 0,
+    });
+  });
+
+  it("drops Agent-authored summaries from every Event Sink detail level", () => {
+    const metadata = {
+      kind: "session.completed",
+      outcome: "succeeded",
+      summary: "Agent-authored top-level summary",
+      report: {
+        summary: "Agent-authored nested summary",
+        status: "succeeded",
+      },
+    };
+
+    for (const level of ["privacy-minimal", "operational", "diagnostic"] as const) {
+      const exported = JSON.stringify(redactEventSinkMetadata(metadata, level));
+      expect(exported).not.toContain("Agent-authored");
+      expect(exported).not.toContain("summary");
+    }
   });
 
   it("redacts nested process credentials in operational exports", () => {
@@ -326,25 +366,21 @@ describe("Timeline Event Sinks", () => {
     expect(JSON.stringify(exported)).toContain("[REDACTED]");
   });
 
-  it("keeps a sanitized command for the privacy-minimal Session timeline", () => {
+  it("keeps Host Shell command text out of the privacy-minimal Session timeline", () => {
     expect(
       privacyMinimalOperationMetadata({
-        kind: "process.shell",
+        kind: "host.shell",
         command: "curl --token super-secret https://example.com",
         cwd: ".",
         env: {},
       }),
-    ).toEqual({
-      kind: "process.shell",
-      command: "curl --token [REDACTED] [REDACTED]",
-    });
+    ).toEqual({ kind: "host.shell" });
     expect(
       privacyMinimalOperationMetadata({
         kind: "process.exec",
         program: "tool",
         args: ["--password", "hunter2", "status"],
         cwd: ".",
-        env: {},
       }),
     ).toEqual({
       kind: "process.exec",
@@ -355,7 +391,7 @@ describe("Timeline Event Sinks", () => {
 
   it("fails closed when command arguments could contain credentials", () => {
     const shell = privacyMinimalOperationMetadata({
-      kind: "process.shell",
+      kind: "host.shell",
       command: 'curl --password="secret" -H Authorization: Bearer abc123 https://user:pass@example.com',
       cwd: "/private/workspace",
       env: {},
@@ -365,16 +401,12 @@ describe("Timeline Event Sinks", () => {
       program: "database-client",
       args: ["-p", "hunter2", "--api-key=abc123", "postgres://user:pass@db/app"],
       cwd: "/private/workspace",
-      env: {},
     });
 
     expect(JSON.stringify({ shell, process })).not.toMatch(
       /secret|hunter2|abc123|user:pass|private\/workspace/u,
     );
-    expect(shell).toEqual({
-      kind: "process.shell",
-      command: "curl --password=[REDACTED] -H Authorization: [REDACTED] [REDACTED] [REDACTED]",
-    });
+    expect(shell).toEqual({ kind: "host.shell" });
     expect(process).toEqual({
       kind: "process.exec",
       program: "database-client",
@@ -407,10 +439,9 @@ describe("Timeline Event Sinks", () => {
       program: "/srv/private-customer/bin/deploy-tool",
       args: [],
       cwd: "/srv/private-customer",
-      env: {},
     });
     const shell = privacyMinimalOperationMetadata({
-      kind: "process.shell",
+      kind: "host.shell",
       command: '"C:\\Customers\\Private\\audit.exe" --version',
       cwd: "C:\\Customers\\Private",
       env: {},
@@ -421,10 +452,7 @@ describe("Timeline Event Sinks", () => {
       program: "deploy-tool",
       args: [],
     });
-    expect(shell).toEqual({
-      kind: "process.shell",
-      command: "audit.exe --version",
-    });
+    expect(shell).toEqual({ kind: "host.shell" });
     expect(JSON.stringify({ process, shell })).not.toMatch(
       /private-customer|Customers|Private/u,
     );
