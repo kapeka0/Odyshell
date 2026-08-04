@@ -286,6 +286,10 @@ type BufferedClientMessage = {
   outputBytes: number;
 };
 
+export type ClientMessageBufferEnqueueResult =
+  | { accepted: false }
+  | { accepted: true; truncatedOperationId?: string };
+
 export class ClientMessageBuffer {
   private readonly messages: BufferedClientMessage[] = [];
   private outputBytes = 0;
@@ -293,30 +297,66 @@ export class ClientMessageBuffer {
   constructor(
     private readonly maximumMessages = 4_096,
     private readonly maximumOutputBytes = 16 * 1024 * 1024,
+    private readonly beforeOutputDiscard?: (operationId: string) => void,
   ) {}
 
-  enqueue(message: ClientToServerMessage): boolean {
+  enqueue(message: ClientToServerMessage): ClientMessageBufferEnqueueResult {
     const outputBytes = message.type === "operation.event"
       ? Buffer.byteLength(message.dataBase64, "base64")
       : 0;
     if (
-      outputBytes > 0 &&
+      message.type === "operation.event" &&
       this.outputBytes + outputBytes > this.maximumOutputBytes
     ) {
-      return false;
+      this.beforeOutputDiscard?.(message.operationId);
+      return { accepted: false };
     }
+    let truncatedOperationId: string | undefined;
     if (this.messages.length >= this.maximumMessages) {
-      if (message.type === "operation.event") return false;
+      if (message.type === "operation.event") {
+        this.beforeOutputDiscard?.(message.operationId);
+        return { accepted: false };
+      }
       const eventIndex = this.messages.findIndex(
         (entry) => entry.message.type === "operation.event",
       );
       const removeAt = eventIndex >= 0 ? eventIndex : 0;
+      const outputToDiscard = this.messages[removeAt]?.message;
+      if (outputToDiscard?.type === "operation.event") {
+        this.beforeOutputDiscard?.(outputToDiscard.operationId);
+      }
       const [removed] = this.messages.splice(removeAt, 1);
       this.outputBytes -= removed?.outputBytes ?? 0;
+      if (removed?.message.type === "operation.event") {
+        truncatedOperationId = removed.message.operationId;
+      }
     }
     this.messages.push({ message, outputBytes });
     this.outputBytes += outputBytes;
-    return true;
+    if (truncatedOperationId) {
+      this.markOutputTruncated(truncatedOperationId);
+    }
+    return {
+      accepted: true,
+      ...(truncatedOperationId ? { truncatedOperationId } : {}),
+    };
+  }
+
+  markOutputTruncated(operationId: string): void {
+    for (const entry of this.messages) {
+      if (
+        entry.message.type !== "operation.completed" ||
+        entry.message.operationId !== operationId ||
+        entry.message.outputTruncated
+      ) {
+        continue;
+      }
+      entry.message = {
+        ...entry.message,
+        error: entry.message.error ?? "Operation output is incomplete",
+        outputTruncated: true,
+      };
+    }
   }
 
   peek(): ClientToServerMessage | undefined {
@@ -396,7 +436,13 @@ export class Client {
   private readonly closedSessions = new Set<string>();
   private readonly closingSessions = new Map<string, Promise<void>>();
   private readonly operations = new Map<string, PendingOperation>();
-  private readonly bufferedMessages = new ClientMessageBuffer();
+  private readonly outputTruncatedOperations = new Set<string>();
+  private readonly unconfirmedOutputOperations = new Set<string>();
+  private readonly bufferedMessages = new ClientMessageBuffer(
+    4_096,
+    16 * 1024 * 1024,
+    (operationId) => this.markOperationOutputTruncated(operationId),
+  );
   private readonly executors = new Map<"host" | "docker", OperationExecutor>();
   private readonly journal: OperationJournal;
   private messageQueue = Promise.resolve();
@@ -440,10 +486,19 @@ export class Client {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     const socket = this.socket;
     this.shutdown = (async (): Promise<void> => {
+      let outputReconciliationError: unknown;
+      try {
+        this.markUnconfirmedOutputTruncated();
+      } catch (error) {
+        outputReconciliationError = error;
+      }
       socket?.close();
       await this.messageQueue;
       try {
         await this.dropLocalAuthority();
+        if (outputReconciliationError !== undefined) {
+          throw outputReconciliationError;
+        }
       } finally {
         this.journal.close();
       }
@@ -472,6 +527,15 @@ export class Client {
     });
     socket.on("close", (code) => {
       if (this.heartbeat) clearInterval(this.heartbeat);
+      try {
+        this.markUnconfirmedOutputTruncated();
+      } catch (error) {
+        this.beginTerminalFailure(
+          "Unable to preserve unconfirmed Operation output",
+          error,
+        );
+        return;
+      }
       if (this.socket !== socket) return;
       this.socket = undefined;
       this.authenticated = false;
@@ -508,6 +572,12 @@ export class Client {
 
   private beginTerminalShutdown(context: string): void {
     if (this.shutdown) return;
+    let outputReconciliationError: unknown;
+    try {
+      this.markUnconfirmedOutputTruncated();
+    } catch (error) {
+      outputReconciliationError = error;
+    }
     this.stopped = true;
     this.authenticated = false;
     if (this.heartbeat) clearInterval(this.heartbeat);
@@ -519,6 +589,9 @@ export class Client {
       try {
         await this.messageQueue;
         await this.dropLocalAuthority();
+        if (outputReconciliationError !== undefined) {
+          throw outputReconciliationError;
+        }
       } finally {
         this.journal.close();
       }
@@ -536,6 +609,9 @@ export class Client {
   }
 
   private deliver(message: ClientToServerMessage): boolean {
+    if (message.type === "operation.event") {
+      this.markOperationOutputUnconfirmed(message.operationId);
+    }
     if (
       this.authenticated &&
       this.socket?.readyState === WebSocket.OPEN
@@ -547,7 +623,26 @@ export class Client {
         this.authenticated = false;
       }
     }
-    return this.bufferedMessages.enqueue(message);
+    return this.bufferedMessages.enqueue(message).accepted;
+  }
+
+  private markOperationOutputTruncated(operationId: string): void {
+    this.journal.markOutputTruncated(operationId);
+    this.bufferedMessages.markOutputTruncated(operationId);
+    this.unconfirmedOutputOperations.delete(operationId);
+    this.outputTruncatedOperations.add(operationId);
+  }
+
+  private markOperationOutputUnconfirmed(operationId: string): void {
+    if (this.unconfirmedOutputOperations.has(operationId)) return;
+    this.journal.markOutputUnconfirmed(operationId);
+    this.unconfirmedOutputOperations.add(operationId);
+  }
+
+  private markUnconfirmedOutputTruncated(): void {
+    for (const operationId of [...this.unconfirmedOutputOperations]) {
+      this.markOperationOutputTruncated(operationId);
+    }
   }
 
   private flushBufferedMessages(): void {
@@ -656,6 +751,8 @@ export class Client {
       case "operation.acknowledged":
         if (!this.authenticated) return;
         this.journal.acknowledge(message.operationId);
+        this.unconfirmedOutputOperations.delete(message.operationId);
+        this.outputTruncatedOperations.delete(message.operationId);
         break;
       case "operation.cancel":
         if (!this.authenticated) return;
@@ -914,11 +1011,21 @@ export class Client {
       active.session.profile.maxOutputBytes,
     );
     const maximumEventBytes = 256 * 1024;
+    const markOutputTruncated = (): void => {
+      if (outputTruncated) return;
+      if (!this.outputTruncatedOperations.has(message.operationId)) {
+        this.markOperationOutputTruncated(message.operationId);
+      }
+      outputTruncated = true;
+    };
     const emit = (stream: "stdout" | "stderr" | "result", data: Buffer): void => {
+      if (this.outputTruncatedOperations.has(message.operationId)) {
+        outputTruncated = true;
+      }
       if (outputTruncated) return;
       const remaining = maximum - outputBytes;
       if (remaining <= 0) {
-        outputTruncated = true;
+        markOutputTruncated();
         return;
       }
       const accepted = data.subarray(0, remaining);
@@ -932,13 +1039,13 @@ export class Client {
           dataBase64: chunk.toString("base64"),
         });
         if (!delivered) {
-          outputTruncated = true;
+          markOutputTruncated();
           return;
         }
         sequence += 1;
         outputBytes += chunk.length;
       }
-      if (accepted.length < data.length) outputTruncated = true;
+      if (accepted.length < data.length) markOutputTruncated();
     };
 
     try {
@@ -1007,6 +1114,9 @@ export class Client {
       control.attach(running);
       if (control.cancelRequested) await control.cancel();
       const { exitCode } = await Promise.race([running.done, cancellationFailure]);
+      outputTruncated ||= this.outputTruncatedOperations.has(
+        message.operationId,
+      );
       const result: JournalResult = {
         status: timedOut
           ? "timed_out"
@@ -1024,6 +1134,9 @@ export class Client {
     } catch (error) {
       control.failStart();
       const terminationUnconfirmed = terminalFailure !== undefined;
+      outputTruncated ||= this.outputTruncatedOperations.has(
+        message.operationId,
+      );
       const result: JournalResult = {
         status: terminationUnconfirmed
           ? "execution_unknown"
@@ -1083,13 +1196,18 @@ export class Client {
   }
 
   private sendCompletion(operationId: string, result: JournalResult): void {
+    const outputTruncated =
+      result.outputTruncated || this.outputTruncatedOperations.has(operationId);
+    const error =
+      result.error ??
+      (outputTruncated ? "Operation output is incomplete" : undefined);
     this.deliver({
       type: "operation.completed",
       operationId,
       status: result.status,
       exitCode: result.exitCode,
-      ...(result.error ? { error: result.error } : {}),
-      outputTruncated: result.outputTruncated,
+      ...(error ? { error } : {}),
+      outputTruncated,
       at: new Date().toISOString(),
     });
   }

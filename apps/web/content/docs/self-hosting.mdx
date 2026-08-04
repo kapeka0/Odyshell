@@ -65,6 +65,8 @@ the web app's Clerk keys, `NEXT_PUBLIC_ODYSHELL_SERVER_URL`, `ODYSHELL_SERVER_UR
 `ODYSHELL_WEB_KEY`, then build and start `@odyshell/web`. A Server without that bridge can expose
 health, enrollment, and administrator endpoints, but cannot register Agents or approve Sessions;
 execution fails closed instead of silently using development credentials.
+The isolated development Session endpoint rejects `host.shell` and `process.exec`; native
+execution always uses the normal browser-approved flow.
 
 ## Connect through the supported flow
 

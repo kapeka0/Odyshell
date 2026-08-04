@@ -150,8 +150,9 @@ describe("remote MCP security boundary", () => {
       server.indexOf('app.get<{ Params: { operationId: string } }>',),
     );
     expect(operations).toContain("clampSessionOperationTimeout(");
-    expect(operations).toContain('parsed.data.action.kind === "host.shell"');
-    expect(operations).toContain('error: "session_credential_required"');
+    expect(operations).toContain("developmentSessionDecision([");
+    expect(operations).toContain("capabilityForAction(parsed.data.action)");
+    expect(operations).toContain("error: developmentDecision.code");
     expect(operations).toContain("timeoutSeconds,");
   });
 

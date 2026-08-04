@@ -60,6 +60,7 @@ import {
 } from "./database.js";
 import {
   clampSessionOperationTimeout,
+  developmentSessionDecision,
   sessionOperationDecision,
   type AgentSessionPrincipal,
 } from "./agent-sessions.js";
@@ -3538,6 +3539,25 @@ app.post("/v1/development/sessions", { preHandler: requireAgent }, async (reques
     return reply.code(400).send({ error: "invalid_request", details: parsed.error.issues });
   }
   const input = parsed.data;
+  const developmentDecision = developmentSessionDecision(input.capabilities);
+  if (!developmentDecision.allowed) {
+    await audit(
+      db,
+      principal.workspaceId,
+      principal.id,
+      "session.denied",
+      "machine",
+      input.machineId,
+      {
+        reason: developmentDecision.code,
+        kind: developmentDecision.capability,
+      },
+    );
+    return reply.code(403).send({
+      error: developmentDecision.code,
+      capability: developmentDecision.capability,
+    });
+  }
   if (
     !canAccessMachine(principal, input.machineId) ||
     !(await db.activeMachinesExist(principal.workspaceId, [input.machineId]))
@@ -4101,8 +4121,26 @@ app.post<{ Params: { sessionId: string } }>(
     if (principal.kind !== "development") {
       return reply.code(403).send({ error: "session_credential_required" });
     }
-    if (parsed.data.action.kind === "host.shell") {
-      return reply.code(403).send({ error: "session_credential_required" });
+    const developmentDecision = developmentSessionDecision([
+      capabilityForAction(parsed.data.action),
+    ]);
+    if (!developmentDecision.allowed) {
+      await audit(
+        db,
+        principal.workspaceId,
+        principal.id,
+        "operation.denied",
+        "session",
+        request.params.sessionId,
+        {
+          reason: developmentDecision.code,
+          kind: parsed.data.action.kind,
+        },
+      );
+      return reply.code(403).send({
+        error: developmentDecision.code,
+        capability: developmentDecision.capability,
+      });
     }
     const session = await db.sessionForOperation(
       principal.workspaceId,

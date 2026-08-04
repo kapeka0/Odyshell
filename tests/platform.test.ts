@@ -116,21 +116,21 @@ describe("client platform support", () => {
       type: "operation.started",
       operationId: "operation-a",
       at: new Date(0).toISOString(),
-    })).toBe(true);
+    })).toEqual({ accepted: true });
     expect(buffer.enqueue({
       type: "operation.event",
       operationId: "operation-a",
       sequence: 0,
       stream: "stdout",
       dataBase64: Buffer.from("abc").toString("base64"),
-    })).toBe(true);
+    })).toEqual({ accepted: true });
     expect(buffer.enqueue({
       type: "operation.event",
       operationId: "operation-a",
       sequence: 1,
       stream: "stdout",
       dataBase64: Buffer.from("d").toString("base64"),
-    })).toBe(false);
+    })).toEqual({ accepted: false });
     expect(buffer.enqueue({
       type: "operation.completed",
       operationId: "operation-a",
@@ -138,12 +138,96 @@ describe("client platform support", () => {
       exitCode: 0,
       outputTruncated: true,
       at: new Date(1).toISOString(),
-    })).toBe(true);
+    })).toEqual({ accepted: true });
     expect(buffer.drain().map((message) => message.type)).toEqual([
       "operation.started",
       "operation.event",
       "operation.completed",
     ]);
+  });
+
+  it("marks a completion truncated when retaining it evicts buffered output", () => {
+    let outputVisibleWhenMarked = false;
+    let buffer: ClientMessageBuffer;
+    buffer = new ClientMessageBuffer(2, 1024, () => {
+      outputVisibleWhenMarked = buffer.peek()?.type === "operation.event";
+    });
+    expect(buffer.enqueue({
+      type: "operation.event",
+      operationId: "operation-a",
+      sequence: 0,
+      stream: "stdout",
+      dataBase64: Buffer.from("first").toString("base64"),
+    })).toEqual({ accepted: true });
+    expect(buffer.enqueue({
+      type: "operation.event",
+      operationId: "operation-a",
+      sequence: 1,
+      stream: "stdout",
+      dataBase64: Buffer.from("second").toString("base64"),
+    })).toEqual({ accepted: true });
+
+    expect(buffer.enqueue({
+      type: "operation.completed",
+      operationId: "operation-a",
+      status: "succeeded",
+      exitCode: 0,
+      outputTruncated: false,
+      at: new Date(1).toISOString(),
+    })).toEqual({
+      accepted: true,
+      truncatedOperationId: "operation-a",
+    });
+    expect(outputVisibleWhenMarked).toBe(true);
+
+    expect(buffer.drain()).toEqual([
+      expect.objectContaining({
+        type: "operation.event",
+        sequence: 1,
+      }),
+      expect.objectContaining({
+        type: "operation.completed",
+        outputTruncated: true,
+        error: "Operation output is incomplete",
+      }),
+    ]);
+  });
+
+  it("marks rejected output before dropping it from the bounded buffer", () => {
+    const discarded: string[] = [];
+    const buffer = new ClientMessageBuffer(2, 3, (operationId) => {
+      discarded.push(operationId);
+    });
+
+    expect(buffer.enqueue({
+      type: "operation.event",
+      operationId: "operation-a",
+      sequence: 0,
+      stream: "stdout",
+      dataBase64: Buffer.from("four").toString("base64"),
+    })).toEqual({ accepted: false });
+    expect(discarded).toEqual(["operation-a"]);
+    expect(buffer.peek()).toBeUndefined();
+  });
+
+  it("upgrades an already buffered completion when transport output becomes uncertain", () => {
+    const buffer = new ClientMessageBuffer(2, 1024);
+    expect(buffer.enqueue({
+      type: "operation.completed",
+      operationId: "operation-a",
+      status: "succeeded",
+      exitCode: 0,
+      outputTruncated: false,
+      at: new Date(1).toISOString(),
+    })).toEqual({ accepted: true });
+
+    buffer.markOutputTruncated("operation-a");
+
+    expect(buffer.peek()).toMatchObject({
+      type: "operation.completed",
+      operationId: "operation-a",
+      outputTruncated: true,
+    });
   });
 
   it("acknowledges a retained Client completion even after Server retention", () => {
@@ -478,11 +562,23 @@ describe("client platform support", () => {
     expect(client).toContain("this.bufferedMessages.enqueue(message)");
     expect(client).toContain("this.flushBufferedMessages()");
     expect(client).toContain("this.reconcileJournalResults()");
+    expect(client).toContain("this.markUnconfirmedOutputTruncated();");
     expect(client).toContain("private messageQueue = Promise.resolve()");
     expect(client).toContain("this.messageQueue = this.messageQueue");
     expect(client).toContain("return this.handle(parseServerMessage(data.toString()))");
     expect(client).not.toContain("void this.dropLocalAuthority()");
     expect(client).toContain("await this.dropLocalAuthority()");
+
+    const deliver = client.slice(
+      client.indexOf("private deliver(message:"),
+      client.indexOf("private markOperationOutputTruncated("),
+    );
+    expect(deliver.indexOf("this.markOperationOutputUnconfirmed(")).toBeLessThan(
+      deliver.indexOf("this.bufferedMessages.enqueue("),
+    );
+    expect(deliver.indexOf("this.markOperationOutputUnconfirmed(")).toBeLessThan(
+      deliver.indexOf("this.send(message)"),
+    );
   });
 
   it("closes superseded local authority before reopening reconnect targets", () => {
@@ -571,6 +667,7 @@ describe("client platform support", () => {
       const beforeRestart = new OperationJournal(path);
       expect(beforeRestart.receive("running-operation")).toBe("new");
       beforeRestart.markRunning("running-operation");
+      beforeRestart.markOutputTruncated("running-operation");
       expect(beforeRestart.receive("received-operation")).toBe("new");
       beforeRestart.close();
 
@@ -581,6 +678,7 @@ describe("client platform support", () => {
       expect(afterRestart.result("running-operation")).toMatchObject({
         status: "execution_unknown",
         error: "Client restarted before it could prove the Operation outcome",
+        outputTruncated: true,
       });
       expect(afterRestart.resultsForReconciliation()).toEqual([
         expect.objectContaining({
@@ -592,6 +690,53 @@ describe("client platform support", () => {
           result: expect.objectContaining({ status: "execution_unknown" }),
         }),
       ]);
+      afterRestart.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("reconciles unconfirmed transport output conservatively after a restart", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "odyshell-journal-output-"));
+    const path = join(directory, "operations.sqlite");
+    try {
+      const beforeRestart = new OperationJournal(path);
+      const disconnectedBuffer = new ClientMessageBuffer(4, 1024);
+      expect(beforeRestart.receive("completed-operation")).toBe("new");
+      beforeRestart.markRunning("completed-operation");
+      beforeRestart.markOutputUnconfirmed("completed-operation");
+      expect(disconnectedBuffer.enqueue({
+        type: "operation.event",
+        operationId: "completed-operation",
+        sequence: 0,
+        stream: "stdout",
+        dataBase64: Buffer.from("not-yet-flushed").toString("base64"),
+      })).toEqual({ accepted: true });
+      beforeRestart.complete("completed-operation", {
+        status: "succeeded",
+        exitCode: 0,
+        outputTruncated: false,
+      });
+      expect(disconnectedBuffer.enqueue({
+        type: "operation.completed",
+        operationId: "completed-operation",
+        status: "succeeded",
+        exitCode: 0,
+        outputTruncated: false,
+        at: new Date(1).toISOString(),
+      })).toEqual({ accepted: true });
+      expect(beforeRestart.result("completed-operation")).toMatchObject({
+        status: "succeeded",
+        outputTruncated: false,
+      });
+      beforeRestart.close();
+
+      const afterRestart = new OperationJournal(path);
+      expect(afterRestart.recoverInterrupted()).toBe(0);
+      expect(afterRestart.result("completed-operation")).toMatchObject({
+        status: "succeeded",
+        outputTruncated: true,
+      });
       afterRestart.close();
     } finally {
       await rm(directory, { recursive: true, force: true });

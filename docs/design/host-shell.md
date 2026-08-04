@@ -60,6 +60,9 @@ Each Operation is separately identified, bounded by its timeout and output limit
 active Session. Transport loss alone does not terminate an already authorized Operation. The Client
 accepts no new Operations while disconnected, continues enforcing the local Operation timeout and
 Session expiry, keeps only bounded output, and reconciles the result after reauthentication.
+Operation output remains unconfirmed until the Server acknowledges the terminal result; a
+disconnect or Client restart before that acknowledgement reports the output as truncated rather
+than claiming that every chunk was persisted.
 The Server blocks future work immediately after cancellation or revocation. A connected Client
 receives terminal revocation and terminates the active process group. A physically disconnected
 Client cannot receive that signal: it accepts no new work, continues enforcing the local Operation

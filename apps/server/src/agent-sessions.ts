@@ -1,6 +1,7 @@
 import {
   mergeSessionMachineScopes,
   sessionScopeDecision,
+  type Capability,
   type OperationAction,
   type SessionMachineScope,
 } from "@odyshell/protocol";
@@ -32,6 +33,32 @@ export type SessionOperationDecision =
 export type HostShellEscalationDecision =
   | { allowed: true; scopes: SessionMachineScope[] }
   | { allowed: false; code: "predecessor_machine_denied" };
+
+export type DevelopmentSessionDecision =
+  | { allowed: true }
+  | {
+      allowed: false;
+      code: "manual_approval_required";
+      capability: "host.shell" | "process.exec";
+    };
+
+/** Keeps broad native execution out of the approval-free development path. */
+export function developmentSessionDecision(
+  capabilities: readonly Capability[],
+): DevelopmentSessionDecision {
+  const unsafeCapability = capabilities.includes("host.shell")
+    ? "host.shell"
+    : capabilities.includes("process.exec")
+      ? "process.exec"
+      : undefined;
+  return unsafeCapability
+    ? {
+        allowed: false,
+        code: "manual_approval_required",
+        capability: unsafeCapability,
+      }
+    : { allowed: true };
+}
 
 /**
  * Builds the exact authority for a linked Host Shell escalation. The new

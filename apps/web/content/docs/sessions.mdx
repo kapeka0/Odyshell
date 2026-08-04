@@ -52,7 +52,9 @@ its Client reconnects before the Session expires.
 Transport loss alone does not terminate an already authorized Operation. The disconnected Client
 accepts no new Operations, continues enforcing the local Operation timeout and Session expiry, and
 keeps only bounded output. It reconciles the result after reauthentication; the Server does not
-assume that a disconnected command succeeded or failed.
+assume that a disconnected command succeeded or failed. Output remains unconfirmed until the
+Server acknowledges the terminal result; if the connection or Client disappears first, Odyshell
+reports that output as truncated instead of claiming every chunk was stored.
 
 Graceful authority loss cancels the active process group. This is different from an abrupt Client
 crash: without a separate Operation supervisor, a detached POSIX command can continue until it

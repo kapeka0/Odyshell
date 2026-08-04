@@ -64,4 +64,36 @@ describe("authority cutover", () => {
     expect(server).toContain('"/v1/development/sessions"');
     expect(server).toContain('"development_credential_required"');
   });
+
+  it("rejects development Host Shell authority before opening a Client Session", () => {
+    const server = readFileSync(
+      resolve(process.cwd(), "apps/server/src/index.ts"),
+      "utf8",
+    );
+    const developmentRoute = server.slice(
+      server.indexOf('app.post("/v1/development/sessions"'),
+      server.indexOf('app.get<{ Params: { sessionId: string } }>'),
+    );
+
+    expect(developmentRoute).toContain("developmentSessionDecision(");
+    expect(developmentRoute.indexOf("developmentSessionDecision(")).toBeLessThan(
+      developmentRoute.indexOf("db.createSession({"),
+    );
+    expect(developmentRoute.indexOf("developmentSessionDecision(")).toBeLessThan(
+      developmentRoute.indexOf("gateway.send(input.machineId"),
+    );
+    expect(developmentRoute).toContain("error: developmentDecision.code");
+
+    const operationRoute = server.slice(
+      server.indexOf('"/v1/sessions/:sessionId/operations"'),
+      server.indexOf('"/v1/operations/:operationId"'),
+    );
+    expect(operationRoute).toContain("developmentSessionDecision(");
+    expect(operationRoute.indexOf("developmentSessionDecision(")).toBeLessThan(
+      operationRoute.indexOf("db.sessionForOperation("),
+    );
+    expect(operationRoute.indexOf("developmentSessionDecision(")).toBeLessThan(
+      operationRoute.lastIndexOf("deliverOperation("),
+    );
+  });
 });

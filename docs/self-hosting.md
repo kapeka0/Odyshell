@@ -50,8 +50,8 @@ pnpm dev:web
 Compose starts the Server and PostgreSQL. Its named volume keeps state across restarts. The
 included passwords and keys are development defaults; do not expose this setup to the internet.
 The development Agent key only authorizes the isolated `/v1/development/sessions` endpoint. It
-does not make `ods exec`, `ods shell`, or `ods mcp` skip the implemented browser-approved Session
-flow.
+rejects `host.shell` and `process.exec`; it does not make `ods exec`, `ods shell`, or `ods mcp` skip
+the implemented browser-approved Session flow.
 
 Before upgrading an existing installation, take a PostgreSQL snapshot. The authority cutover
 keeps Workspaces, machines and retained events, but revokes legacy Agent Access credentials and

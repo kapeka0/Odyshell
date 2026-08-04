@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { OperationAction } from "@odyshell/protocol";
 import {
   clampSessionOperationTimeout,
+  developmentSessionDecision,
   hostShellEscalationScopes,
   sessionOperationDecision,
   type AgentSessionPrincipal,
@@ -53,6 +54,22 @@ const principal: AgentSessionPrincipal = {
 };
 
 describe("typed multi-machine Agent Session authorization", () => {
+  it("requires the browser-approved flow for development Host Shell authority", () => {
+    expect(developmentSessionDecision(["fs.read"])).toEqual({
+      allowed: true,
+    });
+    expect(developmentSessionDecision(["host.shell"])).toEqual({
+      allowed: false,
+      code: "manual_approval_required",
+      capability: "host.shell",
+    });
+    expect(developmentSessionDecision(["process.exec"])).toEqual({
+      allowed: false,
+      code: "manual_approval_required",
+      capability: "process.exec",
+    });
+  });
+
   it("inherits the predecessor authority and adds Host Shell only on its selected machine", () => {
     expect(hostShellEscalationScopes(principal.scopes, machineA)).toEqual({
       allowed: true,

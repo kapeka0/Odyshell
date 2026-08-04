@@ -239,7 +239,9 @@ visibly marked as Agent-reported.
 `session_cancel`, expiry, and security revocation cancel active Operations. Transport loss alone
 does not: an already authorized Operation continues under its local timeout and Session deadline,
 the disconnected Client accepts no new Operations, output buffering remains bounded, and the result
-is reconciled after reauthentication. Process cancellation terminates the process group so children
+is reconciled after reauthentication. Output remains unconfirmed until the Server acknowledges the
+terminal result; disconnect or restart before that acknowledgement reports it as truncated.
+Process cancellation terminates the process group so children
 cannot survive the Session when the Client performs the cancellation. Without a separate Operation
 supervisor, an abrupt Client crash can leave a detached POSIX command running until it exits or is
 stopped externally; restart reconciliation records an unknown result rather than assuming it was

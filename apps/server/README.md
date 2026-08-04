@@ -48,7 +48,8 @@ ods agent login "Coding agent" --server http://127.0.0.1:4100
 
 The Agent requests expiring Sessions for its tasks. Its credential identifies the Agent but never
 authorizes a machine Operation directly. The development Agent key is limited to the explicit
-development Session endpoint and does not make normal CLI execution bypass approval.
+development Session endpoint, which rejects `host.shell` and `process.exec`, and does not make
+normal CLI execution bypass approval.
 
 To test from another device, bind the development Server to a specific reachable host interface:
 

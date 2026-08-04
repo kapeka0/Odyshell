@@ -64,6 +64,16 @@ async function api(path, options = {}) {
   return body;
 }
 
+async function credentialApi(token, path, options = {}) {
+  return await api(path, {
+    ...options,
+    headers: {
+      ...options.headers,
+      authorization: `Bearer ${token}`,
+    },
+  });
+}
+
 function run(command, args, options = {}) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, {
@@ -172,14 +182,19 @@ async function supersedeMachineConnection(config) {
   };
 }
 
-async function operation(sessionId, action, expectedStatus = "succeeded") {
-  const created = await api(`/v1/sessions/${sessionId}/operations`, {
+async function operation(
+  sessionId,
+  action,
+  expectedStatus = "succeeded",
+  token = agentKey,
+) {
+  const created = await credentialApi(token, `/v1/sessions/${sessionId}/operations`, {
     method: "POST",
     headers: { "idempotency-key": crypto.randomUUID() },
     body: JSON.stringify({ action, timeoutSeconds: 10, maxOutputBytes: 1024 * 1024 }),
   });
   const completed = await waitUntil(
-    () => api(`/v1/operations/${created.id}`),
+    () => credentialApi(token, `/v1/operations/${created.id}`),
     (value) =>
       !["queued", "delivered", "running", "cancellation_requested"].includes(
         value.status,
@@ -3560,20 +3575,208 @@ try {
     throw new Error("ods one-shot execution did not return expected output");
   }
 
-  const readOnlyCreated = await api("/v1/development/sessions", {
-    method: "POST",
-    body: JSON.stringify({
-      machineId: machine.id,
-      profile: "workspace",
-      ttlSeconds: 120,
-      capabilities: ["process.exec"],
-    }),
-  });
-  const readOnlySession = await waitUntil(
-    () => api(`/v1/sessions/${readOnlyCreated.id}`),
-    (value) => value.status === "ready" || value.status === "failed",
-    "read-only sandbox creation",
+  const legacyDevelopmentSessionId = crypto.randomUUID();
+  await compose([
+    "exec",
+    "-T",
+    "postgres",
+    "psql",
+    "-U",
+    "odyshell",
+    "-d",
+    "odyshell",
+    "-v",
+    "ON_ERROR_STOP=1",
+    "-c",
+    [
+      "insert into odyshell.sessions",
+      "(workspace_id, id, machine_id, principal_id, profile, capabilities, status, expires_at)",
+      `values ('default', '${legacyDevelopmentSessionId}', '${machine.id}', 'dev-agent',`,
+      "'host', '[\"process.exec\"]'::jsonb, 'ready', now() + interval '10 minutes');",
+    ].join(" "),
+  ]);
+  const legacyDevelopmentExecution = await fetch(
+    new URL(
+      `/v1/sessions/${legacyDevelopmentSessionId}/operations`,
+      apiUrl,
+    ),
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${agentKey}`,
+        "content-type": "application/json",
+        "idempotency-key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({
+        action: {
+          kind: "process.exec",
+          program: process.platform === "win32" ? "cmd.exe" : "/bin/bash",
+          args: process.platform === "win32"
+            ? ["/d", "/s", "/c", "whoami"]
+            : ["-lc", "id"],
+          cwd: ".",
+        },
+        timeoutSeconds: 10,
+        maxOutputBytes: 1024,
+      }),
+    },
   );
+  const legacyDevelopmentExecutionBody =
+    await legacyDevelopmentExecution.json();
+  if (
+    legacyDevelopmentExecution.status !== 403 ||
+    legacyDevelopmentExecutionBody.error !== "manual_approval_required" ||
+    legacyDevelopmentExecutionBody.capability !== "process.exec"
+  ) {
+    throw new Error(
+      `A retained Development Session could execute natively: ${legacyDevelopmentExecution.status} ${JSON.stringify(legacyDevelopmentExecutionBody)}`,
+    );
+  }
+  await compose([
+    "exec",
+    "-T",
+    "postgres",
+    "psql",
+    "-U",
+    "odyshell",
+    "-d",
+    "odyshell",
+    "-v",
+    "ON_ERROR_STOP=1",
+    "-c",
+    `delete from odyshell.sessions where workspace_id = 'default' and id = '${legacyDevelopmentSessionId}';`,
+  ]);
+
+  const createApprovedSandboxSession = async ({
+    title,
+    purpose,
+    capabilities,
+    restrictions,
+  }) => {
+    const requestResponse = await fetch(
+      new URL("/v1/agent-session-requests", apiUrl),
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${cliToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          agentId: approvedAgentId,
+          agentName: "E2E MCP Agent",
+          title,
+          purpose,
+          scopes: [
+            {
+              machineId: machine.id,
+              profile: "workspace",
+              capabilities,
+              restrictions,
+            },
+          ],
+          durationSeconds: 300,
+        }),
+      },
+    );
+    const requested = await requestResponse.json();
+    if (
+      requestResponse.status !== 201 ||
+      requested.status !== "pending" ||
+      !requested.approvalUrl
+    ) {
+      throw new Error(
+        `Sandbox Session request failed: ${requestResponse.status} ${JSON.stringify(requested)}`,
+      );
+    }
+    const requestId = new URL(requested.approvalUrl).searchParams.get(
+      "request",
+    );
+    if (!requestId) throw new Error("Sandbox approval URL omitted its request");
+    const approval = await fetch(
+      new URL("/v1/internal/cloud/session-requests/approve", apiUrl),
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-odyshell-web-key": webKey,
+        },
+        body: JSON.stringify({ ...approvalBody, requestId }),
+      },
+    );
+    if (approval.status !== 200) {
+      throw new Error(`Sandbox Session approval failed: ${approval.status}`);
+    }
+    const claimResponse = await fetch(
+      new URL(`/v1/agent-session-requests/${requested.id}/claim`, apiUrl),
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${cliToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ agentId: approvedAgentId }),
+      },
+    );
+    const claimed = await claimResponse.json();
+    if (
+      claimResponse.status !== 201 ||
+      !claimed.sessionId ||
+      !claimed.sessionToken
+    ) {
+      throw new Error(
+        `Sandbox Session claim failed: ${claimResponse.status} ${JSON.stringify(claimed)}`,
+      );
+    }
+    const ready = await waitUntil(
+      () => credentialApi(
+        claimed.sessionToken,
+        `/v1/sessions/${claimed.sessionId}`,
+      ),
+      (value) => value.status === "ready" || value.status === "failed",
+      `${title} readiness`,
+    );
+    return {
+      ...ready,
+      id: claimed.sessionId,
+      token: claimed.sessionToken,
+    };
+  };
+  const waitForRuntimeSessionClosed = async (sessionId, description) =>
+    await waitUntil(
+      () =>
+        compose([
+          "exec",
+          "-T",
+          "postgres",
+          "psql",
+          "-U",
+          "odyshell",
+          "-d",
+          "odyshell",
+          "-tA",
+          "-c",
+          `select status from odyshell.sessions where workspace_id = 'default' and id = '${sessionId}';`,
+        ]),
+      (status) => status.trim() === "closed",
+      description,
+    );
+
+  const readOnlySession = await createApprovedSandboxSession({
+    title: "Verify read-only Docker isolation",
+    purpose: "Prove the read-only mount rejects writes",
+    capabilities: ["process.exec"],
+    restrictions: {
+      process: {
+        programs: [
+          {
+            program: "touch",
+            args: ["should-not-be-written"],
+            cwd: { path: ".", includeDescendants: false },
+          },
+        ],
+      },
+    },
+  });
   if (readOnlySession.status !== "ready") {
     const activeSessionRows = await compose([
       "exec",
@@ -3611,28 +3814,40 @@ try {
       cwd: ".",
     },
     "failed",
+    readOnlySession.token,
   );
-  await api(`/v1/sessions/${readOnlySession.id}`, { method: "DELETE" });
-  await waitUntil(
-    () => api(`/v1/sessions/${readOnlySession.id}`),
-    (value) => value.status === "closed",
+  await credentialApi(readOnlySession.token, `/v1/sessions/${readOnlySession.id}`, {
+    method: "DELETE",
+  });
+  await waitForRuntimeSessionClosed(
+    readOnlySession.id,
     "read-only sandbox cleanup",
   );
 
-  const createdSession = await api("/v1/development/sessions", {
-    method: "POST",
-    body: JSON.stringify({
-      machineId: machine.id,
-      profile: "workspace",
-      ttlSeconds: 120,
-      capabilities: clientCapabilities,
-    }),
+  const processCwd = { path: ".", includeDescendants: false };
+  const session = await createApprovedSandboxSession({
+    title: "Verify isolated Docker execution",
+    purpose: "Exercise structured execution and filesystem Operations",
+    capabilities: clientCapabilities,
+    restrictions: {
+      process: {
+        programs: [
+          { program: "printf", args: ["idempotent"], cwd: processCwd },
+          {
+            program: "printf",
+            args: ["hello from isolated Odyshell\\n"],
+            cwd: processCwd,
+          },
+          {
+            program: "wget",
+            args: ["-T", "2", "-qO-", "http://example.com"],
+            cwd: processCwd,
+          },
+          { program: "sleep", args: ["30"], cwd: processCwd },
+        ],
+      },
+    },
   });
-  const session = await waitUntil(
-    () => api(`/v1/sessions/${createdSession.id}`),
-    (value) => value.status === "ready" || value.status === "failed",
-    "sandbox creation",
-  );
   if (session.status !== "ready") throw new Error(`Sandbox failed: ${session.error}`);
 
   const idempotencyKey = crypto.randomUUID();
@@ -3641,7 +3856,7 @@ try {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${agentKey}`,
+        authorization: `Bearer ${session.token}`,
         "idempotency-key": idempotencyKey,
       },
       body: JSON.stringify({
@@ -3669,7 +3884,7 @@ try {
     throw new Error("Concurrent idempotent requests created multiple operations");
   }
   await waitUntil(
-    () => api(`/v1/operations/${idempotentOperations[0].id}`),
+    () => credentialApi(session.token, `/v1/operations/${idempotentOperations[0].id}`),
     (value) => value.status === "succeeded",
     "idempotent operation",
   );
@@ -3690,23 +3905,38 @@ try {
     throw new Error("Session container does not match the required sandbox policy");
   }
 
-  const execResult = await operation(session.id, {
-    kind: "process.exec",
-    program: "printf",
-    args: ["hello from isolated Odyshell\\n"],
-    cwd: ".",
-  });
+  const execResult = await operation(
+    session.id,
+    {
+      kind: "process.exec",
+      program: "printf",
+      args: ["hello from isolated Odyshell\\n"],
+      cwd: ".",
+    },
+    "succeeded",
+    session.token,
+  );
   if (!execResult.output.includes("hello from isolated Odyshell")) {
     throw new Error("Structured execution output was not relayed");
   }
 
-  await operation(session.id, {
-    kind: "fs.write",
-    path: "odyshell-e2e.txt",
-    contentBase64: Buffer.from("filesystem round trip").toString("base64"),
-    createParents: true,
-  });
-  const readResult = await operation(session.id, { kind: "fs.read", path: "odyshell-e2e.txt" });
+  await operation(
+    session.id,
+    {
+      kind: "fs.write",
+      path: "odyshell-e2e.txt",
+      contentBase64: Buffer.from("filesystem round trip").toString("base64"),
+      createParents: true,
+    },
+    "succeeded",
+    session.token,
+  );
+  const readResult = await operation(
+    session.id,
+    { kind: "fs.read", path: "odyshell-e2e.txt" },
+    "succeeded",
+    session.token,
+  );
   if (readResult.output !== "filesystem round trip") throw new Error("Filesystem round trip failed");
 
   const networkResult = await operation(
@@ -3718,13 +3948,14 @@ try {
       cwd: ".",
     },
     "failed",
+    session.token,
   );
 
   const traversal = await fetch(new URL(`/v1/sessions/${session.id}/operations`, apiUrl), {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${agentKey}`,
+      authorization: `Bearer ${session.token}`,
       "idempotency-key": crypto.randomUUID(),
     },
     body: JSON.stringify({
@@ -3735,7 +3966,7 @@ try {
   });
   if (traversal.status !== 400) throw new Error("Path traversal request was not rejected");
 
-  const cancellable = await api(`/v1/sessions/${session.id}/operations`, {
+  const cancellable = await credentialApi(session.token, `/v1/sessions/${session.id}/operations`, {
     method: "POST",
     headers: { "idempotency-key": crypto.randomUUID() },
     body: JSON.stringify({
@@ -3745,13 +3976,15 @@ try {
     }),
   });
   await waitUntil(
-    () => api(`/v1/operations/${cancellable.id}`),
+    () => credentialApi(session.token, `/v1/operations/${cancellable.id}`),
     (value) => value.status === "running",
     "cancellable operation startup",
   );
-  await api(`/v1/operations/${cancellable.id}/cancel`, { method: "POST" });
+  await credentialApi(session.token, `/v1/operations/${cancellable.id}/cancel`, {
+    method: "POST",
+  });
   const cancelled = await waitUntil(
-    () => api(`/v1/operations/${cancellable.id}`),
+    () => credentialApi(session.token, `/v1/operations/${cancellable.id}`),
     (value) =>
       !["queued", "delivered", "running", "cancellation_requested"].includes(
         value.status,
@@ -3760,7 +3993,7 @@ try {
   );
   if (cancelled.status !== "cancelled") throw new Error(`Cancellation produced ${cancelled.status}`);
 
-  const reconnectCancellable = await api(`/v1/sessions/${session.id}/operations`, {
+  const reconnectCancellable = await credentialApi(session.token, `/v1/sessions/${session.id}/operations`, {
     method: "POST",
     headers: { "idempotency-key": crypto.randomUUID() },
     body: JSON.stringify({
@@ -3770,16 +4003,19 @@ try {
     }),
   });
   await waitUntil(
-    () => api(`/v1/operations/${reconnectCancellable.id}`),
+    () => credentialApi(session.token, `/v1/operations/${reconnectCancellable.id}`),
     (value) => value.status === "running",
     "reconnect cancellation startup",
   );
   const replacementConnection = await supersedeMachineConnection(
     enrolledClientConfig,
   );
-  await api(`/v1/operations/${reconnectCancellable.id}/cancel`, { method: "POST" });
+  await credentialApi(session.token, `/v1/operations/${reconnectCancellable.id}/cancel`, {
+    method: "POST",
+  });
   await replacementConnection.waitForCancellation(reconnectCancellable.id);
-  const cancellationRequested = await api(
+  const cancellationRequested = await credentialApi(
+    session.token,
     `/v1/operations/${reconnectCancellable.id}`,
   );
   if (cancellationRequested.status !== "cancellation_requested") {
@@ -3789,7 +4025,7 @@ try {
   }
   replacementConnection.socket.close();
   const reconnectCancelled = await waitUntil(
-    () => api(`/v1/operations/${reconnectCancellable.id}`),
+    () => credentialApi(session.token, `/v1/operations/${reconnectCancellable.id}`),
     (value) =>
       !["queued", "delivered", "running", "cancellation_requested"].includes(
         value.status,
@@ -3885,10 +4121,11 @@ try {
     throw new Error("Durable audit metadata retained operation content");
   }
 
-  await api(`/v1/sessions/${session.id}`, { method: "DELETE" });
-  await waitUntil(
-    () => api(`/v1/sessions/${session.id}`),
-    (value) => value.status === "closed",
+  await credentialApi(session.token, `/v1/sessions/${session.id}`, {
+    method: "DELETE",
+  });
+  await waitForRuntimeSessionClosed(
+    session.id,
     "session cleanup",
   );
 
@@ -4149,6 +4386,7 @@ try {
           sessionCredentialCannotMintSessions: true,
           manualSessionExecDenied: true,
           manualSessionDockerDenied: true,
+          developmentNativeExecDenied: true,
           hostShellApproved: true,
           hostShellIndependentCommands: true,
           hostShellHomeDefault: true,
