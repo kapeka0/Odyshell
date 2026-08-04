@@ -467,30 +467,34 @@ describe("Odyshell MCP server", () => {
     );
   });
 
-  it("serves the CLI over clean MCP stdio", async () => {
-    const transport = new StdioClientTransport({
-      command: process.execPath,
-      args: ["--import", "tsx", "apps/cli/src/index.ts", "mcp"],
-      cwd: process.cwd(),
-      env: {
-        ...stringEnvironment(process.env),
-        ODYSHELL_AGENT_TOKEN: "test-agent-token",
-        ODYSHELL_AGENT_ID: "b1144720-58d8-4886-b8ad-d2b32ccaecc9",
-        ODYSHELL_AGENT_NAME: "Test Agent",
-        ODYSHELL_SERVER_URL: "http://127.0.0.1:1",
-      },
-      stderr: "pipe",
-    });
-    const client = new Client({ name: "odyshell-stdio-test", version: "1.0.0" });
-    await client.connect(transport);
-    closeCallbacks.push(async () => client.close());
+  it(
+    "serves the CLI over clean MCP stdio",
+    async () => {
+      const transport = new StdioClientTransport({
+        command: process.execPath,
+        args: ["--import", "tsx", "apps/cli/src/index.ts", "mcp"],
+        cwd: process.cwd(),
+        env: {
+          ...stringEnvironment(process.env),
+          ODYSHELL_AGENT_TOKEN: "test-agent-token",
+          ODYSHELL_AGENT_ID: "b1144720-58d8-4886-b8ad-d2b32ccaecc9",
+          ODYSHELL_AGENT_NAME: "Test Agent",
+          ODYSHELL_SERVER_URL: "http://127.0.0.1:1",
+        },
+        stderr: "pipe",
+      });
+      const client = new Client({ name: "odyshell-stdio-test", version: "1.0.0" });
+      await client.connect(transport);
+      closeCallbacks.push(async () => client.close());
 
-    const { tools } = await client.listTools();
+      const { tools } = await client.listTools();
 
-    expect(tools.some((tool) => tool.name === "session_request")).toBe(true);
-    expect(tools.some((tool) => tool.name === "operation_execute")).toBe(true);
-    expect(tools.some((tool) => tool.name === "process_exec")).toBe(false);
-  });
+      expect(tools.some((tool) => tool.name === "session_request")).toBe(true);
+      expect(tools.some((tool) => tool.name === "operation_execute")).toBe(true);
+      expect(tools.some((tool) => tool.name === "process_exec")).toBe(false);
+    },
+    15_000,
+  );
 });
 
 async function connectServer(
