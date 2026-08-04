@@ -125,6 +125,12 @@ describe("0.15.0 release contract", () => {
         "utf8",
       ),
     ).not.toContain("not published");
+
+    const releaseNotes = readFileSync(
+      resolve(process.cwd(), `docs/releases/${releaseVersion}.md`),
+      "utf8",
+    );
+    expect(releaseNotes).not.toContain("ods client update");
   });
 
   it("rejects malformed release tags before packaging", () => {
