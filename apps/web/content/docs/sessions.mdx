@@ -55,8 +55,13 @@ not assume that an interrupted command succeeded.
 Open a Session to follow its lifecycle and Operations chronologically. The Timeline updates while
 the page is open and attributes actions to the Agent, the responsible member, or Odyshell.
 
-Privacy-minimal Timeline events include a conservatively redacted command shape and exit status
-needed for audit. Argument values are hidden by default. They never retain stdout, stderr, file
-contents, credentials, authorization headers, or environment values. Operation output is returned
-live to the Agent so it can decide the next step. Executable paths are reduced to their basename,
-and typed filesystem and Docker events do not retain paths, queries, or container names.
+The Workspace logging level is captured when the Session is requested and never changes for that
+Session:
+
+- **Privacy-minimal** keeps lifecycle, operation kind, status and exit code. It excludes commands,
+  paths, stdout and stderr.
+- **Operational** adds commands, paths, stdout and stderr with automatic secret redaction.
+- **Diagnostic** keeps complete available details and can contain secrets.
+
+Operation output remains temporary and is eligible for deletion after one hour by default. Older
+Timeline events keep their structural result without recreating deleted output.

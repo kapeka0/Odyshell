@@ -946,6 +946,55 @@ try {
     userId: cliUserId,
     organization: approvalBody.organization,
   };
+  const defaultSettingsContextResponse = await fetch(
+    new URL("/v1/internal/cloud/context", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify(cloudIdentity),
+    },
+  );
+  const defaultSettingsContext = await defaultSettingsContextResponse.json();
+  if (
+    defaultSettingsContext.workspace?.loggingLevel !== "privacy-minimal" ||
+    !defaultSettingsContext.workspace?.avatarSeed ||
+    defaultSettingsContext.userPreferences?.timeZone !== "System"
+  ) {
+    throw new Error("Workspace or user settings did not start fail-safe");
+  }
+  const userSettingsResponse = await fetch(
+    new URL("/v1/internal/cloud/user-settings/update", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({ ...cloudIdentity, timeZone: "UTC" }),
+    },
+  );
+  const workspaceSettingsResponse = await fetch(
+    new URL("/v1/internal/cloud/workspace/settings/update", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        ...cloudIdentity,
+        name: "E2E workspace",
+        avatarSeed: "e2e-avatar-seed",
+        loggingLevel: "operational",
+      }),
+    },
+  );
+  if (userSettingsResponse.status !== 200 || workspaceSettingsResponse.status !== 200) {
+    throw new Error("User or Workspace settings could not be updated");
+  }
   const notificationContextResponse = await fetch(
     new URL("/v1/internal/cloud/context", apiUrl),
     {
@@ -958,6 +1007,14 @@ try {
     },
   );
   const notificationContext = await notificationContextResponse.json();
+  if (
+    notificationContext.workspace?.name !== "E2E workspace" ||
+    notificationContext.workspace?.avatarSeed !== "e2e-avatar-seed" ||
+    notificationContext.workspace?.loggingLevel !== "operational" ||
+    notificationContext.userPreferences?.timeZone !== "UTC"
+  ) {
+    throw new Error("User or Workspace settings were not persisted");
+  }
   const sessionNotification = notificationContext.notifications?.find(
     (notification) =>
       notification.kind === "session.requested" &&
@@ -1054,6 +1111,23 @@ try {
   const independentRequest = await independentRequestResponse.json();
   if (independentRequestResponse.status !== 201) {
     throw new Error("Independent Agent could not request a Session");
+  }
+  const loggingSnapshot = (
+    await compose([
+      "exec",
+      "-T",
+      "postgres",
+      "psql",
+      "-U",
+      "odyshell",
+      "-d",
+      "odyshell",
+      "-tAc",
+      `select logging_level from odyshell.agent_session_requests where id = '${independentRequest.id}';`,
+    ])
+  ).trim();
+  if (loggingSnapshot !== "operational") {
+    throw new Error("A Session request did not snapshot Workspace logging");
   }
   await compose([
     "exec",
@@ -3463,6 +3537,8 @@ try {
           agentIdentityListed: true,
           agentIdentityDeletion: true,
           targetedNotifications: true,
+          workspaceSettings: true,
+          userSettings: true,
           legacyAgentAccessRejected: true,
           sessionBoundedByCredential: true,
           capabilityScopeDenied: true,

@@ -25,7 +25,6 @@ export async function GET(
       {
         extraBody: {
           sessionId: parsed.data,
-          detailLevel: "privacy-minimal",
         },
       },
     );

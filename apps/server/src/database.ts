@@ -27,6 +27,7 @@ import {
   deviceExchangeDecision,
   entitlementsFor,
   type CloudPlanId,
+  type WorkspaceLoggingLevel,
 } from "./cloud.js";
 import {
   autoapprovalDecision,
@@ -111,7 +112,15 @@ interface WorkspaceTable {
   organizationId: string;
   slug: string;
   name: string;
+  avatarSeed: Generated<string>;
+  loggingLevel: Generated<string>;
   createdAt: Generated<Date>;
+}
+
+interface UserPreferenceTable {
+  externalId: string;
+  timeZone: Generated<string>;
+  updatedAt: Generated<Date>;
 }
 
 interface MachineTable {
@@ -255,6 +264,7 @@ interface AgentSessionTable {
   predecessorSessionId: string | null;
   autoapprovalPolicyId: string | null;
   autoapprovalPolicyVersion: number | null;
+  loggingLevel: Generated<string>;
   createdAt: Generated<Date>;
   updatedAt: Generated<Date>;
 }
@@ -315,6 +325,7 @@ interface AgentSessionRequestTable {
   predecessorSessionId: string | null;
   autoapprovalPolicyId: string | null;
   autoapprovalPolicyVersion: number | null;
+  loggingLevel: Generated<string>;
   createdAt: Generated<Date>;
   updatedAt: Generated<Date>;
 }
@@ -455,6 +466,7 @@ interface AuditEventTable {
 interface DatabaseSchema {
   organizations: OrganizationTable;
   workspaces: WorkspaceTable;
+  userPreferences: UserPreferenceTable;
   machines: MachineTable;
   enrollmentTokens: EnrollmentTokenTable;
   notifications: NotificationTable;
@@ -501,7 +513,15 @@ export type WorkspaceRecord = {
   organizationId: string;
   slug: string;
   name: string;
+  avatarSeed: string;
+  loggingLevel: WorkspaceLoggingLevel;
   createdAt: number;
+};
+
+export type UserPreferenceRecord = {
+  externalId: string;
+  timeZone: string;
+  updatedAt: number;
 };
 
 export type NotificationRecord = {
@@ -632,6 +652,7 @@ export type AgentSessionRecord = Timestamped & {
   predecessorSessionId?: string;
   autoapprovalPolicyId?: string;
   autoapprovalPolicyVersion?: number;
+  loggingLevel: WorkspaceLoggingLevel;
 };
 
 export type AgentSessionRequestRecord = Timestamped & {
@@ -656,6 +677,7 @@ export type AgentSessionRequestRecord = Timestamped & {
   predecessorSessionId?: string;
   autoapprovalPolicyId?: string;
   autoapprovalPolicyVersion?: number;
+  loggingLevel: WorkspaceLoggingLevel;
 };
 
 export type AgentPolicyRecord = Timestamped & {
@@ -880,6 +902,8 @@ function workspaceRecord(workspace: Selectable<WorkspaceTable>): WorkspaceRecord
     organizationId: workspace.organizationId,
     slug: workspace.slug,
     name: workspace.name,
+    avatarSeed: workspace.avatarSeed,
+    loggingLevel: workspace.loggingLevel as WorkspaceLoggingLevel,
     createdAt: timestamp(workspace.createdAt),
   };
 }
@@ -976,6 +1000,7 @@ function agentSessionRecord(
     ...(session.autoapprovalPolicyVersion === null
       ? {}
       : { autoapprovalPolicyVersion: session.autoapprovalPolicyVersion }),
+    loggingLevel: session.loggingLevel as WorkspaceLoggingLevel,
     createdAt: timestamp(session.createdAt),
     updatedAt: timestamp(session.updatedAt),
   };
@@ -993,6 +1018,7 @@ function agentSessionRequestRecord(
       ? {}
       : { requestedByAgentId: request.requestedByAgentId }),
     ...(request.runId === null ? {} : { runId: request.runId }),
+    loggingLevel: request.loggingLevel as WorkspaceLoggingLevel,
     machineId: request.machineId,
     title: request.title,
     ...(request.purpose === null ? {} : { purpose: request.purpose }),
@@ -2778,6 +2804,57 @@ async function rollbackMachineMetadata(db: Kysely<DatabaseSchema>): Promise<void
   `.execute(db);
 }
 
+async function migrateWorkspaceSettings(db: Kysely<DatabaseSchema>): Promise<void> {
+  await sql`
+    alter table odyshell.workspaces
+      add column avatar_seed text,
+      add column logging_level text not null default 'privacy-minimal';
+    update odyshell.workspaces set avatar_seed = id where avatar_seed is null;
+    alter table odyshell.workspaces
+      alter column avatar_seed set default md5(random()::text || clock_timestamp()::text),
+      alter column avatar_seed set not null;
+    alter table odyshell.workspaces
+      add constraint workspaces_avatar_seed_check
+      check (length(avatar_seed) between 1 and 128),
+      add constraint workspaces_logging_level_check
+      check (logging_level in ('privacy-minimal', 'operational', 'diagnostic'));
+
+    create table odyshell.user_preferences (
+      external_id text primary key,
+      time_zone text not null default 'System',
+      updated_at timestamptz not null default now(),
+      constraint user_preferences_time_zone_check
+        check (length(time_zone) between 1 and 128)
+    );
+
+    alter table odyshell.agent_session_requests
+      add column logging_level text not null default 'privacy-minimal',
+      add constraint agent_session_requests_logging_level_check
+      check (logging_level in ('privacy-minimal', 'operational', 'diagnostic'));
+    alter table odyshell.agent_sessions
+      add column logging_level text not null default 'privacy-minimal',
+      add constraint agent_sessions_logging_level_check
+      check (logging_level in ('privacy-minimal', 'operational', 'diagnostic'));
+  `.execute(db);
+}
+
+async function rollbackWorkspaceSettings(db: Kysely<DatabaseSchema>): Promise<void> {
+  await sql`
+    alter table odyshell.agent_sessions
+      drop constraint agent_sessions_logging_level_check,
+      drop column logging_level;
+    alter table odyshell.agent_session_requests
+      drop constraint agent_session_requests_logging_level_check,
+      drop column logging_level;
+    drop table odyshell.user_preferences;
+    alter table odyshell.workspaces
+      drop constraint workspaces_logging_level_check,
+      drop constraint workspaces_avatar_seed_check,
+      drop column logging_level,
+      drop column avatar_seed;
+  `.execute(db);
+}
+
 const migrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
     return {
@@ -2855,6 +2932,10 @@ const migrationProvider: MigrationProvider = {
       "020_machine_metadata": {
         up: migrateMachineMetadata,
         down: rollbackMachineMetadata,
+      },
+      "021_workspace_settings": {
+        up: migrateWorkspaceSettings,
+        down: rollbackWorkspaceSettings,
       },
     };
   },
@@ -3433,6 +3514,62 @@ export class PostgresDatabase {
       .selectFrom("workspaces")
       .selectAll()
       .where("id", "=", workspaceId)
+      .executeTakeFirst();
+    return workspace ? workspaceRecord(workspace) : null;
+  }
+
+  async userPreferences(externalId: string): Promise<UserPreferenceRecord> {
+    const preferences = await this.db
+      .selectFrom("userPreferences")
+      .selectAll()
+      .where("externalId", "=", externalId)
+      .executeTakeFirst();
+    return preferences
+      ? {
+          externalId: preferences.externalId,
+          timeZone: preferences.timeZone,
+          updatedAt: timestamp(preferences.updatedAt),
+        }
+      : { externalId, timeZone: "System", updatedAt: 0 };
+  }
+
+  async upsertUserPreferences(input: {
+    externalId: string;
+    timeZone: string;
+  }): Promise<UserPreferenceRecord> {
+    const preferences = await this.db
+      .insertInto("userPreferences")
+      .values(input)
+      .onConflict((conflict) =>
+        conflict.column("externalId").doUpdateSet({
+          timeZone: input.timeZone,
+          updatedAt: new Date(),
+        }),
+      )
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    return {
+      externalId: preferences.externalId,
+      timeZone: preferences.timeZone,
+      updatedAt: timestamp(preferences.updatedAt),
+    };
+  }
+
+  async updateWorkspaceSettings(input: {
+    workspaceId: string;
+    name: string;
+    avatarSeed: string;
+    loggingLevel: WorkspaceLoggingLevel;
+  }): Promise<WorkspaceRecord | null> {
+    const workspace = await this.db
+      .updateTable("workspaces")
+      .set({
+        name: input.name,
+        avatarSeed: input.avatarSeed,
+        loggingLevel: input.loggingLevel,
+      })
+      .where("id", "=", input.workspaceId)
+      .returningAll()
       .executeTakeFirst();
     return workspace ? workspaceRecord(workspace) : null;
   }
@@ -4570,7 +4707,7 @@ export class PostgresDatabase {
   async operationTimelineMetadata(
     workspaceId: string,
     operationIds: string[],
-    includeDiagnosticOutput: boolean,
+    detailLevel: Exclude<WorkspaceLoggingLevel, "privacy-minimal">,
   ): Promise<Map<string, Record<string, unknown>>> {
     if (operationIds.length === 0) return new Map();
     const operations = await this.db
@@ -4582,10 +4719,11 @@ export class PostgresDatabase {
     const metadata = new Map(
       operations.map((operation) => [
         operation.id,
-        operationTimelineMetadata(operation.action),
+        detailLevel === "diagnostic"
+          ? structuredClone(operation.action) as Record<string, unknown>
+          : operationTimelineMetadata(operation.action),
       ]),
     );
-    if (!includeDiagnosticOutput) return metadata;
     const events = await this.db
       .selectFrom("operationEvents")
       .select(["operationId", "stream", "data"])
@@ -4883,6 +5021,13 @@ export class PostgresDatabase {
     notifyRequester?: boolean;
   }): Promise<AgentSessionRequestRecord | null> {
     return await this.db.transaction().execute(async (transaction) => {
+      const workspace = await transaction
+        .selectFrom("workspaces")
+        .select("loggingLevel")
+        .where("id", "=", input.workspaceId)
+        .forShare()
+        .executeTakeFirst();
+      if (!workspace) return null;
       await transaction
         .insertInto("humans")
         .values({
@@ -5063,6 +5208,7 @@ export class PostgresDatabase {
           predecessorSessionId: input.predecessorSessionId ?? null,
           autoapprovalPolicyId: null,
           autoapprovalPolicyVersion: null,
+          loggingLevel: workspace.loggingLevel,
         })
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -5552,6 +5698,7 @@ export class PostgresDatabase {
           predecessorSessionId: request.predecessorSessionId,
           autoapprovalPolicyId: request.autoapprovalPolicyId,
           autoapprovalPolicyVersion: request.autoapprovalPolicyVersion,
+          loggingLevel: request.loggingLevel,
           createdAt: claimedAt,
           updatedAt: claimedAt,
         })

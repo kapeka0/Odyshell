@@ -79,13 +79,14 @@ operations continue to run as the Client user.
 
 ## Privacy
 
-Privacy-minimal Session Timeline events contain verified lifecycle metadata, sanitized command
-text, and exit status, but never file contents, stdout, stderr, credentials, authorization headers,
-or environment values.
+Privacy-minimal Session Timeline events contain verified lifecycle metadata, operation kind and
+exit status, but no commands, paths, stdout or stderr. Operational logging adds those details with
+automatic secret redaction. Redaction is defense in depth, not a guarantee. Diagnostic logging is
+complete and can contain secrets, so enabling it requires explicit confirmation.
 
-Timeline exports and Event Sinks redact credentials at every detail level. Signing secrets are
-encrypted at rest and never returned after configuration. Sink delivery resolves and pins a
-public HTTPS address for every attempt, does not follow redirects and signs the exact body.
+Event Sink detail is independent from Workspace Timeline logging. Signing secrets are encrypted at
+rest and never returned after configuration. Sink delivery resolves and pins a public HTTPS address
+for every attempt, does not follow redirects and signs the exact body.
 
 Full operation requests and results pass through the Server and are temporarily stored for
 delivery. They become eligible for deletion after one hour by default. Control Events become

@@ -42,6 +42,7 @@ export function SidebarWorkspaceSwitcher() {
     userMemberships: { infinite: true },
   });
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const currentWorkspace = state.status === "ready" ? state.context.workspace : null;
 
   async function selectWorkspace(organizationId: string) {
     if (!setActive || organizationId === organization?.id) return;
@@ -89,15 +90,15 @@ export function SidebarWorkspaceSwitcher() {
           >
             {organization ? (
               <WorkspaceIdentityAvatar
-                identity={organization.id}
-                name={organization.name}
+                identity={currentWorkspace?.avatarSeed ?? organization.id}
+                name={currentWorkspace?.name ?? organization.name}
               />
             ) : (
               <span className="size-8 rounded-lg bg-muted" aria-hidden="true" />
             )}
             <div className="grid min-w-0 flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
               <span className="truncate font-medium">
-                {organization?.name ?? "Select workspace"}
+                {currentWorkspace?.name ?? organization?.name ?? "Select workspace"}
               </span>
               {state.status === "ready" ? (
                 <Badge

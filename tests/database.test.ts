@@ -8,6 +8,31 @@ import {
 } from "../apps/server/src/database.js";
 
 describe("server storage boundaries", () => {
+  it("snapshots workspace logging policy into every Session", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const migration = database.slice(
+      database.indexOf("async function migrateWorkspaceSettings("),
+      database.indexOf("const migrationProvider"),
+    );
+    const request = database.slice(
+      database.indexOf("async createAgentSessionRequest("),
+      database.indexOf("async sessionRequestForApproval("),
+    );
+    const claim = database.slice(
+      database.indexOf("async claimAgentSessionRequest("),
+      database.indexOf("async findAgentSessionCredentialByTokenHash("),
+    );
+
+    expect(migration).toContain("logging_level text not null default 'privacy-minimal'");
+    expect(migration).toContain("create table odyshell.user_preferences");
+    expect(request).toContain('.select("loggingLevel")');
+    expect(request).toContain("loggingLevel: workspace.loggingLevel");
+    expect(claim).toContain("loggingLevel: request.loggingLevel");
+  });
+
   it("retries transient PostgreSQL deadlocks without hiding other failures", async () => {
     let attempts = 0;
     await expect(

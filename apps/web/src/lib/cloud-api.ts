@@ -54,6 +54,7 @@ export type CloudSession = {
   requestedByHumanId?: string;
   requestedByAgentId?: string | null;
   runId?: string | null;
+  loggingLevel: "privacy-minimal" | "operational" | "diagnostic";
   predecessorSessionId?: string;
   scopes?: Array<{
     machineId: string;
@@ -81,6 +82,7 @@ export type CloudSessionRequest = {
   requestedByHumanId: string;
   requestedByAgentId?: string | null;
   runId?: string | null;
+  loggingLevel: "privacy-minimal" | "operational" | "diagnostic";
   machines: Array<{ id: string; name: string }>;
   approvalUrl?: string;
 };
@@ -190,6 +192,11 @@ export type CloudContext = {
     organizationId: string;
     slug: string;
     name: string;
+    avatarSeed: string;
+    loggingLevel: "privacy-minimal" | "operational" | "diagnostic";
+  };
+  userPreferences: {
+    timeZone: string;
   };
   plan: {
     id: "free" | "team" | "scale";

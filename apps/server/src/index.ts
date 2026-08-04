@@ -27,6 +27,8 @@ import {
   createCloudLiveToken,
   cloudIdentitySchema,
   cloudManualSessionSchema,
+  cloudUserSettingsSchema,
+  cloudWorkspaceSettingsSchema,
   cloudConnectionView,
   cloudWebRequestDecision,
   cloudWebKey,
@@ -551,50 +553,6 @@ function controlEventView(event: AuditRecord): {
   };
 }
 
-function privacyMinimalTimelineMetadata(
-  metadata: Record<string, unknown>,
-): Record<string, unknown> {
-  const safe: Record<string, unknown> = {};
-  for (const key of [
-    "machineId",
-    "machineIds",
-    "status",
-    "expiresAt",
-    "predecessorSessionId",
-    "executorAgentId",
-    "requesterAgentId",
-    "actorHumanId",
-    "actorAgentId",
-    "runId",
-    "kind",
-    "command",
-    "program",
-    "args",
-    "exitCode",
-    "outputTruncated",
-    "errorCode",
-    "correlationId",
-    "outcome",
-  ]) {
-    if (metadata[key] !== undefined) safe[key] = metadata[key];
-  }
-  if (Array.isArray(metadata.scopes)) {
-    safe.scopes = metadata.scopes.map((scope) => {
-      if (!scope || typeof scope !== "object") return {};
-      const value = scope as Record<string, unknown>;
-      return {
-        ...(typeof value.machineId === "string"
-          ? { machineId: value.machineId }
-          : {}),
-        ...(Array.isArray(value.capabilities)
-          ? { capabilities: value.capabilities.filter((item) => typeof item === "string") }
-          : {}),
-      };
-    });
-  }
-  return safe;
-}
-
 async function timelineExport(
   workspaceId: string,
   sessionId: string,
@@ -611,7 +569,7 @@ async function timelineExport(
           (events ?? []).flatMap((event) =>
             event.operationId ? [event.operationId] : [],
           ),
-          detailLevel === "diagnostic",
+          detailLevel,
         )
       : new Map<string, Record<string, unknown>>();
   return {
@@ -1320,6 +1278,7 @@ app.post(
       policies,
       controlEvents,
       notifications,
+      userPreferences,
     ] = await Promise.all([
       db.listMachines(context.workspace.id),
       db.workspacePlan(context.workspace.id),
@@ -1331,11 +1290,13 @@ app.post(
       db.listAgentPolicies(context.workspace.id),
       db.listAudit(context.workspace.id, 50),
       db.listNotifications(context.workspace.id, parsed.data.userId),
+      db.userPreferences(parsed.data.userId),
     ]);
     const plan = entitlementsFor(context.organization.plan);
     return {
       organization: context.organization,
       workspace: context.workspace,
+      userPreferences: { timeZone: userPreferences.timeZone },
       plan: {
         id: context.organization.plan,
         ...plan,
@@ -1399,6 +1360,7 @@ app.post(
         requestedByHumanId: session.requestedByHumanId,
         requestedByAgentId: session.requestedByAgentId ?? null,
         runId: session.runId ?? null,
+        loggingLevel: session.loggingLevel,
         scopes: session.scopes,
         targets: session.targets,
       })),
@@ -1415,6 +1377,7 @@ app.post(
         requestedByHumanId: sessionRequest.requestedByHumanId,
         requestedByAgentId: sessionRequest.requestedByAgentId ?? null,
         runId: sessionRequest.runId ?? null,
+        loggingLevel: sessionRequest.loggingLevel,
         machines: sessionRequest.machines,
         ...(sessionRequest.status === "pending" && webUrl
           ? { approvalUrl: sessionApprovalUrl(webUrl, sessionRequest.id) }
@@ -1429,6 +1392,54 @@ app.post(
       })),
       controlEvents: controlEvents.map(controlEventView),
     };
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/user-settings/update",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = cloudUserSettingsSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request" });
+    }
+    await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const preferences = await db.upsertUserPreferences({
+      externalId: parsed.data.userId,
+      timeZone: parsed.data.timeZone,
+    });
+    return { timeZone: preferences.timeZone };
+  },
+);
+
+app.post(
+  "/v1/internal/cloud/workspace/settings/update",
+  { preHandler: requireWeb },
+  async (request, reply) => {
+    const parsed = cloudWorkspaceSettingsSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request" });
+    }
+    const context = await db.ensureCloudContext({
+      externalId: parsed.data.organization.externalId,
+      slug: parsed.data.organization.slug,
+      name: parsed.data.organization.name,
+    });
+    const workspace = await db.updateWorkspaceSettings({
+      workspaceId: context.workspace.id,
+      name: parsed.data.name,
+      avatarSeed: parsed.data.avatarSeed,
+      loggingLevel: parsed.data.loggingLevel,
+    });
+    if (!workspace) {
+      return reply.code(404).send({ error: "workspace_not_found" });
+    }
+    gateway.notifyWorkspace(workspace.id);
+    return { workspace };
   },
 );
 
@@ -1622,6 +1633,12 @@ app.post(
     if (!session || !timeline) {
       return reply.code(404).send({ error: "session_not_found" });
     }
+    const exported = await timelineExport(
+      context.workspace.id,
+      parsed.data.sessionId,
+      timeline,
+      session.loggingLevel,
+    );
     return {
       session: {
         ...session,
@@ -1629,11 +1646,7 @@ app.post(
         createdAt: isoTimestamp(session.createdAt),
         updatedAt: isoTimestamp(session.updatedAt),
       },
-      timeline: timeline.map((event) => ({
-        ...event,
-        metadata: privacyMinimalTimelineMetadata(event.metadata),
-        createdAt: isoTimestamp(event.createdAt),
-      })),
+      timeline: exported.events,
     };
   },
 );
@@ -1645,7 +1658,6 @@ app.post(
     const parsed = cloudIdentitySchema
       .extend({
         sessionId: z.string().uuid(),
-        detailLevel: z.enum(eventSinkDetailLevels).default("privacy-minimal"),
       })
       .safeParse(request.body);
     if (!parsed.success) {
@@ -1656,16 +1668,18 @@ app.post(
       slug: parsed.data.organization.slug,
       name: parsed.data.organization.name,
     });
-    const events = await db.workspaceSessionTimeline(
-      context.workspace.id,
-      parsed.data.sessionId,
-    );
-    if (!events) return reply.code(404).send({ error: "session_not_found" });
+    const [session, events] = await Promise.all([
+      db.workspaceAgentSession(context.workspace.id, parsed.data.sessionId),
+      db.workspaceSessionTimeline(context.workspace.id, parsed.data.sessionId),
+    ]);
+    if (!session || !events) {
+      return reply.code(404).send({ error: "session_not_found" });
+    }
     return await timelineExport(
       context.workspace.id,
       parsed.data.sessionId,
       events,
-      parsed.data.detailLevel,
+      session.loggingLevel,
     );
   },
 );

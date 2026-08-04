@@ -7,6 +7,8 @@ import {
   cloudLiveOriginDecision,
   cloudIdentitySchema,
   cloudManualSessionSchema,
+  cloudUserSettingsSchema,
+  cloudWorkspaceSettingsSchema,
   cloudConnectionView,
   cloudWebRequestDecision,
   cloudWebKey,
@@ -28,6 +30,28 @@ import {
 import { cloudRouteIdentityDecision } from "../apps/web/src/lib/cloud-route-policy.js";
 
 describe("cloud identity and device authorization boundaries", () => {
+  it("validates identity-bound user and workspace settings", () => {
+    const identity = {
+      userId: "user_123",
+      organization: { externalId: "org_123", slug: "acme", name: "Acme" },
+    };
+    expect(cloudUserSettingsSchema.safeParse({ ...identity, timeZone: "Europe/Madrid" }).success).toBe(true);
+    expect(cloudUserSettingsSchema.safeParse({ ...identity, timeZone: "Mars/Olympus" }).success).toBe(false);
+    expect(cloudWorkspaceSettingsSchema.safeParse({
+      ...identity,
+      name: "Production",
+      avatarSeed: "seed",
+      loggingLevel: "operational",
+    }).success).toBe(true);
+    expect(cloudWorkspaceSettingsSchema.safeParse({
+      ...identity,
+      name: "Production",
+      avatarSeed: "seed",
+      loggingLevel: "everything",
+      workspaceId: "attacker-workspace",
+    }).success).toBe(false);
+  });
+
   it("requires a signed-in organization member for every web mutation", () => {
     expect(cloudRouteIdentityDecision(null, null)).toBe("not_authenticated");
     expect(cloudRouteIdentityDecision("user_123", null)).toBe(

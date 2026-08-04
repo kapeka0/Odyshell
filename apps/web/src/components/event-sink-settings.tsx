@@ -1,16 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { WebhookIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
-  CardAction,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import {
   Dialog,
@@ -24,9 +19,11 @@ import {
 } from "@/components/ui/dialog";
 import {
   Field,
+  FieldContent,
   FieldDescription,
   FieldGroup,
   FieldLabel,
+  FieldTitle,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
@@ -110,14 +107,24 @@ export function EventSinkSettings() {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Event Sink</CardTitle>
-        <CardDescription>Signed Timeline delivery.</CardDescription>
-        <CardAction>
+    <section className="flex flex-col gap-4">
+      <div>
+        <h2 className="font-heading text-lg font-medium">Event Sink</h2>
+        <p className="text-sm text-muted-foreground">Signed Timeline delivery.</p>
+      </div>
+      <Card>
+        <CardContent className="p-0">
+          <Field orientation="responsive" className="p-4">
+            <FieldContent>
+              <FieldTitle>{sink ? sink.endpoint : "Not configured"}</FieldTitle>
+              <FieldDescription>
+                {sink ? `Secret ${sink.signingSecret}` : "Deliver events to your own HTTPS endpoint."}
+              </FieldDescription>
+            </FieldContent>
+            <div className="flex w-full items-center justify-end gap-3 @md/field-group:w-auto">
+              {sink ? <Badge variant="outline">{detailLabel(sink.detailLevel)}</Badge> : null}
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger render={<Button variant="outline" />}>
-              <WebhookIcon data-icon="inline-start" />
               {sink ? "Configure" : "Add"}
             </DialogTrigger>
             <DialogContent>
@@ -197,24 +204,11 @@ export function EventSinkSettings() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
-        </CardAction>
-      </CardHeader>
-      <CardContent className="flex items-center gap-3">
-        {sink ? (
-          <>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{sink.endpoint}</p>
-              <p className="text-sm text-muted-foreground">
-                Secret {sink.signingSecret}
-              </p>
             </div>
-            <Badge variant="outline">{detailLabel(sink.detailLevel)}</Badge>
-          </>
-        ) : (
-          <p className="text-sm text-muted-foreground">Not configured.</p>
-        )}
-      </CardContent>
-    </Card>
+          </Field>
+        </CardContent>
+      </Card>
+    </section>
   );
 }
 

@@ -61,6 +61,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { capabilityGroups } from "@/lib/agent-access-options";
 import type { CloudMachine } from "@/lib/cloud-api";
+import { formatDashboardTimestamp } from "@/lib/date-time";
 import {
   machinePlatform,
   machinePrivilegeEscalation,
@@ -73,7 +74,8 @@ export function MachineList({
   machines: CloudMachine[];
   atLimit: boolean;
 }) {
-  const { refresh, optimisticallyUpdate } = useDashboard();
+  const { refresh, optimisticallyUpdate, state } = useDashboard();
+  const timeZone = state.status === "ready" ? state.context.userPreferences.timeZone : "System";
   const columns = useMemo<ColumnDef<CloudMachine>[]>(
     () => [
       {
@@ -131,7 +133,7 @@ export function MachineList({
         ),
         cell: ({ row }) => (
           <span className="text-muted-foreground">
-            {formatTimestamp(row.original.lastSeenAt)}
+            {formatDashboardTimestamp(row.original.lastSeenAt, timeZone)}
           </span>
         ),
       },
@@ -142,6 +144,7 @@ export function MachineList({
         cell: ({ row }) => (
           <MachineActions
             machine={row.original}
+            timeZone={timeZone}
             refresh={refresh}
             onUpdated={(updated) =>
               optimisticallyUpdate((context) => ({
@@ -155,7 +158,7 @@ export function MachineList({
         ),
       },
     ],
-    [optimisticallyUpdate, refresh],
+    [optimisticallyUpdate, refresh, timeZone],
   );
 
   return (
@@ -206,10 +209,12 @@ function MachineActions({
   machine,
   refresh,
   onUpdated,
+  timeZone,
 }: {
   machine: CloudMachine;
   refresh: () => Promise<unknown>;
   onUpdated: (machine: CloudMachine) => void;
+  timeZone: string;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -406,13 +411,13 @@ function MachineActions({
               </StatusBadge>
             </Detail>
             <Detail label="Last seen">
-              {formatTimestamp(machine.lastSeenAt)}
+              {formatDashboardTimestamp(machine.lastSeenAt, timeZone)}
             </Detail>
             <Detail label="Platform">
               {machinePlatform(machine.runtime)}
             </Detail>
             <Detail label="Enrolled">
-              {formatTimestamp(machine.enrolledAt)}
+              {formatDashboardTimestamp(machine.enrolledAt, timeZone)}
             </Detail>
             <Detail label="Sudo">
               <Badge
@@ -590,13 +595,4 @@ function Detail({
       <dd className="mt-1">{children}</dd>
     </div>
   );
-}
-
-function formatTimestamp(value: string | null): string {
-  if (!value) return "Never";
-  return new Intl.DateTimeFormat("en", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "UTC",
-  }).format(new Date(value));
 }

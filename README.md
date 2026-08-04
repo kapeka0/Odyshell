@@ -48,7 +48,7 @@ Odyshell treats every remote task as untrusted:
   explicit Session approval and a host profile.
 - Process execution, shell access, filesystem writes, and Docker access are separate capabilities.
 - Every session and operation is identified and bounded.
-- Durable control events contain lifecycle metadata; Session Timelines retain only a conservatively redacted command shape and exit status, never command output.
+- Durable control events contain lifecycle metadata. Each Session snapshots its Workspace Timeline level: Privacy-minimal, Operational with automatic redaction, or complete Diagnostic detail.
 
 Host execution is intentionally direct: it can do anything available to the user running the
 Client. Use a dedicated operating-system user and grant that user only the files and services an
@@ -216,8 +216,9 @@ host execution is the default. Docker sandboxes remain an optional execution pro
 
 The Server keeps machine identities, temporary access, operations, and audit history in PostgreSQL
 through Kysely. Operation payloads are retained for one hour by default; content-minimal control
-events are retained for 30 days. Session Timelines retain lifecycle events, sanitized commands and
-exit status without recording stdout, stderr, file contents, or credentials.
+events are retained for 30 days. Session Timelines default to lifecycle events, operation kind and
+exit status without commands, paths or output. Workspace administrators can enable Operational or
+Diagnostic detail for new Sessions.
 
 Organizations provide the ownership boundary and workspaces isolate machines, Agents, Sessions,
 operations, and control events. Human and organization identity now live in the Clerk-backed web

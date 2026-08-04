@@ -96,7 +96,13 @@ export function TablePageSkeleton({
   );
 }
 
-export function SettingsPageSkeleton({ cards = 4 }: { cards?: number }) {
+export function SettingsPageSkeleton({
+  sections = [6, 3, 3],
+  actions = "last",
+}: {
+  sections?: number[];
+  actions?: "last" | "each";
+}) {
   return (
     <div
       className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 md:px-8 md:py-12"
@@ -107,34 +113,31 @@ export function SettingsPageSkeleton({ cards = 4 }: { cards?: number }) {
         <Skeleton className="h-4 w-20" />
         <Skeleton className="h-9 w-32" />
       </div>
-      {Array.from({ length: cards }, (_, index) => (
-        <div key={index} className="flex flex-col gap-5 rounded-xl border p-6">
+      {sections.map((rows, section) => (
+        <div key={section} className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
-            <Skeleton className="h-5 w-28" />
-            <Skeleton className="h-4 w-40" />
+            <Skeleton className="h-6 w-36" />
+            <Skeleton className="h-4 w-48" />
           </div>
-          <Skeleton className={index === 0 ? "h-14 w-full" : "h-16 w-full"} />
+          <div className="overflow-hidden rounded-xl border">
+            {Array.from({ length: rows }, (_, row) => (
+              <div key={row} className="flex min-h-16 items-center justify-between gap-6 border-b p-4 last:border-b-0">
+                <div className="flex flex-col gap-2">
+                  <Skeleton className="h-4 w-28" />
+                  {row === 0 ? <Skeleton className="h-3 w-44" /> : null}
+                </div>
+                <Skeleton className="h-10 w-64 max-w-1/2" />
+              </div>
+            ))}
+            {actions === "each" || section === sections.length - 1 ? (
+              <div className="flex justify-end gap-2 border-t bg-muted/50 p-4">
+                <Skeleton className="h-10 w-20" />
+                <Skeleton className="h-10 w-16" />
+              </div>
+            ) : null}
+          </div>
         </div>
       ))}
-    </div>
-  );
-}
-
-export function EmptySettingsPageSkeleton() {
-  return (
-    <div
-      className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 md:px-8 md:py-12"
-      aria-busy="true"
-      aria-label="Loading settings"
-    >
-      <div className="flex flex-col gap-2">
-        <Skeleton className="h-4 w-20" />
-        <Skeleton className="h-9 w-32" />
-      </div>
-      <div className="flex min-h-80 flex-col items-center justify-center gap-3 rounded-xl border">
-        <Skeleton className="size-8 rounded-lg" />
-        <Skeleton className="h-5 w-40" />
-      </div>
     </div>
   );
 }

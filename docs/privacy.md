@@ -13,10 +13,10 @@ Odyshell records the minimum information required to answer:
 - when the lifecycle event happened.
 
 It does not place command text, arguments, environment values, file paths, file contents, stdout,
-or stderr in the durable control-event trail. A Session Timeline is a separate, scoped record: for
-process Operations it retains a conservatively redacted command shape and exit status so a member
-can audit what ran. Typed filesystem and Docker Timeline entries retain only the Operation kind,
-not paths, queries, or container names. Executable paths are reduced to their basename.
+or stderr in the durable control-event trail. A Session Timeline is a separate, scoped record. Its
+Workspace level is captured when the Session is requested: Privacy-minimal excludes commands,
+paths and output; Operational adds them with automatic secret redaction; Diagnostic keeps complete
+available details and can contain secrets. Changing the Workspace setting affects only new Sessions.
 
 ## Data classes
 
@@ -75,6 +75,7 @@ a signed HTTPS Event Sink for customer-owned delivery:
 Odyshell Cloud should not require customers to buy long-term centralized storage of task content.
 Delivery uses bounded retries and a dead-letter state. Endpoint validation blocks loopback,
 private-network, link-local, and metadata-service destinations; redirects are not followed.
+Event Sink detail is selected independently from the Workspace Timeline level.
 
 ## Website analytics
 

@@ -4,6 +4,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { ActivityIcon, EllipsisIcon, EyeIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { CopyableValue } from "@/components/copyable-value";
+import { useDashboard } from "@/components/dashboard-provider";
 import {
   DataTable,
   DataTableColumnHeader,
@@ -40,6 +41,7 @@ import type {
   CloudMember,
   ControlEvent,
 } from "@/lib/cloud-api";
+import { formatDashboardTimestamp } from "@/lib/date-time";
 
 type ActivityActor = {
   id: string;
@@ -70,6 +72,8 @@ export function ControlEventList({
   members: CloudMember[];
   retentionDays: number;
 }) {
+  const { state } = useDashboard();
+  const timeZone = state.status === "ready" ? state.context.userPreferences.timeZone : "System";
   const rows = useMemo(
     () => activityRows(events, machines, agents, members),
     [agents, events, machines, members],
@@ -136,7 +140,7 @@ export function ControlEventList({
             dateTime={row.original.createdAt ?? undefined}
             className="whitespace-nowrap font-mono text-xs text-muted-foreground"
           >
-            {formatTimestamp(row.original.createdAt)}
+            {formatDashboardTimestamp(row.original.createdAt, timeZone)}
           </time>
         ),
         filterFn: (row, columnId, value) => {
@@ -152,10 +156,10 @@ export function ControlEventList({
       {
         id: "actions",
         header: () => <span className="sr-only">Actions</span>,
-        cell: ({ row }) => <ActivityActions event={row.original} />,
+        cell: ({ row }) => <ActivityActions event={row.original} timeZone={timeZone} />,
       },
     ],
-    [],
+    [timeZone],
   );
 
   if (events.length === 0) {
@@ -214,7 +218,7 @@ export function ControlEventList({
   );
 }
 
-function ActivityActions({ event }: { event: ActivityRow }) {
+function ActivityActions({ event, timeZone }: { event: ActivityRow; timeZone: string }) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -252,7 +256,7 @@ function ActivityActions({ event }: { event: ActivityRow }) {
             <Detail label="Result">
               {event.result === "denied" ? "Denied" : "Recorded"}
             </Detail>
-            <Detail label="Time">{formatTimestamp(event.createdAt)}</Detail>
+            <Detail label="Time">{formatDashboardTimestamp(event.createdAt, timeZone)}</Detail>
             {event.metadata.kind ? (
               <Detail label="Capability">{event.metadata.kind}</Detail>
             ) : null}
@@ -390,13 +394,4 @@ function actionLabel(action: string): string {
     "cli.login_approved": "CLI login approved",
   };
   return labels[action] ?? "Control event";
-}
-
-function formatTimestamp(value: string | null): string {
-  if (!value) return "Unknown time";
-  return new Intl.DateTimeFormat("en", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "UTC",
-  }).format(new Date(value));
 }

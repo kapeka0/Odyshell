@@ -200,9 +200,6 @@ const minimalKeys = new Set([
   "runId",
   "scopes",
   "kind",
-  "command",
-  "program",
-  "args",
   "exitCode",
   "errorCode",
   "correlationId",
@@ -227,8 +224,16 @@ const eventSinkMinimalKeys = new Set([
   "outcome",
 ]);
 const alwaysSensitiveKey = /(?:token|secret|password|credential|authorization|cookie|env)/iu;
-const diagnosticOnlyKey =
-  /^(?:command|query|stdout|stderr|result|resultText)$/u;
+const secretValuePatterns = [
+  /\b(?:bearer|basic)\s+[a-z0-9._~+/=-]+\b/giu,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/gu,
+  /\b(?:ods|sk|pk|gh[pousr]|github_pat|xox[baprs])[_-][a-z0-9_-]{12,}\b/giu,
+  /\bAKIA[A-Z0-9]{16}\b/gu,
+  /\bAIza[A-Za-z0-9_-]{20,}\b/gu,
+  /([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/giu,
+];
+const namedSecretValue =
+  /\b((?:token|secret|password|passwd|authorization|cookie|api[-_ ]?key)\s*[:=]\s*)[^\s,;]+/giu;
 
 export function operationTimelineMetadata(
   action: OperationAction,
@@ -395,13 +400,13 @@ export function redactTimelineMetadata(
   metadata: Record<string, unknown>,
   level: EventSinkDetailLevel,
 ): Record<string, unknown> {
+  if (level === "diagnostic") return structuredClone(metadata);
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(metadata)) {
     if (alwaysSensitiveKey.test(key)) continue;
     if (key === "summary") continue;
     if (level === "privacy-minimal" && !minimalKeys.has(key)) continue;
-    if (level === "operational" && diagnosticOnlyKey.test(key)) continue;
-    result[key] = sanitizedExportValue(key, value);
+    result[key] = operationalExportValue(key, value);
   }
   return result;
 }
@@ -410,32 +415,68 @@ export function redactEventSinkMetadata(
   metadata: Record<string, unknown>,
   level: EventSinkDetailLevel,
 ): Record<string, unknown> {
+  if (level === "diagnostic") return structuredClone(metadata);
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(metadata)) {
     if (alwaysSensitiveKey.test(key)) continue;
     if (key === "summary") continue;
     if (level === "privacy-minimal" && !eventSinkMinimalKeys.has(key)) continue;
-    if (level === "operational" && diagnosticOnlyKey.test(key)) {
-      continue;
-    }
-    result[key] = sanitizedExportValue(key, value);
+    result[key] = operationalExportValue(key, value);
   }
   return result;
 }
 
-function sanitizedExportValue(key: string, value: unknown): unknown {
+function operationalExportValue(key: string, value: unknown): unknown {
   if (key === "command" && typeof value === "string") {
-    return sanitizeShellCommand(value);
+    return redactOperationalString(value);
   }
   if (key === "program" && typeof value === "string") {
-    return sanitizeProgram(value);
+    return redactOperationalString(value);
   }
   if (key === "args" && Array.isArray(value)) {
-    return sanitizeArgs(
+    return redactOperationalArgs(
       value.filter((item): item is string => typeof item === "string"),
     );
   }
+  if (typeof value === "string") {
+    return redactOperationalString(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => operationalExportValue(key, item));
+  }
+  if (value && typeof value === "object") {
+    return redactTimelineMetadata(value as Record<string, unknown>, "operational");
+  }
   return value;
+}
+
+function redactOperationalString(value: string): string {
+  return secretValuePatterns
+    .reduce(
+      (redacted, pattern) =>
+        redacted.replace(pattern, (_match, prefix: string | undefined) =>
+          typeof prefix === "string"
+            ? `${prefix}[REDACTED]@`
+            : "[REDACTED]",
+        ),
+      value,
+    )
+    .replace(namedSecretValue, "$1[REDACTED]");
+}
+
+function redactOperationalArgs(args: string[]): string[] {
+  let redactNext = false;
+  return args.map((argument) => {
+    if (redactNext) {
+      redactNext = false;
+      return "[REDACTED]";
+    }
+    if (sensitiveFlag.test(argument)) {
+      redactNext = true;
+      return argument;
+    }
+    return redactOperationalString(argument);
+  });
 }
 
 export type TimelineExport = {

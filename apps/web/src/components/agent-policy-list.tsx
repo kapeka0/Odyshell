@@ -5,6 +5,7 @@ import { ShieldCheckIcon } from "lucide-react";
 import { useMemo } from "react";
 import { CopyableValue } from "@/components/copyable-value";
 import { DataTable, DataTableColumnHeader } from "@/components/data-table";
+import { useDashboard } from "@/components/dashboard-provider";
 import { StatusBadge } from "@/components/status-badge";
 import {
   Empty,
@@ -14,6 +15,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import type { CloudAgent, CloudAgentPolicy } from "@/lib/cloud-api";
+import { formatDashboardTimestamp } from "@/lib/date-time";
 
 export function AgentPolicyList({
   policies,
@@ -22,6 +24,8 @@ export function AgentPolicyList({
   policies: CloudAgentPolicy[];
   agents: CloudAgent[];
 }) {
+  const { state } = useDashboard();
+  const timeZone = state.status === "ready" ? state.context.userPreferences.timeZone : "System";
   const agentNames = useMemo(
     () => new Map(agents.map((agent) => [agent.id, agent.name])),
     [agents],
@@ -90,15 +94,12 @@ export function AgentPolicyList({
         ),
         cell: ({ row }) => (
           <span className="text-muted-foreground">
-            {new Intl.DateTimeFormat("en", {
-              dateStyle: "medium",
-              timeStyle: "short",
-            }).format(new Date(row.original.expiresAt))}
+            {formatDashboardTimestamp(row.original.expiresAt, timeZone)}
           </span>
         ),
       },
     ],
-    [agentNames],
+    [agentNames, timeZone],
   );
 
   if (policies.length === 0) {

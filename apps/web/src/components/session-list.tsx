@@ -39,6 +39,7 @@ import type {
   CloudSessionRequest,
 } from "@/lib/cloud-api";
 import { formatSessionDuration } from "@/lib/session-time";
+import { formatDashboardTimestamp } from "@/lib/date-time";
 
 type SessionRow =
   | { kind: "session"; value: CloudSession }
@@ -52,6 +53,7 @@ export function SessionList({
   requests: CloudSessionRequest[];
 }) {
   const { refresh, state } = useDashboard();
+  const timeZone = state.status === "ready" ? state.context.userPreferences.timeZone : "System";
   const members = useMemo(
     () =>
       new Map(
@@ -214,7 +216,7 @@ export function SessionList({
         ),
         cell: ({ row }) => (
           <span className="text-muted-foreground">
-            {formatTimestamp(row.original.value.expiresAt)}
+            {formatDashboardTimestamp(row.original.value.expiresAt, timeZone)}
           </span>
         ),
       },
@@ -229,7 +231,7 @@ export function SessionList({
           ),
       },
     ],
-    [agents, members, refresh],
+    [agents, members, refresh, timeZone],
   );
 
   return (
@@ -445,11 +447,4 @@ function SessionActions({
       </AlertDialog>
     </>
   );
-}
-
-function formatTimestamp(value: string): string {
-  return new Intl.DateTimeFormat("en", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
 }

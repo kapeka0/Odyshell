@@ -29,6 +29,7 @@ import type {
   SessionTimelineDetail,
   SessionTimelineEvent,
 } from "@/lib/cloud-api";
+import { formatDashboardTimestamp } from "@/lib/date-time";
 
 export function SessionDetail({ initial }: { initial: SessionTimelineDetail }) {
   const { state } = useDashboard();
@@ -65,6 +66,7 @@ export function SessionDetail({ initial }: { initial: SessionTimelineDetail }) {
   const agents = new Map(
     (state.status === "ready" ? state.context.agents : []).map((agent) => [agent.id, agent]),
   );
+  const timeZone = state.status === "ready" ? state.context.userPreferences.timeZone : "System";
   const requesterAgent = detail.session.requestedByAgentId
     ? agents.get(detail.session.requestedByAgentId)
     : undefined;
@@ -112,6 +114,7 @@ export function SessionDetail({ initial }: { initial: SessionTimelineDetail }) {
                 agents={agents}
                 members={members}
                 requester={requester}
+                timeZone={timeZone}
               />
             ))}
           </Timeline>
@@ -154,7 +157,8 @@ export function SessionDetail({ initial }: { initial: SessionTimelineDetail }) {
                   </span>
                 ) : "System"}
               </Detail>
-              <Detail label="Expires">{formatTimestamp(detail.session.expiresAt)}</Detail>
+              <Detail label="Logging"><span className="capitalize">{detail.session.loggingLevel.replace("-", " ")}</span></Detail>
+              <Detail label="Expires">{formatDashboardTimestamp(detail.session.expiresAt, timeZone)}</Detail>
               {detail.session.purpose ? <Detail label="Purpose">{detail.session.purpose}</Detail> : null}
             </dl>
           </CardContent>
@@ -185,6 +189,7 @@ function SessionEvent({
   agents,
   members,
   requester,
+  timeZone,
 }: {
   event: SessionTimelineEvent;
   agentName: string;
@@ -194,6 +199,7 @@ function SessionEvent({
     | { kind: "agent"; id: string; name: string }
     | { kind: "human"; id: string; name: string; imageUrl?: string }
     | null;
+  timeZone: string;
 }) {
   const actor = eventActor(event, agentName, agents, members, requester);
   return (
@@ -203,7 +209,7 @@ function SessionEvent({
       <TimelineContent>
         <div className="flex flex-wrap items-start justify-between gap-2">
           <p className="font-medium">{eventLabel(event.eventType)}</p>
-          <time className="text-xs text-muted-foreground" dateTime={event.createdAt}>{formatTimestamp(event.createdAt)}</time>
+          <time className="text-xs text-muted-foreground" dateTime={event.createdAt}>{formatDashboardTimestamp(event.createdAt, timeZone)}</time>
         </div>
         <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
           {actor.kind === "agent" ? <AgentIdentityAvatar name={actor.name} className="size-5" /> : actor.kind === "human" ? (
@@ -225,13 +231,26 @@ function EventMetadata({ metadata }: { metadata: Record<string, unknown> }) {
       : null;
   const exitCode = typeof metadata.exitCode === "number" ? metadata.exitCode : null;
   const status = typeof metadata.status === "string" ? metadata.status : null;
-  if (!command && exitCode === null && !status) return null;
+  const stdout = typeof metadata.stdout === "string" ? metadata.stdout : null;
+  const stderr = typeof metadata.stderr === "string" ? metadata.stderr : null;
+  if (!command && exitCode === null && !status && !stdout && !stderr) return null;
   return (
     <div className="mt-2 rounded-md border bg-muted/35 px-3 py-2 text-xs">
       {command ? <code className="block overflow-x-auto whitespace-pre-wrap break-all">{command}</code> : null}
       {status || exitCode !== null ? (
         <p className="mt-1 text-muted-foreground">{status ?? "Completed"}{exitCode !== null ? ` · Exit ${exitCode}` : ""}</p>
       ) : null}
+      {stdout ? <Output label="Stdout" value={stdout} /> : null}
+      {stderr ? <Output label="Stderr" value={stderr} /> : null}
+    </div>
+  );
+}
+
+function Output({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="mt-2 border-t pt-2">
+      <p className="mb-1 text-muted-foreground">{label}</p>
+      <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono">{value}</pre>
     </div>
   );
 }
@@ -288,8 +307,4 @@ function Detail({ label, children }: { label: string; children: React.ReactNode 
 function eventLabel(value: string) {
   const label = value.replaceAll(".", " ").replaceAll("_", " ");
   return `${label.charAt(0).toUpperCase()}${label.slice(1)}`;
-}
-
-function formatTimestamp(value: string) {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }

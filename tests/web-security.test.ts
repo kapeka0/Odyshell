@@ -48,6 +48,25 @@ import { sessionApprovalUrl } from "../apps/server/src/cloud.js";
 import { statusTone } from "../apps/web/src/lib/status-tone.js";
 
 describe("web authentication boundaries", () => {
+  it("keeps personal settings identity-bound and workspace settings admin-only", () => {
+    const webRoot = resolve(process.cwd(), "apps/web/src");
+    const userRoute = readFileSync(resolve(webRoot, "app/api/user-settings/route.ts"), "utf8");
+    const workspaceRoute = readFileSync(resolve(webRoot, "app/api/workspace-settings/route.ts"), "utf8");
+    const workspacePage = readFileSync(resolve(webRoot, "app/dashboard/settings/page.tsx"), "utf8");
+    const userPage = readFileSync(resolve(webRoot, "app/dashboard/user-settings/page.tsx"), "utf8");
+    const skeletons = readFileSync(resolve(webRoot, "components/dashboard-skeletons.tsx"), "utf8");
+
+    expect(userRoute).toContain("requireCloudRouteIdentity");
+    expect(userRoute).not.toContain("workspaceId");
+    expect(workspaceRoute).toContain("requireCloudAdminRouteIdentity");
+    expect(workspaceRoute).not.toContain("workspaceId");
+    expect(workspacePage).toContain("Enable Diagnostic logging?");
+    expect(workspacePage).toContain('orientation="responsive"');
+    expect(userPage).toContain("user.setProfileImage");
+    expect(userPage).toContain("user.update");
+    expect(skeletons).toContain("sections.map");
+  });
+
   it("initializes Clerk for every authenticated approval and API route", () => {
     const proxy = readFileSync(
       resolve(process.cwd(), "apps/web/src/proxy.ts"),
@@ -665,7 +684,8 @@ describe("dashboard navigation performance boundary", () => {
       ),
       "utf8",
     );
-    expect(userSettings).toContain("<Empty");
+    expect(userSettings).toContain("<Card");
+    expect(userSettings).toContain('orientation="responsive"');
     expect(userSettings).not.toContain("useTheme");
     expect(userSettings).not.toContain("useClerk");
     expect(userSettings).not.toContain("Appearance");
@@ -984,9 +1004,13 @@ describe("dashboard navigation performance boundary", () => {
       resolve(process.cwd(), "apps/server/src/index.ts"),
       "utf8",
     );
-    const sanitizer = server.slice(
-      server.indexOf("function privacyMinimalTimelineMetadata("),
-      server.indexOf("const agentAccessDependencies"),
+    const eventSinks = readFileSync(
+      resolve(process.cwd(), "apps/server/src/event-sinks.ts"),
+      "utf8",
+    );
+    const sanitizer = eventSinks.slice(
+      eventSinks.indexOf("const minimalKeys"),
+      eventSinks.indexOf("const eventSinkMinimalKeys"),
     );
 
     expect(canvas).toContain("context.agents");
@@ -1007,9 +1031,8 @@ describe("dashboard navigation performance boundary", () => {
     expect(sanitizer).toContain('"outcome"');
     expect(sanitizer).not.toContain('"summary"');
     expect(sanitizer).toContain('"runId"');
-    expect(sanitizer).toContain('"command"');
     expect(sanitizer).toContain('"exitCode"');
-    for (const sensitive of ["stdout", "stderr", "token"]) {
+    for (const sensitive of ["stdout", "stderr", "token", "command", "path"]) {
       expect(sanitizer).not.toContain(`"${sensitive}"`);
     }
     for (const route of [

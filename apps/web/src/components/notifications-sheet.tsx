@@ -16,6 +16,7 @@ import {
 import { toast } from "@/components/ui/toast";
 import type { CloudNotification } from "@/lib/cloud-api";
 import { cn } from "@/lib/utils";
+import { formatDashboardTimestamp } from "@/lib/date-time";
 
 export function NotificationsSheet() {
   const { state, refresh, optimisticallyUpdate } = useDashboard();
@@ -23,6 +24,7 @@ export function NotificationsSheet() {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
   const notifications = state.status === "ready" ? state.context.notifications : [];
+  const timeZone = state.status === "ready" ? state.context.userPreferences.timeZone : "System";
   const unread = notifications.filter((notification) => !notification.readAt);
 
   function updateReadState(changes: ReadonlyMap<string, string | null>) {
@@ -156,7 +158,7 @@ export function NotificationsSheet() {
                       <span
                         className="mt-1 block text-xs text-muted-foreground"
                         suppressHydrationWarning
-                        title={exactTime(notification.createdAt)}
+                        title={formatDashboardTimestamp(notification.createdAt, timeZone)}
                       >
                         {relativeTime(notification.createdAt)}
                       </span>
@@ -195,11 +197,4 @@ function relativeTime(value: string): string {
   const hours = Math.round(minutes / 60);
   if (hours < 24) return formatter.format(-hours, "hour");
   return formatter.format(-Math.round(hours / 24), "day");
-}
-
-function exactTime(value: string): string {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
 }

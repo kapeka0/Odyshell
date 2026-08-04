@@ -13,6 +13,12 @@ import {
 import { z } from "zod";
 
 export const cloudPlanIds = ["free", "team", "scale"] as const;
+export const workspaceLoggingLevels = [
+  "privacy-minimal",
+  "operational",
+  "diagnostic",
+] as const;
+export type WorkspaceLoggingLevel = (typeof workspaceLoggingLevels)[number];
 export type CloudPlanId = (typeof cloudPlanIds)[number];
 
 export type PlanEntitlements = {
@@ -46,6 +52,27 @@ export const cloudIdentitySchema = z.object({
     slug: z.string().min(1).max(128).regex(/^[a-z0-9][a-z0-9-]*$/),
     name: z.string().trim().min(1).max(200),
   }).strict(),
+}).strict();
+
+export const cloudUserSettingsSchema = cloudIdentitySchema.extend({
+  timeZone: z.string().trim().min(1).max(128).refine(
+    (timeZone) => {
+      if (timeZone === "System") return true;
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone }).format();
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    { message: "Invalid IANA time zone" },
+  ),
+}).strict();
+
+export const cloudWorkspaceSettingsSchema = cloudIdentitySchema.extend({
+  name: z.string().trim().min(1).max(96),
+  avatarSeed: z.string().trim().min(1).max(128),
+  loggingLevel: z.enum(workspaceLoggingLevels),
 }).strict();
 
 export const cloudManualSessionSchema = cloudIdentitySchema

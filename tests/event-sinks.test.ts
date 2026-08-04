@@ -127,11 +127,14 @@ describe("Timeline Event Sinks", () => {
     expect(redactTimelineMetadata(metadata, "operational")).toEqual({
       machineId: "machine-id",
       path: "config/app.json",
+      stdout: "safe output",
     });
     expect(redactTimelineMetadata(metadata, "diagnostic")).toEqual({
       machineId: "machine-id",
       path: "config/app.json",
       stdout: "safe output",
+      token: "ods_secret_value",
+      env: { API_KEY: "secret" },
     });
   });
 
@@ -160,7 +163,7 @@ describe("Timeline Event Sinks", () => {
     ).toEqual({ kind: "fs.write", path: "config.json" });
   });
 
-  it("keeps command text and bounded output diagnostic-only", () => {
+  it("keeps command text and bounded output operational with redaction", () => {
     const metadata = {
       ...operationTimelineMetadata({
         kind: "process.shell",
@@ -177,11 +180,13 @@ describe("Timeline Event Sinks", () => {
     expect(redactTimelineMetadata(metadata, "operational")).toEqual({
       kind: "process.shell",
       cwd: ".",
+      command: "printf safe",
+      stdout: "safe output",
     });
     expect(redactTimelineMetadata(metadata, "diagnostic")).toEqual({
       kind: "process.shell",
       cwd: ".",
-      command: "printf [REDACTED]",
+      command: "printf safe",
       stdout: "safe output",
     });
     expect(
@@ -212,8 +217,6 @@ describe("Timeline Event Sinks", () => {
       ),
     ).toEqual({
       kind: "process.exec",
-      program: "git",
-      args: ["status"],
       actorAgentId: "agent-a",
       exitCode: 0,
       outcome: "succeeded",
@@ -248,13 +251,12 @@ describe("Timeline Event Sinks", () => {
       exitCode: 0,
       program: "git",
       args: ["status"],
+      command: "git status",
     });
-    expect(redactEventSinkMetadata(metadata, "diagnostic")).not.toHaveProperty(
-      "summary",
-    );
+    expect(redactEventSinkMetadata(metadata, "diagnostic")).toEqual(metadata);
   });
 
-  it("redacts nested process credentials at every export level", () => {
+  it("redacts nested process credentials in operational exports", () => {
     const metadata = {
       kind: "process.exec",
       program: "/private/tools/database-client",
@@ -263,12 +265,27 @@ describe("Timeline Event Sinks", () => {
       summary: "stdout contained ods_session_secret",
     };
 
-    for (const level of ["privacy-minimal", "operational", "diagnostic"] as const) {
+    for (const level of ["privacy-minimal", "operational"] as const) {
       const exported = JSON.stringify(redactTimelineMetadata(metadata, level));
       expect(exported).not.toMatch(
-        /hunter2|abc123|ods_session_secret|private\/tools|private\.example/u,
+        /hunter2|abc123|ods_session_secret/u,
       );
     }
+    expect(JSON.stringify(redactTimelineMetadata(metadata, "diagnostic"))).toContain("hunter2");
+  });
+
+  it("keeps useful operational paths and output while removing common secrets", () => {
+    const exported = redactTimelineMetadata(
+      {
+        command: "curl https://user:pass@example.com/config --token ods_secret_123456789",
+        path: "/srv/app/config.json",
+        stdout: "Authorization: Bearer abc.def.ghi\nAPI_KEY=sk_live_123456789012",
+      },
+      "operational",
+    );
+    expect(exported.path).toBe("/srv/app/config.json");
+    expect(JSON.stringify(exported)).not.toMatch(/user:pass|abc\.def|sk_live/u);
+    expect(JSON.stringify(exported)).toContain("[REDACTED]");
   });
 
   it("keeps a sanitized command for the privacy-minimal Session timeline", () => {

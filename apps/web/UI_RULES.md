@@ -275,8 +275,13 @@ particular component, library or interaction pattern.
 - Personal settings and workspace settings have separate destinations.
   Workspace security settings are visible to members and editable only by
   administrators.
-- Control Events remain privacy-minimal in the MVP. Do not present unavailable
-  logging policies as editable choices.
+- Settings pages group related fields into named sections. Inside each contained
+  surface, use responsive horizontal rows with the label and concise guidance on
+  the left, the control on the right, separators between rows and actions at the
+  bottom-right. Their skeletons preserve the same section and row structure.
+- Workspace Timeline logging is selected for new Sessions as Privacy-minimal,
+  Operational or Diagnostic. Diagnostic requires an explicit warning. Keep Event
+  Sink configuration independent from this workspace display setting.
 - Timeline exports and Event Sinks may use Privacy-minimal, Operational or
   Diagnostic detail. Keep Control Events privacy-minimal, redact secrets at
   every level and make broader Timeline output an explicit workspace choice.
