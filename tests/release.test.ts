@@ -170,6 +170,16 @@ describe("0.14.0 release contract", () => {
     expect(workflow.indexOf("pnpm test:e2e")).toBeLessThan(
       workflow.indexOf("Create immutable release tag"),
     );
+    const documentationSmoke = workflow.slice(
+      workflow.indexOf("- name: Test public documentation"),
+      workflow.indexOf("- run: pnpm test:e2e"),
+    );
+    expect(documentationSmoke).toContain(
+      "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_Y2xlcmsuZXhhbXBsZS5jb20k",
+    );
+    expect(documentationSmoke).toContain(
+      "CLERK_SECRET_KEY: sk_test_docs_smoke_only",
+    );
     expect(workflow.indexOf("Publish verified npm packages")).toBeLessThan(
       workflow.indexOf("Create GitHub Release"),
     );
