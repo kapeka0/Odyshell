@@ -35,6 +35,8 @@ import {
   toggleManualHostShellSelection,
 } from "../apps/web/src/lib/manual-session-access.js";
 import { executionWarningState } from "../apps/web/src/lib/host-shell-access.js";
+import { publicServerUrl } from "../apps/web/src/lib/cloud-api.js";
+import { DEFAULT_CLOUD_SERVER_URL } from "../packages/protocol/src/index.js";
 import {
   deviceApprovalErrorPath,
   deviceApprovalReason,
@@ -246,6 +248,41 @@ describe("web authentication boundaries", () => {
     expect(posixShellArgument("value'with-quote")).toBe(
       "'value'\"'\"'with-quote'",
     );
+  });
+
+  it("never exposes the internal cloud transport URL in enrollment commands", () => {
+    const previousPublicUrl = process.env.NEXT_PUBLIC_ODYSHELL_SERVER_URL;
+    const previousInternalUrl = process.env.ODYSHELL_SERVER_URL;
+    delete process.env.NEXT_PUBLIC_ODYSHELL_SERVER_URL;
+    process.env.ODYSHELL_SERVER_URL =
+      "https://internal-server.example.railway.app";
+
+    try {
+      const command = machineEnrollmentCommand({
+        serverUrl: publicServerUrl(),
+        token: "ods_enroll_synthetic",
+        machineName: "desktop-pc",
+        capabilities: ["process.exec", "host.shell"],
+      });
+
+      expect(publicServerUrl()).toBe(DEFAULT_CLOUD_SERVER_URL);
+      expect(command).toBe(
+        "ods up --token ods_enroll_synthetic --name desktop-pc --allow 'process.exec,host.shell'",
+      );
+      expect(command).not.toContain("--server");
+      expect(command).not.toContain("railway.app");
+    } finally {
+      if (previousPublicUrl === undefined) {
+        delete process.env.NEXT_PUBLIC_ODYSHELL_SERVER_URL;
+      } else {
+        process.env.NEXT_PUBLIC_ODYSHELL_SERVER_URL = previousPublicUrl;
+      }
+      if (previousInternalUrl === undefined) {
+        delete process.env.ODYSHELL_SERVER_URL;
+      } else {
+        process.env.ODYSHELL_SERVER_URL = previousInternalUrl;
+      }
+    }
   });
 
   it("quotes agent credentials before placing them in a shell command", () => {

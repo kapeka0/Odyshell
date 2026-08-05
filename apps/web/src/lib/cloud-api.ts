@@ -289,7 +289,6 @@ export async function cloudRequest<T>(
 export function publicServerUrl(): string {
   return (
     process.env.NEXT_PUBLIC_ODYSHELL_SERVER_URL ??
-    process.env.ODYSHELL_SERVER_URL ??
     DEFAULT_CLOUD_SERVER_URL
   );
 }
