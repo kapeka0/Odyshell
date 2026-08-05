@@ -138,29 +138,34 @@ choose operations for the actual platform and locally allowed capabilities.
 The agent receives an approval URL; after a member approves it, MCP claims the Session Credential.
 If a response is interrupted, the MCP can recover its recent request instead of asking for another
 approval.
-While the same `ods mcp` process remains running, `session_request` reuses a claimed Session only
-when it is still active, unexpired, ready, and covers every requested Operation. The Session
-Credential stays only in that process's memory. Restarting `ods mcp` does not recover already
-claimed authority and requires a new Session request and approval; remote MCP installations use a
-persistent Server-side grant instead.
+While the same `ods mcp` process remains running, `session_request` reuses a claimed typed Session
+only when it is still active, unexpired, ready, and covers every requested Operation. Host Shell
+additionally requires the same stable Task Run `runId`; unrelated work cannot inherit it. The
+Session Credential stays only in that process's memory. Restarting `ods mcp` does not recover
+already claimed authority and requires a new Session request and approval; remote MCP
+installations use a persistent Server-side grant instead.
 
 A request uses either exact typed Operations—exact paths for filesystem work, exact executables and
 arguments for `process.exec`, or exact containers for `docker.logs`—or explicit broad Host Shell
 authority without an advance command list. The MCP process cannot enroll or revoke machines,
 create broader authority, expose credentials, or use administrator controls. The MCP caller may
 omit the short approval title; Odyshell uses the purpose or derives a title from the requested
-authority before creating the Session Request.
+authority before creating the Session Request. A failed Host Shell
+command leaves the Session usable for corrective commands, and MCP explicitly completes it after
+the overall task succeeds or is abandoned.
 
 `ods shell --purpose <purpose> [--title <title>] <machine> <command>` requests `host.shell`, waits
-for human approval, runs one command, and closes the Session. `--purpose` is required and describes
-the goal shown to the approver; the command itself must be passed as one quoted argument. It starts
-in the Client user's Home, can access everything available to that user, has no sandbox or
-isolation, and may persist changes after the Session ends. Prefer `ods exec` when an exact program
-and argument list is sufficient. The shell receives an allowlisted base environment rather than
-every variable in the Client process; explicit environment values are limited to one Operation and
-never persisted, although a POSIX login shell can load user startup files. Graceful cancellation
-stops the process group, but an abrupt Client crash can leave a detached POSIX command running;
-restart reconciliation records an unknown result.
+for human approval, runs one command, and explicitly completes the Session with the command
+outcome. The CLI generates a fresh Task Run identifier for that invocation. `--purpose` is required
+and describes the goal shown to the approver. Its task budget defaults to one hour; `--ttl` may
+shorten it or request a longer justified duration up to 24 hours. The command itself must be passed
+as one quoted argument. It starts in the Client user's Home, can access everything available to
+that user, has no sandbox or isolation, and may persist changes after the Session ends. Prefer
+`ods exec` when an exact program and argument list is sufficient. The shell receives an allowlisted
+base environment rather than every variable in the Client process; explicit environment values
+are limited to one Operation and never persisted, although a POSIX login shell can load user
+startup files. Graceful cancellation stops the process group, but an abrupt Client crash can leave
+a detached POSIX command running; restart reconciliation records an unknown result.
 
 For monorepo development, build and install the local CLI with:
 

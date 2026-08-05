@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import Fastify from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ApprovedMcpRuntime } from "../packages/mcp/src/index.js";
+import type { SessionMachineScope } from "../packages/protocol/src/index.js";
 import type { Database } from "../apps/server/src/database.js";
 import type { ClientGateway } from "../apps/server/src/gateway.js";
 import { ScopedRateLimiter } from "../apps/server/src/cloud.js";
@@ -699,6 +700,121 @@ describe("remote MCP security boundary", () => {
     expect(createAgentSessionRequest).not.toHaveBeenCalled();
   });
 
+  it("does not reuse Host Shell authority from a different Task Run", async () => {
+    const machineId = "9d0cb00d-8665-4a33-bd3f-308c42d6070d";
+    const principal = {
+      ...sessionPrincipal(machineId),
+      scopes: [{
+        machineId,
+        profile: "workspace",
+        capabilities: ["host.shell" as const],
+        restrictions: {},
+      }],
+    };
+    const createAgentSessionRequest = vi.fn(async () => ({
+      status: "pending" as const,
+      expiresAt: Date.now() + 10 * 60_000,
+    }));
+    const runtime = remoteRuntime({
+      listMachines: vi.fn(async () => [{ ...machineRecord(), id: machineId }]),
+      listWorkspaceAgentSessions: vi.fn(async () => [{
+        ...reusableSessionRecord(principal),
+        runId: "task-run-a",
+      }]),
+      findMcpSessionPrincipal: vi.fn(async () => principal),
+      createAgentSessionRequest,
+      audit: vi.fn(async () => undefined),
+    });
+
+    const result = await runtime.request({
+      hostShell: { machine: "rpi5" },
+      runId: "task-run-b",
+      title: "Diagnose another task",
+      durationSeconds: 3_600,
+    });
+
+    expect(result.status).toBe("pending");
+    expect(createAgentSessionRequest).toHaveBeenCalledOnce();
+  });
+
+  it("reuses Host Shell authority within the same Task Run", async () => {
+    const machineId = "9d0cb00d-8665-4a33-bd3f-308c42d6070d";
+    const principal = {
+      ...sessionPrincipal(machineId),
+      scopes: [{
+        machineId,
+        profile: "workspace",
+        capabilities: ["host.shell" as const],
+        restrictions: {},
+      }],
+    };
+    const createAgentSessionRequest = vi.fn();
+    const runtime = remoteRuntime({
+      listMachines: vi.fn(async () => [{ ...machineRecord(), id: machineId }]),
+      listWorkspaceAgentSessions: vi.fn(async () => [{
+        ...reusableSessionRecord(principal),
+        runId: "task-run-a",
+      }]),
+      findMcpSessionPrincipal: vi.fn(async () => principal),
+      createAgentSessionRequest,
+    });
+
+    await expect(runtime.request({
+      hostShell: { machine: "rpi5" },
+      runId: "task-run-a",
+      title: "Continue diagnosing the task",
+      durationSeconds: 3_600,
+    })).resolves.toMatchObject({
+      status: "ready",
+      reused: true,
+      sessionId: principal.sessionId,
+    });
+    expect(createAgentSessionRequest).not.toHaveBeenCalled();
+  });
+
+  it("does not reuse Host Shell authority granted to another MCP installation", async () => {
+    const machineId = "9d0cb00d-8665-4a33-bd3f-308c42d6070d";
+    const principal = {
+      ...sessionPrincipal(machineId),
+      scopes: [{
+        machineId,
+        profile: "workspace",
+        capabilities: ["host.shell" as const],
+        restrictions: {},
+      }],
+    };
+    const createAgentSessionRequest = vi.fn(async () => ({
+      status: "pending" as const,
+      expiresAt: Date.now() + 10 * 60_000,
+    }));
+    const findMcpSessionPrincipal = vi.fn(async (input: { installationId: string }) =>
+      input.installationId === "another-installation" ? principal : null
+    );
+    const runtime = remoteRuntime({
+      listMachines: vi.fn(async () => [{ ...machineRecord(), id: machineId }]),
+      listWorkspaceAgentSessions: vi.fn(async () => [{
+        ...reusableSessionRecord(principal),
+        runId: "task-run-a",
+      }]),
+      findMcpSessionPrincipal,
+      createAgentSessionRequest,
+      audit: vi.fn(async () => undefined),
+    });
+
+    const result = await runtime.request({
+      hostShell: { machine: "rpi5" },
+      runId: "task-run-a",
+      title: "Continue from this installation",
+      durationSeconds: 3_600,
+    });
+
+    expect(result.status).toBe("pending");
+    expect(findMcpSessionPrincipal).toHaveBeenCalledWith(
+      expect.objectContaining({ installationId: "installation-id" }),
+    );
+    expect(createAgentSessionRequest).toHaveBeenCalledOnce();
+  });
+
   it("does not reuse a Session whose scope misses the requested operation", async () => {
     const machineId = "9d0cb00d-8665-4a33-bd3f-308c42d6070d";
     const principal = sessionPrincipal(machineId);
@@ -799,6 +915,7 @@ describe("remote MCP security boundary", () => {
     await expect(
       runtime.request({
         hostShell: { machine: "rpi5" },
+        runId: "task-run-escalation",
         predecessorSessionId,
         title: "Continue with Host Shell",
         purpose: "Typed capabilities were insufficient",
@@ -832,6 +949,7 @@ describe("remote MCP security boundary", () => {
         mcpGrantedSessionForRequest: vi.fn(async () => null),
         getAgentSessionRequest: vi.fn(async () => ({
           status: "approved",
+          scopes: [],
           expiresAt: Date.now() + 60_000,
         })),
         claimAgentSessionRequest: vi.fn(async () => ({
@@ -1221,6 +1339,66 @@ describe("remote MCP security boundary", () => {
     });
     expect(send).not.toHaveBeenCalled();
   });
+
+  it("rejects remote Host Shell lifecycle calls outside their Task Run", async () => {
+    const principal = {
+      ...sessionPrincipal(),
+      runId: "task-run-a",
+      scopes: [{
+        machineId: "9d0cb00d-8665-4a33-bd3f-308c42d6070d",
+        profile: "workspace",
+        capabilities: ["host.shell" as const],
+        restrictions: {},
+      }],
+    };
+    const completeAgentSession = vi.fn();
+    const listMachines = vi.fn();
+    const runtime = remoteRuntime({
+      findMcpSessionPrincipal: vi.fn(async () => principal),
+      completeAgentSession,
+      listMachines,
+    });
+
+    await expect(runtime.execute({
+      sessionId: principal.sessionId,
+      machine: "rpi5",
+      action: { kind: "host.shell", command: "pwd", cwd: ".", env: {} },
+      timeoutSeconds: 120,
+      idempotencyKey: "70843b92-1db1-4d67-9fa4-86e74227d8f2",
+    })).rejects.toMatchObject({ code: "task_run_id_required", status: 403 });
+    await expect(runtime.complete({
+      sessionId: principal.sessionId,
+      runId: "task-run-b",
+      outcome: "failed",
+    })).rejects.toMatchObject({ code: "task_run_id_mismatch", status: 403 });
+
+    expect(listMachines).not.toHaveBeenCalled();
+    expect(completeAgentSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects claiming a remote Host Shell request from another Task Run", async () => {
+    const scopes: SessionMachineScope[] = [{
+      machineId: "9d0cb00d-8665-4a33-bd3f-308c42d6070d",
+      profile: "workspace",
+      capabilities: ["host.shell"],
+      restrictions: {},
+    }];
+    const mcpSessionForRequest = vi.fn();
+    const runtime = remoteRuntime({
+      getAgentSessionRequest: vi.fn(async () => ({
+        id: "request-id",
+        status: "approved",
+        runId: "task-run-a",
+        scopes,
+        expiresAt: Date.now() + 60_000,
+      })),
+      mcpSessionForRequest,
+    });
+
+    await expect(runtime.status("request-id", "task-run-b"))
+      .rejects.toMatchObject({ code: "task_run_id_mismatch", status: 403 });
+    expect(mcpSessionForRequest).not.toHaveBeenCalled();
+  });
 });
 
 function remoteMcpApp(
@@ -1333,6 +1511,9 @@ function remoteRuntime(
     {
       database: {
         listWorkspaceAgentSessions: vi.fn(async () => []),
+        getAgentSessionRequest: vi.fn(async () => null),
+        mcpSessionForRequest: vi.fn(async () => null),
+        mcpGrantedSessionForRequest: vi.fn(async () => null),
         ...database,
       } as unknown as Database,
       gateway: {
@@ -1352,7 +1533,13 @@ function remoteRuntime(
   );
 }
 
-function reusableSessionRecord(principal: ReturnType<typeof sessionPrincipal>) {
+function reusableSessionRecord(principal: {
+  sessionId: string;
+  agentId: string;
+  agentName: string;
+  expiresAt: number;
+  scopes: SessionMachineScope[];
+}) {
   return {
     id: principal.sessionId,
     agentId: principal.agentId,

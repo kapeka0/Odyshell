@@ -6,6 +6,7 @@ import {
   agentSessionRequestInputSchema,
   allCapabilities,
   capabilityForAction,
+  hostShellTaskRunRenewalDecision,
   operationRequestSchema,
   organizationRequestSchema,
   PROTOCOL_VERSION,
@@ -102,8 +103,12 @@ const idempotencyKeySchema = z.string().trim().min(1).max(128);
 const agentIdentityReferenceSchema = z
   .object({ agentId: z.string().uuid() })
   .strict();
+const claimAgentSessionSchema = agentIdentityReferenceSchema.extend({
+  runId: z.string().trim().min(1).max(128).optional(),
+});
 const renewAgentSessionSchema = agentIdentityReferenceSchema.extend({
   durationSeconds: z.number().int().min(60).max(24 * 60 * 60).optional(),
+  runId: z.string().trim().min(1).max(128).optional(),
 });
 const completeAgentSessionSchema = agentIdentityReferenceSchema
   .extend({
@@ -182,9 +187,7 @@ const managedAgentInputSchema = z
     validForSeconds: z.number().int().min(60).max(365 * 24 * 60 * 60),
   })
   .strict();
-const attributedAgentSessionRequestSchema = agentSessionRequestInputSchema
-  .extend({ runId: z.string().trim().min(1).max(128).optional() })
-  .strict();
+const attributedAgentSessionRequestSchema = agentSessionRequestInputSchema;
 
 const app = Fastify({
   logger: { level: process.env.LOG_LEVEL ?? "info" },
@@ -3232,6 +3235,7 @@ app.get(
         ...(sessionRequest.purpose
           ? { purpose: sessionRequest.purpose }
           : {}),
+        ...(sessionRequest.runId ? { runId: sessionRequest.runId } : {}),
         scopes: sessionRequest.scopes,
         durationSeconds: sessionRequest.durationSeconds,
         status: sessionRequest.status,
@@ -3285,7 +3289,7 @@ app.post<{ Params: { requestId: string } }>(
   "/v1/agent-session-requests/:requestId/claim",
   { preHandler: requireSessionRequester },
   async (request, reply) => {
-    const parsed = agentIdentityReferenceSchema.safeParse(request.body);
+    const parsed = claimAgentSessionSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply
         .code(400)
@@ -3313,6 +3317,7 @@ app.post<{ Params: { requestId: string } }>(
       requestId: request.params.requestId,
       agentId: parsed.data.agentId,
       humanId: principal.humanId,
+      ...(parsed.data.runId ? { runId: parsed.data.runId } : {}),
       sessionId: randomUUID(),
       authority: {
         kind: "credential",
@@ -3328,6 +3333,12 @@ app.post<{ Params: { requestId: string } }>(
       return reply.code(409).send({ error: "session_request_pending" });
     }
     if (result.status === "denied" || result.status === "agent_denied") {
+      return reply.code(403).send({ error: result.status });
+    }
+    if (
+      result.status === "task_run_id_required" ||
+      result.status === "task_run_id_mismatch"
+    ) {
       return reply.code(403).send({ error: result.status });
     }
     if (result.status === "expired") {
@@ -3929,6 +3940,25 @@ app.post<{ Params: { sessionId: string } }>(
     if (!predecessor) {
       return reply.code(404).send({ error: "session_not_found" });
     }
+    const taskRunDecision = hostShellTaskRunRenewalDecision(
+      predecessor.scopes,
+      predecessor.runId,
+      parsed.data.runId,
+    );
+    if (!taskRunDecision.allowed) {
+      return reply.code(403).send({ error: taskRunDecision.code });
+    }
+    const durationSeconds =
+      parsed.data.durationSeconds ?? predecessor.durationSeconds;
+    if (
+      predecessor.scopes.some((scope) =>
+        scope.capabilities.includes("host.shell")
+      ) &&
+      durationSeconds > 3_600 &&
+      !predecessor.purpose
+    ) {
+      return reply.code(400).send({ error: "host_shell_purpose_required" });
+    }
     const requestId = randomUUID();
     const expiresAt = Date.now() + 10 * 60_000;
     const created = await db.createAgentSessionRequest({
@@ -3940,11 +3970,11 @@ app.post<{ Params: { sessionId: string } }>(
       ...(principal.agent
         ? { requesterAgentId: principal.agent.agentId }
         : {}),
+      ...(predecessor.runId ? { runId: predecessor.runId } : {}),
       scopes: predecessor.scopes,
       title: predecessor.title,
       ...(predecessor.purpose ? { purpose: predecessor.purpose } : {}),
-      durationSeconds:
-        parsed.data.durationSeconds ?? predecessor.durationSeconds,
+      durationSeconds,
       approvalCodeHash: hashToken(requestId),
       expiresAt,
       predecessorSessionId: request.params.sessionId,
@@ -3960,7 +3990,10 @@ app.post<{ Params: { sessionId: string } }>(
       "session.renewal_requested",
       "session_request",
       requestId,
-      { predecessorSessionId: request.params.sessionId },
+      {
+        predecessorSessionId: request.params.sessionId,
+        ...(predecessor.runId ? { runId: predecessor.runId } : {}),
+      },
     );
     gateway.notifyWorkspace(principal.workspaceId);
     return reply.code(201).send({

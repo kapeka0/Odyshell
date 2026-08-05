@@ -45,7 +45,8 @@ the previous credential remains valid for at most ten minutes.
 The MCP requests either one or more exact typed Operations or explicit broad Host Shell authority.
 Typed Sessions can authorize explicit filesystem paths, exact `process.exec` program and argument
 rules, and exact Docker container names. Host Shell instead approves the capability without an
-advance command list.
+advance command list. Programmatic Host Shell requests require a stable Task Run `runId`, and only
+the same Agent installation and Task Run may reuse that authority.
 
 Its effective authority is the intersection of:
 

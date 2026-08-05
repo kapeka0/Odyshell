@@ -17,3 +17,4 @@ Relevant architecture decisions:
 - [Rotate Agent Credentials with bounded overlap](../adr/0004-rotate-agent-credentials-with-bounded-overlap.md)
 - [Keep Client policy locally authoritative](../adr/0005-keep-client-policy-locally-authoritative.md)
 - [Make native Host Shell explicit](../adr/0006-make-native-host-shell-explicit.md)
+- [Bind Host Shell reuse to Task Runs](../adr/0007-bind-host-shell-reuse-to-task-runs.md)

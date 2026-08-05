@@ -5,6 +5,8 @@ import type {
 } from "../packages/protocol/src/index.js";
 import {
   agentSessionRequestInputSchema,
+  hostShellTaskRunAccessDecision,
+  hostShellTaskRunRenewalDecision,
   agentIdentitySchema,
   agentSessionSchema,
   agentTokenRequestSchema,
@@ -25,6 +27,37 @@ import {
 } from "../packages/protocol/src/index.js";
 
 describe("protocol validation", () => {
+  it("binds attributed Host Shell lifecycle calls to their Task Run", () => {
+    const hostShellScope = [{
+      machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
+      profile: "workspace",
+      capabilities: ["host.shell" as const],
+      restrictions: {},
+    }];
+
+    expect(
+      hostShellTaskRunAccessDecision(hostShellScope, "task-run-a", undefined),
+    ).toEqual({ allowed: false, code: "task_run_id_required" });
+    expect(
+      hostShellTaskRunAccessDecision(hostShellScope, "task-run-a", "task-run-b"),
+    ).toEqual({ allowed: false, code: "task_run_id_mismatch" });
+    expect(
+      hostShellTaskRunAccessDecision(hostShellScope, "task-run-a", "task-run-a"),
+    ).toEqual({ allowed: true });
+    expect(
+      hostShellTaskRunAccessDecision(hostShellScope, undefined, undefined),
+    ).toEqual({ allowed: true });
+    expect(
+      hostShellTaskRunRenewalDecision(hostShellScope, undefined, undefined),
+    ).toEqual({ allowed: false, code: "task_run_id_required" });
+    expect(
+      hostShellTaskRunRenewalDecision(hostShellScope, "task-run-a", "task-run-b"),
+    ).toEqual({ allowed: false, code: "task_run_id_mismatch" });
+    expect(
+      hostShellTaskRunRenewalDecision(hostShellScope, "task-run-a", "task-run-a"),
+    ).toEqual({ allowed: true });
+  });
+
   it.each([
     [
       { kind: "process.exec", program: "git", args: ["status"], cwd: "." },
@@ -664,6 +697,58 @@ describe("protocol validation", () => {
             restrictions: {},
           },
         ],
+      }).success,
+    ).toBe(false);
+    expect(
+      agentSessionRequestInputSchema.safeParse({
+        ...request,
+        runId: "   ",
+        scopes: [
+          {
+            ...request.scopes[0],
+            capabilities: ["host.shell"],
+            restrictions: {},
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      agentSessionRequestInputSchema.safeParse({
+        ...request,
+        runId: "task-run-2026-08-05",
+        scopes: [
+          {
+            ...request.scopes[0],
+            capabilities: ["host.shell"],
+            restrictions: {},
+          },
+        ],
+      }).success,
+    ).toBe(true);
+    expect(
+      agentSessionRequestInputSchema.safeParse({
+        ...request,
+        purpose: undefined,
+        durationSeconds: 3_601,
+        runId: "long-task-run",
+        scopes: [{
+          ...request.scopes[0],
+          capabilities: ["host.shell"],
+          restrictions: {},
+        }],
+      }).success,
+    ).toBe(false);
+    expect(
+      agentSessionRequestInputSchema.safeParse({
+        ...request,
+        purpose: "The full repository verification exceeds one hour",
+        durationSeconds: 3_601,
+        runId: "long-task-run",
+        scopes: [{
+          ...request.scopes[0],
+          capabilities: ["host.shell"],
+          restrictions: {},
+        }],
       }).success,
     ).toBe(true);
     expect(

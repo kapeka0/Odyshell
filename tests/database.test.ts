@@ -454,6 +454,11 @@ describe("server storage boundaries", () => {
     expect(approval).toContain("SESSION_CLAIM_WINDOW_MILLISECONDS");
     expect(claim).toContain(".forUpdate()");
     expect(claim).toContain("request.agentId !== input.agentId");
+    expect(claim).toContain("hostShellTaskRunAccessDecision(");
+    expect(claim).toContain("input.runId");
+    expect(claim.indexOf("hostShellTaskRunAccessDecision(")).toBeLessThan(
+      claim.indexOf('.insertInto("sessionCredentials")'),
+    );
     expect(claim).toContain('.where("id", "=", input.authority.installationId)');
     expect(claim).toContain('.where("userId", "=", input.humanId)');
     expect(claim).toContain('.insertInto("sessionCredentials")');

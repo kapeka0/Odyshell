@@ -94,7 +94,9 @@ Timeline without recording credentials or operation output.
 
 Remote MCP installations use Clerk OAuth only for human and client identity. The Server stores the
 installation-to-Agent and installation-to-Session bindings in PostgreSQL, but never stores OAuth
-access or refresh tokens. Every Operation still passes the normal Session scope and expiry checks.
+access or refresh tokens. Host Shell reuse also requires the same stable Task Run identifier, so
+unrelated requests cannot inherit broad authority. Every Operation still passes the normal Session
+scope and expiry checks.
 Explicit idempotency keys and Server Operation IDs prevent transport retries from dispatching
 duplicate work. Session completion revokes authority only after every Operation has reached a
 terminal state. The verified

@@ -205,6 +205,7 @@ async function runInTemporarySession(
     );
   }
   const agent = api.agent(identity);
+  const runId = action.kind === "host.shell" ? randomUUID() : undefined;
   const request = await (action.kind === "host.shell"
     ? agent.requestHostShellSession({
         machineId: machine.id,
@@ -212,6 +213,7 @@ async function runInTemporarySession(
         purpose: requestMetadata?.purpose ??
           `Run dependent native shell commands on ${machine.name}`,
         durationSeconds: ttlSeconds,
+        runId: runId!,
       })
     : agent.requestOperationSession({
         machineId: machine.id,
@@ -235,14 +237,15 @@ async function runInTemporarySession(
       `session_request_${requestStatus.status}`,
     );
   }
-  const claim = await agent.claim(request.id);
+  const claim = await agent.claim(request.id, runId);
+  const session = api.claimedSession(claim);
+  const operationOptions = {
+    timeoutSeconds,
+    ...(options.json ? {} : { onEvent: streamEvent }),
+  };
+  let result: OperationResult;
   try {
-    const session = api.claimedSession(claim);
-    const operationOptions = {
-      timeoutSeconds,
-      ...(options.json ? {} : { onEvent: streamEvent }),
-    };
-    const result = action.kind === "host.shell"
+    result = action.kind === "host.shell"
       ? await session.host.shell({
           machineId: machine.id,
           command: action.command,
@@ -254,10 +257,15 @@ async function runInTemporarySession(
           ...operationOptions,
         })
       : await session.execute(machine.id, action, operationOptions);
-    finishOperationResult(result, options.json ?? false);
-  } finally {
+  } catch (error) {
     await agent.cancel(claim.sessionId).catch(() => undefined);
+    throw error;
   }
+  await agent.complete(
+    claim.sessionId,
+    result.operation.status === "succeeded" ? "succeeded" : "failed",
+  );
+  finishOperationResult(result, options.json ?? false);
 }
 
 function finishOperationResult(result: OperationResult, json: boolean): void {
@@ -827,7 +835,7 @@ program
     "human-readable goal shown before Host Shell approval",
   )
   .option("--title <title>", "approval title")
-  .option("--ttl <seconds>", "session lifetime", "300")
+  .option("--ttl <seconds>", "session lifetime", "3600")
   .option("--timeout <seconds>", "operation timeout", "120")
   .passThroughOptions()
   .action(

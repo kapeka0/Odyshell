@@ -85,15 +85,17 @@ When later commands depend on earlier results, request broad Host Shell authorit
 anticipating command text:
 
 ```ts
+const taskRunId = "repair-development-environment-2026-08-05";
 const shellRequest = await agent.requestHostShellSession({
   machineId,
   title: "Repair the development environment",
   purpose: "Inspect failures and choose the next command from each result",
-  durationSeconds: 900,
+  durationSeconds: 3600,
+  runId: taskRunId,
 });
 
 // Show shellRequest.approvalUrl, wait for approval, then claim once.
-const shellClaim = await agent.claim(shellRequest.id);
+const shellClaim = await agent.claim(shellRequest.id, taskRunId);
 const shell = ods.claimedSession(shellClaim);
 await shell.host.shell({ machineId, command: "node --version" });
 await shell.host.shell({ machineId, command: "npm test" });
@@ -103,7 +105,8 @@ Each command is an independent Operation. It runs natively as the Client's opera
 starts in that user's Home by default, and shares no persistent shell process or state with the
 next command. Host Shell has no sandbox or PTY, is limited to host Profiles, and is never
 autoapproved or delegated. One unavailable command can fail while the approved Session remains
-usable for the next attempt.
+usable for the next attempt. Keep one stable `runId` for the Task Run and use a new one for
+unrelated work. Complete the Session as soon as the overall task succeeds or is abandoned.
 
 An unattended Agent can propose a bounded autoapproval policy:
 
@@ -199,6 +202,9 @@ const renewal = await ods.renewAgentSession(claim.sessionId, agentId, {
 });
 ```
 
+Host Shell renewal additionally supplies the predecessor's stable `runId`. An unattributed manual
+Host Shell Session cannot be renewed through the programmatic API.
+
 Prefer `process.exec` with an explicit executable and arguments. For dependent multi-command host
 work, request Host Shell authority without including an anticipated command:
 
@@ -207,7 +213,8 @@ const shellRequest = await agent.requestHostShellSession({
   machineId,
   title: "Diagnose the failing build",
   purpose: "Run dependent diagnostic commands",
-  durationSeconds: 900,
+  durationSeconds: 3600,
+  runId: "diagnose-failing-build-2026-08-05",
 });
 
 // After explicit human approval:

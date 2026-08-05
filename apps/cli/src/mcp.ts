@@ -10,6 +10,7 @@ import {
   type ApprovedMcpRuntime,
 } from "@odyshell/mcp";
 import {
+  hostShellTaskRunAccessDecision,
   mergeSessionMachineScopes,
   operationSessionScopes,
   sessionScopeDecision,
@@ -35,6 +36,10 @@ export function createApprovedOdyshellMcpServer(
 ): McpServer {
   const claims = new Map<string, ClaimedAgentSession>();
   const requestSessions = new Map<string, string>();
+  const requestTaskRuns = new Map<
+    string,
+    { runId?: string; scopes: SessionMachineScope[] }
+  >();
   const recentRequests = new Map<
     string,
     ApprovedMcpSessionRequest & { title: string; purpose?: string }
@@ -120,11 +125,12 @@ export function createApprovedOdyshellMcpServer(
       const agent = ods.agent(identity);
       if (!input.predecessorSessionId && claims.size > 0) {
         const sessions = await agent.sessions();
-        const reusableClaim = hostShellMachineId
+        const reusableClaim = input.hostShell
           ? findReusableLocalHostShellClaim(
               claims.values(),
               sessions,
-              hostShellMachineId,
+              hostShellMachineId!,
+              input.runId,
             )
           : findReusableLocalOperationClaim(
               claims.values(),
@@ -162,6 +168,10 @@ export function createApprovedOdyshellMcpServer(
         expiresAt: requested.expiresAt,
       };
       recentRequests.set(requested.id, safeRequest);
+      requestTaskRuns.set(requested.id, {
+        ...(input.runId ? { runId: input.runId } : {}),
+        scopes,
+      });
       return safeRequest;
     },
     async sessions({ includeHistory = false } = {}) {
@@ -217,7 +227,8 @@ export function createApprovedOdyshellMcpServer(
         ].slice(0, 20),
       };
     },
-    async status(requestId) {
+    async status(requestId, runId) {
+      const agent = ods.agent(identity);
       const existingSessionId = requestSessions.get(requestId);
       const existingClaim = existingSessionId
         ? claims.get(existingSessionId)
@@ -226,22 +237,32 @@ export function createApprovedOdyshellMcpServer(
         const canonical = (await ods.agent(identity).sessions()).find(
           (session) => session.id === existingClaim.sessionId,
         );
+        requireLocalTaskRun(canonical, runId);
         return safeClaim(existingClaim, canonical);
       }
 
-      const agent = ods.agent(identity);
+      const requestedAccess = requestTaskRuns.get(requestId) ??
+        (await agent.requests()).find((request) => request.id === requestId);
+      if (requestedAccess) {
+        requireTaskRun(
+          requestedAccess.scopes,
+          requestedAccess.runId,
+          runId,
+        );
+      }
       const status = await agent.status(requestId);
       const recent = recentRequests.get(requestId);
       if (recent) {
         recentRequests.set(requestId, { ...recent, status: status.status });
       }
       if (status.status === "approved") {
-        const claim = await agent.claim(requestId);
+        const claim = await agent.claim(requestId, runId);
         claims.set(claim.sessionId, claim);
         requestSessions.set(requestId, claim.sessionId);
         const canonical = (await agent.sessions()).find(
           (session) => session.id === claim.sessionId,
         );
+        requireLocalTaskRun(canonical, runId);
         return safeClaim(claim, canonical);
       }
       if (status.status === "claimed") {
@@ -260,14 +281,23 @@ export function createApprovedOdyshellMcpServer(
           "session_claim_unavailable",
         );
       }
+      const canonical = (await ods.agent(identity).sessions()).find(
+        (session) => session.id === claim.sessionId,
+      );
+      requireLocalTaskRun(canonical, input.runId);
       const machine = await ods.resolveMachine(input.machine);
       return ods.claimedSession(claim).execute(machine.id, input.action, {
         timeoutSeconds: input.timeoutSeconds,
         idempotencyKey: input.idempotencyKey,
       });
     },
-    complete(input) {
-      return ods.agent(identity).complete(
+    async complete(input) {
+      const agent = ods.agent(identity);
+      const canonical = (await agent.sessions()).find(
+        (session) => session.id === input.sessionId,
+      );
+      requireLocalTaskRun(canonical, input.runId);
+      return agent.complete(
         input.sessionId,
         input.outcome,
         input.summary,
@@ -278,6 +308,39 @@ export function createApprovedOdyshellMcpServer(
     },
   };
   return createApprovedMcpServer(runtime, reportUnexpectedError);
+}
+
+function requireLocalTaskRun(
+  session: ListedAgentSession | undefined,
+  runId: string | undefined,
+): void {
+  if (!session) {
+    throw new ExpectedError(
+      "Session state is unavailable for Task Run validation.",
+      "session_claim_unavailable",
+    );
+  }
+  requireTaskRun(session.scopes, session.runId, runId);
+}
+
+function requireTaskRun(
+  scopes: SessionMachineScope[],
+  expectedRunId: string | undefined,
+  providedRunId: string | undefined,
+): void {
+  const decision = hostShellTaskRunAccessDecision(
+    scopes,
+    expectedRunId,
+    providedRunId,
+  );
+  if (!decision.allowed) {
+    throw new ExpectedError(
+      decision.code === "task_run_id_required"
+        ? "Host Shell authority requires its Task Run identifier."
+        : "Host Shell authority belongs to a different Task Run.",
+      decision.code,
+    );
+  }
 }
 
 function findReusableLocalOperationClaim(
@@ -306,11 +369,13 @@ function findReusableLocalHostShellClaim(
   claims: Iterable<ClaimedAgentSession>,
   sessions: ListedAgentSession[],
   machineId: string,
+  runId: string,
 ): ClaimedAgentSession | undefined {
   return findReusableLocalClaim(
     claims,
     sessions,
     (claim, session) =>
+      session.runId === runId &&
       session.targets.some(
         (target) =>
           target.machineId === machineId && target.status === "ready",

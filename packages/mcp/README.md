@@ -18,8 +18,10 @@ summary without exposing host paths or Client configuration.
 When a Session needs human approval, the tool result tells the agent to show the approval link and
 wait for the user's decision before checking the request status.
 If the MCP client loses a tool response or opens a new chat, `sessions_list` recovers pending
-requests and lists active Sessions. Active authority remains reusable only while the same local MCP
-process holds its claim or the same remote installation retains its persistent grant.
+requests and lists active Sessions. Typed authority remains reusable only while the same local MCP
+process holds its claim or the same remote installation retains its persistent grant. Host Shell
+additionally requires an explicit continuation carrying the same Task Run `runId`; unrelated work
+never inherits it.
 Request and status results include an explicit `nextAction`, so an agent can resume after human
 approval without asking for a duplicate Session.
 
@@ -27,8 +29,9 @@ Local `ods mcp` reuses a compatible ready Session only when that same running pr
 Session Credential. The credential remains in memory, is never persisted, and is revalidated
 against active Server state before reuse. Restarting the process can recover pending unclaimed
 requests, but authority claimed by the previous process requires a new Session request and
-approval. Remote MCP instead stores an installation-bound grant in PostgreSQL, so compatible
+approval. Remote MCP instead stores an installation-bound grant in PostgreSQL, so compatible typed
 authority remains reusable by that installation across stateless requests and Server restarts.
+Compatible Host Shell authority also requires the same stable Task Run `runId`.
 
 The same pending request and review link are available from the Odyshell Sessions dashboard.
 
@@ -44,14 +47,18 @@ groups that would create capability-path cross products are rejected.
 
 Filesystem paths may be relative to the Client Home or exact absolute paths on a host
 profile. An absolute path is presented and approved as an exact filesystem scope. Docker
-profiles reject absolute host paths. Prefer `process.exec` for an exact executable and argument
-array. `session_request` accepts exactly one authority mode: `operations` retains the exact typed
-actions being requested, while `hostShell: { machine }` requests temporary broad Host Shell
-authority without guessing future commands. A linked escalation can carry `predecessorSessionId`.
+profiles reject absolute host paths. Prefer `process.exec` for fully known one-shot work. Use Host
+Shell for exploratory, iterative, or multi-command work whose next command depends on results.
+`session_request` accepts exactly one authority mode: `operations` retains the exact typed actions
+being requested, while `hostShell: { machine }` requests temporary broad Host Shell authority
+without guessing future commands and requires a stable Task Run `runId`. A linked escalation can
+carry `predecessorSessionId`.
 The MCP caller may omit `title`; Odyshell then uses `purpose` as the short approval title or derives
 one from the requested authority. The stored Session Request still always has a non-empty title.
 Actual `host.shell` commands are supplied only to `operation_execute`; Host Shell is never
-autoapproved. Persistable command action fields and output remain temporary delivery data, while
+autoapproved. `session_status`, `operation_execute`, and `session_complete` repeat the stable
+`runId` for attributed Host Shell authority; manual dashboard Sessions are exempt. Persistable
+command action fields and output remain temporary delivery data, while
 environment values and standard input are transport-only and never persisted. Privacy-minimal
 Timeline data and Event Sinks do not export command text or output. Commands run as the Client's
 operating-system user, start in that user's Home by default, have no sandbox or isolation, and may

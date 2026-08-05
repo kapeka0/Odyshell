@@ -207,12 +207,13 @@ independently; the dashboard is not an authorization boundary.
 The dashboard offers Session presets of 5 minutes, 15 minutes, 1 hour, 4 hours, 8 hours, and
 24 hours, with a 1-hour default. MCP also defaults to 1 hour. API, SDK, and MCP requests accept
 whole-second durations from 60 seconds through 24 hours; SDK callers provide the duration
-explicitly. Single-operation CLI commands, including `ods shell`, default to 5 minutes. No Session
-can be permanent.
+explicitly. Single-operation typed CLI commands default to 5 minutes; `ods shell` defaults to the
+one-hour Host Shell task budget. No Session can be permanent.
 
 An active Session is never extended or widened. `renew` creates a successor Session with a new
 identifier, approval decision, and credential. It can preserve or reduce scope; expanding
-authority is a new request.
+authority is a new request. Renewing Host Shell requires the same Task Run identifier as its
+predecessor; an unattributed manual Host Shell Session cannot be renewed programmatically.
 
 ### Per-target readiness
 
@@ -234,7 +235,9 @@ work.
 
 `session_complete` requires no active Operations. Odyshell records verified lifecycle and
 Operation results; the Agent may report `succeeded` or `failed` with an optional summary, which is
-visibly marked as Agent-reported.
+visibly marked as Agent-reported. A failed Host Shell Operation does not end the Session. The Agent
+continues corrective work and reports the outcome of the overall Task Run when it explicitly
+completes the Session; expiry is only an interruption fallback.
 
 `session_cancel`, expiry, and security revocation cancel active Operations. Transport loss alone
 does not: an already authorized Operation continues under its local timeout and Session deadline,
@@ -371,11 +374,12 @@ The MCP surface includes:
 
 `machines_list` exposes machine name, description, platform, architecture, runner, effective
 capabilities, and default shell. Session and execution tools repeat the relevant machine context
-so an Agent can recover correctly after a lost tool result or a new chat. `sessions_list` returns active requests
-and Sessions by default; history is an explicit option. Agents always select the Session identifier
-they intend to use. Before creating a request, the MCP runtime reuses a ready, unexpired Session
-only when it belongs to the same installation and every requested Operation fits its immutable
-scope.
+so an Agent can recover correctly after a lost tool result or a new chat. `sessions_list` returns
+active requests and Sessions by default; history is an explicit option. Agents always select the
+Session identifier they intend to use. Before creating a request, the MCP runtime reuses a ready,
+unexpired typed Session only when it belongs to the same installation and every requested
+Operation fits its immutable scope. Host Shell reuse additionally requires the same stable Task Run
+`runId`; a new chat can supply it only for an explicit continuation, never for unrelated work.
 
 Human membership, billing, and unrestricted Workspace administration are not MCP tools.
 

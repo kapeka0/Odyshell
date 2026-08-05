@@ -154,9 +154,11 @@ Workspace can use `/mcp`; accounts with several use `/mcp/<workspace-id>`.
 
 Remote MCP requests either one or more exact typed Operations or explicit broad Host Shell
 authority for approval. Host Shell requests identify the machine, objective, and duration without
-an advance command list. Every execution includes a stable Operation ID, so a transport retry
-returns the original Operation instead of running it again. Completion is explicit, records the
-Agent-reported outcome, and fails closed while work is active.
+an advance command list. They also require a stable Task Run `runId`; reuse requires both the same
+MCP installation and `runId`, so unrelated work cannot inherit broad authority. Every execution
+includes a stable Operation ID, so a transport retry returns the original Operation instead of
+running it again. A failed command leaves the Session usable for corrective work. Completion is
+explicit, records the overall Agent-reported task outcome, and fails closed while work is active.
 
 ## Connect a machine
 

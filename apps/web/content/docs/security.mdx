@@ -41,7 +41,9 @@ retains the policy ID and version that authorized it.
 delegated, requires an explicit Session capability, remains bounded by expiry and the Client Local
 Policy, and records structural status in the privacy-minimal Timeline. Persistable command action
 fields and output remain temporary delivery data; environment values and standard input are never
-persisted. Prefer `process.exec` whenever an exact program and argument list is sufficient.
+persisted. Programmatic requests require a stable Task Run identifier, and reuse requires the same
+Agent installation and Task Run so unrelated work cannot inherit authority. Prefer `process.exec`
+whenever an exact program and argument list is sufficient.
 `process.exec` has no caller-supplied environment field; its contract is limited to the exact
 program, arguments, and working directory. Host Shell can supply per-command environment values
 under its broad authority, but those values are never persisted or shared with later Operations.

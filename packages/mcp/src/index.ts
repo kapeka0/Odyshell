@@ -16,17 +16,18 @@ const timeoutSchema = z
   .min(1)
   .max(MAX_OPERATION_TIMEOUT_SECONDS)
   .default(DEFAULT_OPERATION_TIMEOUT_SECONDS);
+const taskRunIdSchema = z.string().trim().min(1).max(128);
 const sessionRequestCommonShape = {
   title: z.string().trim().min(1).max(96).optional(),
   purpose: z.string().trim().min(1).max(280).optional(),
   durationSeconds: z.number().int().min(60).max(86_400).optional(),
-  runId: z.string().trim().min(1).max(128).optional(),
 };
 
 const approvedMcpSessionRequestSchema = z.xor([
   z
     .object({
       ...sessionRequestCommonShape,
+      runId: taskRunIdSchema.optional(),
       operations: z
         .array(
           z.object({
@@ -41,17 +42,26 @@ const approvedMcpSessionRequestSchema = z.xor([
   z
     .object({
       ...sessionRequestCommonShape,
+      runId: taskRunIdSchema,
       hostShell: z.object({ machine: machineSchema }).strict(),
       predecessorSessionId: z.string().uuid().optional(),
     })
-    .strict(),
+    .strict()
+    .superRefine((request, context) => {
+      if (request.durationSeconds && request.durationSeconds > 3_600 && !request.purpose) {
+        context.addIssue({
+          code: "custom",
+          message: "Host Shell tasks longer than one hour require a purpose",
+          path: ["purpose"],
+        });
+      }
+    }),
 ]);
 
 type ApprovedMcpSessionRequestCommon = {
   title: string;
   purpose?: string;
   durationSeconds: number;
-  runId?: string;
 };
 
 export type ApprovedMcpSessionRequestInput =
@@ -59,12 +69,14 @@ export type ApprovedMcpSessionRequestInput =
     (
       | {
           operations: Array<{ machine: string; action: ScopedOperationAction }>;
+          runId?: string;
           hostShell?: never;
           predecessorSessionId?: never;
         }
       | {
           operations?: never;
           hostShell: { machine: string };
+          runId: string;
           predecessorSessionId?: string;
         }
     );
@@ -74,9 +86,10 @@ export type ApprovedMcpRuntime = {
   ping(machine: string): Promise<unknown>;
   request(input: ApprovedMcpSessionRequestInput): Promise<ApprovedMcpSessionRequest>;
   sessions(input?: { includeHistory?: boolean }): Promise<unknown>;
-  status(requestId: string): Promise<unknown>;
+  status(requestId: string, runId?: string): Promise<unknown>;
   execute(input: {
     sessionId: string;
+    runId?: string;
     machine: string;
     action: OperationAction;
     timeoutSeconds: number;
@@ -84,6 +97,7 @@ export type ApprovedMcpRuntime = {
   }): Promise<ApprovedMcpOperationResult>;
   complete(input: {
     sessionId: string;
+    runId?: string;
     outcome: "succeeded" | "failed";
     summary?: string;
   }): Promise<unknown>;
@@ -122,7 +136,7 @@ export function createApprovedMcpServer(
     { name: "odyshell", version: "0.15.1" },
     {
       instructions:
-        "Inspect machines before choosing platform-specific operations. Before requesting authority, call sessions_list. Reuse a ready Session only when it is bound to the current local MCP process or remote MCP installation; session_request performs that transport-appropriate compatibility check before requesting new approval. Machine and Session results include platform, architecture, runner, capabilities, default shell and privilegeEscalation. Prefer exact typed filesystem, Docker and process.exec operation requests. For dependent multi-command host work whose later commands depend on prior output, request the hostShell mode without anticipating a command; it grants broad host.shell authority for a short Session, is never autoapproved and every executed command is audited. Use predecessorSessionId only with hostShell when escalating an existing Session. When privilegeEscalation is sudo, explicitly mention root access in the Session title or purpose before requesting a sudo command. Show approval links verbatim, then call session_status. Generate a fresh UUIDv4 idempotencyKey for each logical operation and reuse it only when retrying that exact operation_execute call. Always pass the explicit sessionId and actual typed action. Credentials stay inside Odyshell.",
+        "Inspect machines before choosing platform-specific operations. Before requesting authority, call sessions_list. Reuse exact typed authority only when it is bound to the current local MCP process or remote MCP installation. Use typed filesystem, Docker, or process.exec requests when the task is fully known and can be expressed as one exact or structured action. For exploratory, iterative, or multi-command host work, request hostShell at the outset without anticipating commands; it grants broad host.shell authority for the Task Run, requires manual approval, and audits every command. Generate one stable runId for the Task Run and retain it across retries and explicit continuations; never reuse Host Shell authority from another runId. Use predecessorSessionId only with hostShell when escalating an existing Session. When privilegeEscalation is sudo, explicitly mention root access in the Session title or purpose before requesting a sudo command. Show approval links verbatim, then call session_status. Generate a fresh UUIDv4 idempotencyKey for each logical operation and reuse it only when retrying that exact operation_execute call. A failed command does not close the Session: inspect its result, correct the work, and continue with the same sessionId and runId. After no Operations remain active, complete the Session only when the overall task succeeds or is abandoned; report the overall outcome rather than the last command status. Credentials stay inside Odyshell.",
     },
   );
 
@@ -153,9 +167,9 @@ export function createApprovedMcpServer(
   server.registerTool(
     "session_request",
     {
-      title: "Request operation access",
+      title: "Request task access",
       description:
-        "Call sessions_list first. Reuse compatible ready authority only when it is bound to this local MCP process or remote MCP installation; session_request checks that boundary before requesting approval. Choose exactly one request mode: operations retains one or more exact typed actions, while hostShell requests broad temporary Host Shell authority without anticipating commands. Host Shell requires manual approval. Use predecessorSessionId only with hostShell to link an escalation to the current Session. A short title is optional; when omitted, Odyshell derives it from purpose or the requested authority. Inspect machine platform, defaultShell and privilegeEscalation before composing OS-specific commands. If sudo is available, explicitly disclose intended root access in the title or purpose. If approval is required, show the returned link and follow nextAction.",
+        "Call sessions_list first. Choose exactly one request mode: operations retains exact typed actions for fully known work, while hostShell is the preferred mode for exploratory, iterative, or multi-command host work. Generate one stable runId for the Task Run when requesting Host Shell and retain it across retries and explicit continuations; Odyshell never reuses Host Shell authority from another runId. Host Shell requires manual approval and requests broad temporary authority without anticipating commands. Use predecessorSessionId only with hostShell to link an escalation to the current Session. A short title is optional; when omitted, Odyshell derives it from purpose or the requested authority. Inspect machine platform, defaultShell and privilegeEscalation before composing OS-specific commands. If sudo is available, explicitly disclose intended root access in the title or purpose. If approval is required, show the returned link and follow nextAction.",
       inputSchema: approvedMcpSessionRequestSchema,
       annotations: requestAnnotations,
     },
@@ -170,6 +184,7 @@ export function createApprovedMcpServer(
         ? {
             ...common,
             hostShell: input.hostShell,
+            runId: input.runId!,
             ...(input.predecessorSessionId
               ? { predecessorSessionId: input.predecessorSessionId }
               : {}),
@@ -187,7 +202,7 @@ export function createApprovedMcpServer(
     {
       title: "List Sessions",
       description:
-        "List pending requests and active Sessions owned by this Agent. Active authority is returned by default so a new chat using the same local MCP process or remote installation can reuse an explicit Session identifier; request history only when needed.",
+        "List pending requests and active Sessions owned by this Agent. Active authority is returned by default for recovery. Exact typed authority may be reused by the same local MCP process or remote installation; Host Shell additionally requires an explicit continuation with the same Task Run runId and must never be inherited by unrelated work. Request history only when needed.",
       inputSchema: z.object({ includeHistory: z.boolean().default(false) }),
       annotations: readOnlyAnnotations,
     },
@@ -200,14 +215,17 @@ export function createApprovedMcpServer(
     {
       title: "Check access request",
       description:
-        "Check whether a request was approved and make the resulting Session available to this MCP installation.",
-      inputSchema: z.object({ requestId: z.string().uuid() }),
+        "Check whether a request was approved and make the resulting Session available to this MCP installation. Supply the stable Task Run runId for an Agent-requested Host Shell request; dashboard-created Sessions are exempt.",
+      inputSchema: z.object({
+        requestId: z.string().uuid(),
+        runId: taskRunIdSchema.optional(),
+      }),
       annotations: requestAnnotations,
     },
-    async ({ requestId }) =>
+    async ({ requestId, runId }) =>
       runSessionStatus(
         requestId,
-        () => runtime.status(requestId),
+        () => runtime.status(requestId, runId),
         reportUnexpectedError,
       ),
   );
@@ -217,7 +235,7 @@ export function createApprovedMcpServer(
     {
       title: "Execute approved operation",
       description:
-        "Execute an action inside an approved Session. Typed process, filesystem and Docker actions must match the approved scope; Host Shell commands are chosen only after broad host.shell authority is approved. Supply a fresh UUIDv4 idempotencyKey for each logical Operation and reuse it only for an exact retry. Odyshell safely reduces a requested timeout to the Session lifetime remaining.",
+        "Execute an action inside an approved Session. Typed process, filesystem and Docker actions must match the approved scope. Agent-requested Host Shell execution must supply the stable Task Run runId; dashboard-created Sessions are exempt. A failed command does not close its Session; inspect the result and continue corrective work with a fresh UUIDv4 idempotencyKey. Reuse an idempotencyKey only for an exact retry. Odyshell safely reduces a requested timeout to the Session lifetime remaining.",
       inputSchema: z.object({
         idempotencyKey: z
           .uuidv4()
@@ -225,6 +243,7 @@ export function createApprovedMcpServer(
             "Fresh UUIDv4 for this logical Operation. Reuse it only for an exact retry of the same call.",
           ),
         sessionId: z.string().uuid(),
+        runId: taskRunIdSchema.optional(),
         machine: machineSchema,
         action: sessionOperationActionSchema,
         timeoutSeconds: timeoutSchema,
@@ -234,7 +253,15 @@ export function createApprovedMcpServer(
     async (input) =>
       runOperation(
         input.idempotencyKey,
-        () => runtime.execute(input),
+        () =>
+          runtime.execute({
+            idempotencyKey: input.idempotencyKey,
+            sessionId: input.sessionId,
+            ...(input.runId ? { runId: input.runId } : {}),
+            machine: input.machine,
+            action: input.action,
+            timeoutSeconds: input.timeoutSeconds,
+          }),
         reportUnexpectedError,
       ),
   );
@@ -244,9 +271,10 @@ export function createApprovedMcpServer(
     {
       title: "Complete a Session",
       description:
-        "Close an approved Session after all operations finish and record the agent-reported outcome.",
+        "Always call this after the Task Run finishes and no Operations remain active. Supply the stable Task Run runId for an Agent-requested Host Shell Session; dashboard-created Sessions are exempt. Close the Session and report succeeded only when the overall task goal was met, or failed when the task was abandoned; individual command failures do not determine the Session outcome.",
       inputSchema: z.object({
         sessionId: z.string().uuid(),
+        runId: taskRunIdSchema.optional(),
         outcome: z.enum(["succeeded", "failed"]).default("succeeded"),
         summary: z.string().trim().min(1).max(512).optional(),
       }),
@@ -257,6 +285,7 @@ export function createApprovedMcpServer(
         () =>
           runtime.complete({
             sessionId: input.sessionId,
+            ...(input.runId ? { runId: input.runId } : {}),
             outcome: input.outcome,
             ...(input.summary ? { summary: input.summary } : {}),
           }),

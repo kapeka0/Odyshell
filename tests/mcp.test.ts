@@ -32,6 +32,7 @@ const localAgentIdentity = {
 const localRequestId = "7d8730ef-075c-40d5-a72d-8101abe17260";
 const localSessionId = "c837dd55-fdf0-47bb-887f-e4f857245dc7";
 const localMachineId = "29f34f33-418c-4624-84c3-25818db42023";
+const localTaskRunId = "codex-task-2026-08-05";
 
 type JsonSchemaNode = {
   additionalProperties?: boolean;
@@ -107,8 +108,21 @@ describe("Odyshell MCP server", () => {
     expect(
       tools.find((tool) => tool.name === "session_request")?.description,
     ).toContain("Call sessions_list first");
-    expect(client.getInstructions()).toContain("dependent multi-command host work");
-    expect(client.getInstructions()).not.toContain("interactive multi-step");
+    expect(client.getInstructions()).toContain(
+      "For exploratory, iterative, or multi-command host work",
+    );
+    expect(client.getInstructions()).toContain(
+      "A failed command does not close the Session",
+    );
+    expect(client.getInstructions()).toContain(
+      "complete the Session only when the overall task succeeds or is abandoned",
+    );
+    expect(
+      tools.find((tool) => tool.name === "session_request")?.description,
+    ).toContain("Generate one stable runId for the Task Run");
+    expect(
+      tools.find((tool) => tool.name === "session_complete")?.description,
+    ).toContain("Always call this after the Task Run finishes");
   });
 
   it("publishes mutually exclusive typed and Host Shell request schemas", async () => {
@@ -122,10 +136,12 @@ describe("Odyshell MCP server", () => {
     expect(schema?.oneOf).toHaveLength(2);
     expect(schema?.oneOf?.map((branch) => branch.required)).toEqual(
       expect.arrayContaining([
-        ["operations"],
-        ["hostShell"],
+        expect.arrayContaining(["operations"]),
+        expect.arrayContaining(["hostShell", "runId"]),
       ]),
     );
+    expect(schema?.oneOf?.every((branch) => !branch.required?.includes("title")))
+      .toBe(true);
     expect(JSON.stringify(schema)).not.toContain('"const":"host.shell"');
     expect(JSON.stringify(schema)).not.toContain('"env"');
     expect(JSON.stringify(schema).match(/predecessorSessionId/gu)).toHaveLength(1);
@@ -181,6 +197,7 @@ describe("Odyshell MCP server", () => {
       name: "session_request",
       arguments: {
         hostShell: { machine: "desktop" },
+        runId: localTaskRunId,
         predecessorSessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
         title: "Escalate to Host Shell",
       },
@@ -189,6 +206,7 @@ describe("Odyshell MCP server", () => {
     expect(result.isError, textOf(result)).not.toBe(true);
     expect(request).toHaveBeenCalledWith({
       hostShell: { machine: "desktop" },
+      runId: localTaskRunId,
       predecessorSessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
       title: "Escalate to Host Shell",
       durationSeconds: 3_600,
@@ -199,6 +217,7 @@ describe("Odyshell MCP server", () => {
       arguments: {
         hostShell: { machine: "raspberrypi-5" },
         purpose: "Read current IP address",
+        runId: localTaskRunId,
       },
     });
 
@@ -207,6 +226,7 @@ describe("Odyshell MCP server", () => {
       hostShell: { machine: "raspberrypi-5" },
       title: "Read current IP address",
       purpose: "Read current IP address",
+      runId: localTaskRunId,
       durationSeconds: 3_600,
     });
 
@@ -244,6 +264,21 @@ describe("Odyshell MCP server", () => {
 
     for (const arguments_ of [
       { title: "Missing request mode" },
+      {
+        title: "Missing Task Run",
+        hostShell: { machine: "desktop" },
+      },
+      {
+        title: "Blank Task Run",
+        hostShell: { machine: "desktop" },
+        runId: "   ",
+      },
+      {
+        title: "Unjustified long Host Shell task",
+        hostShell: { machine: "desktop" },
+        runId: "long-task-run",
+        durationSeconds: 3_601,
+      },
       {
         title: "Ambiguous request mode",
         hostShell: { machine: "desktop" },
@@ -499,12 +534,13 @@ describe("Odyshell MCP server", () => {
     const { client } = await connectServer(
       createApprovedOdyshellMcpServer(ods, localAgentIdentity),
     );
-    await claimLocalSession(client);
+    await claimLocalSession(client, localTaskRunId);
 
     const result = await client.callTool({
       name: "session_request",
       arguments: {
         hostShell: { machine: "rpi5" },
+        runId: localTaskRunId,
         title: "Continue host diagnostics",
       },
     });
@@ -517,6 +553,72 @@ describe("Odyshell MCP server", () => {
       reused: true,
     });
     expect(requestSession).not.toHaveBeenCalled();
+  });
+
+  it("does not reuse local Host Shell authority from a different Task Run", async () => {
+    const { ods, requestSession } = localClaimedMcpFixture(
+      localHostShellScope(),
+    );
+    const { client } = await connectServer(
+      createApprovedOdyshellMcpServer(ods, localAgentIdentity),
+    );
+    await claimLocalSession(client, localTaskRunId);
+
+    const result = await client.callTool({
+      name: "session_request",
+      arguments: {
+        hostShell: { machine: "rpi5" },
+        runId: "another-task-run",
+        title: "Start unrelated host work",
+      },
+    });
+
+    expect(result.isError, textOf(result)).not.toBe(true);
+    expect(textOf(result)).toContain("Approval required");
+    expect(requestSession).toHaveBeenCalledOnce();
+  });
+
+  it("rejects local Host Shell use and completion outside its Task Run", async () => {
+    const { ods, claimSession } = localClaimedMcpFixture(localHostShellScope());
+    const { client } = await connectServer(
+      createApprovedOdyshellMcpServer(ods, localAgentIdentity),
+    );
+    const missingStatusRun = await claimLocalSession(client);
+    expect(missingStatusRun.isError).toBe(true);
+    expect(textOf(missingStatusRun)).toContain("task_run_id_required");
+    expect(claimSession).not.toHaveBeenCalled();
+    await claimLocalSession(client, localTaskRunId);
+    expect(claimSession).toHaveBeenCalledWith(localRequestId, localTaskRunId);
+
+    const operation = {
+      idempotencyKey: "70843b92-1db1-4d67-9fa4-86e74227d8f2",
+      sessionId: localSessionId,
+      machine: "rpi5",
+      action: { kind: "host.shell", command: "pwd" },
+    };
+    const missing = await client.callTool({
+      name: "operation_execute",
+      arguments: operation,
+    });
+    expect(missing.isError).toBe(true);
+    expect(textOf(missing)).toContain("task_run_id_required");
+
+    const mismatchedCompletion = await client.callTool({
+      name: "session_complete",
+      arguments: {
+        sessionId: localSessionId,
+        runId: "another-task-run",
+        outcome: "failed",
+      },
+    });
+    expect(mismatchedCompletion.isError).toBe(true);
+    expect(textOf(mismatchedCompletion)).toContain("task_run_id_mismatch");
+
+    const allowed = await client.callTool({
+      name: "operation_execute",
+      arguments: { ...operation, runId: localTaskRunId },
+    });
+    expect(allowed.isError, textOf(allowed)).not.toBe(true);
   });
 
   it("never reuses claimed authority for a linked Host Shell escalation", async () => {
@@ -532,12 +634,13 @@ describe("Odyshell MCP server", () => {
     const { client } = await connectServer(
       createApprovedOdyshellMcpServer(ods, localAgentIdentity),
     );
-    await claimLocalSession(client);
+    await claimLocalSession(client, localTaskRunId);
 
     const result = await client.callTool({
       name: "session_request",
       arguments: {
         hostShell: { machine: "rpi5" },
+        runId: localTaskRunId,
         predecessorSessionId,
         title: "Escalate configuration inspection",
       },
@@ -924,6 +1027,7 @@ function localCanonicalSession(
     agentName: localAgentIdentity.name,
     title: "Local MCP authority",
     status: "active",
+    runId: localTaskRunId,
     expiresAt: "2099-08-04T19:00:00.000Z",
     scopes,
     targets: [
@@ -940,7 +1044,11 @@ function localClaimedMcpFixture(
     additionalSessions?: ListedAgentSession[];
     failSessionRevalidation?: boolean;
   } = {},
-): { ods: Odyshell; requestSession: ReturnType<typeof vi.fn> } {
+): {
+  ods: Odyshell;
+  requestSession: ReturnType<typeof vi.fn>;
+  claimSession: ReturnType<typeof vi.fn>;
+} {
   const requestSession = vi.fn(async () => ({
     id: "837544aa-ad50-4c8c-a3c8-8a41b25a14db",
     status: "pending" as const,
@@ -948,17 +1056,27 @@ function localClaimedMcpFixture(
     expiresAt: "2099-08-04T18:10:00.000Z",
     scopes: [],
   }));
+  const claimSession = vi.fn(async () => ({
+    sessionId: localSessionId,
+    sessionToken: "ods_session_secret",
+    scopes: [scope],
+    status: "opening" as const,
+    expiresAt: "2099-08-04T19:00:00.000Z",
+  }));
   const canonical = localCanonicalSession(localSessionId, [scope]);
   let sessionReads = 0;
   const ods = fakeApprovedOdyshell({
     requestSession,
-    claim: async () => ({
-      sessionId: localSessionId,
-      sessionToken: "ods_session_secret",
+    requests: async () => [{
+      id: localRequestId,
+      title: "Local MCP authority",
+      status: "approved" as const,
+      runId: localTaskRunId,
       scopes: [scope],
-      status: "opening" as const,
-      expiresAt: "2099-08-04T19:00:00.000Z",
-    }),
+      durationSeconds: 3_600,
+      expiresAt: "2099-08-04T18:10:00.000Z",
+    }],
+    claim: claimSession,
     sessions: async () => {
       sessionReads += 1;
       if (options.failSessionRevalidation && sessionReads > 1) {
@@ -979,13 +1097,16 @@ function localClaimedMcpFixture(
     clientVersion: "0.14.0",
     protocolVersion: 3,
   });
-  return { ods, requestSession };
+  return { ods, requestSession, claimSession };
 }
 
-function claimLocalSession(client: Client): Promise<CallToolResult> {
+function claimLocalSession(
+  client: Client,
+  runId?: string,
+): Promise<CallToolResult> {
   return client.callTool({
     name: "session_status",
-    arguments: { requestId: localRequestId },
+    arguments: { requestId: localRequestId, ...(runId ? { runId } : {}) },
   });
 }
 

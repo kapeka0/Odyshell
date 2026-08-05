@@ -210,12 +210,14 @@ describe("Odyshell SDK", () => {
       title: "Diagnose the build",
       purpose: "Run dependent commands",
       durationSeconds: 900,
+      runId: "task-run-2026-08-05",
       predecessorSessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
     });
 
     expect(requests[0]?.body).toMatchObject({
       agentId: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
       title: "Diagnose the build",
+      runId: "task-run-2026-08-05",
       predecessorSessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
       scopes: [{
         machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
@@ -227,6 +229,49 @@ describe("Odyshell SDK", () => {
     expect(requests[0]?.body).not.toHaveProperty("command");
     expect(requests[0]?.body).not.toHaveProperty("action");
     expect(requests[0]?.body).not.toHaveProperty("scopes.0.action");
+  });
+
+  it("rejects Host Shell authority without a Task Run identifier", async () => {
+    const requests: CapturedRequest[] = [];
+    const ods = new Odyshell({
+      serverUrl: "https://ods.example",
+      agentToken: "agent-secret",
+      fetch: mockFetch(requests, () => ({})),
+    });
+    const agent = ods.agent({
+      id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+      name: "Codex",
+    });
+
+    await expect(agent.requestHostShellSession({
+      machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
+      title: "Unattributed host work",
+      durationSeconds: 900,
+    } as never)).rejects.toMatchObject({ code: "task_run_id_required" });
+    expect(requests).toHaveLength(0);
+  });
+
+  it("rejects unattributed Host Shell through the low-level Session request", async () => {
+    const requests: CapturedRequest[] = [];
+    const ods = new Odyshell({
+      serverUrl: "https://ods.example",
+      agentToken: "agent-secret",
+      fetch: mockFetch(requests, () => ({})),
+    });
+
+    await expect(ods.requestAgentSession({
+      agentId: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+      agentName: "Codex",
+      title: "Unattributed low-level host work",
+      durationSeconds: 900,
+      scopes: [{
+        machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
+        profile: "workspace",
+        capabilities: ["host.shell"],
+        restrictions: {},
+      }],
+    })).rejects.toMatchObject({ code: "task_run_id_required" });
+    expect(requests).toHaveLength(0);
   });
 
   it("rejects Host Shell on the typed-operation request helper", async () => {
@@ -253,6 +298,69 @@ describe("Odyshell SDK", () => {
       },
     } as never)).rejects.toMatchObject({ code: "host_shell_request_required" });
     expect(requests).toHaveLength(0);
+  });
+
+  it("forwards the Task Run when renewing Host Shell authority", async () => {
+    const requests: CapturedRequest[] = [];
+    const ods = new Odyshell({
+      serverUrl: "https://ods.example",
+      agentToken: "agent-secret",
+      fetch: mockFetch(requests, () => ({
+        id: "renewal-request",
+        predecessorSessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
+        status: "pending",
+        expiresAt: "2026-07-31T00:10:00.000Z",
+        scopes: [],
+      })),
+    });
+
+    await ods.renewAgentSession(
+      "c837dd55-fdf0-47bb-887f-e4f857245dc7",
+      "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+      { durationSeconds: 3_600, runId: "task-run-2026-08-05" },
+    );
+
+    expect(requests[0]).toMatchObject({
+      path:
+        "/v1/agent-sessions/c837dd55-fdf0-47bb-887f-e4f857245dc7/renew",
+      method: "POST",
+      body: {
+        agentId: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+        durationSeconds: 3_600,
+        runId: "task-run-2026-08-05",
+      },
+    });
+  });
+
+  it("forwards the Task Run when claiming Host Shell authority", async () => {
+    const requests: CapturedRequest[] = [];
+    const ods = new Odyshell({
+      serverUrl: "https://ods.example",
+      agentToken: "agent-secret",
+      fetch: mockFetch(requests, () => ({
+        sessionId: "c837dd55-fdf0-47bb-887f-e4f857245dc7",
+        sessionToken: "session-secret",
+        scopes: [],
+        status: "opening",
+        expiresAt: "2026-07-31T01:00:00.000Z",
+      })),
+    });
+
+    await ods.claimAgentSession(
+      "7d8730ef-075c-40d5-a72d-8101abe17260",
+      "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+      "task-run-2026-08-05",
+    );
+
+    expect(requests[0]).toMatchObject({
+      path:
+        "/v1/agent-session-requests/7d8730ef-075c-40d5-a72d-8101abe17260/claim",
+      method: "POST",
+      body: {
+        agentId: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
+        runId: "task-run-2026-08-05",
+      },
+    });
   });
 
   it("executes Host Shell only through a claimed Session", async () => {

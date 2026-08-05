@@ -49,15 +49,17 @@ Host Shell uses a separate, manually approved request because its commands are n
 advance:
 
 ```ts
+const taskRunId = "repair-development-environment-2026-08-05";
 const shellRequest = await agent.requestHostShellSession({
   machineId,
   title: "Repair the development environment",
   purpose: "Inspect failures and choose each next command from the result",
-  durationSeconds: 900,
+  durationSeconds: 3600,
+  runId: taskRunId,
 });
 
 console.log(shellRequest.approvalUrl);
-const shellClaim = await agent.claim(shellRequest.id);
+const shellClaim = await agent.claim(shellRequest.id, taskRunId);
 const shell = ods.claimedSession(shellClaim);
 
 await shell.host.shell({ machineId, command: "node --version" });
@@ -69,7 +71,9 @@ delegated. Every command is a separate Operation chosen after approval. It runs 
 operating-system user running the Client and starts in that user's Home unless the Operation sets
 another working directory. There is no sandbox, PTY, persistent shell process, or shell state
 shared between commands. A missing command can fail without ending the Session, so the Agent can
-inspect the result and try another command.
+inspect the result and try another command. Keep one stable `runId` for the Task Run, including an
+explicit continuation after interruption; a different task must use a new one. Complete the
+Session as soon as the overall task succeeds or is abandoned instead of waiting for expiry.
 
 An Independent Agent can create Managed Agent identities after an administrator approves its
 Delegation Policy:

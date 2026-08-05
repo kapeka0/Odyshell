@@ -46,6 +46,11 @@ The recent live connection state of an Agent integration. Presence does not impl
 use any machine.
 _Avoid_: Agent access, active Session
 
+**Task Run**:
+One concrete execution of an Agent task, identified consistently across its retries and explicit
+continuations. Unrelated work is a different Task Run even when it uses the same Agent and machine.
+_Avoid_: Conversation, model turn, process
+
 ## Temporary authority
 
 **Session Request**:

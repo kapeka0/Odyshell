@@ -51,8 +51,9 @@ commands, approve persistent Agent identities, and review their temporary Sessio
 
 An Agent Credential identifies a persistent Agent but grants no machine authority. Each task uses
 an immutable Session for explicit machines and capabilities and expires within 24 hours. Host Shell
-authority is broad, explicit, and always requires manual approval. Control Events never include
-command text, arguments, paths, file contents, stdout, or stderr.
+authority is broad, explicit, always requires manual approval, and is reusable only by the same
+Task Run. Control Events never include command text, arguments, paths, file contents, stdout, or
+stderr.
 
 ## Trust boundary
 

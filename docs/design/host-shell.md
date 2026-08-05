@@ -19,6 +19,14 @@ same-user capability with these invariants:
   approving an advance list of commands;
 - an active Session permits repeated, independent Host Shell Operations until expiry, cancellation,
   completion, or revocation;
+- a failed Host Shell Operation, including a non-zero command exit, does not fail or close the
+  Session; the Agent may inspect the result and submit corrective Operations under the same
+  authority;
+- Host Shell authority may be reused only by the same Agent task; a different task or conversation
+  cannot inherit a still-active Session merely because its Agent, installation, machine, and
+  capability match;
+- a Task Run identifier is required for Agent-requested Host Shell authority and is part of the
+  reuse boundary; requests without one never reuse an existing Session implicitly;
 - every Operation starts in the Home directory of the operating-system user running the Client by
   default; an explicit per-command working directory does not narrow the capability;
 - commands run with everything that user can access, including files, credentials, network, local
@@ -33,6 +41,18 @@ same-user capability with these invariants:
 
 Structured `process.exec`, filesystem, and Docker Operations remain the narrower choices when the
 task can be expressed with typed authority.
+
+Agent-requested Host Shell duration is a budget for the whole Task Run rather than for an
+individual command. It defaults to one hour, may be shorter for clearly bounded work, and exceeds
+one hour only when the stated purpose justifies it. Explicit completion still ends authority as
+soon as the task finishes.
+
+The canonical Server rejects programmatic Host Shell Session Requests without a Task Run
+identifier. MCP and SDK callers supply it; the single-task `ods shell` command generates one for
+its invocation. Human-created dashboard Sessions are already explicit grants and do not require a
+synthetic Task Run identifier, but programmatic clients never reuse them implicitly or renew them.
+MCP requires the same identifier again when claiming, executing, or completing attributed Host
+Shell authority; dashboard-created Sessions remain explicitly selectable without one.
 
 ## Authorization and product surfaces
 
@@ -57,7 +77,14 @@ privilege-escalation enforcement for macOS or Windows.
 ## Execution, expiry, and observability
 
 Each Operation is separately identified, bounded by its timeout and output limit, and tied to the
-active Session. Transport loss alone does not terminate an already authorized Operation. The Client
+active Session. An Operation failure is not a Session outcome: the Agent keeps the Session open
+while diagnosing or correcting the task, then completes it as succeeded only when the task goal is
+met or as failed when it abandons the goal. Explicit completion after the last Operation is the
+normal end of a Host Shell Session; expiry is only the fallback when the Agent is interrupted or
+cannot complete it. If a task is interrupted, only an explicit continuation of that same task may
+resume its unexpired Session by retaining the same Task Run identifier; unrelated work must use a
+new identifier and must not reuse the residual authority.
+Transport loss alone does not terminate an already authorized Operation. The Client
 accepts no new Operations while disconnected, continues enforcing the local Operation timeout and
 Session expiry, keeps only bounded output, and reconciles the result after reauthentication.
 Operation output remains unconfirmed until the Server acknowledges the terminal result; a

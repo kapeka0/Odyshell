@@ -82,7 +82,9 @@ The Session approves Host Shell authority rather than an advance command list. I
 independent Operations for the Session duration; every command starts in the Client user's Home by
 default, and the shell does not preserve `cd` or environment changes between commands. Selecting a
 different working directory for one Operation does not narrow the same-user authority. It is not a
-persistent terminal or PTY.
+persistent terminal or PTY. A failed command does not close the Session: inspect the result, issue
+corrective commands under the same Task Run authority, then explicitly complete the Session when
+the overall task succeeds or is abandoned.
 
 Host Shell commands run with the full authority of the operating-system user running the Client.
 They can reach that user's files, credentials, network, and services, have no sandbox or isolation,

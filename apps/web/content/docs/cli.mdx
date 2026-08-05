@@ -72,9 +72,12 @@ policy exists, the CLI prints an approval URL and waits. The Session Credential 
 used for the operation and revoked when the command finishes.
 
 `ods shell --purpose <purpose> [--title <title>] <machine> <command>` requests an explicit Host
-Shell Session, waits for human approval, runs one native command, and closes the Session.
+Shell Session, generates a Task Run identifier, waits for human approval, runs one native command,
+and explicitly completes the Session with the command outcome.
 `--purpose` is required and describes the goal shown before approval. Pass the complete command as
-one quoted argument. Host Shell starts in the Client user's Home and has no sandbox or isolation.
+one quoted argument. Its task budget defaults to one hour; `--ttl` can shorten it or request a
+longer justified duration up to 24 hours. Host Shell starts in the Client user's Home and has no
+sandbox or isolation.
 Its process receives an allowlisted base environment rather than every Client variable; explicit
 values last for one Operation, although a POSIX login shell can load user startup files. An abrupt
 Client crash can leave a detached POSIX command running; the result is reconciled as unknown.

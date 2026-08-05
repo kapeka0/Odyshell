@@ -46,6 +46,11 @@ export type HostShellSessionRequestInput = {
   durationSeconds: number;
   profile?: string;
   predecessorSessionId?: string;
+  runId: string;
+};
+
+export type AgentSessionRenewalInput = {
+  durationSeconds?: number;
   runId?: string;
 };
 
@@ -251,6 +256,7 @@ export type AgentSessionRequestStatus = {
 export type ListedAgentSessionRequest = AgentSessionRequestStatus & {
   title: string;
   purpose?: string;
+  runId?: string;
   scopes: SessionMachineScope[];
   durationSeconds: number;
 };
@@ -377,6 +383,14 @@ export class AgentClient {
   }
 
   requestHostShellSession(input: HostShellSessionRequestInput) {
+    if (!input.runId?.trim()) {
+      return Promise.reject(
+        new ExpectedError(
+          "Host Shell authority requires a Task Run identifier.",
+          "task_run_id_required",
+        ),
+      );
+    }
     return this.requestSession({
       title: input.title,
       ...(input.purpose ? { purpose: input.purpose } : {}),
@@ -392,7 +406,7 @@ export class AgentClient {
       ...(input.predecessorSessionId
         ? { predecessorSessionId: input.predecessorSessionId }
         : {}),
-      ...(input.runId ? { runId: input.runId } : {}),
+      runId: input.runId,
     });
   }
 
@@ -408,8 +422,8 @@ export class AgentClient {
     return this.ods.agentSessions();
   }
 
-  claim(requestId: string) {
-    return this.ods.claimAgentSession(requestId, this.identity.id);
+  claim(requestId: string, runId?: string) {
+    return this.ods.claimAgentSession(requestId, this.identity.id, runId);
   }
 
   cancel(sessionId: string) {
@@ -752,6 +766,15 @@ export class Odyshell {
   async requestAgentSession(
     input: AgentSessionRequestInput,
   ): Promise<AgentSessionRequest> {
+    if (
+      input.scopes.some((scope) => scope.capabilities.includes("host.shell")) &&
+      !input.runId?.trim()
+    ) {
+      throw new ExpectedError(
+        "Host Shell authority requires a Task Run identifier.",
+        "task_run_id_required",
+      );
+    }
     return this.request("/v1/agent-session-requests", {
       method: "POST",
       body: input,
@@ -783,12 +806,13 @@ export class Odyshell {
   async claimAgentSession(
     requestId: string,
     agentId: string,
+    runId?: string,
   ): Promise<ClaimedAgentSession> {
     return this.request(
       `/v1/agent-session-requests/${encodeURIComponent(requestId)}/claim`,
       {
         method: "POST",
-        body: { agentId },
+        body: { agentId, ...(runId ? { runId } : {}) },
       },
     );
   }
@@ -867,7 +891,7 @@ export class Odyshell {
   async renewAgentSession(
     sessionId: string,
     agentId: string,
-    durationSeconds?: number,
+    input: AgentSessionRenewalInput = {},
   ): Promise<
     AgentSessionRequest & { predecessorSessionId: string }
   > {
@@ -877,7 +901,10 @@ export class Odyshell {
         method: "POST",
         body: {
           agentId,
-          ...(durationSeconds === undefined ? {} : { durationSeconds }),
+          ...(input.durationSeconds === undefined
+            ? {}
+            : { durationSeconds: input.durationSeconds }),
+          ...(input.runId ? { runId: input.runId } : {}),
         },
       },
     );

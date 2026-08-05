@@ -15,9 +15,10 @@ approve the request. The Agent checks `session_status` after the decision and us
 `sessionId` for every Operation.
 
 Before creating a request, the Agent checks `sessions_list`. If the same MCP installation already
-has a ready, unexpired Session covering every requested machine and Operation, Odyshell returns
-that Session directly instead of asking for duplicate approval. The Server repeats this check even
-if the model skips it.
+has a ready, unexpired typed Session covering every requested machine and Operation, Odyshell
+returns that Session directly instead of asking for duplicate approval. Host Shell additionally
+requires the same stable Task Run identifier. The Server repeats this check even if the model
+skips it.
 
 Every request has a short title used in tables, notifications and the canvas. A longer purpose is
 optional. MCP callers may omit the title; Odyshell uses the purpose or derives a short title from
@@ -42,10 +43,21 @@ exposing low-level program arguments or container restrictions in this form. A m
 approved by its creator and opens immediately when that Agent has an active MCP installation.
 Otherwise, the Agent claims the approved request when it next connects.
 
+A failed Host Shell command does not close its Session. The Agent can inspect the result, run
+corrective commands under the same authority, and complete the Session only when the overall task
+succeeds or is abandoned. Explicit completion after the final command is the normal lifecycle;
+expiry is only a fallback when the Agent is interrupted. An unexpired Session may be resumed only
+by an explicit continuation carrying the same Task Run identifier, never inherited by unrelated
+work. Agent-requested Host Shell Sessions therefore require that identifier; requests without one
+do not reuse Host Shell authority implicitly. MCP clients repeat it while checking status,
+executing commands, completing, and renewing so another Task Run cannot consume the authority.
+
 The dashboard offers 5 minutes, 15 minutes, 1 hour, 4 hours, 8 hours, or 24 hours and defaults to
 1 hour. API, SDK, and MCP requests can instead supply any whole-second duration from 60 seconds to
-24 hours; MCP defaults to 1 hour when omitted. Sessions cannot be widened, extended, or made
-permanent. Create a new Session when authority must change.
+24 hours; MCP defaults to 1 hour when omitted. For Host Shell this duration budgets the whole task,
+not an individual command; durations above one hour require a purpose that explains the need.
+Explicit completion ends authority as soon as the task finishes. Sessions cannot be widened,
+extended, or made permanent. Create a new Session when authority must change.
 If the Client does not acknowledge a target within 60 seconds, Odyshell fails that target closed.
 Other ready targets remain usable. A disconnected target can retry the same approved authority if
 its Client reconnects before the Session expires.

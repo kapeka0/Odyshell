@@ -91,6 +91,8 @@ describe("CLI npm package", () => {
     expect(temporaryFlow).toContain("requestHostShellSession");
     expect(temporaryFlow).toContain("session.host.shell");
     expect(temporaryFlow).toContain("session.execute");
+    expect(temporaryFlow).toContain("await agent.complete(");
+    expect(temporaryFlow).toContain("await agent.cancel(");
     expect(temporaryFlow).not.toContain("createSession(");
     expect(temporaryFlow).not.toContain("capability:");
     expect(temporaryFlow).not.toContain("process.shell");
@@ -98,6 +100,7 @@ describe("CLI npm package", () => {
     expect(shellFlow).not.toContain('commandParts.join(" ")');
     expect(shellFlow).toContain(".requiredOption(");
     expect(shellFlow).toContain('"--purpose <purpose>"');
+    expect(shellFlow).toContain('.option("--ttl <seconds>", "session lifetime", "3600")');
     expect(temporaryFlow).toContain("purpose: requestMetadata?.purpose");
   });
 

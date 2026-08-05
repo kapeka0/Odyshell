@@ -363,6 +363,7 @@ export const agentSessionRequestInputSchema = z
     title: z.string().trim().min(1).max(96),
     purpose: z.string().trim().min(1).max(280).optional(),
     predecessorSessionId: z.string().uuid().optional(),
+    runId: z.string().trim().min(1).max(128).optional(),
     scopes: z.array(sessionMachineScopeSchema).min(1).max(16),
     durationSeconds: z
       .number()
@@ -380,10 +381,67 @@ export const agentSessionRequestInputSchema = z
         path: ["scopes"],
       });
     }
+    const requestsHostShell = request.scopes.some((scope) =>
+      scope.capabilities.includes("host.shell")
+    );
+    if (requestsHostShell && request.runId === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "Programmatic Host Shell Sessions require a Task Run identifier",
+        path: ["runId"],
+      });
+    }
+    if (requestsHostShell && request.durationSeconds > 3_600 && !request.purpose) {
+      context.addIssue({
+        code: "custom",
+        message: "Host Shell tasks longer than one hour require a purpose",
+        path: ["purpose"],
+      });
+    }
   });
 export type AgentSessionRequestInput = z.infer<
   typeof agentSessionRequestInputSchema
 >;
+
+export type HostShellTaskRunAccessDecision =
+  | { allowed: true }
+  | {
+      allowed: false;
+      code: "task_run_id_required" | "task_run_id_mismatch";
+    };
+
+export function hostShellTaskRunAccessDecision(
+  scopes: SessionMachineScope[],
+  expectedRunId: string | undefined,
+  providedRunId: string | undefined,
+): HostShellTaskRunAccessDecision {
+  if (
+    !scopes.some((scope) => scope.capabilities.includes("host.shell")) ||
+    expectedRunId === undefined
+  ) {
+    return { allowed: true };
+  }
+  if (!providedRunId?.trim()) {
+    return { allowed: false, code: "task_run_id_required" };
+  }
+  return providedRunId.trim() === expectedRunId
+    ? { allowed: true }
+    : { allowed: false, code: "task_run_id_mismatch" };
+}
+
+export function hostShellTaskRunRenewalDecision(
+  scopes: SessionMachineScope[],
+  expectedRunId: string | undefined,
+  providedRunId: string | undefined,
+): HostShellTaskRunAccessDecision {
+  if (!scopes.some((scope) => scope.capabilities.includes("host.shell"))) {
+    return { allowed: true };
+  }
+  if (expectedRunId === undefined) {
+    return { allowed: false, code: "task_run_id_required" };
+  }
+  return hostShellTaskRunAccessDecision(scopes, expectedRunId, providedRunId);
+}
 
 export type SessionScopeDecision =
   | { allowed: true }

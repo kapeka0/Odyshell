@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  hostShellTaskRunAccessDecision,
   MAX_AGENT_SESSION_SECONDS,
   mergeSessionMachineScopes,
   type Capability,
@@ -765,6 +766,8 @@ export type SessionClaimResult =
         | "expired"
         | "already_claimed"
         | "agent_denied"
+        | "task_run_id_required"
+        | "task_run_id_mismatch"
         | "machine_unavailable"
         | "predecessor_unavailable";
     };
@@ -774,6 +777,7 @@ export type AgentSessionCredentialPrincipal = {
   agentId: string;
   agentName: string;
   sessionId: string;
+  runId?: string;
   scopes: SessionMachineScope[];
   expiresAt: number;
 };
@@ -5876,6 +5880,7 @@ export class PostgresDatabase {
     humanId: string,
   ): Promise<{
     agentName: string;
+    runId?: string;
     title: string;
     purpose?: string;
     scopes: SessionMachineScope[];
@@ -5899,6 +5904,7 @@ export class PostgresDatabase {
         )
         .select([
           "agents.name as agentName",
+          "agentSessionRequests.runId",
           "agentSessionRequests.title",
           "agentSessionRequests.purpose",
           "agentSessionRequests.scopes",
@@ -5915,6 +5921,7 @@ export class PostgresDatabase {
     return renewal
       ? {
           agentName: renewal.agentName,
+          ...(renewal.runId === null ? {} : { runId: renewal.runId }),
           title: renewal.title,
           ...(renewal.purpose === null ? {} : { purpose: renewal.purpose }),
           scopes: renewal.scopes,
@@ -6097,6 +6104,7 @@ export class PostgresDatabase {
     requestId: string;
     agentId: string;
     humanId: string;
+    runId?: string;
     sessionId: string;
     authority:
       | { kind: "credential"; credentialId: string; credentialHash: string }
@@ -6115,6 +6123,14 @@ export class PostgresDatabase {
       if (!request) return { status: "invalid" };
       if (request.agentId !== input.agentId) {
         return { status: "agent_denied" };
+      }
+      const taskRunDecision = hostShellTaskRunAccessDecision(
+        request.scopes,
+        request.runId ?? undefined,
+        input.runId,
+      );
+      if (!taskRunDecision.allowed) {
+        return { status: taskRunDecision.code };
       }
       if (request.expiresAt <= new Date(input.now)) {
         if (request.status !== "claimed") {
@@ -6352,6 +6368,15 @@ export class PostgresDatabase {
           )
           .onRef("agentSessions.id", "=", "sessionCredentials.sessionId"),
       )
+      .innerJoin("agentSessionRequests", (join) =>
+        join
+          .onRef(
+            "agentSessionRequests.workspaceId",
+            "=",
+            "agentSessions.workspaceId",
+          )
+          .onRef("agentSessionRequests.sessionId", "=", "agentSessions.id"),
+      )
       .innerJoin("agents", (join) =>
         join
           .onRef("agents.workspaceId", "=", "agentSessions.workspaceId")
@@ -6375,6 +6400,7 @@ export class PostgresDatabase {
         "agentSessions.agentId",
         "agents.name as agentName",
         "agentSessions.id as sessionId",
+        "agentSessionRequests.runId",
         "agentSessionTargets.machineId",
         "agentSessionTargets.profile",
         "agentSessionTargets.capabilities",
@@ -6397,6 +6423,7 @@ export class PostgresDatabase {
       agentId: principal.agentId,
       agentName: principal.agentName,
       sessionId: principal.sessionId,
+      ...(principal.runId === null ? {} : { runId: principal.runId }),
       scopes: principals.map((target) => ({
         machineId: target.machineId,
         profile: target.profile,
@@ -6488,6 +6515,15 @@ export class PostgresDatabase {
           .onRef("agentSessions.workspaceId", "=", "mcpSessionGrants.workspaceId")
           .onRef("agentSessions.id", "=", "mcpSessionGrants.sessionId"),
       )
+      .innerJoin("agentSessionRequests", (join) =>
+        join
+          .onRef(
+            "agentSessionRequests.workspaceId",
+            "=",
+            "agentSessions.workspaceId",
+          )
+          .onRef("agentSessionRequests.sessionId", "=", "agentSessions.id"),
+      )
       .innerJoin("agents", (join) =>
         join
           .onRef("agents.workspaceId", "=", "agentSessions.workspaceId")
@@ -6503,6 +6539,7 @@ export class PostgresDatabase {
         "agentSessions.agentId",
         "agents.name as agentName",
         "agentSessions.id as sessionId",
+        "agentSessionRequests.runId",
         "agentSessionTargets.machineId",
         "agentSessionTargets.profile",
         "agentSessionTargets.capabilities",
@@ -6527,6 +6564,7 @@ export class PostgresDatabase {
       agentId: principal.agentId,
       agentName: principal.agentName,
       sessionId: principal.sessionId,
+      ...(principal.runId === null ? {} : { runId: principal.runId }),
       scopes: principals.map((row) => ({
         machineId: row.machineId,
         profile: row.profile,

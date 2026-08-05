@@ -5,6 +5,7 @@ import type {
 } from "@odyshell/mcp";
 import {
   capabilitySchema,
+  hostShellTaskRunAccessDecision,
   operationSessionScopes,
   sessionScopeDecision,
   type Capability,
@@ -124,6 +125,7 @@ export function createRemoteMcpRuntime(
             db,
             installation,
             machine.id,
+            input.runId,
           );
         }
       } else {
@@ -299,7 +301,16 @@ export function createRemoteMcpRuntime(
         ],
       };
     },
-    async status(requestId) {
+    async status(requestId, runId) {
+      const current = await db.getAgentSessionRequest(
+        installation.workspaceId,
+        requestId,
+        installation.agentId,
+        installation.userId,
+      );
+      if (current) {
+        requireRemoteTaskRun(current.scopes, current.runId, runId);
+      }
       const bound = await db.mcpSessionForRequest({
         workspaceId: installation.workspaceId,
         installationId: installation.id,
@@ -310,20 +321,25 @@ export function createRemoteMcpRuntime(
         installationId: installation.id,
         requestId,
       });
-      if (granted) return remoteMcpSessionStatus(db, granted);
+      if (granted) {
+        requireRemoteTaskRun(granted.scopes, granted.runId, runId);
+        return remoteMcpSessionStatus(db, granted);
+      }
       if (bound) {
+        const principal = await db.findMcpSessionPrincipal({
+          workspaceId: installation.workspaceId,
+          installationId: installation.id,
+          sessionId: bound.sessionId,
+        });
+        if (principal) {
+          requireRemoteTaskRun(principal.scopes, principal.runId, runId);
+        }
         return {
           status: bound.expiresAt <= Date.now() ? "expired" : bound.status,
           sessionId: bound.sessionId,
           expiresAt: isoTimestamp(bound.expiresAt),
         };
       }
-      const current = await db.getAgentSessionRequest(
-        installation.workspaceId,
-        requestId,
-        installation.agentId,
-        installation.userId,
-      );
       if (!current) {
         throw new RemoteMcpError(
           "Session request was not found",
@@ -350,6 +366,7 @@ export function createRemoteMcpRuntime(
         requestId,
         agentId: installation.agentId,
         humanId: installation.userId,
+        ...(runId ? { runId } : {}),
         sessionId: randomUUID(),
         authority: { kind: "mcp", installationId: installation.id },
         now: Date.now(),
@@ -358,7 +375,12 @@ export function createRemoteMcpRuntime(
         throw new RemoteMcpError(
           "Session could not be claimed",
           `session_${result.status}`,
-          result.status === "expired" ? 410 : 409,
+          result.status === "expired"
+            ? 410
+            : result.status === "task_run_id_required" ||
+                result.status === "task_run_id_mismatch"
+              ? 403
+              : 409,
         );
       }
       if (result.superseded) {
@@ -422,6 +444,7 @@ export function createRemoteMcpRuntime(
           403,
         );
       }
+      requireRemoteTaskRun(principal.scopes, principal.runId, input.runId);
       const machine = await resolveMcpMachine(db, installation, input.machine);
       const sessionPrincipal: AgentSessionPrincipal = {
         workspaceId: principal.workspaceId,
@@ -556,6 +579,7 @@ export function createRemoteMcpRuntime(
       if (!principal) {
         throw new RemoteMcpError("Session was not found", "session_not_found", 404);
       }
+      requireRemoteTaskRun(principal.scopes, principal.runId, input.runId);
       const termination = await db.completeAgentSession({
         workspaceId: principal.workspaceId,
         sessionId,
@@ -659,6 +683,7 @@ async function findReusableMcpHostShellSession(
   db: Database,
   installation: McpInstallationRecord,
   machineId: string,
+  runId: string,
 ): Promise<AgentSessionCredentialPrincipal | null> {
   const sessions = await db.listWorkspaceAgentSessions(
     installation.workspaceId,
@@ -669,6 +694,7 @@ async function findReusableMcpHostShellSession(
     if (
       session.status !== "active" ||
       session.expiresAt <= Date.now() ||
+      session.runId !== runId ||
       !session.targets.some(
         (target) => target.machineId === machineId && target.status === "ready",
       )
@@ -764,6 +790,27 @@ function safeRuntimeString(value: unknown): string | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function requireRemoteTaskRun(
+  scopes: SessionMachineScope[],
+  expectedRunId: string | undefined,
+  providedRunId: string | undefined,
+): void {
+  const decision = hostShellTaskRunAccessDecision(
+    scopes,
+    expectedRunId,
+    providedRunId,
+  );
+  if (!decision.allowed) {
+    throw new RemoteMcpError(
+      decision.code === "task_run_id_required"
+        ? "Host Shell authority requires its Task Run identifier."
+        : "Host Shell authority belongs to a different Task Run.",
+      decision.code,
+      403,
+    );
+  }
 }
 
 async function resolveMcpMachine(

@@ -134,6 +134,49 @@ describe("HostExecutor", () => {
     expect(Buffer.concat(secondOutput).toString()).toBe("missing");
   });
 
+  it("keeps Host Shell authority after a command fails", async () => {
+    await executor.closeSession(session);
+    executor = new HostExecutor({
+      homeDirectory: workspace,
+      shell: {
+        program: process.execPath,
+        argsForCommand: (command) => ["-e", command],
+      },
+    });
+    session = await executor.openSession(
+      crypto.randomUUID(),
+      profile(workspace),
+      ["host.shell"],
+      undefined,
+      new Date(Date.now() + 60_000),
+      () => {},
+    );
+
+    const failed = await executor.execute(
+      crypto.randomUUID(),
+      session,
+      { kind: "host.shell", command: "process.exit(7)", cwd: ".", env: {} },
+      hooks(),
+    );
+    expect((await failed.done).exitCode).toBe(7);
+
+    const output: Buffer[] = [];
+    const corrected = await executor.execute(
+      crypto.randomUUID(),
+      session,
+      {
+        kind: "host.shell",
+        command: "process.stdout.write('recovered')",
+        cwd: ".",
+        env: {},
+      },
+      hooks({ stdout: (data) => output.push(data) }),
+    );
+
+    expect((await corrected.done).exitCode).toBe(0);
+    expect(Buffer.concat(output).toString()).toBe("recovered");
+  });
+
   it.skipIf(process.platform !== "win32")(
     "passes quoted Host Shell commands to cmd.exe without rewriting them",
     async () => {
