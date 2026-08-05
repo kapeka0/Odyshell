@@ -17,7 +17,6 @@ export type McpAuthorityReuseRequest =
 
 export type McpSessionRequestPlan = {
   allowed: true;
-  operations: ResolvedMcpOperation[];
   scopes: SessionMachineScope[];
   kinds: string[];
   reuse: McpAuthorityReuseRequest | null;
@@ -45,7 +44,6 @@ export function planMcpOperationRequest(
   try {
     return {
       allowed: true,
-      operations,
       scopes: operationSessionScopes(operations),
       kinds: operations.map((operation) => operation.action.kind),
       reuse: { kind: "operations", operations },
@@ -65,7 +63,6 @@ export function planMcpHostShellRequest(
   if (predecessorScopes === undefined) {
     return {
       allowed: true,
-      operations: [],
       scopes: [{
         machineId,
         profile: "workspace",
@@ -84,7 +81,6 @@ export function planMcpHostShellRequest(
   }
   return {
     allowed: true,
-    operations: [],
     scopes: mergeSessionMachineScopes([
       ...predecessorScopes,
       {
@@ -101,9 +97,9 @@ export function planMcpHostShellRequest(
 
 export type McpCanonicalSession = {
   sessionId: string;
-  status: string;
+  active: boolean;
   expiresAt: number | string;
-  targets: Array<{ machineId: string; status: string }>;
+  targets: Array<{ machineId: string; ready: boolean }>;
 };
 
 export type McpBoundAuthority = {
@@ -126,11 +122,11 @@ export async function findReusableMcpAuthority<A extends McpBoundAuthority>(
     : [...new Set(input.request.operations.map((operation) => operation.machineId))];
   for (const session of input.sessions) {
     if (
-      session.status !== "active" ||
+      !session.active ||
       !isFuture(session.expiresAt, now) ||
       machineIds.some(
         (machineId) => !session.targets.some(
-          (target) => target.machineId === machineId && target.status === "ready",
+          (target) => target.machineId === machineId && target.ready,
         ),
       )
     ) {
@@ -163,7 +159,7 @@ export type McpClaimDecision =
 
 export function mcpClaimDecision(input: {
   hasBoundAuthority: boolean;
-  status: string;
+  status: "pending" | "approved" | "denied" | "expired" | "claimed";
 }): McpClaimDecision {
   if (input.hasBoundAuthority) return "return_bound";
   if (input.status === "approved") return "claim";

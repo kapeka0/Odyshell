@@ -127,9 +127,12 @@ export function createRemoteMcpRuntime(
         reusable = await findReusableMcpAuthority({
           sessions: sessions.map((session) => ({
             sessionId: session.id,
-            status: session.status,
+            active: session.status === "active",
             expiresAt: session.expiresAt,
-            targets: session.targets,
+            targets: session.targets.map((target) => ({
+              machineId: target.machineId,
+              ready: target.status === "ready",
+            })),
           })),
           request: plan.reuse,
           authorityForSession: async (sessionId) =>

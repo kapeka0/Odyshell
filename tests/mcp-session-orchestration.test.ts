@@ -18,10 +18,6 @@ describe("MCP Session orchestration", () => {
       action: { kind: "fs.read", path: "repo/package.json" },
     }])).toEqual({
       allowed: true,
-      operations: [{
-        machineId: machineA,
-        action: { kind: "fs.read", path: "repo/package.json" },
-      }],
       scopes: [{
         machineId: machineA,
         profile: "workspace",
@@ -112,15 +108,15 @@ describe("MCP Session orchestration", () => {
       sessions: [
         {
           sessionId: "session-unbound",
-          status: "active",
+          active: true,
           expiresAt: now + 60_000,
-          targets: [{ machineId: machineA, status: "ready" }],
+          targets: [{ machineId: machineA, ready: true }],
         },
         {
           sessionId: "session-bound",
-          status: "active",
+          active: true,
           expiresAt: now + 60_000,
-          targets: [{ machineId: machineA, status: "ready" }],
+          targets: [{ machineId: machineA, ready: true }],
         },
       ],
       request: {
