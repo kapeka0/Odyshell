@@ -28,8 +28,9 @@ import type {
   RunningSession,
 } from "./executor.js";
 import { HostExecutor } from "./host-executor.js";
-import { OperationJournal, type JournalResult } from "./journal.js";
+import type { JournalResult } from "./journal.js";
 import { PendingOperation } from "./operation-control.js";
+import { ClientOperationLifecycle } from "./operation-lifecycle.js";
 import { passwordlessSudoAvailable } from "./profile.js";
 import {
   assertLocalAuthorityNotQuarantined,
@@ -51,6 +52,10 @@ export {
   normalizeClientProfileName,
   normalizeServerUrl,
 } from "./platform.js";
+export {
+  ClientMessageBuffer,
+  type ClientMessageBufferEnqueueResult,
+} from "./operation-lifecycle.js";
 
 export function adjustedSessionDeadline(
   expiresAt: string,
@@ -281,103 +286,6 @@ type ActiveSession = {
   closing: boolean;
 };
 
-type BufferedClientMessage = {
-  message: ClientToServerMessage;
-  outputBytes: number;
-};
-
-export type ClientMessageBufferEnqueueResult =
-  | { accepted: false }
-  | { accepted: true; truncatedOperationId?: string };
-
-export class ClientMessageBuffer {
-  private readonly messages: BufferedClientMessage[] = [];
-  private outputBytes = 0;
-
-  constructor(
-    private readonly maximumMessages = 4_096,
-    private readonly maximumOutputBytes = 16 * 1024 * 1024,
-    private readonly beforeOutputDiscard?: (operationId: string) => void,
-  ) {}
-
-  enqueue(message: ClientToServerMessage): ClientMessageBufferEnqueueResult {
-    const outputBytes = message.type === "operation.event"
-      ? Buffer.byteLength(message.dataBase64, "base64")
-      : 0;
-    if (
-      message.type === "operation.event" &&
-      this.outputBytes + outputBytes > this.maximumOutputBytes
-    ) {
-      this.beforeOutputDiscard?.(message.operationId);
-      return { accepted: false };
-    }
-    let truncatedOperationId: string | undefined;
-    if (this.messages.length >= this.maximumMessages) {
-      if (message.type === "operation.event") {
-        this.beforeOutputDiscard?.(message.operationId);
-        return { accepted: false };
-      }
-      const eventIndex = this.messages.findIndex(
-        (entry) => entry.message.type === "operation.event",
-      );
-      const removeAt = eventIndex >= 0 ? eventIndex : 0;
-      const outputToDiscard = this.messages[removeAt]?.message;
-      if (outputToDiscard?.type === "operation.event") {
-        this.beforeOutputDiscard?.(outputToDiscard.operationId);
-      }
-      const [removed] = this.messages.splice(removeAt, 1);
-      this.outputBytes -= removed?.outputBytes ?? 0;
-      if (removed?.message.type === "operation.event") {
-        truncatedOperationId = removed.message.operationId;
-      }
-    }
-    this.messages.push({ message, outputBytes });
-    this.outputBytes += outputBytes;
-    if (truncatedOperationId) {
-      this.markOutputTruncated(truncatedOperationId);
-    }
-    return {
-      accepted: true,
-      ...(truncatedOperationId ? { truncatedOperationId } : {}),
-    };
-  }
-
-  markOutputTruncated(operationId: string): void {
-    for (const entry of this.messages) {
-      if (
-        entry.message.type !== "operation.completed" ||
-        entry.message.operationId !== operationId ||
-        entry.message.outputTruncated
-      ) {
-        continue;
-      }
-      entry.message = {
-        ...entry.message,
-        error: entry.message.error ?? "Operation output is incomplete",
-        outputTruncated: true,
-      };
-    }
-  }
-
-  peek(): ClientToServerMessage | undefined {
-    return this.messages[0]?.message;
-  }
-
-  shift(): ClientToServerMessage | undefined {
-    const entry = this.messages.shift();
-    if (!entry) return undefined;
-    this.outputBytes -= entry.outputBytes;
-    return entry.message;
-  }
-
-  drain(): ClientToServerMessage[] {
-    const messages = this.messages.map((entry) => entry.message);
-    this.messages.length = 0;
-    this.outputBytes = 0;
-    return messages;
-  }
-}
-
 export function operationTimeoutMilliseconds(
   requestedSeconds: number,
   localMaximumSeconds: number,
@@ -436,15 +344,8 @@ export class Client {
   private readonly closedSessions = new Set<string>();
   private readonly closingSessions = new Map<string, Promise<void>>();
   private readonly operations = new Map<string, PendingOperation>();
-  private readonly outputTruncatedOperations = new Set<string>();
-  private readonly unconfirmedOutputOperations = new Set<string>();
-  private readonly bufferedMessages = new ClientMessageBuffer(
-    4_096,
-    16 * 1024 * 1024,
-    (operationId) => this.markOperationOutputTruncated(operationId),
-  );
   private readonly executors = new Map<"host" | "docker", OperationExecutor>();
-  private readonly journal: OperationJournal;
+  private readonly operationLifecycle: ClientOperationLifecycle;
   private messageQueue = Promise.resolve();
   private shutdown: Promise<void> | undefined;
   private runtime: ClientRuntimeInfo | undefined;
@@ -459,11 +360,14 @@ export class Client {
     if (runners.has("docker")) {
       this.executors.set("docker", new DockerRunner(config.machineId));
     }
-    this.journal = new OperationJournal(resolve(config.stateDirectory, "operations.sqlite"));
+    this.operationLifecycle = new ClientOperationLifecycle(
+      resolve(config.stateDirectory, "operations.sqlite"),
+      (message) => this.sendIfConnected(message),
+    );
   }
 
   async start(): Promise<void> {
-    const interruptedOperations = this.journal.recoverInterrupted();
+    const interruptedOperations = this.operationLifecycle.recoverInterrupted();
     if (interruptedOperations > 0) {
       console.error(
         `Recovered ${interruptedOperations} interrupted Operation${interruptedOperations === 1 ? "" : "s"} as execution_unknown`,
@@ -488,7 +392,7 @@ export class Client {
     this.shutdown = (async (): Promise<void> => {
       let outputReconciliationError: unknown;
       try {
-        this.markUnconfirmedOutputTruncated();
+        this.operationLifecycle.markUnconfirmedOutputTruncated();
       } catch (error) {
         outputReconciliationError = error;
       }
@@ -500,7 +404,7 @@ export class Client {
           throw outputReconciliationError;
         }
       } finally {
-        this.journal.close();
+        this.operationLifecycle.close();
       }
     })();
     await this.shutdown;
@@ -528,7 +432,7 @@ export class Client {
     socket.on("close", (code) => {
       if (this.heartbeat) clearInterval(this.heartbeat);
       try {
-        this.markUnconfirmedOutputTruncated();
+        this.operationLifecycle.markUnconfirmedOutputTruncated();
       } catch (error) {
         this.beginTerminalFailure(
           "Unable to preserve unconfirmed Operation output",
@@ -574,7 +478,7 @@ export class Client {
     if (this.shutdown) return;
     let outputReconciliationError: unknown;
     try {
-      this.markUnconfirmedOutputTruncated();
+      this.operationLifecycle.markUnconfirmedOutputTruncated();
     } catch (error) {
       outputReconciliationError = error;
     }
@@ -593,7 +497,7 @@ export class Client {
           throw outputReconciliationError;
         }
       } finally {
-        this.journal.close();
+        this.operationLifecycle.close();
       }
     })();
     void this.shutdown.catch((error: unknown) => {
@@ -608,10 +512,7 @@ export class Client {
     this.socket.send(JSON.stringify(message));
   }
 
-  private deliver(message: ClientToServerMessage): boolean {
-    if (message.type === "operation.event") {
-      this.markOperationOutputUnconfirmed(message.operationId);
-    }
+  private sendIfConnected(message: ClientToServerMessage): boolean {
     if (
       this.authenticated &&
       this.socket?.readyState === WebSocket.OPEN
@@ -623,43 +524,7 @@ export class Client {
         this.authenticated = false;
       }
     }
-    return this.bufferedMessages.enqueue(message).accepted;
-  }
-
-  private markOperationOutputTruncated(operationId: string): void {
-    this.journal.markOutputTruncated(operationId);
-    this.bufferedMessages.markOutputTruncated(operationId);
-    this.unconfirmedOutputOperations.delete(operationId);
-    this.outputTruncatedOperations.add(operationId);
-  }
-
-  private markOperationOutputUnconfirmed(operationId: string): void {
-    if (this.unconfirmedOutputOperations.has(operationId)) return;
-    this.journal.markOutputUnconfirmed(operationId);
-    this.unconfirmedOutputOperations.add(operationId);
-  }
-
-  private markUnconfirmedOutputTruncated(): void {
-    for (const operationId of [...this.unconfirmedOutputOperations]) {
-      this.markOperationOutputTruncated(operationId);
-    }
-  }
-
-  private flushBufferedMessages(): void {
-    while (
-      this.authenticated &&
-      this.socket?.readyState === WebSocket.OPEN
-    ) {
-      const message = this.bufferedMessages.peek();
-      if (!message) return;
-      try {
-        this.send(message);
-        this.bufferedMessages.shift();
-      } catch {
-        this.authenticated = false;
-        return;
-      }
-    }
+    return false;
   }
 
   private async dropLocalAuthority(): Promise<void> {
@@ -706,8 +571,8 @@ export class Client {
         this.authenticated = true;
         this.reconnectDelay = 1_000;
         console.log(`Authenticated as ${this.config.machineName} (${message.machineId})`);
-        this.flushBufferedMessages();
-        this.reconcileJournalResults();
+        this.operationLifecycle.flush();
+        this.operationLifecycle.reconcile();
         if (this.heartbeat) clearInterval(this.heartbeat);
         this.heartbeat = setInterval(() => {
           try {
@@ -750,9 +615,7 @@ export class Client {
         break;
       case "operation.acknowledged":
         if (!this.authenticated) return;
-        this.journal.acknowledge(message.operationId);
-        this.unconfirmedOutputOperations.delete(message.operationId);
-        this.outputTruncatedOperations.delete(message.operationId);
+        this.operationLifecycle.acknowledge(message.operationId);
         break;
       case "operation.cancel":
         if (!this.authenticated) return;
@@ -766,7 +629,7 @@ export class Client {
   ): Promise<void> {
     try {
       if (this.closedSessions.has(message.sessionId)) {
-        this.deliver({
+        this.operationLifecycle.deliver({
           type: "session.closed",
           sessionId: message.sessionId,
           reason: "already_closed",
@@ -803,7 +666,7 @@ export class Client {
           expiresAt: message.expiresAt,
           ...(message.serverTime ? { serverTime: message.serverTime } : {}),
         });
-        this.deliver({
+        this.operationLifecycle.deliver({
           type: "session.opened",
           sessionId: message.sessionId,
           runner: existing.session.runner,
@@ -835,7 +698,7 @@ export class Client {
       );
       if (this.closedSessions.has(message.sessionId)) {
         await executor.closeSession(session);
-        this.deliver({
+        this.operationLifecycle.deliver({
           type: "session.closed",
           sessionId: message.sessionId,
           reason: "closed_while_opening",
@@ -843,14 +706,14 @@ export class Client {
         return;
       }
       this.sessions.set(message.sessionId, { session, executor, closing: false });
-      this.deliver({
+      this.operationLifecycle.deliver({
         type: "session.opened",
         sessionId: message.sessionId,
         runner: session.runner,
         runtimeId: session.runtimeId,
       });
     } catch (error) {
-      this.deliver({
+      this.operationLifecycle.deliver({
         type: "session.open_failed",
         sessionId: message.sessionId,
         error: error instanceof Error ? error.message : String(error),
@@ -915,7 +778,11 @@ export class Client {
       await Promise.all(
         operations.map((operation) => operation.waitUntilFinished()),
       );
-      this.deliver({ type: "session.closed", sessionId, reason });
+      this.operationLifecycle.deliver({
+        type: "session.closed",
+        sessionId,
+        reason,
+      });
     })();
     this.closingSessions.set(sessionId, closing);
     try {
@@ -933,12 +800,7 @@ export class Client {
   private async startOperation(
     message: Extract<ServerToClientMessage, { type: "operation.start" }>,
   ): Promise<void> {
-    const receipt = this.journal.receive(message.operationId);
-    if (receipt === "completed") {
-      const previous = this.journal.result(message.operationId);
-      if (previous) this.sendCompletion(message.operationId, previous);
-      return;
-    }
+    const receipt = this.operationLifecycle.receiveStart(message.operationId);
     if (receipt !== "new") return;
 
     const active = this.sessions.get(message.sessionId);
@@ -949,8 +811,7 @@ export class Client {
         error: "Session is not active on this client",
         outputTruncated: false,
       };
-      this.journal.complete(message.operationId, result);
-      this.sendCompletion(message.operationId, result);
+      this.operationLifecycle.complete(message.operationId, result);
       return;
     }
 
@@ -966,8 +827,7 @@ export class Client {
         error: "Local concurrent Operation limit reached",
         outputTruncated: false,
       };
-      this.journal.complete(message.operationId, result);
-      this.sendCompletion(message.operationId, result);
+      this.operationLifecycle.complete(message.operationId, result);
       return;
     }
 
@@ -1013,13 +873,13 @@ export class Client {
     const maximumEventBytes = 256 * 1024;
     const markOutputTruncated = (): void => {
       if (outputTruncated) return;
-      if (!this.outputTruncatedOperations.has(message.operationId)) {
-        this.markOperationOutputTruncated(message.operationId);
+      if (!this.operationLifecycle.isOutputTruncated(message.operationId)) {
+        this.operationLifecycle.markOutputTruncated(message.operationId);
       }
       outputTruncated = true;
     };
     const emit = (stream: "stdout" | "stderr" | "result", data: Buffer): void => {
-      if (this.outputTruncatedOperations.has(message.operationId)) {
+      if (this.operationLifecycle.isOutputTruncated(message.operationId)) {
         outputTruncated = true;
       }
       if (outputTruncated) return;
@@ -1031,7 +891,7 @@ export class Client {
       const accepted = data.subarray(0, remaining);
       for (let offset = 0; offset < accepted.length; offset += maximumEventBytes) {
         const chunk = accepted.subarray(offset, offset + maximumEventBytes);
-        const delivered = this.deliver({
+        const delivered = this.operationLifecycle.deliver({
           type: "operation.event",
           operationId: message.operationId,
           sequence,
@@ -1056,8 +916,8 @@ export class Client {
       ) {
         throw new Error("Session closed before the Operation could start");
       }
-      this.journal.markRunning(message.operationId);
-      this.deliver({
+      this.operationLifecycle.markRunning(message.operationId);
+      this.operationLifecycle.deliver({
         type: "operation.started",
         operationId: message.operationId,
         at: new Date().toISOString(),
@@ -1114,7 +974,7 @@ export class Client {
       control.attach(running);
       if (control.cancelRequested) await control.cancel();
       const { exitCode } = await Promise.race([running.done, cancellationFailure]);
-      outputTruncated ||= this.outputTruncatedOperations.has(
+      outputTruncated ||= this.operationLifecycle.isOutputTruncated(
         message.operationId,
       );
       const result: JournalResult = {
@@ -1129,12 +989,11 @@ export class Client {
         ...(outputTruncated ? { error: "Output limit reached" } : {}),
         outputTruncated,
       };
-      this.journal.complete(message.operationId, result);
-      this.sendCompletion(message.operationId, result);
+      this.operationLifecycle.complete(message.operationId, result);
     } catch (error) {
       control.failStart();
       const terminationUnconfirmed = terminalFailure !== undefined;
-      outputTruncated ||= this.outputTruncatedOperations.has(
+      outputTruncated ||= this.operationLifecycle.isOutputTruncated(
         message.operationId,
       );
       const result: JournalResult = {
@@ -1153,8 +1012,7 @@ export class Client {
             : String(error),
         outputTruncated,
       };
-      this.journal.complete(message.operationId, result);
-      this.sendCompletion(message.operationId, result);
+      this.operationLifecycle.complete(message.operationId, result);
     } finally {
       if (timer) clearTimeout(timer);
       if (this.operations.get(message.operationId) === control) {
@@ -1176,46 +1034,7 @@ export class Client {
       await operation.cancel();
       return;
     }
-    const previous = this.journal.result(operationId);
-    if (previous) {
-      this.sendCompletion(operationId, previous);
-      return;
-    }
-    const receipt = this.journal.receive(operationId);
-    const result: JournalResult = {
-      status: receipt === "new" ? "cancelled" : "execution_unknown",
-      exitCode: null,
-      error:
-        receipt === "new"
-          ? "Operation was cancelled before execution started"
-          : "Operation execution state was unavailable when cancellation arrived",
-      outputTruncated: false,
-    };
-    this.journal.complete(operationId, result);
-    this.sendCompletion(operationId, result);
-  }
-
-  private sendCompletion(operationId: string, result: JournalResult): void {
-    const outputTruncated =
-      result.outputTruncated || this.outputTruncatedOperations.has(operationId);
-    const error =
-      result.error ??
-      (outputTruncated ? "Operation output is incomplete" : undefined);
-    this.deliver({
-      type: "operation.completed",
-      operationId,
-      status: result.status,
-      exitCode: result.exitCode,
-      ...(error ? { error } : {}),
-      outputTruncated,
-      at: new Date().toISOString(),
-    });
-  }
-
-  private reconcileJournalResults(): void {
-    for (const entry of this.journal.resultsForReconciliation()) {
-      this.sendCompletion(entry.operationId, entry.result);
-    }
+    this.operationLifecycle.cancelUntracked(operationId);
   }
 }
 

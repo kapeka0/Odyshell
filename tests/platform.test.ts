@@ -559,26 +559,11 @@ describe("client platform support", () => {
     expect(client).toContain("sessionScopeSubsetDecision(current, requested)");
     expect(client).toContain("Session retry scope does not match active local authority");
     expect(client).toContain("this.authenticated = false");
-    expect(client).toContain("this.bufferedMessages.enqueue(message)");
-    expect(client).toContain("this.flushBufferedMessages()");
-    expect(client).toContain("this.reconcileJournalResults()");
-    expect(client).toContain("this.markUnconfirmedOutputTruncated();");
     expect(client).toContain("private messageQueue = Promise.resolve()");
     expect(client).toContain("this.messageQueue = this.messageQueue");
     expect(client).toContain("return this.handle(parseServerMessage(data.toString()))");
     expect(client).not.toContain("void this.dropLocalAuthority()");
     expect(client).toContain("await this.dropLocalAuthority()");
-
-    const deliver = client.slice(
-      client.indexOf("private deliver(message:"),
-      client.indexOf("private markOperationOutputTruncated("),
-    );
-    expect(deliver.indexOf("this.markOperationOutputUnconfirmed(")).toBeLessThan(
-      deliver.indexOf("this.bufferedMessages.enqueue("),
-    );
-    expect(deliver.indexOf("this.markOperationOutputUnconfirmed(")).toBeLessThan(
-      deliver.indexOf("this.send(message)"),
-    );
   });
 
   it("closes superseded local authority before reopening reconnect targets", () => {
@@ -642,22 +627,6 @@ describe("client platform support", () => {
     expect(closeSession.indexOf("await closing")).toBeLessThan(
       closeSession.indexOf("this.sessions.delete(sessionId)"),
     );
-  });
-
-  it("terminalizes a cancellation that reconnects without an in-memory Operation", () => {
-    const source = readFileSync("apps/client/src/index.ts", "utf8");
-    const cancellation = source.slice(
-      source.indexOf("private async cancelOperation("),
-      source.indexOf("private sendCompletion("),
-    );
-
-    expect(source).not.toContain("cancellationsBeforeStart");
-    expect(cancellation).toContain("this.journal.receive(operationId)");
-    expect(cancellation).toContain(
-      'status: receipt === "new" ? "cancelled" : "execution_unknown"',
-    );
-    expect(cancellation).toContain("this.journal.complete(operationId, result)");
-    expect(cancellation).toContain("this.sendCompletion(operationId, result)");
   });
 
   it("marks interrupted journal entries execution_unknown and reconciles them after restart", async () => {
