@@ -119,6 +119,11 @@ ODYSHELL_SERVER_URL=https://api.ods.example.com
 ODYSHELL_WEB_KEY=<same-value-as-the-server>
 ```
 
+Set both Server URL variables explicitly. `NEXT_PUBLIC_ODYSHELL_SERVER_URL` is the canonical URL
+shown to browsers and included in self-hosted CLI commands. Odyshell never derives it from
+`ODYSHELL_SERVER_URL`, which may be an internal deployment hostname that must not be disclosed to
+Clients.
+
 Build and start the implemented web application:
 
 ```bash

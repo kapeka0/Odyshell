@@ -65,6 +65,11 @@ the web app's Clerk keys, `NEXT_PUBLIC_ODYSHELL_SERVER_URL`, `ODYSHELL_SERVER_UR
 `ODYSHELL_WEB_KEY`, then build and start `@odyshell/web`. A Server without that bridge can expose
 health, enrollment, and administrator endpoints, but cannot register Agents or approve Sessions;
 execution fails closed instead of silently using development credentials.
+
+Set both Server URL variables explicitly. `NEXT_PUBLIC_ODYSHELL_SERVER_URL` is the canonical URL
+shown to browsers and included in self-hosted CLI commands. Odyshell never derives it from
+`ODYSHELL_SERVER_URL`, which may remain an internal deployment hostname.
+
 The isolated development Session endpoint rejects `host.shell` and `process.exec`; native
 execution always uses the normal browser-approved flow.
 
