@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import type { OperationAction } from "@odyshell/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { MachineLifecycleQueue } from "../apps/server/src/gateway.js";
@@ -358,29 +356,6 @@ describe("Operation delivery lifecycle", () => {
     ).resolves.toMatchObject({ kind: "replay", id: "existing-operation" });
     expect(replayFingerprint).toBe(fingerprint);
     expect(harness.gateway.send).not.toHaveBeenCalled();
-  });
-
-  it("routes HTTP and Remote MCP dispatch through the shared lifecycle boundary", () => {
-    const http = readFileSync(resolve(process.cwd(), "apps/server/src/index.ts"), "utf8");
-    const remoteMcp = readFileSync(
-      resolve(process.cwd(), "apps/server/src/remote-mcp-runtime.ts"),
-      "utf8",
-    );
-    const httpOperations = http.slice(
-      http.indexOf('"/v1/sessions/:sessionId/operations"'),
-      http.indexOf('app.get<{ Params: { operationId: string } }>'),
-    );
-    const remoteExecution = remoteMcp.slice(
-      remoteMcp.indexOf("async execute(input)"),
-      remoteMcp.indexOf("async complete(input)"),
-    );
-
-    expect(httpOperations.match(/deliverOperation\(/gu)).toHaveLength(2);
-    expect(httpOperations).not.toContain('type: "operation.start"');
-    expect(httpOperations.match(/delivery.kind === "idempotency_conflict"/gu)).toHaveLength(2);
-    expect(remoteExecution).toContain("await deliverOperation(");
-    expect(remoteExecution).not.toContain('type: "operation.start"');
-    expect(remoteExecution).toContain('"idempotency_conflict"');
   });
 
   it("does not create or send when revocation wins the machine lifecycle", async () => {

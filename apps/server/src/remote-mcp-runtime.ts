@@ -20,13 +20,11 @@ import {
   type McpInstallationRecord,
 } from "./database.js";
 import {
-  clampSessionOperationTimeout,
   hostShellEscalationScopes,
-  sessionOperationDecision,
   type AgentSessionPrincipal,
 } from "./agent-sessions.js";
 import type { ClientGateway } from "./gateway.js";
-import { deliverOperation } from "./operation-delivery.js";
+import { createOperationAdmission } from "./operation-admission.js";
 import { createSessionTermination } from "./session-termination.js";
 
 export type RemoteMcpRuntimeDependencies = {
@@ -41,6 +39,7 @@ export function createRemoteMcpRuntime(
   dependencies: RemoteMcpRuntimeDependencies,
 ): ApprovedMcpRuntime {
   const { database: db, gateway, sessionRequestLimiter, webUrl } = dependencies;
+  const operationAdmission = createOperationAdmission({ database: db, gateway });
   const sessionTermination = createSessionTermination({ database: db, gateway });
   return {
     async machines() {
@@ -432,120 +431,71 @@ export function createRemoteMcpRuntime(
         scopes: principal.scopes,
         expiresAt: principal.expiresAt,
       };
-      const decisionTime = Date.now();
-      const timeoutSeconds =
-        clampSessionOperationTimeout(
-          input.timeoutSeconds,
-          principal.expiresAt,
-          decisionTime,
-        ) ?? input.timeoutSeconds;
-      const decision = sessionOperationDecision(
-        sessionPrincipal,
-        input.sessionId,
-        machine.id,
-        input.action,
-        timeoutSeconds,
-        decisionTime,
-      );
-      if (!decision.allowed) {
-        await audit(
-          db,
-          principal.workspaceId,
-          principal.agentId,
-          "operation.denied",
-          "session",
-          input.sessionId,
-          { reason: decision.code, kind: input.action.kind },
-        );
+      const admission = await operationAdmission.admit({
+        principal: sessionPrincipal,
+        sessionId: input.sessionId,
+        machineId: machine.id,
+        action: input.action,
+        timeoutSeconds: input.timeoutSeconds,
+        maxOutputBytes: 1024 * 1024,
+        idempotencyKey: input.idempotencyKey,
+        source: "remote_mcp",
+      });
+      if (admission.kind === "denied") {
         throw new RemoteMcpError(
           "Operation is outside the approved Session scope",
-          decision.code,
-          decision.code === "session_expired" ? 410 : 403,
+          admission.code,
+          admission.code === "session_expired" ? 410 : 403,
         );
       }
-      const target = await db.getAgentSessionTargetRuntime(
-        principal.workspaceId,
-        input.sessionId,
-        principal.agentId,
-        machine.id,
-      );
-      if (!target) {
+      if (admission.kind === "session_target_not_found") {
         throw new RemoteMcpError(
           "Session target was not found",
           "session_target_not_found",
           404,
         );
       }
-      if (target.status !== "ready") {
+      if (admission.kind === "session_not_ready") {
         throw new RemoteMcpError(
           "Session target is not ready",
           "session_not_ready",
           409,
         );
       }
-      const delivery = await deliverOperation(
-        { database: db, gateway },
-        {
-          workspaceId: principal.workspaceId,
-          machineId: machine.id,
-          sessionId: target.runtimeSessionId,
-          idempotencyScopeId: input.sessionId,
-          principalId: principal.agentId,
-          action: input.action,
-          timeoutSeconds,
-          requestedTimeoutSeconds: input.timeoutSeconds,
-          maxOutputBytes: 1024 * 1024,
-          idempotencyKey: input.idempotencyKey,
-        },
-      );
-      if (delivery.kind === "replay") {
+      if (admission.kind === "replay") {
         return waitForRemoteMcpOperation(
           db,
           principal.workspaceId,
           principal.agentId,
           input.sessionId,
-          delivery.id,
-          timeoutSeconds,
+          admission.id,
+          admission.timeoutSeconds,
         );
       }
-      if (delivery.kind === "idempotency_conflict") {
+      if (admission.kind === "idempotency_conflict") {
         throw new RemoteMcpError(
           "Idempotency key was already used for a different Operation payload",
           "idempotency_conflict",
           409,
         );
       }
-      if (delivery.kind === "session_not_active") {
+      if (admission.kind === "session_not_active") {
         throw new RemoteMcpError(
           "Session is no longer active",
           "session_not_active",
           409,
         );
       }
-      if (delivery.kind === "machine_offline") {
+      if (admission.kind === "machine_offline") {
         throw new RemoteMcpError("Machine is offline", "machine_offline", 409);
       }
-      await audit(
-        db,
-        principal.workspaceId,
-        principal.agentId,
-        "operation.created",
-        "operation",
-        delivery.id,
-        {
-          sessionId: input.sessionId,
-          machineId: machine.id,
-          kind: input.action.kind,
-          source: "remote_mcp",
-        },
-      );
       return waitForRemoteMcpOperation(
         db,
         principal.workspaceId,
         principal.agentId,
         input.sessionId,
-        delivery.id,
-        timeoutSeconds,
+        admission.id,
+        admission.timeoutSeconds,
       );
     },
     async complete(input) {

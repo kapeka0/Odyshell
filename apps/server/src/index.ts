@@ -59,15 +59,14 @@ import {
   type CliTokenRecord,
 } from "./database.js";
 import {
-  clampSessionOperationTimeout,
   developmentSessionDecision,
-  sessionOperationDecision,
   type AgentSessionPrincipal,
 } from "./agent-sessions.js";
 import { clientCompatibility } from "./compatibility.js";
 import { ClientGateway } from "./gateway.js";
 import { SERVER_HTTP_BODY_LIMIT_BYTES } from "./http-limits.js";
 import { machinePrivilegeEscalation } from "./machine-policy.js";
+import { createOperationAdmission } from "./operation-admission.js";
 import { dataRetentionPolicy } from "./privacy.js";
 import { deliverOperation } from "./operation-delivery.js";
 import { registerRemoteMcp } from "./remote-mcp.js";
@@ -226,6 +225,7 @@ const purgeExpiredData = async (): Promise<void> => {
 await purgeExpiredData();
 const gateway = new ClientGateway(db);
 gateway.register(app);
+const operationAdmission = createOperationAdmission({ database: db, gateway });
 const sessionTermination = createSessionTermination({ database: db, gateway });
 
 type AgentPrincipal = {
@@ -3956,107 +3956,51 @@ app.post<{ Params: { sessionId: string } }>(
       if (!machineId) {
         return reply.code(400).send({ error: "machine_id_required" });
       }
-      const decisionTime = Date.now();
-      const timeoutSeconds = clampSessionOperationTimeout(
-        parsed.data.timeoutSeconds,
-        principal.sessionScope.expiresAt,
-        decisionTime,
-      );
-      if (timeoutSeconds === null) {
-        return reply.code(410).send({ error: "session_expired" });
-      }
-      const decision = sessionOperationDecision(
-        principal.sessionScope,
-        request.params.sessionId,
+      const admission = await operationAdmission.admit({
+        principal: principal.sessionScope,
+        sessionId: request.params.sessionId,
         machineId,
-        parsed.data.action,
-        timeoutSeconds,
-        decisionTime,
-      );
-      if (!decision.allowed) {
-        await audit(
-          db,
-          principal.workspaceId,
-          principal.id,
-          "operation.denied",
-          "session",
-          request.params.sessionId,
-          {
-            reason: decision.code,
-            kind: parsed.data.action.kind,
-          },
-        );
+        action: parsed.data.action,
+        timeoutSeconds: parsed.data.timeoutSeconds,
+        maxOutputBytes: parsed.data.maxOutputBytes,
+        idempotencyKey,
+      });
+      if (admission.kind === "denied") {
         const status =
-          decision.code === "session_expired"
+          admission.code === "session_expired"
             ? 410
-            : decision.code === "timeout_exceeds_session"
+            : admission.code === "timeout_exceeds_session"
               ? 400
               : 403;
         return reply.code(status).send({
-          error: decision.code,
+          error: admission.code,
           details: {
-            machineId,
-            requiredCapability: capabilityForAction(parsed.data.action),
+            machineId: admission.machineId,
+            requiredCapability: admission.requiredCapability,
           },
         });
       }
-      const target = await db.getAgentSessionTargetRuntime(
-        principal.workspaceId,
-        request.params.sessionId,
-        principal.id,
-        machineId,
-      );
-      if (!target) {
+      if (admission.kind === "session_target_not_found") {
         return reply.code(404).send({ error: "session_target_not_found" });
       }
-      if (!target.canonicalReady || target.status !== "ready") {
+      if (admission.kind === "session_not_ready") {
         return reply
           .code(409)
-          .send({ error: "session_not_ready", status: target.status });
+          .send({ error: "session_not_ready", status: admission.status });
       }
-      const delivery = await deliverOperation(
-        { database: db, gateway },
-        {
-          workspaceId: principal.workspaceId,
-          machineId: target.machineId,
-          sessionId: target.runtimeSessionId,
-          idempotencyScopeId: request.params.sessionId,
-          principalId: principal.id,
-          action: parsed.data.action,
-          timeoutSeconds,
-          requestedTimeoutSeconds: parsed.data.timeoutSeconds,
-          maxOutputBytes: parsed.data.maxOutputBytes,
-          idempotencyKey,
-        },
-      );
-      if (delivery.kind === "replay") {
-        return reply.code(200).send({ id: delivery.id, status: delivery.status });
+      if (admission.kind === "replay") {
+        return reply.code(200).send({ id: admission.id, status: admission.status });
       }
-      if (delivery.kind === "idempotency_conflict") {
+      if (admission.kind === "idempotency_conflict") {
         return reply.code(409).send({ error: "idempotency_conflict" });
       }
-      if (delivery.kind === "session_not_active") {
+      if (admission.kind === "session_not_active") {
         return reply.code(409).send({ error: "session_not_active" });
       }
-      if (delivery.kind === "machine_offline") {
+      if (admission.kind === "machine_offline") {
         return reply.code(409).send({ error: "machine_offline" });
       }
-      await audit(
-        db,
-        principal.workspaceId,
-        principal.id,
-        "operation.created",
-        "operation",
-        delivery.id,
-        {
-          sessionId: request.params.sessionId,
-          kind: parsed.data.action.kind,
-          machineId: target.machineId,
-          operation: operationAuditMetadata(parsed.data.action),
-        },
-      );
-      gateway.notifyWorkspace(principal.workspaceId);
-      return reply.code(202).send({ id: delivery.id, status: delivery.status });
+      return reply.code(202).send({ id: admission.id, status: admission.status });
     }
     if (principal.kind !== "development") {
       return reply.code(403).send({ error: "session_credential_required" });

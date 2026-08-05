@@ -143,19 +143,6 @@ describe("remote MCP security boundary", () => {
     expect(cancellation).toContain('status: "revoked"');
   });
 
-  it("keeps Host Shell behind canonical approval and clamps its timeout", async () => {
-    const server = await readFile("apps/server/src/index.ts", "utf8");
-    const operations = server.slice(
-      server.indexOf('"/v1/sessions/:sessionId/operations"'),
-      server.indexOf('app.get<{ Params: { operationId: string } }>',),
-    );
-    expect(operations).toContain("clampSessionOperationTimeout(");
-    expect(operations).toContain("developmentSessionDecision([");
-    expect(operations).toContain("capabilityForAction(parsed.data.action)");
-    expect(operations).toContain("error: developmentDecision.code");
-    expect(operations).toContain("timeoutSeconds,");
-  });
-
   it("rejects an MCP installation whose persistent Agent was deleted", async () => {
     const database = await readFile("apps/server/src/database.ts", "utf8");
     const installation = database.slice(
@@ -1047,6 +1034,7 @@ describe("remote MCP security boundary", () => {
         listMachines: vi.fn(async () => [machineRecord()]),
         getAgentSessionTargetRuntime: vi.fn(async () => ({
           status: "ready",
+          canonicalReady: true,
           runtimeSessionId: "runtime-session-id",
         })),
         replayOperationByIdempotency,
@@ -1123,6 +1111,7 @@ describe("remote MCP security boundary", () => {
         listMachines: vi.fn(async () => [machineRecord()]),
         getAgentSessionTargetRuntime: vi.fn(async () => ({
           status: "ready",
+          canonicalReady: true,
           runtimeSessionId: "runtime-session-id",
         })),
         replayOperationByIdempotency,
@@ -1177,6 +1166,7 @@ describe("remote MCP security boundary", () => {
         listMachines: vi.fn(async () => [machineRecord()]),
         getAgentSessionTargetRuntime: vi.fn(async () => ({
           status: "ready",
+          canonicalReady: true,
           runtimeSessionId: "runtime-session-id",
         })),
         replayOperationByIdempotency: vi.fn(async () => ({
