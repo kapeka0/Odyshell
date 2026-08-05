@@ -27,6 +27,7 @@ import {
 } from "./agent-sessions.js";
 import type { ClientGateway } from "./gateway.js";
 import { deliverOperation } from "./operation-delivery.js";
+import { createSessionTermination } from "./session-termination.js";
 
 export type RemoteMcpRuntimeDependencies = {
   database: Database;
@@ -40,6 +41,7 @@ export function createRemoteMcpRuntime(
   dependencies: RemoteMcpRuntimeDependencies,
 ): ApprovedMcpRuntime {
   const { database: db, gateway, sessionRequestLimiter, webUrl } = dependencies;
+  const sessionTermination = createSessionTermination({ database: db, gateway });
   return {
     async machines() {
       return {
@@ -556,13 +558,16 @@ export function createRemoteMcpRuntime(
       if (!principal) {
         throw new RemoteMcpError("Session was not found", "session_not_found", 404);
       }
-      const termination = await db.completeAgentSession({
-        workspaceId: principal.workspaceId,
-        sessionId,
-        agentId: principal.agentId,
-        outcome: input.outcome,
-        ...(input.summary ? { summary: input.summary } : {}),
-      });
+      const termination = await sessionTermination.complete(
+        {
+          workspaceId: principal.workspaceId,
+          sessionId,
+          agentId: principal.agentId,
+          outcome: input.outcome,
+          ...(input.summary ? { summary: input.summary } : {}),
+        },
+        { closeReason: "completed", notifyWorkspace: true },
+      );
       if (!termination) {
         throw new RemoteMcpError("Session was not found", "session_not_found", 404);
       }
@@ -573,14 +578,6 @@ export function createRemoteMcpRuntime(
           409,
         );
       }
-      for (const target of termination.targets) {
-        gateway.send(target.machineId, {
-          type: "session.close",
-          sessionId: target.runtimeSessionId,
-          reason: "completed",
-        });
-      }
-      gateway.notifyWorkspace(principal.workspaceId);
       return {
         id: sessionId,
         status: "completed",

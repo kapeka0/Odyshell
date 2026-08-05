@@ -72,6 +72,7 @@ import { dataRetentionPolicy } from "./privacy.js";
 import { deliverOperation } from "./operation-delivery.js";
 import { registerRemoteMcp } from "./remote-mcp.js";
 import { createRemoteMcpRuntime } from "./remote-mcp-runtime.js";
+import { createSessionTermination } from "./session-termination.js";
 import {
   decryptEventSinkSecret,
   encryptEventSinkSecret,
@@ -225,6 +226,7 @@ const purgeExpiredData = async (): Promise<void> => {
 await purgeExpiredData();
 const gateway = new ClientGateway(db);
 gateway.register(app);
+const sessionTermination = createSessionTermination({ database: db, gateway });
 
 type AgentPrincipal = {
   kind: "agent_identity" | "cli" | "development" | "session";
@@ -723,27 +725,17 @@ async function deleteWorkspaceAgent(
   if (!hierarchy) return null;
   let terminatedSessions = 0;
   for (const session of hierarchy.sessionIds) {
-    const termination = await db.cancelAgentSession({
-      workspaceId,
-      sessionId: session.id,
-      agentId: session.agentId,
-      reason: "revoked",
-    });
+    const termination = await sessionTermination.cancel(
+      {
+        workspaceId,
+        sessionId: session.id,
+        agentId: session.agentId,
+        reason: "revoked",
+      },
+      { closeReason: "agent_deleted" },
+    );
     if (!termination?.transitioned) continue;
     terminatedSessions += 1;
-    for (const operation of termination.operations) {
-      gateway.send(operation.machineId, {
-        type: "operation.cancel",
-        operationId: operation.id,
-      });
-    }
-    for (const target of termination.targets) {
-      gateway.send(target.machineId, {
-        type: "session.close",
-        sessionId: target.runtimeSessionId,
-        reason: "agent_deleted",
-      });
-    }
   }
   await audit(db, workspaceId, principalId, "agent.deleted", "agent", agentId, {
     deletedAgents: hierarchy.agentIds.length,
@@ -901,28 +893,18 @@ app.post(
     }
     let terminatedSessions = 0;
     for (const session of hierarchy.sessionIds) {
-      const termination = await db.cancelAgentSession({
-        workspaceId: hierarchy.workspaceId,
-        sessionId: session.id,
-        agentId: session.agentId,
-        requestedByHumanId: hierarchy.ownerHumanId,
-        reason: "revoked",
-      });
+      const termination = await sessionTermination.cancel(
+        {
+          workspaceId: hierarchy.workspaceId,
+          sessionId: session.id,
+          agentId: session.agentId,
+          requestedByHumanId: hierarchy.ownerHumanId,
+          reason: "revoked",
+        },
+        { closeReason: "agent_revoked" },
+      );
       if (!termination) continue;
       terminatedSessions += 1;
-      for (const operation of termination.operations) {
-        gateway.send(operation.machineId, {
-          type: "operation.cancel",
-          operationId: operation.id,
-        });
-      }
-      for (const target of termination.targets) {
-        gateway.send(target.machineId, {
-          type: "session.close",
-          sessionId: target.runtimeSessionId,
-          reason: "agent_revoked",
-        });
-      }
     }
     await audit(
       db,
@@ -1158,28 +1140,18 @@ for (const transition of ["disable", "delete"] as const) {
       }
       let terminatedSessions = 0;
       for (const sessionId of result.sessionIds) {
-        const termination = await db.cancelAgentSession({
-          workspaceId: principal.workspaceId,
-          sessionId,
-          agentId: result.agent.id,
-          requestedByHumanId: principal.ownerHumanId,
-          reason: "revoked",
-        });
+        const termination = await sessionTermination.cancel(
+          {
+            workspaceId: principal.workspaceId,
+            sessionId,
+            agentId: result.agent.id,
+            requestedByHumanId: principal.ownerHumanId,
+            reason: "revoked",
+          },
+          { closeReason: "policy_revoked" },
+        );
         if (!termination) continue;
         terminatedSessions += 1;
-        for (const operation of termination.operations) {
-          gateway.send(operation.machineId, {
-            type: "operation.cancel",
-            operationId: operation.id,
-          });
-        }
-        for (const target of termination.targets) {
-          gateway.send(target.machineId, {
-            type: "session.close",
-            sessionId: target.runtimeSessionId,
-            reason: "policy_revoked",
-          });
-        }
       }
       await audit(
         db,
@@ -1860,31 +1832,23 @@ app.post(
     if (!session) {
       return reply.code(404).send({ error: "session_not_found" });
     }
-    const result = await db.cancelAgentSession({
-      workspaceId: context.workspace.id,
-      sessionId: session.id,
-      agentId: session.agentId,
-      requestedByHumanId: parsed.data.userId,
-      reason: "cancelled",
-      now: Date.now(),
-    });
+    const result = await sessionTermination.cancel(
+      {
+        workspaceId: context.workspace.id,
+        sessionId: session.id,
+        agentId: session.agentId,
+        requestedByHumanId: parsed.data.userId,
+        reason: "cancelled",
+        now: Date.now(),
+      },
+      {
+        closeReason: "workspace_member_cancelled",
+        notifyWorkspace: true,
+      },
+    );
     if (!result) {
       return reply.code(403).send({ error: "session_cancel_denied" });
     }
-    for (const operation of result.operations) {
-      gateway.send(operation.machineId, {
-        type: "operation.cancel",
-        operationId: operation.id,
-      });
-    }
-    for (const target of result.targets) {
-      gateway.send(target.machineId, {
-        type: "session.close",
-        sessionId: target.runtimeSessionId,
-        reason: "workspace_member_cancelled",
-      });
-    }
-    gateway.notifyWorkspace(context.workspace.id);
     return { id: result.id, status: result.status, transitioned: result.transitioned };
   },
 );
@@ -3707,27 +3671,17 @@ app.delete<{ Params: { sessionId: string } }>(
       return reply.code(404).send({ error: "active_session_not_found" });
     }
     if (principal.sessionScope !== undefined) {
-      const termination = await db.cancelAgentSession({
-        workspaceId: principal.workspaceId,
-        sessionId: request.params.sessionId,
-        agentId: principal.id,
-        reason: "cancelled",
-      });
+      const termination = await sessionTermination.cancel(
+        {
+          workspaceId: principal.workspaceId,
+          sessionId: request.params.sessionId,
+          agentId: principal.id,
+          reason: "cancelled",
+        },
+        { closeReason: "agent_request" },
+      );
       if (!termination) {
         return reply.code(404).send({ error: "active_session_not_found" });
-      }
-      for (const operation of termination.operations) {
-        gateway.send(operation.machineId, {
-          type: "operation.cancel",
-          operationId: operation.id,
-        });
-      }
-      for (const target of termination.targets) {
-        gateway.send(target.machineId, {
-          type: "session.close",
-          sessionId: target.runtimeSessionId,
-          reason: "agent_request",
-        });
       }
       await audit(
         db,
@@ -3788,31 +3742,21 @@ app.post<{ Params: { sessionId: string } }>(
     ) {
       return reply.code(403).send({ error: "agent_identity_mismatch" });
     }
-    const termination = await db.cancelAgentSession({
-      workspaceId: principal.workspaceId,
-      sessionId: request.params.sessionId,
-      agentId: parsed.data.agentId,
-      requestedByHumanId: principal.humanId,
-      ...(principal.agent
-        ? { actorAgentId: principal.agent.agentId }
-        : { actorHumanId: principal.humanId }),
-      reason: "cancelled",
-    });
+    const termination = await sessionTermination.cancel(
+      {
+        workspaceId: principal.workspaceId,
+        sessionId: request.params.sessionId,
+        agentId: parsed.data.agentId,
+        requestedByHumanId: principal.humanId,
+        ...(principal.agent
+          ? { actorAgentId: principal.agent.agentId }
+          : { actorHumanId: principal.humanId }),
+        reason: "cancelled",
+      },
+      { closeReason: "human_request" },
+    );
     if (!termination) {
       return reply.code(404).send({ error: "session_not_found" });
-    }
-    for (const operation of termination.operations) {
-      gateway.send(operation.machineId, {
-        type: "operation.cancel",
-        operationId: operation.id,
-      });
-    }
-    for (const target of termination.targets) {
-      gateway.send(target.machineId, {
-        type: "session.close",
-        sessionId: target.runtimeSessionId,
-        reason: "human_request",
-      });
     }
     if (termination.transitioned) {
       await audit(
@@ -3850,29 +3794,25 @@ app.post<{ Params: { sessionId: string } }>(
     ) {
       return reply.code(403).send({ error: "agent_identity_mismatch" });
     }
-    const completion = await db.completeAgentSession({
-      workspaceId: principal.workspaceId,
-      sessionId: request.params.sessionId,
-      agentId: parsed.data.agentId,
-      requestedByHumanId: principal.humanId,
-      ...(principal.agent
-        ? { actorAgentId: principal.agent.agentId }
-        : { actorHumanId: principal.humanId }),
-      outcome: parsed.data.outcome,
-      ...(parsed.data.summary ? { summary: parsed.data.summary } : {}),
-    });
+    const completion = await sessionTermination.complete(
+      {
+        workspaceId: principal.workspaceId,
+        sessionId: request.params.sessionId,
+        agentId: parsed.data.agentId,
+        requestedByHumanId: principal.humanId,
+        ...(principal.agent
+          ? { actorAgentId: principal.agent.agentId }
+          : { actorHumanId: principal.humanId }),
+        outcome: parsed.data.outcome,
+        ...(parsed.data.summary ? { summary: parsed.data.summary } : {}),
+      },
+      { closeReason: "completed" },
+    );
     if (!completion) {
       return reply.code(404).send({ error: "session_not_found" });
     }
     if (completion.status === "busy") {
       return reply.code(409).send({ error: "session_operations_active" });
-    }
-    for (const target of completion.targets) {
-      gateway.send(target.machineId, {
-        type: "session.close",
-        sessionId: target.runtimeSessionId,
-        reason: "completed",
-      });
     }
     if (completion.transitioned) {
       await audit(
