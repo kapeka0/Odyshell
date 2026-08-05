@@ -1,14 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
-import type {
-  ApprovedMcpOperationResult,
-  ApprovedMcpRuntime,
+import {
+  findReusableMcpAuthority,
+  mcpClaimDecision,
+  planMcpHostShellRequest,
+  planMcpOperationRequest,
+  type ApprovedMcpOperationResult,
+  type ApprovedMcpRuntime,
 } from "@odyshell/mcp";
 import {
   capabilitySchema,
-  operationSessionScopes,
-  sessionScopeDecision,
   type Capability,
-  type OperationAction,
   type ScopedOperationAction,
   type SessionMachineScope,
 } from "@odyshell/protocol";
@@ -19,10 +20,7 @@ import {
   type Database,
   type McpInstallationRecord,
 } from "./database.js";
-import {
-  hostShellEscalationScopes,
-  type AgentSessionPrincipal,
-} from "./agent-sessions.js";
+import type { AgentSessionPrincipal } from "./agent-sessions.js";
 import type { ClientGateway } from "./gateway.js";
 import { createOperationAdmission } from "./operation-admission.js";
 import { createSessionTermination } from "./session-termination.js";
@@ -72,20 +70,14 @@ export function createRemoteMcpRuntime(
       }
     },
     async request(input) {
-      const operations: Array<{
-        machineId: string;
-        action: ScopedOperationAction;
-      }> = [];
-      let scopes: SessionMachineScope[];
-      let kinds: string[];
-      let reusable: AgentSessionCredentialPrincipal | null = null;
+      let plan: ReturnType<typeof planMcpOperationRequest>;
       if (input.hostShell) {
         const machine = await resolveMcpMachine(
           db,
           installation,
           input.hostShell.machine,
         );
-        kinds = ["host.shell"];
+        let predecessorScopes: SessionMachineScope[] | null | undefined;
         if (input.predecessorSessionId) {
           const predecessor = await db.agentSessionForRenewal(
             installation.workspaceId,
@@ -93,54 +85,14 @@ export function createRemoteMcpRuntime(
             installation.agentId,
             installation.userId,
           );
-          if (!predecessor) {
-            throw new RemoteMcpError(
-              "The predecessor Session is unavailable",
-              "predecessor_session_unavailable",
-              409,
-            );
-          }
-          const escalation = hostShellEscalationScopes(
-            predecessor.scopes,
-            machine.id,
-          );
-          if (!escalation.allowed) {
-            throw new RemoteMcpError(
-              "Host Shell can only be added to a predecessor machine",
-              escalation.code,
-              403,
-            );
-          }
-          scopes = escalation.scopes;
-        } else {
-          scopes = [
-            {
-              machineId: machine.id,
-              profile: "workspace",
-              capabilities: ["host.shell"],
-              restrictions: {},
-            },
-          ];
-          reusable = await findReusableMcpHostShellSession(
-            db,
-            installation,
-            machine.id,
-          );
+          predecessorScopes = predecessor?.scopes ?? null;
         }
+        plan = planMcpHostShellRequest(machine.id, predecessorScopes);
       } else {
-        if (
-          input.operations.some(
-            (operation) =>
-              (operation.action as OperationAction).kind === "host.shell",
-          )
-        ) {
-          throw new RemoteMcpError(
-            "Request Host Shell authority without anticipating a command",
-            "host_shell_request_required",
-            400,
-          );
-        }
-        const resolved = await Promise.all(
+        const operations: Array<{
+          machineId: string;
+          action: ScopedOperationAction;
+        }> = await Promise.all(
           input.operations.map(async (operation) => ({
             machineId: (
               await resolveMcpMachine(db, installation, operation.machine)
@@ -148,24 +100,45 @@ export function createRemoteMcpRuntime(
             action: operation.action,
           })),
         );
-        operations.push(...resolved);
-        kinds = operations.map((operation) => operation.action.kind);
-        try {
-          scopes = operationSessionScopes(operations);
-        } catch {
-          throw new RemoteMcpError(
-            "Operations cannot be combined without broadening their scope.",
-            "session_scope_conflict",
-            400,
-          );
-        }
-        if (!input.predecessorSessionId) {
-          reusable = await findReusableMcpSession(
-            db,
-            installation,
-            operations,
-          );
-        }
+        plan = planMcpOperationRequest(operations);
+      }
+      if (!plan.allowed) {
+        const message = plan.code === "host_shell_request_required"
+          ? "Request Host Shell authority without anticipating a command"
+          : plan.code === "session_scope_conflict"
+            ? "Operations cannot be combined without broadening their scope."
+            : plan.code === "predecessor_session_unavailable"
+              ? "The predecessor Session is unavailable"
+              : "Host Shell can only be added to a predecessor machine";
+        const status = plan.code === "predecessor_machine_denied"
+          ? 403
+          : plan.code === "predecessor_session_unavailable"
+            ? 409
+            : 400;
+        throw new RemoteMcpError(message, plan.code, status);
+      }
+      let reusable: AgentSessionCredentialPrincipal | undefined;
+      if (plan.reuse) {
+        const sessions = await db.listWorkspaceAgentSessions(
+          installation.workspaceId,
+          100,
+          { agentId: installation.agentId },
+        );
+        reusable = await findReusableMcpAuthority({
+          sessions: sessions.map((session) => ({
+            sessionId: session.id,
+            status: session.status,
+            expiresAt: session.expiresAt,
+            targets: session.targets,
+          })),
+          request: plan.reuse,
+          authorityForSession: async (sessionId) =>
+            db.findMcpSessionPrincipal({
+              workspaceId: installation.workspaceId,
+              installationId: installation.id,
+              sessionId,
+            }),
+        });
       }
       if (reusable) {
         return {
@@ -203,7 +176,7 @@ export function createRemoteMcpRuntime(
         agentName: installation.agentName,
         humanId: installation.userId,
         ...(input.runId ? { runId: input.runId } : {}),
-        scopes,
+        scopes: plan.scopes,
         title: input.title,
         ...(input.purpose ? { purpose: input.purpose } : {}),
         durationSeconds: input.durationSeconds,
@@ -231,8 +204,8 @@ export function createRemoteMcpRuntime(
         "session_request",
         requestId,
         {
-          machineIds: scopes.map((scope) => scope.machineId),
-          kinds,
+          machineIds: plan.scopes.map((scope) => scope.machineId),
+          kinds: plan.kinds,
           durationSeconds: input.durationSeconds,
           source: "remote_mcp",
           ...(input.predecessorSessionId
@@ -311,8 +284,14 @@ export function createRemoteMcpRuntime(
         installationId: installation.id,
         requestId,
       });
-      if (granted) return remoteMcpSessionStatus(db, granted);
-      if (bound) {
+      const boundDecision = mcpClaimDecision({
+        hasBoundAuthority: Boolean(granted || bound),
+        status: "approved",
+      });
+      if (boundDecision === "return_bound" && granted) {
+        return remoteMcpSessionStatus(db, granted);
+      }
+      if (boundDecision === "return_bound" && bound) {
         return {
           status: bound.expiresAt <= Date.now() ? "expired" : bound.status,
           sessionId: bound.sessionId,
@@ -332,14 +311,18 @@ export function createRemoteMcpRuntime(
           404,
         );
       }
-      if (current.status !== "approved") {
-        if (current.status === "claimed") {
-          throw new RemoteMcpError(
-            "Session was claimed by another installation",
-            "session_claim_unavailable",
-            409,
-          );
-        }
+      const decision = mcpClaimDecision({
+        hasBoundAuthority: false,
+        status: current.status,
+      });
+      if (decision === "unavailable") {
+        throw new RemoteMcpError(
+          "Session was claimed by another installation",
+          "session_claim_unavailable",
+          409,
+        );
+      }
+      if (decision === "return_status") {
         return {
           id: current.id,
           status: current.status,
@@ -557,87 +540,6 @@ export function createRemoteMcpRuntime(
       };
     },
   };
-}
-
-async function findReusableMcpSession(
-  db: Database,
-  installation: McpInstallationRecord,
-  operations: Array<{ machineId: string; action: OperationAction }>,
-): Promise<AgentSessionCredentialPrincipal | null> {
-  const sessions = await db.listWorkspaceAgentSessions(
-    installation.workspaceId,
-    100,
-    { agentId: installation.agentId },
-  );
-  for (const session of sessions) {
-    if (
-      session.status !== "active" ||
-      session.expiresAt <= Date.now() ||
-      operations.some(
-        ({ machineId }) =>
-          !session.targets.some(
-            (target) =>
-              target.machineId === machineId && target.status === "ready",
-          ),
-      )
-    ) {
-      continue;
-    }
-    const principal = await db.findMcpSessionPrincipal({
-      workspaceId: installation.workspaceId,
-      installationId: installation.id,
-      sessionId: session.id,
-    });
-    if (
-      principal &&
-      operations.every(({ machineId, action }) =>
-        principal.scopes.some(
-          (scope) => sessionScopeDecision(scope, machineId, action).allowed,
-        ),
-      )
-    ) {
-      return principal;
-    }
-  }
-  return null;
-}
-
-async function findReusableMcpHostShellSession(
-  db: Database,
-  installation: McpInstallationRecord,
-  machineId: string,
-): Promise<AgentSessionCredentialPrincipal | null> {
-  const sessions = await db.listWorkspaceAgentSessions(
-    installation.workspaceId,
-    100,
-    { agentId: installation.agentId },
-  );
-  for (const session of sessions) {
-    if (
-      session.status !== "active" ||
-      session.expiresAt <= Date.now() ||
-      !session.targets.some(
-        (target) => target.machineId === machineId && target.status === "ready",
-      )
-    ) {
-      continue;
-    }
-    const principal = await db.findMcpSessionPrincipal({
-      workspaceId: installation.workspaceId,
-      installationId: installation.id,
-      sessionId: session.id,
-    });
-    if (
-      principal?.scopes.some(
-        (scope) =>
-          scope.machineId === machineId &&
-          scope.capabilities.includes("host.shell"),
-      )
-    ) {
-      return principal;
-    }
-  }
-  return null;
 }
 
 function mcpMachineExecutionFacts(runtime: unknown): {

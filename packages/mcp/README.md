@@ -6,9 +6,10 @@
 
 <p align="center"><strong>One Session workflow for local and remote agent connections.</strong></p>
 
-This private workspace package defines the MCP tools shared by `ods mcp` and the remote OAuth MCP.
-Transport and credentials stay in their adapters; this package only translates tool calls into a
-trusted runtime interface.
+This private workspace package defines the MCP tools and Session-orchestration policy shared by
+`ods mcp` and the remote OAuth MCP. Request scopes, compatible-authority reuse, and claim-state
+transitions are decided here; transport, credential storage, and persistence stay in their
+adapters.
 
 The surface includes machine discovery and ping, Session recovery/status/completion, typed
 Operation execution, and Session timelines. It contains no enrollment, member, billing, or

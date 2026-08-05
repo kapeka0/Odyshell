@@ -3,7 +3,6 @@ import type { OperationAction } from "@odyshell/protocol";
 import {
   clampSessionOperationTimeout,
   developmentSessionDecision,
-  hostShellEscalationScopes,
   sessionOperationDecision,
   type AgentSessionPrincipal,
 } from "../apps/server/src/agent-sessions.js";
@@ -67,28 +66,6 @@ describe("typed multi-machine Agent Session authorization", () => {
       allowed: false,
       code: "manual_approval_required",
       capability: "process.exec",
-    });
-  });
-
-  it("inherits the predecessor authority and adds Host Shell only on its selected machine", () => {
-    expect(hostShellEscalationScopes(principal.scopes, machineA)).toEqual({
-      allowed: true,
-      scopes: [
-        {
-          machineId: machineA,
-          profile: "workspace",
-          capabilities: ["fs.read", "process.exec", "host.shell"],
-          restrictions: principal.scopes[0]!.restrictions,
-        },
-        principal.scopes[1],
-      ],
-    });
-  });
-
-  it("rejects Host Shell escalation onto a machine outside the predecessor", () => {
-    expect(hostShellEscalationScopes(principal.scopes, machineC)).toEqual({
-      allowed: false,
-      code: "predecessor_machine_denied",
     });
   });
 

@@ -6,13 +6,14 @@ import {
 } from "@modelcontextprotocol/server/stdio";
 import {
   createApprovedMcpServer,
+  findReusableMcpAuthority,
+  mcpClaimDecision,
+  planMcpHostShellRequest,
+  planMcpOperationRequest,
   type ApprovedMcpSessionRequest,
   type ApprovedMcpRuntime,
 } from "@odyshell/mcp";
 import {
-  mergeSessionMachineScopes,
-  operationSessionScopes,
-  sessionScopeDecision,
   type ScopedOperationAction,
   type SessionMachineScope,
 } from "@odyshell/protocol";
@@ -46,91 +47,53 @@ export function createApprovedOdyshellMcpServer(
       return ods.ping(resolved.id);
     },
     async request(input) {
-      let scopes: SessionMachineScope[];
-      let operations: Array<{
-        machineId: string;
-        action: ScopedOperationAction;
-      }> = [];
-      let hostShellMachineId: string | undefined;
+      const agent = ods.agent(identity);
+      let plan: ReturnType<typeof planMcpOperationRequest>;
       if (input.hostShell) {
         const machine = await ods.resolveMachine(input.hostShell.machine);
-        hostShellMachineId = machine.id;
+        let predecessorScopes: SessionMachineScope[] | null | undefined;
         if (input.predecessorSessionId) {
-          const predecessor = (await ods.agent(identity).sessions()).find(
+          const predecessor = (await agent.sessions()).find(
             (session) =>
               session.id === input.predecessorSessionId &&
               session.status === "active" &&
               Date.parse(session.expiresAt) > Date.now(),
           );
-          const inherited = predecessor?.scopes.find(
-            (scope) => scope.machineId === machine.id,
-          );
-          if (!predecessor || !inherited) {
-            throw new ExpectedError(
-              "Host Shell can only be added to an active predecessor machine.",
-              "predecessor_session_unavailable",
-            );
-          }
-          scopes = mergeSessionMachineScopes([
-            ...predecessor.scopes,
-            {
-              machineId: machine.id,
-              profile: inherited.profile,
-              capabilities: ["host.shell"],
-              restrictions: {},
-            },
-          ]);
-        } else {
-          scopes = [
-            {
-              machineId: machine.id,
-              profile: "workspace",
-              capabilities: ["host.shell"],
-              restrictions: {},
-            },
-          ];
+          predecessorScopes = predecessor?.scopes ?? null;
         }
+        plan = planMcpHostShellRequest(machine.id, predecessorScopes);
       } else {
-        if (
-          input.operations.some(
-            (operation) =>
-              (operation.action as { kind: string }).kind === "host.shell",
-          )
-        ) {
-          throw new ExpectedError(
-            "Request Host Shell authority without anticipating a command.",
-            "host_shell_request_required",
-          );
-        }
-        operations = await Promise.all(
+        const operations: Array<{
+          machineId: string;
+          action: ScopedOperationAction;
+        }> = await Promise.all(
           input.operations.map(async (operation) => ({
             machineId: (await ods.resolveMachine(operation.machine)).id,
             action: operation.action,
           })),
         );
-        try {
-          scopes = operationSessionScopes(operations);
-        } catch {
-          throw new ExpectedError(
-            "Operations cannot be combined without broadening their scope.",
-            "session_scope_conflict",
-          );
-        }
+        plan = planMcpOperationRequest(operations);
       }
-      const agent = ods.agent(identity);
-      if (!input.predecessorSessionId && claims.size > 0) {
+      if (!plan.allowed) {
+        const message = plan.code === "host_shell_request_required"
+          ? "Request Host Shell authority without anticipating a command."
+          : plan.code === "session_scope_conflict"
+            ? "Operations cannot be combined without broadening their scope."
+            : "Host Shell can only be added to an active predecessor machine.";
+        throw new ExpectedError(message, plan.code);
+      }
+      if (plan.reuse && claims.size > 0) {
         const sessions = await agent.sessions();
-        const reusableClaim = hostShellMachineId
-          ? findReusableLocalHostShellClaim(
-              claims.values(),
-              sessions,
-              hostShellMachineId,
-            )
-          : findReusableLocalOperationClaim(
-              claims.values(),
-              sessions,
-              operations,
-            );
+        const reusableClaim = await findReusableMcpAuthority({
+          sessions: sessions.map((session) => ({
+            sessionId: session.id,
+            status: session.status,
+            expiresAt: session.expiresAt,
+            targets: session.targets,
+          })),
+          request: plan.reuse,
+          authorityForSession: async (sessionId) => claims.get(sessionId),
+        });
         if (reusableClaim) {
           return {
             id: reusableClaim.sessionId,
@@ -144,7 +107,7 @@ export function createApprovedOdyshellMcpServer(
       const requested = await agent.requestSession({
         title: input.title,
         ...(input.purpose ? { purpose: input.purpose } : {}),
-        scopes,
+        scopes: plan.scopes,
         durationSeconds: input.durationSeconds,
         ...(input.predecessorSessionId
           ? { predecessorSessionId: input.predecessorSessionId }
@@ -222,7 +185,11 @@ export function createApprovedOdyshellMcpServer(
       const existingClaim = existingSessionId
         ? claims.get(existingSessionId)
         : undefined;
-      if (existingClaim) {
+      const existingDecision = mcpClaimDecision({
+        hasBoundAuthority: existingClaim !== undefined,
+        status: "approved",
+      });
+      if (existingDecision === "return_bound" && existingClaim) {
         const canonical = (await ods.agent(identity).sessions()).find(
           (session) => session.id === existingClaim.sessionId,
         );
@@ -235,7 +202,11 @@ export function createApprovedOdyshellMcpServer(
       if (recent) {
         recentRequests.set(requestId, { ...recent, status: status.status });
       }
-      if (status.status === "approved") {
+      const decision = mcpClaimDecision({
+        hasBoundAuthority: false,
+        status: status.status,
+      });
+      if (decision === "claim") {
         const claim = await agent.claim(requestId);
         claims.set(claim.sessionId, claim);
         requestSessions.set(requestId, claim.sessionId);
@@ -244,7 +215,7 @@ export function createApprovedOdyshellMcpServer(
         );
         return safeClaim(claim, canonical);
       }
-      if (status.status === "claimed") {
+      if (decision === "unavailable") {
         throw new ExpectedError(
           "This request was already claimed by another MCP process.",
           "session_claim_unavailable",
@@ -278,79 +249,6 @@ export function createApprovedOdyshellMcpServer(
     },
   };
   return createApprovedMcpServer(runtime, reportUnexpectedError);
-}
-
-function findReusableLocalOperationClaim(
-  claims: Iterable<ClaimedAgentSession>,
-  sessions: ListedAgentSession[],
-  operations: Array<{ machineId: string; action: ScopedOperationAction }>,
-): ClaimedAgentSession | undefined {
-  return findReusableLocalClaim(
-    claims,
-    sessions,
-    (claim, session) =>
-      operations.every(
-        ({ machineId, action }) =>
-          session.targets.some(
-            (target) =>
-              target.machineId === machineId && target.status === "ready",
-          ) &&
-          claim.scopes.some(
-            (scope) => sessionScopeDecision(scope, machineId, action).allowed,
-          ),
-      ),
-  );
-}
-
-function findReusableLocalHostShellClaim(
-  claims: Iterable<ClaimedAgentSession>,
-  sessions: ListedAgentSession[],
-  machineId: string,
-): ClaimedAgentSession | undefined {
-  return findReusableLocalClaim(
-    claims,
-    sessions,
-    (claim, session) =>
-      session.targets.some(
-        (target) =>
-          target.machineId === machineId && target.status === "ready",
-      ) &&
-      claim.scopes.some(
-        (scope) =>
-          scope.machineId === machineId &&
-          scope.capabilities.includes("host.shell"),
-      ),
-  );
-}
-
-function findReusableLocalClaim(
-  claims: Iterable<ClaimedAgentSession>,
-  sessions: ListedAgentSession[],
-  isCompatible: (
-    claim: ClaimedAgentSession,
-    session: ListedAgentSession,
-  ) => boolean,
-): ClaimedAgentSession | undefined {
-  const now = Date.now();
-  for (const claim of claims) {
-    const session = sessions.find((candidate) => candidate.id === claim.sessionId);
-    if (
-      !session ||
-      session.status !== "active" ||
-      !isFutureTimestamp(claim.expiresAt, now) ||
-      !isFutureTimestamp(session.expiresAt, now) ||
-      !isCompatible(claim, session)
-    ) {
-      continue;
-    }
-    return claim;
-  }
-  return undefined;
-}
-
-function isFutureTimestamp(value: string, now: number): boolean {
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) && timestamp > now;
 }
 
 function safeClaim(

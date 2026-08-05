@@ -9,6 +9,20 @@ import {
 } from "@odyshell/protocol";
 import { z } from "zod";
 
+export {
+  findReusableMcpAuthority,
+  mcpClaimDecision,
+  planMcpHostShellRequest,
+  planMcpOperationRequest,
+  type McpAuthorityReuseRequest,
+  type McpBoundAuthority,
+  type McpCanonicalSession,
+  type McpClaimDecision,
+  type McpSessionRequestDenial,
+  type McpSessionRequestPlan,
+  type ResolvedMcpOperation,
+} from "./session-orchestration.js";
+
 const machineSchema = z.string().trim().min(1).max(256);
 const timeoutSchema = z
   .number()

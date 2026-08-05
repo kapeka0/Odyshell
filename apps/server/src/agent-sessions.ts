@@ -1,5 +1,4 @@
 import {
-  mergeSessionMachineScopes,
   sessionScopeDecision,
   type Capability,
   type OperationAction,
@@ -30,10 +29,6 @@ export type SessionOperationDecision =
       machineId?: string;
     };
 
-export type HostShellEscalationDecision =
-  | { allowed: true; scopes: SessionMachineScope[] }
-  | { allowed: false; code: "predecessor_machine_denied" };
-
 export type DevelopmentSessionDecision =
   | { allowed: true }
   | {
@@ -58,35 +53,6 @@ export function developmentSessionDecision(
         capability: unsafeCapability,
       }
     : { allowed: true };
-}
-
-/**
- * Builds the exact authority for a linked Host Shell escalation. The new
- * Session inherits every predecessor scope unchanged and adds host.shell only
- * to a machine that the predecessor already covers.
- */
-export function hostShellEscalationScopes(
-  predecessorScopes: SessionMachineScope[],
-  machineId: string,
-): HostShellEscalationDecision {
-  const predecessor = predecessorScopes.find(
-    (scope) => scope.machineId === machineId,
-  );
-  if (!predecessor) {
-    return { allowed: false, code: "predecessor_machine_denied" };
-  }
-  return {
-    allowed: true,
-    scopes: mergeSessionMachineScopes([
-      ...predecessorScopes,
-      {
-        machineId,
-        profile: predecessor.profile,
-        capabilities: ["host.shell"],
-        restrictions: {},
-      },
-    ]),
-  };
 }
 
 /** Bounds a requested timeout to the remaining canonical Session lifetime. */
