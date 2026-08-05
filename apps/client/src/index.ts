@@ -24,12 +24,9 @@ import {
 } from "./docker-runner.js";
 import type {
   OperationExecutor,
-  RunningOperation,
   RunningSession,
 } from "./executor.js";
 import { HostExecutor } from "./host-executor.js";
-import type { JournalResult } from "./journal.js";
-import { PendingOperation } from "./operation-control.js";
 import { ClientOperationLifecycle } from "./operation-lifecycle.js";
 import { passwordlessSudoAvailable } from "./profile.js";
 import {
@@ -54,6 +51,7 @@ export {
 } from "./platform.js";
 export {
   ClientMessageBuffer,
+  operationTimeoutMilliseconds,
   type ClientMessageBufferEnqueueResult,
 } from "./operation-lifecycle.js";
 
@@ -286,30 +284,6 @@ type ActiveSession = {
   closing: boolean;
 };
 
-export function operationTimeoutMilliseconds(
-  requestedSeconds: number,
-  localMaximumSeconds: number,
-  sessionExpiresAt: Date,
-  now = Date.now(),
-): number {
-  if (
-    !Number.isFinite(requestedSeconds) ||
-    requestedSeconds <= 0 ||
-    !Number.isFinite(localMaximumSeconds) ||
-    localMaximumSeconds <= 0
-  ) {
-    return 0;
-  }
-  return Math.max(
-    0,
-    Math.min(
-      Math.floor(requestedSeconds * 1_000),
-      Math.floor(localMaximumSeconds * 1_000),
-      sessionExpiresAt.getTime() - now,
-    ),
-  );
-}
-
 export async function terminateLocalAuthority(
   cancelOperations: Array<() => Promise<void>>,
   closeSessions: Array<() => Promise<void>>,
@@ -343,7 +317,6 @@ export class Client {
   private readonly sessions = new Map<string, ActiveSession>();
   private readonly closedSessions = new Set<string>();
   private readonly closingSessions = new Map<string, Promise<void>>();
-  private readonly operations = new Map<string, PendingOperation>();
   private readonly executors = new Map<"host" | "docker", OperationExecutor>();
   private readonly operationLifecycle: ClientOperationLifecycle;
   private messageQueue = Promise.resolve();
@@ -363,6 +336,10 @@ export class Client {
     this.operationLifecycle = new ClientOperationLifecycle(
       resolve(config.stateDirectory, "operations.sqlite"),
       (message) => this.sendIfConnected(message),
+      {
+        onTerminalFailure: (context, error) =>
+          this.beginTerminalFailure(context, error),
+      },
     );
   }
 
@@ -528,14 +505,13 @@ export class Client {
   }
 
   private async dropLocalAuthority(): Promise<void> {
-    const operations = [...this.operations.values()];
     const sessions = [...this.sessions.values()];
     for (const active of sessions) active.closing = true;
     this.sessions.clear();
     let terminationError: unknown;
     try {
       await terminateLocalAuthority(
-        operations.map((operation) => async () => operation.cancel()),
+        [async () => this.operationLifecycle.terminateAll()],
         sessions.map(
           (active) => async () =>
             active.executor.closeSession(active.session),
@@ -544,8 +520,6 @@ export class Client {
     } catch (error) {
       terminationError = error;
     }
-    await Promise.all(operations.map((operation) => operation.waitUntilFinished()));
-    this.operations.clear();
     if (terminationError !== undefined) throw terminationError;
   }
 
@@ -765,18 +739,12 @@ export class Client {
     }
     const active = this.sessions.get(sessionId);
     if (active) active.closing = true;
-    const operations = [...this.operations.values()].filter(
-      (operation) => operation.sessionId === sessionId,
-    );
     const closing = (async (): Promise<void> => {
       await terminateLocalAuthority(
-        operations.map((operation) => async () => operation.cancel()),
+        [async () => this.operationLifecycle.terminateSession(sessionId)],
         active
           ? [async () => active.executor.closeSession(active.session)]
           : [],
-      );
-      await Promise.all(
-        operations.map((operation) => operation.waitUntilFinished()),
       );
       this.operationLifecycle.deliver({
         type: "session.closed",
@@ -800,241 +768,31 @@ export class Client {
   private async startOperation(
     message: Extract<ServerToClientMessage, { type: "operation.start" }>,
   ): Promise<void> {
-    const receipt = this.operationLifecycle.receiveStart(message.operationId);
-    if (receipt !== "new") return;
-
     const active = this.sessions.get(message.sessionId);
-    if (!active || active.closing) {
-      const result: JournalResult = {
-        status: "failed",
-        exitCode: null,
-        error: "Session is not active on this client",
-        outputTruncated: false,
-      };
-      this.operationLifecycle.complete(message.operationId, result);
-      return;
-    }
-
-    const operationsForProfile = [...this.operations.values()].filter(
-      (operation) => operation.profile === active.session.profile,
-    ).length;
-    if (
-      operationsForProfile >= active.session.profile.maxConcurrentOperations
-    ) {
-      const result: JournalResult = {
-        status: "failed",
-        exitCode: null,
-        error: "Local concurrent Operation limit reached",
-        outputTruncated: false,
-      };
-      this.operationLifecycle.complete(message.operationId, result);
-      return;
-    }
-
-    const control = new PendingOperation(
-      message.sessionId,
-      active.session.profile,
+    await this.operationLifecycle.start(
+      message,
+      !active || active.closing
+        ? null
+        : {
+            profile: active.session.profile,
+            expiresAt: active.session.expiresAt,
+            isActive: () =>
+              !active.closing &&
+              this.sessions.get(message.sessionId) === active,
+            execute: (operationId, action, output, options) =>
+              active.executor.execute(
+                operationId,
+                active.session,
+                action,
+                output,
+                options,
+              ),
+          },
     );
-    this.operations.set(message.operationId, control);
-
-    let sequence = 0;
-    let outputBytes = 0;
-    let outputTruncated = false;
-    let timedOut = false;
-    let terminalFailure: unknown;
-    let timer: NodeJS.Timeout | undefined;
-    const deadlineMarker = Symbol("operation-deadline");
-    const executionSignal = control.executionSignal();
-    const deadlineReached = new Promise<typeof deadlineMarker>((resolveDeadline) => {
-      if (executionSignal.aborted) {
-        resolveDeadline(deadlineMarker);
-        return;
-      }
-      executionSignal.addEventListener(
-        "abort",
-        () => resolveDeadline(deadlineMarker),
-        { once: true },
-      );
-    });
-    const cancellationFailure = control.waitForCancellationFailure().catch(
-      (error: unknown) => {
-        terminalFailure = error;
-        throw error;
-      },
-    );
-    const requestedMaximum = Number.isInteger(message.maxOutputBytes) &&
-        message.maxOutputBytes > 0
-      ? message.maxOutputBytes
-      : 0;
-    const maximum = Math.min(
-      requestedMaximum,
-      active.session.profile.maxOutputBytes,
-    );
-    const maximumEventBytes = 256 * 1024;
-    const markOutputTruncated = (): void => {
-      if (outputTruncated) return;
-      if (!this.operationLifecycle.isOutputTruncated(message.operationId)) {
-        this.operationLifecycle.markOutputTruncated(message.operationId);
-      }
-      outputTruncated = true;
-    };
-    const emit = (stream: "stdout" | "stderr" | "result", data: Buffer): void => {
-      if (this.operationLifecycle.isOutputTruncated(message.operationId)) {
-        outputTruncated = true;
-      }
-      if (outputTruncated) return;
-      const remaining = maximum - outputBytes;
-      if (remaining <= 0) {
-        markOutputTruncated();
-        return;
-      }
-      const accepted = data.subarray(0, remaining);
-      for (let offset = 0; offset < accepted.length; offset += maximumEventBytes) {
-        const chunk = accepted.subarray(offset, offset + maximumEventBytes);
-        const delivered = this.operationLifecycle.deliver({
-          type: "operation.event",
-          operationId: message.operationId,
-          sequence,
-          stream,
-          dataBase64: chunk.toString("base64"),
-        });
-        if (!delivered) {
-          markOutputTruncated();
-          return;
-        }
-        sequence += 1;
-        outputBytes += chunk.length;
-      }
-      if (accepted.length < data.length) markOutputTruncated();
-    };
-
-    try {
-      if (
-        active.closing ||
-        this.sessions.get(message.sessionId) !== active ||
-        active.session.expiresAt.getTime() <= Date.now()
-      ) {
-        throw new Error("Session closed before the Operation could start");
-      }
-      this.operationLifecycle.markRunning(message.operationId);
-      this.operationLifecycle.deliver({
-        type: "operation.started",
-        operationId: message.operationId,
-        at: new Date().toISOString(),
-      });
-      const timeoutMilliseconds = operationTimeoutMilliseconds(
-        message.timeoutSeconds,
-        active.session.profile.maxOperationTimeoutSeconds,
-        active.session.expiresAt,
-      );
-      if (timeoutMilliseconds <= 0) {
-        timedOut = true;
-        control.failStart();
-        await control.cancel();
-        throw new Error("Operation deadline elapsed before process start");
-      }
-      timer = setTimeout(() => {
-        timedOut = true;
-        void control.cancel().catch(() => {});
-      }, timeoutMilliseconds);
-      const executionPreparation = active.executor.execute(
-        message.operationId,
-        active.session,
-        message.action,
-        {
-          stdout: (data) => emit("stdout", data),
-          stderr: (data) => emit("stderr", data),
-          result: (data) => emit("result", data),
-        },
-        { signal: executionSignal },
-      );
-      void executionPreparation.then(
-        (lateRunning) => {
-          if (!executionSignal.aborted) return;
-          void lateRunning.cancel().catch((error: unknown) => {
-            this.beginTerminalFailure(
-              "Late Operation preparation could not be terminated",
-              error,
-            );
-          });
-        },
-        () => {},
-      );
-      const prepared = await Promise.race([executionPreparation, deadlineReached]);
-      if (prepared === deadlineMarker) {
-        control.failStart();
-        await control.cancel();
-        throw new Error(
-          timedOut
-            ? "Operation deadline elapsed before process start"
-            : "Operation was cancelled before process start",
-        );
-      }
-      const running = prepared;
-      control.attach(running);
-      if (control.cancelRequested) await control.cancel();
-      const { exitCode } = await Promise.race([running.done, cancellationFailure]);
-      outputTruncated ||= this.operationLifecycle.isOutputTruncated(
-        message.operationId,
-      );
-      const result: JournalResult = {
-        status: timedOut
-          ? "timed_out"
-          : control.cancelRequested
-            ? "cancelled"
-            : exitCode === 0
-              ? "succeeded"
-              : "failed",
-        exitCode,
-        ...(outputTruncated ? { error: "Output limit reached" } : {}),
-        outputTruncated,
-      };
-      this.operationLifecycle.complete(message.operationId, result);
-    } catch (error) {
-      control.failStart();
-      const terminationUnconfirmed = terminalFailure !== undefined;
-      outputTruncated ||= this.operationLifecycle.isOutputTruncated(
-        message.operationId,
-      );
-      const result: JournalResult = {
-        status: terminationUnconfirmed
-          ? "execution_unknown"
-          : timedOut
-            ? "timed_out"
-            : control.cancelRequested
-              ? "cancelled"
-              : "failed",
-        exitCode: null,
-        error: terminationUnconfirmed
-          ? `Unable to confirm process-tree termination: ${error instanceof Error ? error.message : String(error)}`
-          : error instanceof Error
-            ? error.message
-            : String(error),
-        outputTruncated,
-      };
-      this.operationLifecycle.complete(message.operationId, result);
-    } finally {
-      if (timer) clearTimeout(timer);
-      if (this.operations.get(message.operationId) === control) {
-        this.operations.delete(message.operationId);
-      }
-      control.markFinished();
-      if (terminalFailure !== undefined) {
-        this.beginTerminalFailure(
-          "Operation process-tree termination could not be proved",
-          terminalFailure,
-        );
-      }
-    }
   }
 
   private async cancelOperation(operationId: string): Promise<void> {
-    const operation = this.operations.get(operationId);
-    if (operation) {
-      await operation.cancel();
-      return;
-    }
-    this.operationLifecycle.cancelUntracked(operationId);
+    await this.operationLifecycle.cancel(operationId);
   }
 }
 

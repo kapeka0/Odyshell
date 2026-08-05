@@ -603,23 +603,11 @@ describe("client platform support", () => {
       "utf8",
     );
 
-    expect(client).toContain("Promise.race([running.done, cancellationFailure])");
     expect(client).toContain("this.beginTerminalFailure(");
     expect(client).toContain("process.exit(1)");
     expect(client).not.toContain("client.stop().finally(() => process.exit(0))");
     expect(client.match(/void this\.closeSession\(/gu)).toHaveLength(1);
     expect(client.match(/this\.closeSessionSafely\(/gu)).toHaveLength(3);
-    const operation = client.slice(
-      client.indexOf("private async startOperation("),
-      client.indexOf("private async cancelOperation("),
-    );
-    expect(operation.indexOf("operationTimeoutMilliseconds(")).toBeLessThan(
-      operation.indexOf("active.executor.execute("),
-    );
-    expect(operation).toContain("control.executionSignal()");
-    expect(operation).toContain("Promise.race([executionPreparation, deadlineReached])");
-    expect(operation).toContain('status: terminationUnconfirmed');
-    expect(operation).toContain('? "execution_unknown"');
     const closeSession = client.slice(
       client.indexOf("private async closeSession("),
       client.indexOf("private async startOperation("),
