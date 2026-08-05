@@ -20,8 +20,8 @@ const monoFont = Geist_Mono({
 export const metadata: Metadata = {
   metadataBase: new URL("https://odyshell.com"),
   title: {
-    default: "Odyshell — Agent access to private machines",
-    template: "%s — Odyshell",
+    default: "Odyshell | Agent access to private machines",
+    template: "%s | Odyshell",
   },
   description:
     "Give AI agents scoped, temporary and auditable access to private machines without SSH, inbound ports or a VPN.",

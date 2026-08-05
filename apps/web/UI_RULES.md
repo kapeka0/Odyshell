@@ -160,6 +160,8 @@ particular component, library or interaction pattern.
   Settings action, with comfortable inner padding between actions. Theme
   changes do not need success toasts.
 - Browser icons follow the active system color scheme.
+- Browser tab titles use a vertical bar to separate the page name from the
+  product name or tagline.
 - Canvas background dots remain quiet but visibly distinct from light-mode
   borders. Dark mode keeps its existing lower-contrast treatment.
 - The selected sidebar link is one restrained tonal step stronger than hover,
