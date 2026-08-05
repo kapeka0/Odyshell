@@ -20,7 +20,8 @@ that Session directly instead of asking for duplicate approval. The Server repea
 if the model skips it.
 
 Every request has a short title used in tables, notifications and the canvas. A longer purpose is
-optional.
+optional. MCP callers may omit the title; Odyshell uses the purpose or derives a short title from
+the requested authority before creating the request.
 
 Workspace members can also select **New** on the Sessions page. Choose an Agent with an active
 credential, an online machine, a duration, and explicit capabilities:

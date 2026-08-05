@@ -17,7 +17,7 @@ const timeoutSchema = z
   .max(MAX_OPERATION_TIMEOUT_SECONDS)
   .default(DEFAULT_OPERATION_TIMEOUT_SECONDS);
 const sessionRequestCommonShape = {
-  title: z.string().trim().min(1).max(96),
+  title: z.string().trim().min(1).max(96).optional(),
   purpose: z.string().trim().min(1).max(280).optional(),
   durationSeconds: z.number().int().min(60).max(86_400).optional(),
   runId: z.string().trim().min(1).max(128).optional(),
@@ -119,7 +119,7 @@ export function createApprovedMcpServer(
   reportUnexpectedError: (error: unknown) => void = () => undefined,
 ): McpServer {
   const server = new McpServer(
-    { name: "odyshell", version: "0.15.0" },
+    { name: "odyshell", version: "0.15.1" },
     {
       instructions:
         "Inspect machines before choosing platform-specific operations. Before requesting authority, call sessions_list. Reuse a ready Session only when it is bound to the current local MCP process or remote MCP installation; session_request performs that transport-appropriate compatibility check before requesting new approval. Machine and Session results include platform, architecture, runner, capabilities, default shell and privilegeEscalation. Prefer exact typed filesystem, Docker and process.exec operation requests. For dependent multi-command host work whose later commands depend on prior output, request the hostShell mode without anticipating a command; it grants broad host.shell authority for a short Session, is never autoapproved and every executed command is audited. Use predecessorSessionId only with hostShell when escalating an existing Session. When privilegeEscalation is sudo, explicitly mention root access in the Session title or purpose before requesting a sudo command. Show approval links verbatim, then call session_status. Generate a fresh UUIDv4 idempotencyKey for each logical operation and reuse it only when retrying that exact operation_execute call. Always pass the explicit sessionId and actual typed action. Credentials stay inside Odyshell.",
@@ -155,13 +155,13 @@ export function createApprovedMcpServer(
     {
       title: "Request operation access",
       description:
-        "Call sessions_list first. Reuse compatible ready authority only when it is bound to this local MCP process or remote MCP installation; session_request checks that boundary before requesting approval. Choose exactly one request mode: operations retains one or more exact typed actions, while hostShell requests broad temporary Host Shell authority without anticipating commands. Host Shell requires manual approval. Use predecessorSessionId only with hostShell to link an escalation to the current Session. Inspect machine platform, defaultShell and privilegeEscalation before composing OS-specific commands. If sudo is available, explicitly disclose intended root access in the title or purpose. If approval is required, show the returned link and follow nextAction.",
+        "Call sessions_list first. Reuse compatible ready authority only when it is bound to this local MCP process or remote MCP installation; session_request checks that boundary before requesting approval. Choose exactly one request mode: operations retains one or more exact typed actions, while hostShell requests broad temporary Host Shell authority without anticipating commands. Host Shell requires manual approval. Use predecessorSessionId only with hostShell to link an escalation to the current Session. A short title is optional; when omitted, Odyshell derives it from purpose or the requested authority. Inspect machine platform, defaultShell and privilegeEscalation before composing OS-specific commands. If sudo is available, explicitly disclose intended root access in the title or purpose. If approval is required, show the returned link and follow nextAction.",
       inputSchema: approvedMcpSessionRequestSchema,
       annotations: requestAnnotations,
     },
     async (input) => {
       const common = {
-        title: input.title,
+        title: deriveSessionRequestTitle(input),
         ...(input.purpose ? { purpose: input.purpose } : {}),
         durationSeconds: input.durationSeconds ?? 3_600,
         ...(input.runId ? { runId: input.runId } : {}),
@@ -277,6 +277,18 @@ export function createApprovedMcpServer(
   );
 
   return server;
+}
+
+function deriveSessionRequestTitle(
+  input: z.infer<typeof approvedMcpSessionRequestSchema>,
+): string {
+  if (input.title) return input.title;
+  if (input.purpose) return input.purpose.slice(0, 96);
+  if ("hostShell" in input) {
+    return `Run Host Shell on ${input.hostShell.machine}`.slice(0, 96);
+  }
+  const { machine, action } = input.operations[0]!;
+  return `Run ${action.kind} on ${machine}`.slice(0, 96);
 }
 
 const readOnlyAnnotations = {

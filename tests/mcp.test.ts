@@ -122,8 +122,8 @@ describe("Odyshell MCP server", () => {
     expect(schema?.oneOf).toHaveLength(2);
     expect(schema?.oneOf?.map((branch) => branch.required)).toEqual(
       expect.arrayContaining([
-        expect.arrayContaining(["operations", "title"]),
-        expect.arrayContaining(["hostShell", "title"]),
+        ["operations"],
+        ["hostShell"],
       ]),
     );
     expect(JSON.stringify(schema)).not.toContain('"const":"host.shell"');
@@ -194,6 +194,54 @@ describe("Odyshell MCP server", () => {
       durationSeconds: 3_600,
     });
 
+    const derivedTitle = await client.callTool({
+      name: "session_request",
+      arguments: {
+        hostShell: { machine: "raspberrypi-5" },
+        purpose: "Read current IP address",
+      },
+    });
+
+    expect(derivedTitle.isError, textOf(derivedTitle)).not.toBe(true);
+    expect(request).toHaveBeenNthCalledWith(2, {
+      hostShell: { machine: "raspberrypi-5" },
+      title: "Read current IP address",
+      purpose: "Read current IP address",
+      durationSeconds: 3_600,
+    });
+
+    const derivedOperationsTitle = await client.callTool({
+      name: "session_request",
+      arguments: {
+        operations: [{
+          machine: "raspberrypi-5",
+          action: {
+            kind: "process.exec",
+            program: "hostname",
+            args: ["-I"],
+          },
+        }],
+      },
+    });
+
+    expect(
+      derivedOperationsTitle.isError,
+      textOf(derivedOperationsTitle),
+    ).not.toBe(true);
+    expect(request).toHaveBeenNthCalledWith(3, {
+      operations: [{
+        machine: "raspberrypi-5",
+        action: {
+          kind: "process.exec",
+          program: "hostname",
+          args: ["-I"],
+          cwd: ".",
+        },
+      }],
+      title: "Run process.exec on raspberrypi-5",
+      durationSeconds: 3_600,
+    });
+
     for (const arguments_ of [
       { title: "Missing request mode" },
       {
@@ -226,7 +274,7 @@ describe("Odyshell MCP server", () => {
       });
       expect(invalid.isError).toBe(true);
     }
-    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(3);
   });
 
   it("recovers a Session request when the original tool response is lost", async () => {

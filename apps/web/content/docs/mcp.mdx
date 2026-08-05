@@ -84,11 +84,13 @@ The approval-based workflow exposes eight tools:
    so existing ready authority can be reused after an interrupted response, a new chat, or another
    step in the same Agent task. History is optional. A local process restart does not preserve a
    claimed Session Credential; remote installation grants do survive Server restarts.
-4. `session_request` accepts a title, optional purpose, and either exact typed Operations or
-   explicit broad Host Shell authority. A Host Shell request identifies its machine, objective,
-   duration, and capability without approving an advance command list. Local MCP reuses compatible
-   authority claimed in the current process; remote MCP reuses a compatible ready Session bound to
-   the persistent installation. Otherwise the tool returns an approval URL for new authority.
+4. `session_request` accepts an optional short title, optional purpose, and either exact typed
+   Operations or explicit broad Host Shell authority. When the title is omitted, Odyshell uses the
+   purpose or derives a short title from the requested authority. A Host Shell request identifies
+   its machine, objective, duration, and capability without approving an advance command list.
+   Local MCP reuses compatible authority claimed in the current process; remote MCP reuses a
+   compatible ready Session bound to the persistent installation. Otherwise the tool returns an
+   approval URL for new authority.
 5. `session_status` checks the decision and privately binds the approved Session.
 6. `operation_execute` executes only an approved operation and requires an explicit UUIDv4
    `idempotencyKey`. Generate a fresh UUID for each logical Operation, and reuse that exact UUID only

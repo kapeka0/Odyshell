@@ -48,6 +48,8 @@ profiles reject absolute host paths. Prefer `process.exec` for an exact executab
 array. `session_request` accepts exactly one authority mode: `operations` retains the exact typed
 actions being requested, while `hostShell: { machine }` requests temporary broad Host Shell
 authority without guessing future commands. A linked escalation can carry `predecessorSessionId`.
+The MCP caller may omit `title`; Odyshell then uses `purpose` as the short approval title or derives
+one from the requested authority. The stored Session Request still always has a non-empty title.
 Actual `host.shell` commands are supplied only to `operation_execute`; Host Shell is never
 autoapproved. Persistable command action fields and output remain temporary delivery data, while
 environment values and standard input are transport-only and never persisted. Privacy-minimal
