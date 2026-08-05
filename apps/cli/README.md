@@ -147,7 +147,9 @@ persistent Server-side grant instead.
 A request uses either exact typed Operations—exact paths for filesystem work, exact executables and
 arguments for `process.exec`, or exact containers for `docker.logs`—or explicit broad Host Shell
 authority without an advance command list. The MCP process cannot enroll or revoke machines,
-create broader authority, expose credentials, or use administrator controls.
+create broader authority, expose credentials, or use administrator controls. The MCP caller may
+omit the short approval title; Odyshell uses the purpose or derives a title from the requested
+authority before creating the Session Request.
 
 `ods shell --purpose <purpose> [--title <title>] <machine> <command>` requests `host.shell`, waits
 for human approval, runs one command, and closes the Session. `--purpose` is required and describes
