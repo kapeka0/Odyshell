@@ -172,4 +172,37 @@ describe("Operation admission", () => {
     );
     expect(notifyWorkspace).toHaveBeenCalledWith("workspace-a");
   });
+
+  it("keeps development authority policy and delivery behind the same boundary", async () => {
+    const audit = vi.fn(async () => {});
+    const sessionForOperation = vi.fn();
+    const admission = createOperationAdmission({
+      database: { audit, sessionForOperation } as never,
+      gateway: {} as never,
+    });
+
+    await expect(admission.admitDevelopment({
+      workspaceId: "workspace-a",
+      principalId: "agent-a",
+      sessionId: "development-session-a",
+      action: { kind: "host.shell", command: "whoami", cwd: ".", env: {} },
+      timeoutSeconds: 30,
+      maxOutputBytes: 1024,
+      idempotencyKey: "operation-development-a",
+      now,
+    })).resolves.toEqual({
+      kind: "denied",
+      code: "manual_approval_required",
+      requiredCapability: "host.shell",
+    });
+    expect(sessionForOperation).not.toHaveBeenCalled();
+    expect(audit).toHaveBeenCalledWith(
+      "workspace-a",
+      "agent-a",
+      "operation.denied",
+      "session",
+      "development-session-a",
+      { reason: "manual_approval_required", kind: "host.shell" },
+    );
+  });
 });

@@ -88,12 +88,9 @@ describe("authority cutover", () => {
       server.indexOf('"/v1/sessions/:sessionId/operations"'),
       server.indexOf('"/v1/operations/:operationId"'),
     );
-    expect(operationRoute).toContain("developmentSessionDecision(");
-    expect(operationRoute.indexOf("developmentSessionDecision(")).toBeLessThan(
-      operationRoute.indexOf("db.sessionForOperation("),
-    );
-    expect(operationRoute.indexOf("developmentSessionDecision(")).toBeLessThan(
-      operationRoute.lastIndexOf("deliverOperation("),
-    );
+    expect(operationRoute).toContain("operationAdmission.admitDevelopment(");
+    expect(operationRoute).not.toContain("developmentSessionDecision(");
+    expect(operationRoute).not.toContain("db.sessionForOperation(");
+    expect(operationRoute).not.toContain("deliverOperation(");
   });
 });

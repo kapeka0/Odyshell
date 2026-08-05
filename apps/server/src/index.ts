@@ -68,7 +68,6 @@ import { SERVER_HTTP_BODY_LIMIT_BYTES } from "./http-limits.js";
 import { machinePrivilegeEscalation } from "./machine-policy.js";
 import { createOperationAdmission } from "./operation-admission.js";
 import { dataRetentionPolicy } from "./privacy.js";
-import { deliverOperation } from "./operation-delivery.js";
 import { registerRemoteMcp } from "./remote-mcp.js";
 import { createRemoteMcpRuntime } from "./remote-mcp-runtime.js";
 import { createSessionTermination } from "./session-termination.js";
@@ -550,10 +549,6 @@ function adminPrincipalFor(request: FastifyRequest): string {
 
 function canAccessMachine(principal: AgentPrincipal, machineId: string): boolean {
   return principal.machineIds === null || principal.machineIds.has(machineId);
-}
-
-function operationAuditMetadata(action: OperationAction): Record<string, unknown> {
-  return { kind: action.kind };
 }
 
 function isUniqueConflict(error: unknown): boolean {
@@ -4005,92 +4000,52 @@ app.post<{ Params: { sessionId: string } }>(
     if (principal.kind !== "development") {
       return reply.code(403).send({ error: "session_credential_required" });
     }
-    const developmentDecision = developmentSessionDecision([
-      capabilityForAction(parsed.data.action),
-    ]);
-    if (!developmentDecision.allowed) {
-      await audit(
-        db,
-        principal.workspaceId,
-        principal.id,
-        "operation.denied",
-        "session",
-        request.params.sessionId,
-        {
-          reason: developmentDecision.code,
-          kind: parsed.data.action.kind,
-        },
-      );
+    const developmentAdmission = await operationAdmission.admitDevelopment({
+      workspaceId: principal.workspaceId,
+      principalId: principal.id,
+      sessionId: request.params.sessionId,
+      action: parsed.data.action,
+      timeoutSeconds: parsed.data.timeoutSeconds,
+      maxOutputBytes: parsed.data.maxOutputBytes,
+      idempotencyKey,
+    });
+    if (developmentAdmission.kind === "denied") {
+      if (developmentAdmission.code === "session_expired") {
+        return reply.code(410).send({ error: developmentAdmission.code });
+      }
       return reply.code(403).send({
-        error: developmentDecision.code,
-        capability: developmentDecision.capability,
+        error: developmentAdmission.code,
+        capability: developmentAdmission.requiredCapability,
       });
     }
-    const session = await db.sessionForOperation(
-      principal.workspaceId,
-      request.params.sessionId,
-      principal.id,
-    );
-    if (!session) return reply.code(404).send({ error: "session_not_found" });
-    if (session.status !== "ready") {
-      return reply.code(409).send({ error: "session_not_ready", status: session.status });
+    if (developmentAdmission.kind === "session_not_found") {
+      return reply.code(404).send({ error: "session_not_found" });
     }
-    if (session.expiresAt <= Date.now()) {
-      return reply.code(410).send({ error: "session_expired" });
-    }
-    const neededCapability = capabilityForAction(parsed.data.action);
-    if (!session.capabilities.includes(neededCapability)) {
-      await audit(db, principal.workspaceId, principal.id, "operation.denied", "session", request.params.sessionId, {
-        reason: "session_capability",
-        capability: neededCapability,
-        kind: parsed.data.action.kind,
-        machineId: session.machineId,
+    if (developmentAdmission.kind === "session_not_ready") {
+      return reply.code(409).send({
+        error: "session_not_ready",
+        status: developmentAdmission.status,
       });
-      return reply.code(403).send({ error: "capability_denied", capability: neededCapability });
     }
-    const delivery = await deliverOperation(
-      { database: db, gateway },
-      {
-        workspaceId: principal.workspaceId,
-        machineId: session.machineId,
-        sessionId: request.params.sessionId,
-        idempotencyScopeId: request.params.sessionId,
-        principalId: principal.id,
-        action: parsed.data.action,
-        timeoutSeconds: parsed.data.timeoutSeconds,
-        requestedTimeoutSeconds: parsed.data.timeoutSeconds,
-        maxOutputBytes: parsed.data.maxOutputBytes,
-        idempotencyKey,
-      },
-    );
-    if (delivery.kind === "replay") {
-      return reply.code(200).send({ id: delivery.id, status: delivery.status });
+    if (developmentAdmission.kind === "replay") {
+      return reply.code(200).send({
+        id: developmentAdmission.id,
+        status: developmentAdmission.status,
+      });
     }
-    if (delivery.kind === "idempotency_conflict") {
+    if (developmentAdmission.kind === "idempotency_conflict") {
       return reply.code(409).send({ error: "idempotency_conflict" });
     }
-    if (delivery.kind === "session_not_active") {
+    if (developmentAdmission.kind === "session_not_active") {
       return reply.code(409).send({ error: "session_not_active" });
     }
-    if (delivery.kind === "machine_offline") {
+    if (developmentAdmission.kind === "machine_offline") {
       return reply.code(409).send({ error: "machine_offline" });
     }
-    await audit(
-      db,
-      principal.workspaceId,
-      principal.id,
-      "operation.created",
-      "operation",
-      delivery.id,
-      {
-        sessionId: request.params.sessionId,
-        kind: parsed.data.action.kind,
-        machineId: session.machineId,
-        operation: operationAuditMetadata(parsed.data.action),
-      },
-    );
-    gateway.notifyWorkspace(principal.workspaceId);
-    return reply.code(202).send({ id: delivery.id, status: delivery.status });
+    return reply.code(202).send({
+      id: developmentAdmission.id,
+      status: developmentAdmission.status,
+    });
   },
 );
 
