@@ -561,6 +561,31 @@ describe("remote MCP security boundary", () => {
     expect(response.json()).toEqual({ error: "mcp_installation_revoked" });
   });
 
+  it("reports the active-Agent entitlement when a new MCP installation is full", async () => {
+    const app = remoteMcpApp({
+      database: {
+        ensureMcpInstallation: vi.fn(async () => ({
+          status: "agent_limit_reached" as const,
+          plan: "free" as const,
+          activeAgentLimit: 3,
+        })),
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/mcp/workspace-id",
+      headers: { authorization: "Bearer safe-oauth-token" },
+      payload: initializeRequest(),
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      error: "agent_limit_reached",
+      details: { activeAgentLimit: 3, plan: "free" },
+    });
+  });
+
   it("does not claim an approved request twice", async () => {
     const claimAgentSessionRequest = vi.fn();
     const runtime = remoteRuntime({

@@ -15,7 +15,7 @@ type PackageManifest = {
   exports?: unknown;
 };
 
-const releaseVersion = "0.15.1";
+const releaseVersion = "0.16.0";
 const manifests = [
   "apps/cli/package.json",
   "apps/client/package.json",
@@ -26,7 +26,7 @@ const manifests = [
   "packages/sdk/package.json",
 ].map(readManifest);
 
-describe("0.15.1 release contract", () => {
+describe("0.16.0 release contract", () => {
   it("exposes the built Server as the root production entrypoint", () => {
     const rootPackage = JSON.parse(
       readFileSync(resolve(process.cwd(), "package.json"), "utf8"),
@@ -112,7 +112,7 @@ describe("0.15.1 release contract", () => {
       "README.md",
       "apps/cli/README.md",
       "packages/sdk/README.md",
-      "docs/releases/0.15.1.md",
+      "docs/releases/0.16.0.md",
     ]) {
       const documentation = readFileSync(resolve(process.cwd(), path), "utf8");
       for (const manager of ["pnpm", "npm", "Yarn", "Bun"]) {
@@ -216,6 +216,25 @@ describe("0.15.1 release contract", () => {
       );
     expect(() => verifyIntegrity("sha512-expected")).not.toThrow();
     expect(() => verifyIntegrity("sha512-hostile")).toThrow();
+  });
+
+  it("gates CI and releases on high-severity production dependency audits", () => {
+    const root = process.cwd();
+    const ci = readFileSync(
+      resolve(root, ".github/workflows/ci.yml"),
+      "utf8",
+    );
+    const release = readFileSync(
+      resolve(root, ".github/workflows/release.yml"),
+      "utf8",
+    );
+    const productionAudit = "pnpm audit --prod --audit-level high";
+
+    expect(ci).toContain(productionAudit);
+    expect(release).toContain(productionAudit);
+    expect(release.indexOf(productionAudit)).toBeLessThan(
+      release.indexOf("pnpm test:e2e"),
+    );
   });
 
   it("audits release coherence with read-only GitHub permissions", () => {

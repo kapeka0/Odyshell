@@ -2,20 +2,33 @@ import { randomUUID } from "node:crypto";
 import {
   lstat,
   mkdir,
-  readFile,
-  readdir,
+  open,
+  opendir,
   realpath,
   rename,
+  rmdir,
   rm,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
+  MAX_FILESYSTEM_WRITE_BYTES,
   normalizeOperationPath,
   type OperationAction,
   type SessionPathRestriction,
 } from "@odyshell/protocol";
-import type { OperationHooks } from "./executor.js";
+import type { OperationHooks, RunningOperation } from "./executor.js";
+
+const MAX_FILESYSTEM_READ_BYTES = 1024 * 1024;
+const MAX_FILESYSTEM_LIST_ENTRIES = 1_000;
+const MAX_FILESYSTEM_SEARCH_NODES = 2_048;
+const MAX_FILESYSTEM_SEARCH_DEPTH = 32;
+const MAX_FILESYSTEM_WRITE_BASE64_LENGTH =
+  4 * Math.ceil(MAX_FILESYSTEM_WRITE_BYTES / 3);
+const STANDARD_BASE64_PATTERN =
+  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+type OpenDirectory = Awaited<ReturnType<typeof opendir>>;
 
 export type FilesystemAction = Extract<
   OperationAction,
@@ -103,7 +116,19 @@ export async function resolveFilesystemPath(
   allowMissing = false,
 ): Promise<string> {
   if (!isAbsolute(requestedPath)) {
-    return resolveHomePath(homeDirectory, requestedPath, allowMissing);
+    const path = await resolveHomePath(
+      homeDirectory,
+      requestedPath,
+      allowMissing,
+    );
+    if (restrictions !== undefined) {
+      await assertRelativeFilesystemRestriction(
+        homeDirectory,
+        requestedPath,
+        restrictions,
+      );
+    }
+    return path;
   }
   const candidate = resolve(requestedPath);
   if (restrictions === undefined) {
@@ -203,12 +228,134 @@ export async function resolveFilesystemPath(
   return candidate;
 }
 
-export async function executeFilesystemOperation(
+async function assertRelativeFilesystemRestriction(
+  homeDirectory: string,
+  requestedPath: string,
+  restrictions: SessionPathRestriction[],
+): Promise<void> {
+  const normalized = normalizeOperationPath(requestedPath);
+  const matching = restrictions.filter((restriction) => {
+    if (isAbsolute(restriction.path)) return false;
+    const root = normalizeOperationPath(restriction.path);
+    return (
+      normalized === root ||
+      (restriction.includeDescendants &&
+        (root === "." || normalized.startsWith(`${root}/`)))
+    );
+  });
+  if (matching.length === 0) {
+    throw new Error("Relative path is not granted by the local Session scope");
+  }
+
+  const home = await realpath(homeDirectory);
+  const candidate = resolve(home, requestedPath);
+  let denied: unknown;
+  for (const restriction of matching) {
+    try {
+      await assertRelativePathWithinRestriction(home, candidate, restriction);
+      return;
+    } catch (error) {
+      denied = error;
+    }
+  }
+  throw denied;
+}
+
+async function assertRelativePathWithinRestriction(
+  home: string,
+  candidate: string,
+  restriction: SessionPathRestriction,
+): Promise<void> {
+  const boundary = resolve(home, restriction.path);
+  const resolvedBoundary = await nearestExistingPath(boundary);
+  if (resolvedBoundary.path !== boundary) {
+    if (relative(resolvedBoundary.path, resolvedBoundary.actual) !== "") {
+      throw new Error("Relative path scope resolves through a symbolic link");
+    }
+    const resolvedCandidate = await nearestExistingPath(candidate);
+    if (relative(resolvedCandidate.path, resolvedCandidate.actual) !== "") {
+      throw new Error("Relative path escapes through a symbolic link");
+    }
+    return;
+  }
+  if (relative(boundary, resolvedBoundary.actual) !== "") {
+    throw new Error("Relative path scope resolves through a symbolic link");
+  }
+
+  const resolvedCandidate = await nearestExistingPath(candidate);
+  const actualRelative = relative(
+    resolvedBoundary.actual,
+    resolvedCandidate.actual,
+  );
+  if (
+    actualRelative !== "" &&
+    (!restriction.includeDescendants ||
+      actualRelative.startsWith("..") ||
+      isAbsolute(actualRelative))
+  ) {
+    throw new Error("Resolved path escapes the approved relative scope");
+  }
+}
+
+async function nearestExistingPath(
+  candidate: string,
+): Promise<{ path: string; actual: string }> {
+  let path = candidate;
+  while (true) {
+    try {
+      return { path, actual: await realpath(path) };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const parent = dirname(path);
+      if (parent === path) throw error;
+      path = parent;
+    }
+  }
+}
+
+export function startFilesystemOperation(
   homeDirectory: string,
   action: FilesystemAction,
   hooks: OperationHooks,
   restrictions?: SessionPathRestriction[],
+  signal?: AbortSignal,
+): RunningOperation {
+  const cancellation = new AbortController();
+  const cancelFromSignal = (): void => cancellation.abort();
+  if (signal) {
+    signal.addEventListener("abort", cancelFromSignal, { once: true });
+    if (signal.aborted) cancellation.abort();
+  }
+  const done = executeFilesystemOperation(
+    homeDirectory,
+    action,
+    hooks,
+    restrictions,
+    cancellation.signal,
+  ).then(
+    () => ({ exitCode: 0 }),
+    (error: unknown) => {
+      if (cancellation.signal.aborted) return { exitCode: null };
+      throw error;
+    },
+  ).finally(() => signal?.removeEventListener("abort", cancelFromSignal));
+  return {
+    cancel: async () => {
+      cancellation.abort();
+      await done;
+    },
+    done,
+  };
+}
+
+async function executeFilesystemOperation(
+  homeDirectory: string,
+  action: FilesystemAction,
+  hooks: OperationHooks,
+  restrictions: SessionPathRestriction[] | undefined,
+  signal: AbortSignal,
 ): Promise<void> {
+  assertFilesystemOperationActive(signal);
   switch (action.kind) {
     case "fs.read": {
       const path = await resolveFilesystemPath(
@@ -216,7 +363,39 @@ export async function executeFilesystemOperation(
         action.path,
         restrictions,
       );
-      hooks.result(await readFile(path));
+      assertFilesystemOperationActive(signal);
+      const file = await open(path, "r");
+      try {
+        const info = await file.stat();
+        assertFilesystemOperationActive(signal);
+        if (!info.isFile()) {
+          throw new Error("Filesystem read requires a regular file");
+        }
+        if (info.size > MAX_FILESYSTEM_READ_BYTES) {
+          throw new Error("Filesystem read exceeds the 1 MiB limit");
+        }
+        const data = Buffer.allocUnsafe(MAX_FILESYSTEM_READ_BYTES + 1);
+        let offset = 0;
+        while (offset < data.length) {
+          assertFilesystemOperationActive(signal);
+          const { bytesRead } = await file.read(
+            data,
+            offset,
+            data.length - offset,
+            offset,
+          );
+          assertFilesystemOperationActive(signal);
+          if (bytesRead === 0) break;
+          offset += bytesRead;
+        }
+        if (offset > MAX_FILESYSTEM_READ_BYTES) {
+          throw new Error("Filesystem read exceeds the 1 MiB limit");
+        }
+        assertFilesystemOperationActive(signal);
+        hooks.result(data.subarray(0, offset));
+      } finally {
+        await file.close();
+      }
       break;
     }
     case "fs.list": {
@@ -225,11 +404,25 @@ export async function executeFilesystemOperation(
         action.path,
         restrictions,
       );
-      const entries = await readdir(path, { withFileTypes: true });
-      const result = await Promise.all(
-        entries.map(async (entry) => {
+      assertFilesystemOperationActive(signal);
+      const directory = await opendir(path);
+      const result: Array<{
+        name: string;
+        type: "directory" | "file" | "symlink";
+        size: number;
+      }> = [];
+      try {
+        while (true) {
+          assertFilesystemOperationActive(signal);
+          const entry = await directory.read();
+          assertFilesystemOperationActive(signal);
+          if (!entry) break;
+          if (result.length >= MAX_FILESYSTEM_LIST_ENTRIES) {
+            throw new Error("Filesystem list exceeds the 1,000-entry limit");
+          }
           const info = await lstat(join(path, entry.name));
-          return {
+          assertFilesystemOperationActive(signal);
+          result.push({
             name: entry.name,
             type: entry.isDirectory()
               ? "directory"
@@ -237,9 +430,12 @@ export async function executeFilesystemOperation(
                 ? "symlink"
                 : "file",
             size: info.size,
-          };
-        }),
-      );
+          });
+        }
+      } finally {
+        await closeDirectory(directory);
+      }
+      assertFilesystemOperationActive(signal);
       hooks.result(Buffer.from(JSON.stringify(result)));
       break;
     }
@@ -255,7 +451,17 @@ export async function executeFilesystemOperation(
       const query = action.query.toLocaleLowerCase();
       const results: Array<{ path: string; type: "directory" | "file" | "symlink"; size: number }> =
         [];
-      await searchDirectory(resultRoot, root, query, action.maxResults, results);
+      await searchDirectory(
+        resultRoot,
+        root,
+        query,
+        action.maxResults,
+        results,
+        { visitedNodes: 0 },
+        0,
+        signal,
+      );
+      assertFilesystemOperationActive(signal);
       hooks.result(Buffer.from(JSON.stringify(results)));
       break;
     }
@@ -266,12 +472,15 @@ export async function executeFilesystemOperation(
         restrictions,
       );
       const info = await lstat(path);
+      assertFilesystemOperationActive(signal);
+      const resultPath = isAbsolute(action.path)
+        ? path.replaceAll("\\", "/")
+        : relative(await realpath(homeDirectory), path);
+      assertFilesystemOperationActive(signal);
       hooks.result(
         Buffer.from(
           JSON.stringify({
-            path: isAbsolute(action.path)
-              ? path.replaceAll("\\", "/")
-              : relative(await realpath(homeDirectory), path),
+            path: resultPath,
             type: info.isDirectory()
               ? "directory"
               : info.isSymbolicLink()
@@ -285,27 +494,32 @@ export async function executeFilesystemOperation(
       break;
     }
     case "fs.write": {
+      const data = decodeFilesystemWrite(action.contentBase64);
       const path = await resolveFilesystemPath(
         homeDirectory,
         action.path,
         restrictions,
         true,
       );
+      assertFilesystemOperationActive(signal);
       try {
         const existing = await lstat(path);
         if (existing.isSymbolicLink()) throw new Error("Writing through symlinks is denied");
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
+      assertFilesystemOperationActive(signal);
       if (action.createParents) await mkdir(dirname(path), { recursive: true });
+      assertFilesystemOperationActive(signal);
       const temporaryPath = `${path}.odyshell-${randomUUID()}.tmp`;
-      const data = Buffer.from(action.contentBase64, "base64");
       try {
-        await writeFile(temporaryPath, data, { flag: "wx" });
+        await writeFile(temporaryPath, data, { flag: "wx", signal });
+        assertFilesystemOperationActive(signal);
         await rename(temporaryPath, path);
       } finally {
         await rm(temporaryPath, { force: true }).catch(() => {});
       }
+      assertFilesystemOperationActive(signal);
       hooks.result(Buffer.from(JSON.stringify({ bytesWritten: data.length })));
       break;
     }
@@ -316,11 +530,16 @@ export async function executeFilesystemOperation(
         restrictions,
         true,
       );
+      assertFilesystemOperationActive(signal);
       await mkdir(path, { recursive: action.recursive });
+      assertFilesystemOperationActive(signal);
       hooks.result(Buffer.from(JSON.stringify({ created: action.path })));
       break;
     }
     case "fs.remove": {
+      if (action.recursive) {
+        throw new Error("Recursive filesystem removal is unavailable");
+      }
       if (
         action.path === "." ||
         action.path === "" ||
@@ -339,7 +558,12 @@ export async function executeFilesystemOperation(
         action.path,
         restrictions,
       );
-      await rm(path, { recursive: action.recursive, force: false });
+      assertFilesystemOperationActive(signal);
+      const info = await lstat(path);
+      assertFilesystemOperationActive(signal);
+      if (info.isDirectory()) await rmdir(path);
+      else await unlink(path);
+      assertFilesystemOperationActive(signal);
       hooks.result(Buffer.from(JSON.stringify({ removed: action.path })));
       break;
     }
@@ -352,41 +576,96 @@ async function searchDirectory(
   query: string,
   maximum: number,
   results: Array<{ path: string; type: "directory" | "file" | "symlink"; size: number }>,
+  budget: { visitedNodes: number },
+  depth: number,
+  signal: AbortSignal,
 ): Promise<void> {
+  assertFilesystemOperationActive(signal);
   if (results.length >= maximum) return;
-  let entries;
+  if (depth > MAX_FILESYSTEM_SEARCH_DEPTH) {
+    throw new Error("Filesystem search exceeds the 32-directory depth limit");
+  }
+  let handle: OpenDirectory;
   try {
-    entries = await readdir(directory, { withFileTypes: true });
+    handle = await opendir(directory);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "EACCES" || code === "EPERM") return;
     throw error;
   }
-  for (const entry of entries) {
-    if (results.length >= maximum) return;
-    const entryPath = join(directory, entry.name);
-    let info;
-    try {
-      info = await lstat(entryPath);
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === "ENOENT" || code === "EACCES" || code === "EPERM") continue;
-      throw error;
+  try {
+    while (results.length < maximum) {
+      assertFilesystemOperationActive(signal);
+      const entry = await handle.read();
+      assertFilesystemOperationActive(signal);
+      if (!entry) return;
+      if (budget.visitedNodes >= MAX_FILESYSTEM_SEARCH_NODES) {
+        throw new Error("Filesystem search exceeds the 2,048-node limit");
+      }
+      budget.visitedNodes += 1;
+      const entryPath = join(directory, entry.name);
+      let info;
+      try {
+        info = await lstat(entryPath);
+        assertFilesystemOperationActive(signal);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "ENOENT" || code === "EACCES" || code === "EPERM") continue;
+        throw error;
+      }
+      const type = entry.isDirectory()
+        ? "directory"
+        : entry.isSymbolicLink()
+          ? "symlink"
+          : "file";
+      if (entry.name.toLocaleLowerCase().includes(query)) {
+        results.push({
+          path: relative(searchRoot, entryPath).replaceAll("\\", "/"),
+          type,
+          size: info.size,
+        });
+      }
+      if (entry.isDirectory() && !entry.isSymbolicLink()) {
+        await searchDirectory(
+          searchRoot,
+          entryPath,
+          query,
+          maximum,
+          results,
+          budget,
+          depth + 1,
+          signal,
+        );
+      }
     }
-    const type = entry.isDirectory()
-      ? "directory"
-      : entry.isSymbolicLink()
-        ? "symlink"
-        : "file";
-    if (entry.name.toLocaleLowerCase().includes(query)) {
-      results.push({
-        path: relative(searchRoot, entryPath).replaceAll("\\", "/"),
-        type,
-        size: info.size,
-      });
-    }
-    if (entry.isDirectory() && !entry.isSymbolicLink()) {
-      await searchDirectory(searchRoot, entryPath, query, maximum, results);
-    }
+  } finally {
+    await closeDirectory(handle);
+  }
+}
+
+function assertFilesystemOperationActive(signal: AbortSignal): void {
+  if (signal.aborted) throw new Error("Filesystem Operation was cancelled");
+}
+
+function decodeFilesystemWrite(value: string): Buffer {
+  if (value.length > MAX_FILESYSTEM_WRITE_BASE64_LENGTH) {
+    throw new Error("Filesystem write exceeds the 1 MiB limit");
+  }
+  if (!STANDARD_BASE64_PATTERN.test(value)) {
+    throw new Error("Filesystem write content must be valid standard base64");
+  }
+  const paddingBytes = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  const decodedBytes = (value.length / 4) * 3 - paddingBytes;
+  if (decodedBytes > MAX_FILESYSTEM_WRITE_BYTES) {
+    throw new Error("Filesystem write exceeds the 1 MiB limit");
+  }
+  return Buffer.from(value, "base64");
+}
+
+async function closeDirectory(directory: OpenDirectory): Promise<void> {
+  try {
+    await directory.close();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ERR_DIR_CLOSED") throw error;
   }
 }

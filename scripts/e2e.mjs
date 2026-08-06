@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import process from "node:process";
 
 const root = process.cwd();
+const expectedProtocolVersion = 4;
 let apiUrl;
 const agentKey = process.env.ODYSHELL_AGENT_KEY ?? "dev-agent-key";
 const adminKey = process.env.ODYSHELL_ADMIN_KEY ?? "dev-admin-key";
@@ -143,7 +144,7 @@ async function supersedeMachineConnection(config) {
           JSON.stringify({
             type: "authenticate",
             machineId: config.machineId,
-            protocolVersion: 3,
+            protocolVersion: expectedProtocolVersion,
             signature,
           }),
         );
@@ -520,7 +521,7 @@ try {
     !["linux", "macos", "windows"].includes(machine.runtime?.hostPlatform) ||
     !machine.runtime?.architecture ||
     machine.runtime?.containerOs !== "linux" ||
-    machine.runtime?.protocolVersion !== 3 ||
+    machine.runtime?.protocolVersion !== expectedProtocolVersion ||
     !/^\d+\.\d+\.\d+$/u.test(machine.runtime?.clientVersion ?? "") ||
     !machine.runtime?.supportedCapabilities?.includes("fs.read") ||
     !machine.runtime?.supportedCapabilities?.includes("host.shell") ||
@@ -563,7 +564,7 @@ try {
     "-c",
     [
       "update odyshell.organizations",
-      "set external_id = 'e2e-clerk-organization'",
+      "set external_id = 'e2e-clerk-organization', plan = 'scale'",
       "where id = 'default';",
       "insert into odyshell.cli_tokens",
       "(workspace_id, id, user_id, token_hash, expires_at)",
@@ -2934,6 +2935,7 @@ try {
     throw new Error("Administrator machine list did not include the enrolled client");
   }
 
+  const hostShellRunId = crypto.randomUUID();
   const hostShellRequestResponse = await fetch(
     new URL("/v1/agent-session-requests", apiUrl),
     {
@@ -2947,6 +2949,7 @@ try {
         agentName: "E2E MCP Agent",
         title: "Verify native Host Shell",
         purpose: "Run two harmless native commands in independent shells",
+        runId: hostShellRunId,
         scopes: [
           {
             machineId: machine.id,
@@ -3005,7 +3008,10 @@ try {
         authorization: `Bearer ${cliToken}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ agentId: approvedAgentId }),
+      body: JSON.stringify({
+        agentId: approvedAgentId,
+        runId: hostShellRunId,
+      }),
     },
   );
   const hostShellSession = await hostShellClaimResponse.json();
@@ -3263,6 +3269,7 @@ try {
         agentName: "E2E MCP Agent",
         title: "Reject Host Shell through the Docker profile",
         purpose: "Verify profile-scoped capability enforcement",
+        runId: crypto.randomUUID(),
         scopes: [
           {
             machineId: machine.id,
@@ -4351,6 +4358,130 @@ try {
     throw new Error(`Privacy retention left expired rows: ${retainedRows}`);
   }
 
+  const quotaSeedAgentIds = [crypto.randomUUID(), crypto.randomUUID()];
+  await compose([
+    "exec",
+    "-T",
+    "postgres",
+    "psql",
+    "-U",
+    "odyshell",
+    "-d",
+    "odyshell",
+    "-v",
+    "ON_ERROR_STOP=1",
+    "-c",
+    [
+      "update odyshell.organizations set plan = 'free' where id = 'default';",
+      "update odyshell.agents set status = 'disabled', updated_at = now()",
+      "where workspace_id = 'default' and status = 'active';",
+      "insert into odyshell.agents",
+      "(workspace_id, id, name, kind, parent_agent_id, created_by_human_id, status)",
+      "values",
+      `('default', '${quotaSeedAgentIds[0]}', 'Quota seed 1', 'independent', null, null, 'active'),`,
+      `('default', '${quotaSeedAgentIds[1]}', 'Quota seed 2', 'independent', null, null, 'active');`,
+    ].join(" "),
+  ]);
+  const quotaDeviceResponse = await fetch(
+    new URL("/v1/auth/agent/device", apiUrl),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agentName: "Quota device contender" }),
+    },
+  );
+  const quotaDevice = await quotaDeviceResponse.json();
+  if (quotaDeviceResponse.status !== 201 || !quotaDevice.userCode) {
+    throw new Error("Concurrent Agent quota authorization did not start");
+  }
+  const quotaHumanAgentId = crypto.randomUUID();
+  const quotaContenders = await Promise.all([
+    fetch(new URL("/v1/internal/cloud/agent-device/approve", apiUrl), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        userId: cliUserId,
+        organization: approvalBody.organization,
+        userCode: quotaDevice.userCode,
+      }),
+    }),
+    fetch(new URL("/v1/agent-session-requests", apiUrl), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${cliToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        agentId: quotaHumanAgentId,
+        agentName: "Quota human contender",
+        title: "Exercise concurrent Agent quota",
+        purpose: "Verify every Agent creation path shares one entitlement lock",
+        scopes: [
+          {
+            machineId: machine.id,
+            profile: "workspace",
+            capabilities: ["fs.read"],
+            restrictions: {
+              filesystem: {
+                paths: [{ path: "approved.txt", includeDescendants: false }],
+              },
+            },
+          },
+        ],
+        durationSeconds: 300,
+      }),
+    }),
+  ]);
+  const quotaContenderBodies = await Promise.all(
+    quotaContenders.map((response) => response.json()),
+  );
+  const quotaContenderStatuses = quotaContenders
+    .map((response) => response.status)
+    .sort((left, right) => left - right);
+  if (
+    quotaContenderStatuses.filter((status) => status === 200 || status === 201)
+      .length !== 1 ||
+    quotaContenderStatuses.filter((status) => status === 409).length !== 1 ||
+    !quotaContenderBodies.some(
+      (body) =>
+        body.error === "agent_limit_reached" &&
+        body.details?.plan === "free" &&
+        body.details?.activeAgentLimit === 3,
+    )
+  ) {
+    throw new Error(
+      `Concurrent Agent quota was not enforced: ${JSON.stringify({ quotaContenderStatuses, quotaContenderBodies })}`,
+    );
+  }
+  const activeAgentCount = (
+    await compose([
+      "exec",
+      "-T",
+      "postgres",
+      "psql",
+      "-U",
+      "odyshell",
+      "-d",
+      "odyshell",
+      "-tA",
+      "-c",
+      [
+        "select count(*) from odyshell.agents",
+        "where workspace_id = 'default'",
+        "and status = 'active'",
+        "and deleted_at is null;",
+      ].join(" "),
+    ])
+  ).trim();
+  if (activeAgentCount !== "3") {
+    throw new Error(
+      `Concurrent Agent quota produced ${activeAgentCount} active Agents`,
+    );
+  }
+
   console.log(
     JSON.stringify(
       {
@@ -4406,6 +4537,7 @@ try {
           odsWorkspaceSelection: true,
           odsPing: true,
           authorityCutover: true,
+          activeAgentEntitlement: true,
           agentIdentityListed: true,
           agentIdentityDeletion: true,
           targetedNotifications: true,

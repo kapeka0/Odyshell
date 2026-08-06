@@ -19,8 +19,8 @@ import {
   assertOperationCanStart,
 } from "./executor.js";
 import {
-  executeFilesystemOperation,
   isFilesystemAction,
+  startFilesystemOperation,
 } from "./filesystem-operations.js";
 import { containerUser } from "./platform.js";
 
@@ -102,6 +102,7 @@ function containerWorkspacePath(relativePath: string): string {
 export class DockerRunner implements OperationExecutor {
   readonly kind = "docker" as const;
   private readonly operations = new Map<string, Set<RunningOperation>>();
+  private readonly closedSessions = new WeakSet<RunningSession>();
 
   constructor(private readonly machineId: string) {}
 
@@ -200,6 +201,7 @@ export class DockerRunner implements OperationExecutor {
   }
 
   async closeSession(session: RunningSession): Promise<void> {
+    this.closedSessions.add(session);
     clearTimeout(session.expiryTimer);
     const operations = [...(this.operations.get(session.id) ?? [])];
     await Promise.all(operations.map((operation) => operation.cancel()));
@@ -220,6 +222,9 @@ export class DockerRunner implements OperationExecutor {
     context: OperationExecutionContext = {},
   ): Promise<RunningOperation> {
     assertOperationCanStart(context.signal);
+    if (this.closedSessions.has(session)) {
+      throw new Error("Session is closed on this client");
+    }
     if (session.profile.runner !== "docker") {
       throw new Error("DockerRunner requires a Docker profile");
     }
@@ -245,13 +250,22 @@ export class DockerRunner implements OperationExecutor {
       if (isAbsolute(action.path)) {
         throw new Error("Absolute filesystem paths require a host execution profile");
       }
-      const done = executeFilesystemOperation(
+      const running = startFilesystemOperation(
         session.profile.mountSource,
         action,
         hooks,
         session.restrictions?.filesystem?.paths,
-      ).then(() => ({ exitCode: 0 }));
-      return { cancel: async () => {}, done };
+        context.signal,
+      );
+      const active = this.operations.get(session.id) ?? new Set<RunningOperation>();
+      active.add(running);
+      this.operations.set(session.id, active);
+      const cleanup = (): void => {
+        active.delete(running);
+        if (active.size === 0) this.operations.delete(session.id);
+      };
+      void running.done.then(cleanup, cleanup);
+      return running;
     }
     if (action.kind === "docker.logs") {
       throw new Error("docker.logs is unavailable inside a Docker execution profile");

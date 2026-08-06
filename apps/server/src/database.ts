@@ -624,6 +624,25 @@ export type AgentDeviceExchangeResult =
       expiresAt: number;
     };
 
+export type ActiveAgentLimitReached = {
+  status: "agent_limit_reached";
+  plan: CloudPlanId;
+  activeAgentLimit: number;
+};
+
+export type AgentDeviceApprovalResult =
+  | { status: "approved" | "expired" | "invalid" | "already_used" }
+  | ActiveAgentLimitReached;
+
+export type ManagedAgentCreationResult =
+  | {
+      status: "created";
+      agent: AgentIdentityRecord;
+      policy: AgentPolicyRecord;
+    }
+  | ActiveAgentLimitReached
+  | { status: "denied" };
+
 export type HumanIdentityRecord = Timestamped & {
   workspaceId: string;
   id: string;
@@ -3190,6 +3209,57 @@ export function defaultCloudWorkspaceName(userName?: string): string {
   return `${possessive} Workspace`;
 }
 
+type ActiveAgentEntitlementDecision =
+  | { allowed: true }
+  | {
+      allowed: false;
+      plan: CloudPlanId;
+      activeAgentLimit: number;
+    };
+
+async function activeAgentEntitlementDecision(
+  transaction: Transaction<DatabaseSchema>,
+  workspaceId: string,
+): Promise<ActiveAgentEntitlementDecision> {
+  await lockActiveAgentEntitlement(transaction, workspaceId);
+  return activeAgentEntitlementDecisionAfterLock(transaction, workspaceId);
+}
+
+async function lockActiveAgentEntitlement(
+  transaction: Transaction<DatabaseSchema>,
+  workspaceId: string,
+): Promise<void> {
+  await sql`select pg_advisory_xact_lock(hashtext(${workspaceId}))`.execute(
+    transaction,
+  );
+}
+
+async function activeAgentEntitlementDecisionAfterLock(
+  transaction: Transaction<DatabaseSchema>,
+  workspaceId: string,
+): Promise<ActiveAgentEntitlementDecision> {
+  const workspace = await transaction
+    .selectFrom("workspaces")
+    .innerJoin("organizations", "organizations.id", "workspaces.organizationId")
+    .select(["organizations.plan", "organizations.externalId"])
+    .where("workspaces.id", "=", workspaceId)
+    .executeTakeFirstOrThrow();
+  if (workspace.externalId === null) return { allowed: true };
+
+  const plan = workspace.plan as CloudPlanId;
+  const activeAgentLimit = entitlementsFor(plan).activeAgentLimit;
+  const activeAgents = await transaction
+    .selectFrom("agents")
+    .select(({ fn }) => fn.countAll<number>().as("count"))
+    .where("workspaceId", "=", workspaceId)
+    .where("deletedAt", "is", null)
+    .where("status", "=", "active")
+    .executeTakeFirstOrThrow();
+  return Number(activeAgents.count) < activeAgentLimit
+    ? { allowed: true }
+    : { allowed: false, plan, activeAgentLimit };
+}
+
 type CanonicalSessionReconciliation =
   | { state: "opening" }
   | {
@@ -4044,106 +4114,45 @@ export class PostgresDatabase {
     return human ? humanIdentityRecord(human) : null;
   }
 
-  async createAgentIdentity(input: {
-    workspaceId: string;
-    id: string;
-    name: string;
-    kind: "independent" | "managed";
-    parentAgentId: string | null;
-    createdByHumanId: string;
-  }): Promise<AgentIdentityRecord | null> {
-    if (
-      (input.kind === "independent" && input.parentAgentId !== null) ||
-      (input.kind === "managed" && input.parentAgentId === null) ||
-      input.parentAgentId === input.id
-    ) {
-      return null;
-    }
-    return await this.db.transaction().execute(async (transaction) => {
-      const human = await transaction
-        .selectFrom("humans")
-        .select("id")
-        .where("workspaceId", "=", input.workspaceId)
-        .where("id", "=", input.createdByHumanId)
-        .where("status", "=", "active")
-        .forShare()
-        .executeTakeFirst();
-      if (!human) return null;
-
-      if (input.parentAgentId !== null) {
-        const parent = await transaction
-          .selectFrom("agents")
-          .select("id")
-          .where("workspaceId", "=", input.workspaceId)
-          .where("id", "=", input.parentAgentId)
-          .where("kind", "=", "independent")
-          .where("status", "=", "active")
-          .forShare()
-          .executeTakeFirst();
-        if (!parent) return null;
-      }
-
-      const agent = await transaction
-        .insertInto("agents")
-        .values({
-          ...input,
-          status: "active",
-          deletedAt: null,
-        })
-        .onConflict((conflict) =>
-          conflict.columns(["workspaceId", "id"]).doNothing(),
-        )
-        .returningAll()
-        .executeTakeFirst();
-      return agent ? agentIdentityRecord(agent) : null;
-    });
-  }
-
   async ensureMcpInstallation(input: {
     workspaceId: string;
     userId: string;
     oauthClientId: string;
     agentName: string;
-  }): Promise<McpInstallationRecord | null> {
+  }): Promise<McpInstallationRecord | ActiveAgentLimitReached | null> {
     return await this.db.transaction().execute(async (transaction) => {
-      await transaction
-        .insertInto("humans")
-        .values({
-          workspaceId: input.workspaceId,
-          id: input.userId,
-          externalId: input.userId,
-          status: "active",
-        })
-        .onConflict((conflict) =>
-          conflict.columns(["workspaceId", "id"]).doNothing(),
-        )
-        .execute();
-      const existing = await transaction
-        .selectFrom("mcpInstallations")
-        .innerJoin("agents", (join) =>
-          join
-            .onRef("agents.workspaceId", "=", "mcpInstallations.workspaceId")
-            .onRef("agents.id", "=", "mcpInstallations.agentId"),
-        )
-        .selectAll("mcpInstallations")
-        .select([
-          "agents.name as agentName",
-          "agents.status as agentStatus",
-          "agents.deletedAt as agentDeletedAt",
-        ])
-        .where("mcpInstallations.workspaceId", "=", input.workspaceId)
-        .where("mcpInstallations.provider", "=", "clerk")
-        .where("mcpInstallations.userId", "=", input.userId)
-        .where("mcpInstallations.oauthClientId", "=", input.oauthClientId)
-        .executeTakeFirst();
-      if (existing) {
+      const findExisting = async () =>
+        transaction
+          .selectFrom("mcpInstallations")
+          .innerJoin("agents", (join) =>
+            join
+              .onRef("agents.workspaceId", "=", "mcpInstallations.workspaceId")
+              .onRef("agents.id", "=", "mcpInstallations.agentId"),
+          )
+          .selectAll("mcpInstallations")
+          .select([
+            "agents.name as agentName",
+            "agents.status as agentStatus",
+            "agents.deletedAt as agentDeletedAt",
+          ])
+          .where("mcpInstallations.workspaceId", "=", input.workspaceId)
+          .where("mcpInstallations.provider", "=", "clerk")
+          .where("mcpInstallations.userId", "=", input.userId)
+          .where("mcpInstallations.oauthClientId", "=", input.oauthClientId)
+          .executeTakeFirst();
+      const existingResult = (existing: Awaited<ReturnType<typeof findExisting>>) => {
+        if (!existing) return null;
         if (
           existing.status !== "active" ||
           existing.agentStatus !== "active" ||
           existing.agentDeletedAt !== null
         ) {
-          return null;
+          return false;
         }
+        return existing;
+      };
+      let existing = existingResult(await findExisting());
+      if (existing) {
         const genericName = /^(MCP Agent|MCP)$/i.test(existing.agentName);
         const agentName = genericName ? input.agentName : existing.agentName;
         if (agentName !== existing.agentName) {
@@ -4166,6 +4175,47 @@ export class PostgresDatabase {
           updatedAt: timestamp(existing.updatedAt),
         };
       }
+      if (existing === false) return null;
+
+      await lockActiveAgentEntitlement(transaction, input.workspaceId);
+      existing = existingResult(await findExisting());
+      if (existing) {
+        return {
+          workspaceId: existing.workspaceId,
+          id: existing.id,
+          userId: existing.userId,
+          oauthClientId: existing.oauthClientId,
+          agentId: existing.agentId,
+          agentName: existing.agentName,
+          status: "active",
+          createdAt: timestamp(existing.createdAt),
+          updatedAt: timestamp(existing.updatedAt),
+        };
+      }
+      if (existing === false) return null;
+      const entitlement = await activeAgentEntitlementDecisionAfterLock(
+        transaction,
+        input.workspaceId,
+      );
+      if (!entitlement.allowed) {
+        return {
+          status: "agent_limit_reached",
+          plan: entitlement.plan,
+          activeAgentLimit: entitlement.activeAgentLimit,
+        };
+      }
+      await transaction
+        .insertInto("humans")
+        .values({
+          workspaceId: input.workspaceId,
+          id: input.userId,
+          externalId: input.userId,
+          status: "active",
+        })
+        .onConflict((conflict) =>
+          conflict.columns(["workspaceId", "id"]).doNothing(),
+        )
+        .execute();
 
       const now = new Date();
       const agentId = randomUUID();
@@ -4717,11 +4767,19 @@ export class PostgresDatabase {
     maxSessionSeconds: number;
     expiresAt: number;
     internalApprovalCodeHash: string;
-  }): Promise<{
-    agent: AgentIdentityRecord;
-    policy: AgentPolicyRecord;
-  } | null> {
+  }): Promise<ManagedAgentCreationResult> {
     return await this.db.transaction().execute(async (transaction) => {
+      const entitlement = await activeAgentEntitlementDecision(
+        transaction,
+        input.workspaceId,
+      );
+      if (!entitlement.allowed) {
+        return {
+          status: "agent_limit_reached",
+          plan: entitlement.plan,
+          activeAgentLimit: entitlement.activeAgentLimit,
+        };
+      }
       const parent = await transaction
         .selectFrom("agents")
         .selectAll()
@@ -4733,7 +4791,7 @@ export class PostgresDatabase {
         .where("deletedAt", "is", null)
         .forUpdate()
         .executeTakeFirst();
-      if (!parent) return null;
+      if (!parent) return { status: "denied" };
       const delegation = await transaction
         .selectFrom("agentPolicies")
         .selectAll()
@@ -4744,7 +4802,7 @@ export class PostgresDatabase {
         .forShare()
         .executeTakeFirst();
       if (!delegation?.approvedByHumanId || !delegation.maxManagedAgents) {
-        return null;
+        return { status: "denied" };
       }
       const managedCount = await transaction
         .selectFrom("agents")
@@ -4769,7 +4827,7 @@ export class PostgresDatabase {
         },
         now: Date.now(),
       });
-      if (!decision.allowed) return null;
+      if (!decision.allowed) return { status: "denied" };
       const machineIds = input.scopes.map((scope) => scope.machineId);
       const machines = await transaction
         .selectFrom("machines")
@@ -4784,7 +4842,7 @@ export class PostgresDatabase {
         new Set(machineIds).size !== machineIds.length ||
         !machineScopesAllowed(machines, input.scopes)
       ) {
-        return null;
+        return { status: "denied" };
       }
       const agent = await transaction
         .insertInto("agents")
@@ -4823,6 +4881,7 @@ export class PostgresDatabase {
         .returningAll()
         .executeTakeFirstOrThrow();
       return {
+        status: "created",
         agent: agentIdentityRecord(agent),
         policy: agentPolicyRecord(policy),
       };
@@ -5439,7 +5498,7 @@ export class PostgresDatabase {
     predecessorMode?: "renewal" | "host_shell_escalation";
     allowWorkspaceAgent?: boolean;
     notifyRequester?: boolean;
-  }): Promise<AgentSessionRequestRecord | null> {
+  }): Promise<AgentSessionRequestRecord | ActiveAgentLimitReached | null> {
     return await this.db.transaction().execute(async (transaction) => {
       const workspace = await transaction
         .selectFrom("workspaces")
@@ -5448,6 +5507,19 @@ export class PostgresDatabase {
         .forShare()
         .executeTakeFirst();
       if (!workspace) return null;
+      let agentCreationLocked = false;
+      if (!input.requesterAgentId) {
+        const existingAgent = await transaction
+          .selectFrom("agents")
+          .select("id")
+          .where("workspaceId", "=", input.workspaceId)
+          .where("id", "=", input.agentId)
+          .executeTakeFirst();
+        if (!existingAgent) {
+          await lockActiveAgentEntitlement(transaction, input.workspaceId);
+          agentCreationLocked = true;
+        }
+      }
       await transaction
         .insertInto("humans")
         .values({
@@ -5471,23 +5543,39 @@ export class PostgresDatabase {
         .executeTakeFirst();
       if (!human) return null;
 
-      if (!input.requesterAgentId) {
-        await transaction
-          .insertInto("agents")
-          .values({
-            workspaceId: input.workspaceId,
-            id: input.agentId,
-            name: input.agentName,
-            kind: "independent",
-            parentAgentId: null,
-            createdByHumanId: input.humanId,
-            status: "active",
-            deletedAt: null,
-          })
-          .onConflict((conflict) =>
-            conflict.columns(["workspaceId", "id"]).doNothing(),
-          )
-          .execute();
+      if (agentCreationLocked) {
+        const existingAgent = await transaction
+          .selectFrom("agents")
+          .select("id")
+          .where("workspaceId", "=", input.workspaceId)
+          .where("id", "=", input.agentId)
+          .executeTakeFirst();
+        if (!existingAgent) {
+          const entitlement = await activeAgentEntitlementDecisionAfterLock(
+            transaction,
+            input.workspaceId,
+          );
+          if (!entitlement.allowed) {
+            return {
+              status: "agent_limit_reached",
+              plan: entitlement.plan,
+              activeAgentLimit: entitlement.activeAgentLimit,
+            };
+          }
+          await transaction
+            .insertInto("agents")
+            .values({
+              workspaceId: input.workspaceId,
+              id: input.agentId,
+              name: input.agentName,
+              kind: "independent",
+              parentAgentId: null,
+              createdByHumanId: input.humanId,
+              status: "active",
+              deletedAt: null,
+            })
+            .execute();
+        }
       }
       let agentQuery = transaction
         .selectFrom("agents")
@@ -7180,7 +7268,7 @@ export class PostgresDatabase {
     userId: string;
     workspaceId: string;
     agentId: string;
-  }): Promise<"approved" | "expired" | "invalid" | "already_used"> {
+  }): Promise<AgentDeviceApprovalResult> {
     return await this.db.transaction().execute(async (transaction) => {
       const authorization = await transaction
         .selectFrom("agentDeviceAuthorizations")
@@ -7189,8 +7277,20 @@ export class PostgresDatabase {
         .forUpdate()
         .executeTakeFirst();
       const decision = deviceApprovalDecision(authorization ?? null);
-      if (decision !== "approved") return decision;
-      if (!authorization) return "invalid";
+      if (decision !== "approved") return { status: decision };
+      if (!authorization) return { status: "invalid" };
+
+      const entitlement = await activeAgentEntitlementDecision(
+        transaction,
+        input.workspaceId,
+      );
+      if (!entitlement.allowed) {
+        return {
+          status: "agent_limit_reached",
+          plan: entitlement.plan,
+          activeAgentLimit: entitlement.activeAgentLimit,
+        };
+      }
 
       await transaction
         .insertInto("humans")
@@ -7228,7 +7328,7 @@ export class PostgresDatabase {
         })
         .where("id", "=", authorization.id)
         .execute();
-      return "approved";
+      return { status: "approved" };
     });
   }
 

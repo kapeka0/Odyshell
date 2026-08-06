@@ -1,6 +1,6 @@
 {
   "name": "@odyshell/protocol",
-  "version": "0.15.1",
+  "version": "0.16.0",
   "description": "Shared TypeScript contracts for Odyshell Server, Client, and SDK.",
   "keywords": [
     "ai-agents",
@@ -40,6 +40,6 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
-    "zod": "^4.0.0"
+    "zod": "^4.4.3"
   }
 }

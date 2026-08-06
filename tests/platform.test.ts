@@ -392,6 +392,7 @@ describe("client platform support", () => {
   });
 
   it("reports additive and incompatible Client protocol versions", () => {
+    expect(PROTOCOL_VERSION).toBe(4);
     expect(clientCompatibility(undefined)).toMatchObject({
       compatible: true,
       upgradeRequired: false,
@@ -410,13 +411,13 @@ describe("client platform support", () => {
     });
     expect(
       clientCompatibility({
-        protocolVersion: 999,
-        clientVersion: "0.1.0",
+        protocolVersion: 3,
+        clientVersion: "0.15.1",
       }),
     ).toMatchObject({
       compatible: false,
       upgradeRequired: true,
-      protocolVersion: 999,
+      protocolVersion: 3,
     });
     const gateway = readFileSync(
       resolve(process.cwd(), "apps/server/src/gateway.ts"),

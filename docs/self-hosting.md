@@ -57,11 +57,15 @@ Before upgrading an existing installation, take a PostgreSQL snapshot. The autho
 keeps Workspaces, machines and retained events, but revokes legacy Agent Access credentials and
 their active Sessions. Register integrations again with `ods agent login`.
 
-Protocol v3 is also a breaking local Client upgrade. Remove each protocol v2 Profile and its stale
-machine record, then recreate and re-enroll it with a new command. Host Profiles no longer accept
-`workspaceRoot` and start relative work in the operating-system user's Home. Docker Profiles
-require `--runner docker --mount-source <absolute-path>` so their new configuration has an explicit
-`mountSource`. Do not copy or hand-edit old Profile configuration.
+Protocol v4 is a breaking Server/Client wire upgrade because recursive `fs.remove` is no longer
+accepted. Update the Server and CLI together, then restart each Profile; existing Profile
+configuration remains valid and re-enrollment is not required.
+
+The older protocol v3 upgrade changed local Client Profile configuration. Remove each protocol v2
+Profile and its stale machine record, then recreate and re-enroll it with a new command. Host
+Profiles no longer accept `workspaceRoot` and start relative work in the operating-system user's
+Home. Docker Profiles require `--runner docker --mount-source <absolute-path>` so their new
+configuration has an explicit `mountSource`. Do not copy or hand-edit old Profile configuration.
 
 Rollback may restore application or schema compatibility, but it never reactivates revoked
 secrets. Restore a pre-cutover snapshot only before accepting new Sessions.
@@ -176,7 +180,8 @@ ods token create
 ```
 
 The selected Clerk Organization owns the Workspace. Organization membership is not managed by the
-CLI.
+CLI. Only the administrator CLI needs `ods login`; the target machine uses the generated
+single-use enrollment token and does not log in separately.
 
 On the private machine:
 

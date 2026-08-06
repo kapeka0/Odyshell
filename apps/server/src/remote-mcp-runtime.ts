@@ -217,6 +217,13 @@ export function createRemoteMcpRuntime(
             }
           : {}),
       });
+      if (created?.status === "agent_limit_reached") {
+        throw new RemoteMcpError(
+          `The ${created.plan} plan allows ${created.activeAgentLimit} active Agents`,
+          "agent_limit_reached",
+          409,
+        );
+      }
       if (!created) {
         throw new RemoteMcpError(
           "Agent or machine is unavailable",

@@ -1206,6 +1206,10 @@ describe("dashboard navigation performance boundary", () => {
       resolve(webRoot, "app/activate-agent/page.tsx"),
       "utf8",
     );
+    const activation = readFileSync(
+      resolve(webRoot, "components/agent-activation.tsx"),
+      "utf8",
+    );
     const server = readFileSync(
       resolve(process.cwd(), "apps/server/src/index.ts"),
       "utf8",
@@ -1216,6 +1220,9 @@ describe("dashboard navigation performance boundary", () => {
     expect(server).toContain('"/v1/auth/agent/device"');
     expect(server).toContain('"/v1/agent-credentials/rotate"');
     expect(server).toContain("agent_identity_mismatch");
+    expect(activation).toContain('body?.error === "agent_limit_reached"');
+    expect(activation).toContain("Disable or remove an Agent");
+    expect(activation).toContain("then approve again");
   });
 
   it("keeps persistent Agent deletion behind the organization administrator boundary", () => {

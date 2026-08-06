@@ -114,7 +114,18 @@ re-enroll the Profile to clear its local state.
 Docker is only required when using Docker operations or the optional `--runner docker` profile.
 Node.js 24 or newer is required.
 
-## Protocol v3 upgrade
+Structured filesystem work is bounded locally: reads and decoded writes are limited to 1 MiB,
+listings to 1,000 entries, and searches to 2,048 visited nodes and 32 directory levels. Removal is
+limited to one file or empty directory; recursive removal is unavailable. Relative Session scopes
+reject symlink roots and descendant symlinks that resolve outside the approved subtree.
+
+## Protocol v4 upgrade
+
+Odyshell 0.16 uses Client protocol v4 because recursive `fs.remove` is no longer accepted. Update
+the Server and CLI together, then restart every enrolled Profile. Existing Profile configuration
+remains valid and re-enrollment is not required.
+
+### Legacy protocol v3 Profile migration
 
 Protocol v3 does not migrate protocol v2 Client Profiles. Stop and remove each old Profile, remove
 its stale machine record in the dashboard, then run a newly generated enrollment command with the

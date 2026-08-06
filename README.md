@@ -183,7 +183,13 @@ Check that the complete path to a machine is working:
 ods ping my-machine
 ```
 
-## Upgrade to protocol v3
+## Upgrade to Client protocol v4
+
+Odyshell 0.16 uses Client protocol v4 because recursive `fs.remove` is no longer accepted. Update
+the Server and CLI together, then restart every enrolled Profile. Existing Profile configuration
+remains valid and re-enrollment is not required.
+
+### Legacy protocol v3 Profile migration
 
 Protocol v3 intentionally rejects older Client Profile configuration. Stop and remove every old
 Profile, remove its stale machine record in the dashboard, then generate a new enrollment command
@@ -227,7 +233,8 @@ their Server with `--server`.
 
 From the dashboard, generate the one-time `ods up` command for a machine. The enrollment token
 expires after ten minutes and can only be used once. You explicitly select the local operations
-that machine will accept.
+that machine will accept. The target machine does not run `ods login`: an authenticated Workspace
+member creates the command, and the target only uses its single-use enrollment token.
 
 ## Connect an Agent
 
@@ -279,6 +286,14 @@ task still receives its own expiring Session.
 Odyshell currently supports typed process, explicit Host Shell, filesystem, and Docker log
 Operations. Direct host execution is the default. Docker sandboxes remain an optional execution
 Profile.
+
+Structured filesystem work is locally resource-bounded: `fs.read` accepts regular files up to
+1 MiB, `fs.write` accepts up to 1 MiB of decoded content, `fs.list` accepts up to 1,000 entries,
+and `fs.search` visits at most 2,048 nodes and 32 directory levels. `fs.remove` deletes one file or
+empty directory; recursive removal is not exposed in the MVP. Exceeding a limit fails the
+Operation without returning a partial result. Filesystem Operations observe deadline and Session
+cancellation cooperatively and suppress late results. Relative Session scopes reject symlink roots
+and descendant symlinks that resolve outside the approved subtree.
 
 The Server keeps machine identities, temporary Sessions, Operations, and audit history in PostgreSQL
 through Kysely. Persistable Operation action fields and output are retained for one hour by default;

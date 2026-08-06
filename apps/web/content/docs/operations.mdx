@@ -15,7 +15,7 @@ description: The typed process, filesystem, and Docker operations supported by O
 | `fs.read` | Read a file |
 | `fs.write` | Write a file |
 | `fs.mkdir` | Create a directory |
-| `fs.remove` | Remove a file or directory |
+| `fs.remove` | Remove one file or empty directory |
 | `docker.logs` | Read logs from a Docker container |
 
 Relative filesystem paths on a host Profile start from the Client user's Home. An Agent can request
@@ -34,6 +34,23 @@ Restricted Agent Sessions fail closed:
 
 The Server checks the selected machine scope, and the Client enforces the same restrictions again
 before executing locally.
+
+## Filesystem resource limits
+
+The Client bounds structured filesystem work independently of the Server:
+
+- `fs.read` accepts only regular files of at most 1 MiB;
+- `fs.write` accepts at most 1 MiB of decoded content;
+- `fs.list` accepts at most 1,000 directory entries;
+- `fs.search` visits at most 2,048 nodes and descends at most 32 directory levels, in addition to
+  its requested result limit;
+- `fs.remove` deletes one file or empty directory. Recursive removal is unavailable.
+
+Crossing one of these ceilings fails the Operation without returning a partial result. Cancelling
+the Operation, closing its Session, or reaching its deadline is observed between filesystem steps
+and suppresses any late result. An operating-system mutation already in progress may finish before
+the Client observes cancellation. Relative scopes reject symlink roots and descendant symlinks
+that resolve outside the approved subtree.
 
 Operation retries must use an opaque, unique idempotency key and reuse it only with the exact same
 machine, action, requested timeout, and output limit. A changed payload returns

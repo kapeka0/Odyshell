@@ -133,7 +133,7 @@ export function createApprovedMcpServer(
   reportUnexpectedError: (error: unknown) => void = () => undefined,
 ): McpServer {
   const server = new McpServer(
-    { name: "odyshell", version: "0.15.1" },
+    { name: "odyshell", version: "0.16.0" },
     {
       instructions:
         "Inspect machines before choosing platform-specific operations. Before requesting authority, call sessions_list. Reuse exact typed authority only when it is bound to the current local MCP process or remote MCP installation. Use typed filesystem, Docker, or process.exec requests when the task is fully known and can be expressed as one exact or structured action. For exploratory, iterative, or multi-command host work, request hostShell at the outset without anticipating commands; it grants broad host.shell authority for the Task Run, requires manual approval, and audits every command. Generate one stable runId for the Task Run and retain it across retries and explicit continuations; never reuse Host Shell authority from another runId. Use predecessorSessionId only with hostShell when escalating an existing Session. When privilegeEscalation is sudo, explicitly mention root access in the Session title or purpose before requesting a sudo command. Show approval links verbatim, then call session_status. Generate a fresh UUIDv4 idempotencyKey for each logical operation and reuse it only when retrying that exact operation_execute call. A failed command does not close the Session: inspect its result, correct the work, and continue with the same sessionId and runId. After no Operations remain active, complete the Session only when the overall task succeeds or is abandoned; report the overall outcome rather than the last command status. Credentials stay inside Odyshell.",

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 export const DEFAULT_CLOUD_SERVER_URL =
   "https://server.odyshell.com";
 export const MAX_AGENT_ACCESS_SECONDS = 365 * 24 * 60 * 60;
@@ -10,6 +10,7 @@ export const DEFAULT_OPERATION_TIMEOUT_SECONDS = 600;
 export const MAX_OPERATION_TIMEOUT_SECONDS = 24 * 60 * 60;
 export const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
 export const MAX_HOST_SHELL_STDIN_BYTES = 1024 * 1024;
+export const MAX_FILESYSTEM_WRITE_BYTES = 1024 * 1024;
 
 const identityIdSchema = z.string().trim().min(1).max(256);
 const identityStatusSchema = z.enum(["active", "disabled"]);
@@ -674,6 +675,36 @@ const hostShellStdinBase64Schema = z
     }
   });
 
+const maximumFilesystemWriteBase64Length =
+  4 * Math.ceil(MAX_FILESYSTEM_WRITE_BYTES / 3);
+const filesystemWriteContentBase64Schema = z
+  .string()
+  .max(maximumFilesystemWriteBase64Length)
+  .superRefine((value, context) => {
+    if (!standardBase64Pattern.test(value)) {
+      context.addIssue({
+        code: "custom",
+        message: "contentBase64 must be valid standard base64",
+      });
+      return;
+    }
+    const paddingBytes = value.endsWith("==")
+      ? 2
+      : value.endsWith("=")
+        ? 1
+        : 0;
+    const decodedBytes = (value.length / 4) * 3 - paddingBytes;
+    if (decodedBytes > MAX_FILESYSTEM_WRITE_BYTES) {
+      context.addIssue({
+        code: "too_big",
+        maximum: MAX_FILESYSTEM_WRITE_BYTES,
+        origin: "string",
+        inclusive: true,
+        message: "Decoded contentBase64 exceeds 1 MiB",
+      });
+    }
+  });
+
 const processExecOperationActionSchema = z
   .object({
     kind: z.literal("process.exec"),
@@ -716,11 +747,15 @@ const scopedOperationActionSchemas = [
   z.object({
     kind: z.literal("fs.write"),
     path: filesystemPathSchema,
-    contentBase64: z.string(),
+    contentBase64: filesystemWriteContentBase64Schema,
     createParents: z.boolean().default(false),
   }),
   z.object({ kind: z.literal("fs.mkdir"), path: filesystemPathSchema, recursive: z.boolean().default(true) }),
-  z.object({ kind: z.literal("fs.remove"), path: filesystemPathSchema, recursive: z.boolean().default(false) }),
+  z.object({
+    kind: z.literal("fs.remove"),
+    path: filesystemPathSchema,
+    recursive: z.literal(false).default(false),
+  }),
   z.object({
     kind: z.literal("docker.logs"),
     container: z

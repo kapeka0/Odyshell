@@ -17,7 +17,8 @@ Open **Machines**, select **Add**, and configure:
 - the capabilities the machine will accept.
 
 Odyshell generates an `ods up` command containing a single-use enrollment token. Run it on the
-target machine. The token expires after ten minutes and cannot be replayed.
+target machine. The target does not need `ods login`; the signed-in Workspace member authorizes
+enrollment by generating this command. The token expires after ten minutes and cannot be replayed.
 The member who created the command receives a dashboard notification when that machine enrolls.
 
 After it connects, open its actions and select **Edit** to change its name, add a short description,

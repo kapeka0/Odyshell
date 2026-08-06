@@ -27,6 +27,9 @@ jobs:
           package-manager-cache: false
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
+      - name: Audit production dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: pnpm audit --prod --audit-level high
       - run: pnpm release:check
       - run: pnpm typecheck
       - run: pnpm test

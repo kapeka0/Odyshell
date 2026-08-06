@@ -69,7 +69,7 @@ const program = new Command();
 program
   .name("ods")
   .description("Agent-first access to private machines")
-  .version("0.15.1")
+  .version("0.16.0")
   .option("-j, --json", "emit stable JSON output")
   .option("--server <url>", "override the Odyshell server URL")
   .option("--workspace-id <id>", "select the administrator workspace")
@@ -989,19 +989,18 @@ fsCommand
 
 fsCommand
   .command("remove <machine> <path>")
-  .description("remove a file or directory")
-  .option("--recursive", "remove a directory and its contents")
+  .description("remove a file or empty directory")
   .action(
     async (
       machine: string,
       path: string,
-      options: { recursive?: boolean },
+      _options,
       command: Command,
     ) =>
       runInTemporarySession(
         command,
         machine,
-        { kind: "fs.remove", path, recursive: options.recursive ?? false },
+        { kind: "fs.remove", path, recursive: false },
         300,
         120,
       ),

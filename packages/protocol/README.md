@@ -11,6 +11,15 @@ defines capabilities, Session requests, typed process, filesystem and Docker Ope
 messages exchanged between the Server and Client. It also defines the strict Human, Agent, and
 task Session identity contracts used by the current authority model.
 
+The current Client wire protocol is v4. It intentionally rejects protocol v3 peers because
+recursive `fs.remove` is no longer part of the accepted Operation contract. Update the Server and
+Client together; existing Client Profile configuration remains valid and does not require
+re-enrollment.
+
+`fs.write` accepts valid standard base64 whose decoded content is at most 1 MiB. `fs.remove`
+accepts only non-recursive removal so Clients can bound each mutation to one file or empty
+directory.
+
 The `host.shell` capability is intentionally available only to host Client Profiles. Its action
 accepts one command, an optional working directory (`.` means the Client Profile home),
 per-command environment variables, and up to 1 MiB of base64-encoded standard input. Operation

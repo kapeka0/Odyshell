@@ -27,7 +27,7 @@ private network.
 | --- | --- |
 | Platforms | Linux, macOS, and Windows Clients |
 | Processes | Structured executable calls and explicit Host Shell commands |
-| Filesystem | Stat, list, search, read, write, mkdir, and remove |
+| Filesystem | Resource-bounded stat, list, search, read, write, mkdir, and remove |
 | Docker | Container log access and an optional Docker execution profile |
 | Identity | Ed25519 machine identity |
 | Enrollment | Single-use, expiring enrollment tokens |
@@ -56,6 +56,14 @@ An operation is accepted only when:
 8. structured filesystem Operations satisfy any exact path restriction in the Session.
 
 The model cannot override these checks with a prompt.
+
+Structured filesystem reads accept regular files up to 1 MiB, and writes accept up to 1 MiB of
+decoded content. Directory listings accept up to 1,000 entries, and searches visit at most 2,048
+nodes and 32 directory levels. Hitting a limit fails the Operation without a partial result.
+Removal is limited to one file or empty directory; recursive removal is not exposed in the MVP.
+Session closure and Operation deadlines cancel iterative filesystem work cooperatively and
+suppress a late result. Relative Session scopes reject symlink roots and descendant symlinks that
+resolve outside the approved subtree.
 
 An allowed Host Shell command starts in the Client user's Home by default. An explicit per-command
 working directory does not narrow its authority. It can perform anything available to that
@@ -100,7 +108,8 @@ These are not implied by the current API.
 The web control plane now supports the smallest complete design-partner workflow:
 
 1. a member signs in to a Clerk Organization and authorizes `ods login`;
-2. the member enrolls a machine with an explicit local capability policy;
+2. the member generates a single-use command and runs it on a machine with an explicit local
+   capability policy; the target machine does not need a separate CLI login;
 3. an Agent registers a persistent identity without receiving machine authority;
 4. the Agent requests and claims a browser-approved Session for explicit machines and Operations;
 5. the member cancels the Session or lets it expire and reviews its privacy-minimal Timeline.

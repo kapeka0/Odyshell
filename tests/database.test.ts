@@ -817,6 +817,72 @@ describe("server storage boundaries", () => {
     expect(rotation).toContain("10 * 60 * 1_000");
   });
 
+  it("enforces the Cloud active-Agent entitlement on every canonical creation path", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const server = readFileSync(
+      resolve(process.cwd(), "apps/server/src/index.ts"),
+      "utf8",
+    );
+    const approval = database.slice(
+      database.indexOf("async approveAgentDeviceAuthorization("),
+      database.indexOf("async exchangeAgentDeviceAuthorization("),
+    );
+    const entitlement = database.slice(
+      database.indexOf("async function activeAgentEntitlementDecision("),
+      database.indexOf("type CanonicalSessionReconciliation"),
+    );
+    const managedCreation = database.slice(
+      database.indexOf("async createManagedAgent("),
+      database.indexOf("async listManagedAgents("),
+    );
+    const mcpInstallation = database.slice(
+      database.indexOf("async ensureMcpInstallation("),
+      database.indexOf("async getAgentIdentity("),
+    );
+    const sessionRequest = database.slice(
+      database.indexOf("async createAgentSessionRequest("),
+      database.indexOf("async getAgentSessionRequest("),
+    );
+    const endpoint = server.slice(
+      server.indexOf('"/v1/internal/cloud/agent-device/approve"'),
+      server.indexOf('"/v1/internal/cloud/agent-policies/inspect"'),
+    );
+
+    expect(entitlement).toContain("pg_advisory_xact_lock");
+    expect(entitlement).toContain('.innerJoin("organizations"');
+    expect(entitlement).toContain("entitlementsFor(plan).activeAgentLimit");
+    expect(entitlement).toContain('.selectFrom("agents")');
+    expect(entitlement).toContain('.where("deletedAt", "is", null)');
+    expect(entitlement).toContain('.where("status", "=", "active")');
+    expect(approval.indexOf("activeAgentEntitlementDecision(")).toBeLessThan(
+      approval.indexOf('.insertInto("agents")'),
+    );
+    expect(endpoint).toContain('error: "agent_limit_reached"');
+    expect(endpoint).toContain("activeAgentLimit");
+    expect(managedCreation).toContain("activeAgentEntitlementDecision(");
+    expect(managedCreation).toContain('status: "agent_limit_reached"');
+    expect(managedCreation).toContain('status: "created"');
+    expect(mcpInstallation).toContain("lockActiveAgentEntitlement(");
+    expect(mcpInstallation).toContain(
+      "activeAgentEntitlementDecisionAfterLock(",
+    );
+    expect(sessionRequest).toContain("lockActiveAgentEntitlement(");
+    expect(sessionRequest).toContain(
+      "activeAgentEntitlementDecisionAfterLock(",
+    );
+    expect(mcpInstallation.indexOf("lockActiveAgentEntitlement(")).toBeLessThan(
+      mcpInstallation.indexOf('.insertInto("humans")'),
+    );
+    expect(sessionRequest.indexOf("lockActiveAgentEntitlement(")).toBeLessThan(
+      sessionRequest.indexOf('.insertInto("humans")'),
+    );
+    expect(database).not.toContain("async createAgentIdentity(");
+    expect(database.match(/\.insertInto\("agents"\)/gu)).toHaveLength(4);
+  });
+
   it("versions autoapproval ceilings and permanently binds approved Sessions to them", () => {
     const database = readFileSync(
       resolve(process.cwd(), "apps/server/src/database.ts"),

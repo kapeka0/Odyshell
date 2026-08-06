@@ -11,8 +11,9 @@ import {
   type OperationResult,
   type ListedAgentSession,
 } from "../packages/sdk/src/index.js";
-import type {
-  SessionMachineScope,
+import {
+  PROTOCOL_VERSION,
+  type SessionMachineScope,
 } from "../packages/protocol/src/index.js";
 import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
@@ -382,7 +383,7 @@ describe("Odyshell MCP server", () => {
       compatible: true,
       upgradeRequired: false,
       clientVersion: "0.13.1",
-      protocolVersion: 3,
+      protocolVersion: PROTOCOL_VERSION,
     });
     const server = createApprovedOdyshellMcpServer(ods, {
       id: "9a7a6a54-5d4a-43d0-8ef4-0e0396096eeb",
@@ -1095,7 +1096,7 @@ function localClaimedMcpFixture(
     compatible: true,
     upgradeRequired: false,
     clientVersion: "0.14.0",
-    protocolVersion: 3,
+    protocolVersion: PROTOCOL_VERSION,
   });
   return { ods, requestSession, claimSession };
 }

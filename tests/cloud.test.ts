@@ -461,6 +461,57 @@ describe("cloud identity and device authorization boundaries", () => {
     expect(limiter.allow("client", 2_000)).toBe(true);
   });
 
+  it("releases expired rate-limit keys before tracking new traffic", () => {
+    const limiter = new FixedWindowRateLimiter(1, 1_000);
+    for (let index = 0; index < 1_000; index += 1) {
+      expect(limiter.allow(`client-${index}`, 1_000)).toBe(true);
+    }
+    expect(limiter.trackedKeyCount).toBe(1_000);
+
+    expect(limiter.allow("fresh-client", 2_000)).toBe(true);
+    expect(limiter.trackedKeyCount).toBe(1);
+  });
+
+  it("fails closed when unique active rate-limit keys exhaust capacity", () => {
+    const limiter = new FixedWindowRateLimiter(2, 1_000, 3);
+    expect(limiter.allow("client-a", 1_000)).toBe(true);
+    expect(limiter.allow("client-b", 1_000)).toBe(true);
+    expect(limiter.allow("client-c", 1_000)).toBe(true);
+
+    for (let index = 0; index < 1_000; index += 1) {
+      expect(limiter.allow(`attacker-${index}`, 1_001)).toBe(false);
+    }
+    expect(limiter.trackedKeyCount).toBe(3);
+    expect(limiter.allow("client-a", 1_001)).toBe(true);
+    expect(limiter.canAllow("bypass", 1_001)).toBe(false);
+    limiter.consume("bypass", 1_001);
+    expect(limiter.trackedKeyCount).toBe(3);
+
+    expect(limiter.allow("fresh-client", 2_000)).toBe(true);
+    expect(limiter.trackedKeyCount).toBe(1);
+  });
+
+  it("expires rolled-back windows without pinning capacity to a future timestamp", () => {
+    const limiter = new FixedWindowRateLimiter(1, 1_000, 2);
+    expect(limiter.allow("future-client", 100_000)).toBe(true);
+    expect(limiter.allow("rolled-back-client", 1_000)).toBe(true);
+
+    expect(limiter.allow("fresh-client", 2_000)).toBe(true);
+    expect(limiter.trackedKeyCount).toBe(2);
+  });
+
+  it("fails closed on invalid rate-limiter state and timestamps", () => {
+    expect(() => new FixedWindowRateLimiter(0, 1_000)).toThrow(RangeError);
+    expect(() => new FixedWindowRateLimiter(1, 0)).toThrow(RangeError);
+    expect(() => new FixedWindowRateLimiter(1, 1_000, 0)).toThrow(RangeError);
+
+    const limiter = new FixedWindowRateLimiter(1, 1_000);
+    expect(limiter.allow("client", Number.NaN)).toBe(false);
+    expect(limiter.allow("client", Number.POSITIVE_INFINITY)).toBe(false);
+    expect(limiter.allow("client", Number.MAX_SAFE_INTEGER)).toBe(false);
+    expect(limiter.trackedKeyCount).toBe(0);
+  });
+
   it("bounds credential issuance per member and workspace", () => {
     const perMember = new ScopedRateLimiter(4, 2, 1_000);
     expect(perMember.allow("workspace", "member-a", 1_000)).toBe(true);

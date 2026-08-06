@@ -90,7 +90,13 @@ Open each URL printed by `ods login`, `ods agent login`, and `ods exec` and appr
 app. Legacy `ods agent create` and direct Session creation intentionally return migration errors;
 development credentials are not a production substitute for these approvals.
 
-## Protocol v3 upgrade
+## Protocol v4 upgrade
+
+Odyshell 0.16 rejects protocol v3 peers because recursive `fs.remove` is no longer accepted. Update
+the Server and CLI together, then restart each enrolled Profile. Existing Profile configuration
+remains valid and re-enrollment is not required.
+
+### Legacy protocol v3 Profile migration
 
 Protocol v3 rejects protocol v2 Client Profile configuration. Remove each old Profile and its
 stale machine record, then recreate and re-enroll it. Host Profiles no longer accept

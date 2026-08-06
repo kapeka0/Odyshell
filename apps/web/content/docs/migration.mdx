@@ -25,7 +25,13 @@ application or schema does not reactivate revoked credentials. Restore a pre-cut
 snapshot only before accepting new Sessions, or continue forward and register new Agent
 Credentials.
 
-## Re-enroll Client Profiles for protocol v3
+## Update Server and Client together for protocol v4
+
+Odyshell 0.16 rejects protocol v3 peers because recursive `fs.remove` is no longer accepted. Update
+the Server and CLI together, then restart each enrolled Profile. Existing Profile configuration
+remains valid and re-enrollment is not required.
+
+## Legacy: re-enroll Client Profiles for protocol v3
 
 Protocol v3 intentionally rejects protocol v2 Client Profile configuration. Stop and remove each
 old Profile, remove its stale machine record in the dashboard, then generate a new enrollment

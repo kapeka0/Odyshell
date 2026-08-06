@@ -4,6 +4,7 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import {
   agentSessionRequestInputSchema,
   agentTokenRequestSchema,
@@ -474,34 +475,131 @@ export function cloudWebUrl(
 
 export class FixedWindowRateLimiter {
   private readonly windows = new Map<string, { count: number; resetsAt: number }>();
+  private readonly expirations: Array<{ key: string; resetsAt: number }> = [];
+
+  get trackedKeyCount(): number {
+    return this.windows.size;
+  }
 
   constructor(
     private readonly limit: number,
     private readonly windowMilliseconds: number,
-  ) {}
+    private readonly maxTrackedKeys = 10_000,
+  ) {
+    if (!Number.isSafeInteger(limit) || limit < 1) {
+      throw new RangeError("Rate limit must be a positive safe integer");
+    }
+    if (!Number.isSafeInteger(windowMilliseconds) || windowMilliseconds < 1) {
+      throw new RangeError("Rate-limit window must be a positive safe integer");
+    }
+    if (!Number.isSafeInteger(maxTrackedKeys) || maxTrackedKeys < 1) {
+      throw new RangeError(
+        "Tracked rate-limit key capacity must be a positive safe integer",
+      );
+    }
+  }
 
-  allow(key: string, now = Date.now()): boolean {
-    if (!this.canAllow(key, now)) return false;
-    this.consume(key, now);
+  allow(key: string, now = monotonicMilliseconds()): boolean {
+    const observedAt = this.prepare(now);
+    if (observedAt === undefined || !this.canAllowPrepared(key)) return false;
+    this.consumePrepared(key, observedAt);
     return true;
   }
 
-  canAllow(key: string, now = Date.now()): boolean {
-    const current = this.windows.get(key);
-    return !current || current.resetsAt <= now || current.count < this.limit;
+  canAllow(key: string, now = monotonicMilliseconds()): boolean {
+    if (this.prepare(now) === undefined) return false;
+    return this.canAllowPrepared(key);
   }
 
-  consume(key: string, now = Date.now()): void {
+  consume(key: string, now = monotonicMilliseconds()): void {
+    const observedAt = this.prepare(now);
+    if (observedAt === undefined || !this.canAllowPrepared(key)) return;
+    this.consumePrepared(key, observedAt);
+  }
+
+  private prepare(now: number): number | undefined {
+    if (
+      !Number.isSafeInteger(now) ||
+      now < 0 ||
+      now > Number.MAX_SAFE_INTEGER - this.windowMilliseconds
+    ) {
+      return undefined;
+    }
+    this.pruneExpired(now);
+    return now;
+  }
+
+  private pruneExpired(now: number): void {
+    while (true) {
+      const next = this.expirations[0];
+      if (!next || next.resetsAt > now) return;
+      const expired = this.removeNextExpiration();
+      if (!expired) return;
+      const current = this.windows.get(expired.key);
+      if (current?.resetsAt === expired.resetsAt) {
+        this.windows.delete(expired.key);
+      }
+    }
+  }
+
+  private canAllowPrepared(key: string): boolean {
     const current = this.windows.get(key);
-    if (!current || current.resetsAt <= now) {
-      this.windows.set(key, {
+    return current
+      ? current.count < this.limit
+      : this.windows.size < this.maxTrackedKeys;
+  }
+
+  private consumePrepared(key: string, now: number): void {
+    const current = this.windows.get(key);
+    if (!current) {
+      const window = {
         count: 1,
         resetsAt: now + this.windowMilliseconds,
-      });
+      };
+      this.windows.set(key, window);
+      this.addExpiration({ key, resetsAt: window.resetsAt });
       return;
     }
     current.count += 1;
   }
+
+  private addExpiration(expiration: { key: string; resetsAt: number }): void {
+    this.expirations.push(expiration);
+    let index = this.expirations.length - 1;
+    while (index > 0) {
+      const parent = Math.floor((index - 1) / 2);
+      if (this.expirations[parent]!.resetsAt <= expiration.resetsAt) break;
+      this.expirations[index] = this.expirations[parent]!;
+      index = parent;
+    }
+    this.expirations[index] = expiration;
+  }
+
+  private removeNextExpiration(): { key: string; resetsAt: number } | undefined {
+    const first = this.expirations[0];
+    const last = this.expirations.pop();
+    if (!first || !last || this.expirations.length === 0) return first;
+    let index = 0;
+    while (true) {
+      const left = index * 2 + 1;
+      if (left >= this.expirations.length) break;
+      const right = left + 1;
+      const child =
+        right < this.expirations.length &&
+        this.expirations[right]!.resetsAt < this.expirations[left]!.resetsAt
+          ? right
+          : left;
+      if (this.expirations[child]!.resetsAt >= last.resetsAt) break;
+      this.expirations[index] = this.expirations[child]!;
+      index = child;
+    }
+    this.expirations[index] = last;
+    return first;
+  }
+}
+
+function monotonicMilliseconds(): number {
+  return Math.floor(performance.now());
 }
 
 export class ScopedRateLimiter {
@@ -523,7 +621,11 @@ export class ScopedRateLimiter {
     );
   }
 
-  allow(workspaceId: string, userId: string, now = Date.now()): boolean {
+  allow(
+    workspaceId: string,
+    userId: string,
+    now = monotonicMilliseconds(),
+  ): boolean {
     const userKey = `${workspaceId}:${userId}`;
     if (
       !this.userLimiter.canAllow(userKey, now) ||

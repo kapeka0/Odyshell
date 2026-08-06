@@ -40,6 +40,8 @@ jobs:
       - name: Validate release contract
         run: node scripts/release-check.mjs "$RELEASE_TAG"
       - run: pnpm install --frozen-lockfile
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level high
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm --filter @odyshell/web lint

@@ -1,6 +1,6 @@
 {
   "name": "@odyshell/sdk",
-  "version": "0.15.1",
+  "version": "0.16.0",
   "description": "TypeScript SDK for temporary, scoped Odyshell Agent Sessions.",
   "keywords": [
     "ai-agents",
@@ -43,6 +43,6 @@
     "@odyshell/protocol": "workspace:*"
   },
   "devDependencies": {
-    "tsup": "^8.5.0"
+    "tsup": "^8.5.1"
   }
 }

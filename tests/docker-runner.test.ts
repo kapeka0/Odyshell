@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   DockerRunner,
@@ -68,6 +71,49 @@ describe("DockerRunner cleanup", () => {
       )).rejects.toThrow("require a host execution profile");
     } finally {
       clearTimeout(expiryTimer);
+    }
+  });
+
+  it("rejects host filesystem work after a Docker Session closes", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "odyshell-docker-closed-"));
+    const runner = new DockerRunner(crypto.randomUUID());
+    const expiryTimer = setTimeout(() => undefined, 60_000);
+    const session = {
+      id: crypto.randomUUID(),
+      runner: "docker" as const,
+      runtimeId: "container",
+      profile: {
+        runner: "docker" as const,
+        mountSource: workspace,
+        image: "alpine:3.22",
+        network: "none" as const,
+        maxSessionTtlSeconds: 300,
+        maxConcurrentSessions: 1,
+        maxConcurrentOperations: 4,
+        maxOperationTimeoutSeconds: 3_600,
+        maxOutputBytes: 1_024,
+        capabilities: ["fs.read" as const],
+      },
+      capabilities: new Set(["fs.read" as const]),
+      restrictions: undefined,
+      expiresAt: new Date(Date.now() + 60_000),
+      expiryTimer,
+    };
+    try {
+      await writeFile(join(workspace, "secret.txt"), "must not be read");
+      await runner.closeSession(session);
+
+      await expect(
+        runner.execute(
+          crypto.randomUUID(),
+          session,
+          { kind: "fs.read", path: "secret.txt" },
+          { stdout() {}, stderr() {}, result() {} },
+        ),
+      ).rejects.toThrow("Session is closed on this client");
+    } finally {
+      clearTimeout(expiryTimer);
+      await rm(workspace, { recursive: true, force: true });
     }
   });
 });

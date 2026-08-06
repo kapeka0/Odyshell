@@ -4,6 +4,7 @@ packages:
 overrides:
   postcss: 8.5.25
   sharp: 0.35.3
+  "tsup@8.5.1>esbuild": 0.28.1
 allowBuilds:
   '@clerk/shared': false
   bufferutil: false
@@ -12,3 +13,9 @@ allowBuilds:
   sharp: true
   unrs-resolver: true
   utf-8-validate: false
+minimumReleaseAgeExclude:
+  - fast-uri@4.1.2
+  - fast-uri@3.1.5
+  - esbuild@0.28.1
+  - brace-expansion@5.0.9
+  - brace-expansion@1.1.18

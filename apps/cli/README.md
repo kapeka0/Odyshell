@@ -37,8 +37,10 @@ ods audit
 link, choose the workspace, and approve the CLI; there is no code to copy manually.
 
 `ods login` authorizes the CLI but does not enroll the current machine. Use the **Add machine**
-flow in the web app and run its generated `ods up` command on the target host. A host can maintain
-isolated outbound Clients for multiple Workspaces or Servers with named Profiles:
+flow in the web app and run its generated `ods up` command on the target host. The target host does
+not need its own `ods login`; the authenticated member authorizes enrollment by generating that
+single-use command. A host can maintain isolated outbound Clients for multiple Workspaces or
+Servers with named Profiles:
 
 ```bash
 ods --server https://personal.example up --profile personal <enrollment-options>

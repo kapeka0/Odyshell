@@ -4,6 +4,7 @@ import type {
   OperationAction,
 } from "../packages/protocol/src/index.js";
 import {
+  MAX_FILESYSTEM_WRITE_BYTES,
   agentSessionRequestInputSchema,
   hostShellTaskRunAccessDecision,
   hostShellTaskRunRenewalDecision,
@@ -411,6 +412,57 @@ describe("protocol validation", () => {
     expect(
       operationRequestSchema.safeParse({
         action: { kind: "docker.logs", container: "api; rm -rf /" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps filesystem removal bounded to one file or empty directory", () => {
+    expect(
+      operationRequestSchema.safeParse({
+        action: { kind: "fs.remove", path: "obsolete.txt" },
+      }).success,
+    ).toBe(true);
+    expect(
+      operationRequestSchema.safeParse({
+        action: {
+          kind: "fs.remove",
+          path: "generated",
+          recursive: true,
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("bounds filesystem writes to 1 MiB of valid standard base64", () => {
+    expect(
+      operationRequestSchema.safeParse({
+        action: {
+          kind: "fs.write",
+          path: "bounded.bin",
+          contentBase64: Buffer.alloc(MAX_FILESYSTEM_WRITE_BYTES).toString(
+            "base64",
+          ),
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      operationRequestSchema.safeParse({
+        action: {
+          kind: "fs.write",
+          path: "oversized.bin",
+          contentBase64: Buffer.alloc(MAX_FILESYSTEM_WRITE_BYTES + 1).toString(
+            "base64",
+          ),
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      operationRequestSchema.safeParse({
+        action: {
+          kind: "fs.write",
+          path: "invalid.bin",
+          contentBase64: "not base64!",
+        },
       }).success,
     ).toBe(false);
   });

@@ -30,7 +30,9 @@ the Home directory of the operating-system user running the Client; exact absolu
 requested and reviewed separately.
 
 The enrollment token in that command expires after ten minutes and works once. The Client then
-keeps an outbound connection to Odyshell; the machine does not expose an inbound port.
+keeps an outbound connection to Odyshell; the machine does not expose an inbound port. Do not run
+`ods login` on the target: the signed-in Workspace member authorized it by generating the
+single-use enrollment command.
 
 ## 4. Connect an Agent
 

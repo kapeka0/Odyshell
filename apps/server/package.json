@@ -1,6 +1,6 @@
 {
   "name": "@odyshell/server",
-  "version": "0.15.1",
+  "version": "0.16.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,17 +10,17 @@
   },
   "dependencies": {
     "@clerk/backend": "^3.13.2",
-    "@fastify/websocket": "^11.2.0",
+    "@fastify/websocket": "^11.3.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "@odyshell/mcp": "workspace:*",
     "@odyshell/protocol": "workspace:*",
-    "fastify": "^5.4.0",
+    "fastify": "^5.10.0",
     "kysely": "^0.29.4",
     "pg": "^8.22.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/pg": "^8.20.0",
-    "@types/ws": "^8.18.0"
+    "@types/ws": "^8.18.1"
   }
 }

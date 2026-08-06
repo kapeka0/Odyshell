@@ -1,6 +1,6 @@
 {
   "name": "@odyshell/cli",
-  "version": "0.15.1",
+  "version": "0.16.0",
   "description": "Agent-first command line access to machines connected through Odyshell.",
   "keywords": [
     "ai-agents",
@@ -48,10 +48,10 @@
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
-    "commander": "^14.0.0",
+    "commander": "^14.0.3",
     "open": "^11.0.0",
     "picocolors": "^1.1.1",
-    "ws": "^8.18.0",
+    "ws": "^8.21.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {

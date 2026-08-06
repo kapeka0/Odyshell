@@ -1093,7 +1093,16 @@ app.post(
       expiresAt: Date.now() + parsed.data.validForSeconds * 1_000,
       internalApprovalCodeHash: hashToken(createOpaqueToken("policy")),
     });
-    if (!created) {
+    if (created.status === "agent_limit_reached") {
+      return reply.code(409).send({
+        error: "agent_limit_reached",
+        details: {
+          activeAgentLimit: created.activeAgentLimit,
+          plan: created.plan,
+        },
+      });
+    }
+    if (created.status === "denied") {
       return reply.code(403).send({ error: "delegation_scope_denied" });
     }
     await audit(
@@ -1561,6 +1570,15 @@ app.post(
       allowWorkspaceAgent: true,
       notifyRequester: false,
     });
+    if (created?.status === "agent_limit_reached") {
+      return reply.code(409).send({
+        error: "agent_limit_reached",
+        details: {
+          activeAgentLimit: created.activeAgentLimit,
+          plan: created.plan,
+        },
+      });
+    }
     if (!created) return reply.code(403).send({ error: "session_scope_denied" });
     if (created.status === "pending") {
       const approved = await db.approveAgentSessionRequest({
@@ -2095,14 +2113,23 @@ app.post(
       workspaceId: context.workspace.id,
       agentId,
     });
-    if (result === "invalid") {
+    if (result.status === "invalid") {
       return reply.code(404).send({ error: "device_code_not_found" });
     }
-    if (result === "expired") {
+    if (result.status === "expired") {
       return reply.code(410).send({ error: "device_code_expired" });
     }
-    if (result === "already_used") {
+    if (result.status === "already_used") {
       return reply.code(409).send({ error: "device_code_already_used" });
+    }
+    if (result.status === "agent_limit_reached") {
+      return reply.code(409).send({
+        error: "agent_limit_reached",
+        details: {
+          activeAgentLimit: result.activeAgentLimit,
+          plan: result.plan,
+        },
+      });
     }
     await audit(
       db,
@@ -3150,6 +3177,15 @@ app.post(
           }
         : {}),
     });
+    if (created?.status === "agent_limit_reached") {
+      return reply.code(409).send({
+        error: "agent_limit_reached",
+        details: {
+          activeAgentLimit: created.activeAgentLimit,
+          plan: created.plan,
+        },
+      });
+    }
     if (!created) {
       return reply.code(403).send({ error: "agent_or_machine_denied" });
     }
@@ -3980,6 +4016,15 @@ app.post<{ Params: { sessionId: string } }>(
       predecessorSessionId: request.params.sessionId,
       predecessorMode: "renewal",
     });
+    if (created?.status === "agent_limit_reached") {
+      return reply.code(409).send({
+        error: "agent_limit_reached",
+        details: {
+          activeAgentLimit: created.activeAgentLimit,
+          plan: created.plan,
+        },
+      });
+    }
     if (!created) {
       return reply.code(403).send({ error: "session_renewal_denied" });
     }

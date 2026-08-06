@@ -1,4 +1,12 @@
-import { mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import process from "node:process";
@@ -18,7 +26,15 @@ describe("HostExecutor", () => {
     maxConcurrentOperations: 4,
     maxOperationTimeoutSeconds: 60,
     maxOutputBytes: 1024 * 1024,
-    capabilities: ["process.exec", "host.shell", "fs.write", "fs.read", "fs.search"],
+    capabilities: [
+      "process.exec",
+      "host.shell",
+      "fs.write",
+      "fs.list",
+      "fs.read",
+      "fs.remove",
+      "fs.search",
+    ],
   });
 
   beforeEach(async () => {
@@ -27,7 +43,15 @@ describe("HostExecutor", () => {
     session = await executor.openSession(
       crypto.randomUUID(),
       profile(workspace),
-      ["process.exec", "host.shell", "fs.write", "fs.read", "fs.search"],
+      [
+        "process.exec",
+        "host.shell",
+        "fs.write",
+        "fs.list",
+        "fs.read",
+        "fs.remove",
+        "fs.search",
+      ],
       undefined,
       new Date(Date.now() + 60_000),
       () => {},
@@ -565,6 +589,226 @@ describe("HostExecutor", () => {
     ]);
   });
 
+  it("rejects filesystem reads larger than 1 MiB before returning file contents", async () => {
+    await writeFile(
+      join(workspace, "oversized.bin"),
+      Buffer.alloc(1024 * 1024 + 1),
+    );
+    const result: Buffer[] = [];
+    const running = await executor.execute(
+      crypto.randomUUID(),
+      session,
+      { kind: "fs.read", path: "oversized.bin" },
+      hooks({ result: (data) => result.push(data) }),
+    );
+
+    await expect(running.done).rejects.toThrow(
+      "Filesystem read exceeds the 1 MiB limit",
+    );
+    expect(result).toEqual([]);
+  });
+
+  it("rejects filesystem writes larger than 1 MiB before changing the tree", async () => {
+    const result: Buffer[] = [];
+    const running = await executor.execute(
+      crypto.randomUUID(),
+      session,
+      {
+        kind: "fs.write",
+        path: "oversized/child.bin",
+        contentBase64: Buffer.alloc(1024 * 1024 + 1).toString("base64"),
+        createParents: true,
+      },
+      hooks({ result: (data) => result.push(data) }),
+    );
+
+    await expect(running.done).rejects.toThrow(
+      "Filesystem write exceeds the 1 MiB limit",
+    );
+    await expect(lstat(join(workspace, "oversized"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(result).toEqual([]);
+  });
+
+  it("rejects filesystem listings that exceed 1,000 entries", async () => {
+    const directory = join(workspace, "many-entries");
+    await mkdir(directory);
+    await populateDirectory(directory, 1_001);
+    const result: Buffer[] = [];
+    const running = await executor.execute(
+      crypto.randomUUID(),
+      session,
+      { kind: "fs.list", path: "many-entries" },
+      hooks({ result: (data) => result.push(data) }),
+    );
+
+    await expect(running.done).rejects.toThrow(
+      "Filesystem list exceeds the 1,000-entry limit",
+    );
+    expect(result).toEqual([]);
+  });
+
+  it("bounds filesystem search work even when no result matches", async () => {
+    const directory = join(workspace, "search-nodes");
+    await mkdir(directory);
+    await populateDirectory(directory, 2_049);
+    const result: Buffer[] = [];
+    const running = await executor.execute(
+      crypto.randomUUID(),
+      session,
+      {
+        kind: "fs.search",
+        path: "search-nodes",
+        query: "does-not-match",
+        maxResults: 1,
+      },
+      hooks({ result: (data) => result.push(data) }),
+    );
+
+    await expect(running.done).rejects.toThrow(
+      "Filesystem search exceeds the 2,048-node limit",
+    );
+    expect(result).toEqual([]);
+  });
+
+  it("rejects filesystem searches deeper than 32 directories", async () => {
+    let directory = join(workspace, "deep-search");
+    await mkdir(directory);
+    for (let depth = 0; depth <= 32; depth += 1) {
+      directory = join(directory, `level-${depth}`);
+      await mkdir(directory);
+    }
+    const result: Buffer[] = [];
+    const running = await executor.execute(
+      crypto.randomUUID(),
+      session,
+      {
+        kind: "fs.search",
+        path: "deep-search",
+        query: "does-not-match",
+        maxResults: 1,
+      },
+      hooks({ result: (data) => result.push(data) }),
+    );
+
+    await expect(running.done).rejects.toThrow(
+      "Filesystem search exceeds the 32-directory depth limit",
+    );
+    expect(result).toEqual([]);
+  });
+
+  it("rejects recursive filesystem removal before changing the tree", async () => {
+    const root = join(workspace, "recursive-removal");
+    await mkdir(root);
+    const file = join(root, "file.txt");
+    await writeFile(file, "keep me");
+    const running = await executor.execute(
+      crypto.randomUUID(),
+      session,
+      {
+        kind: "fs.remove",
+        path: "recursive-removal",
+        recursive: true,
+      } as unknown as OperationAction,
+      hooks(),
+    );
+
+    await expect(running.done).rejects.toThrow(
+      "Recursive filesystem removal is unavailable",
+    );
+    await expect(lstat(file)).resolves.toBeDefined();
+  });
+
+  it("removes individual files and empty directories", async () => {
+    const file = join(workspace, "remove-file.txt");
+    const directory = join(workspace, "remove-empty-directory");
+    await writeFile(file, "remove me");
+    await mkdir(directory);
+
+    for (const path of ["remove-file.txt", "remove-empty-directory"]) {
+      const running = await executor.execute(
+        crypto.randomUUID(),
+        session,
+        { kind: "fs.remove", path, recursive: false },
+        hooks(),
+      );
+      await expect(running.done).resolves.toEqual({ exitCode: 0 });
+    }
+    await expect(lstat(file)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(directory)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("observes filesystem write cancellation before creating parents", async () => {
+    const deadline = new AbortController();
+    const result: Buffer[] = [];
+    const preparation = executor.execute(
+      crypto.randomUUID(),
+      session,
+      {
+        kind: "fs.write",
+        path: "cancelled/child.txt",
+        contentBase64: Buffer.from("must not be written").toString("base64"),
+        createParents: true,
+      },
+      hooks({ result: (data) => result.push(data) }),
+      { signal: deadline.signal },
+    );
+    deadline.abort();
+    const running = await preparation;
+
+    await expect(running.done).resolves.toEqual({ exitCode: null });
+    await expect(lstat(join(workspace, "cancelled"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(result).toEqual([]);
+  });
+
+  it("stops an in-flight filesystem operation when its deadline is revoked", async () => {
+    const deadline = new AbortController();
+    const result: Buffer[] = [];
+    const preparation = executor.execute(
+      crypto.randomUUID(),
+      session,
+      {
+        kind: "fs.search",
+        path: ".",
+        query: "does-not-match",
+        maxResults: 1,
+      },
+      hooks({ result: (data) => result.push(data) }),
+      { signal: deadline.signal },
+    );
+    deadline.abort();
+    const running = await preparation;
+
+    await expect(running.done).resolves.toEqual({ exitCode: null });
+    expect(result).toEqual([]);
+  });
+
+  it("waits for in-flight filesystem work to stop when its Session closes", async () => {
+    const directory = join(workspace, "revoked-search");
+    await mkdir(directory);
+    await populateDirectory(directory, 1_000);
+    const result: Buffer[] = [];
+    const running = await executor.execute(
+      crypto.randomUUID(),
+      session,
+      {
+        kind: "fs.search",
+        path: "revoked-search",
+        query: "does-not-match",
+        maxResults: 1,
+      },
+      hooks({ result: (data) => result.push(data) }),
+    );
+
+    await executor.closeSession(session);
+
+    await expect(running.done).resolves.toEqual({ exitCode: null });
+    expect(result).toEqual([]);
+  });
+
   it("enforces typed Session restrictions again on the Client", async () => {
     await executor.closeSession(session);
     session = await executor.openSession(
@@ -623,6 +867,69 @@ describe("HostExecutor", () => {
     } finally {
       await rm(outside, { recursive: true, force: true });
     }
+  });
+
+  it("rejects a relative scope rooted at a symlink inside the account Home", async () => {
+    const privateDirectory = join(workspace, "private");
+    await mkdir(privateDirectory);
+    await writeFile(join(privateDirectory, "secret.txt"), "secret");
+    await symlink(privateDirectory, join(workspace, "approved-link"), "junction");
+    await executor.closeSession(session);
+    session = await executor.openSession(
+      crypto.randomUUID(),
+      profile(workspace),
+      ["fs.read"],
+      {
+        filesystem: {
+          paths: [{ path: "approved-link", includeDescendants: true }],
+        },
+      },
+      new Date(Date.now() + 60_000),
+      () => {},
+    );
+
+    await expect(
+      execute({ kind: "fs.read", path: "approved-link/secret.txt" }),
+    ).rejects.toThrow("Relative path scope resolves through a symbolic link");
+  });
+
+  it("rejects relative writes that escape their scope through a parent symlink", async () => {
+    const approved = join(workspace, "approved");
+    const privateDirectory = join(workspace, "private");
+    await mkdir(approved);
+    await mkdir(privateDirectory);
+    await symlink(privateDirectory, join(approved, "linked"), "junction");
+    await executor.closeSession(session);
+    session = await executor.openSession(
+      crypto.randomUUID(),
+      profile(workspace),
+      ["fs.write"],
+      {
+        filesystem: {
+          paths: [{ path: "approved", includeDescendants: true }],
+        },
+      },
+      new Date(Date.now() + 60_000),
+      () => {},
+    );
+
+    const running = await executor.execute(
+      crypto.randomUUID(),
+      session,
+      {
+        kind: "fs.write",
+        path: "approved/linked/secret.txt",
+        contentBase64: Buffer.from("secret").toString("base64"),
+        createParents: true,
+      },
+      hooks(),
+    );
+    await expect(running.done).rejects.toThrow(
+      "Resolved path escapes the approved relative scope",
+    );
+    await expect(lstat(join(privateDirectory, "secret.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("reads an absolute path when the Session grants unrestricted filesystem access", async () => {
@@ -826,4 +1133,18 @@ function hooks(
     result: () => {},
     ...overrides,
   };
+}
+
+async function populateDirectory(
+  directory: string,
+  entries: number,
+): Promise<void> {
+  await Promise.all(
+    Array.from({ length: entries }, (_, index) =>
+      writeFile(
+        join(directory, `entry-${index.toString().padStart(4, "0")}.txt`),
+        "",
+      ),
+    ),
+  );
 }

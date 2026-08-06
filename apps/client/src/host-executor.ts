@@ -22,10 +22,10 @@ import {
   assertOperationCanStart,
 } from "./executor.js";
 import {
-  executeFilesystemOperation,
   isFilesystemAction,
   resolveHostShellWorkingDirectory,
   resolveProcessWorkingDirectory,
+  startFilesystemOperation,
 } from "./filesystem-operations.js";
 import {
   hostAccountShell,
@@ -124,18 +124,15 @@ export class HostExecutor implements OperationExecutor {
       throw new Error(`Operation denied by local Session scope: ${restrictionDecision.code}`);
     }
 
-    if (isFilesystemAction(action)) {
-      const done = executeFilesystemOperation(
-        this.homeDirectory,
-        action,
-        hooks,
-        session.restrictions?.filesystem?.paths,
-      ).then(() => ({ exitCode: 0 }));
-      return { cancel: async () => {}, done };
-    }
-
-    const running =
-      action.kind === "docker.logs"
+    const running = isFilesystemAction(action)
+      ? startFilesystemOperation(
+          this.homeDirectory,
+          action,
+          hooks,
+          session.restrictions?.filesystem?.paths,
+          context.signal,
+        )
+      : action.kind === "docker.logs"
         ? this.executeDockerLogs(action, hooks)
         : await this.executeProcess(session, action, hooks, context.signal);
     const active = this.operations.get(session.id) ?? new Set<RunningOperation>();

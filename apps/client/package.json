@@ -1,6 +1,6 @@
 {
   "name": "@odyshell/client",
-  "version": "0.15.1",
+  "version": "0.16.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -29,9 +29,9 @@
   },
   "dependencies": {
     "@odyshell/protocol": "workspace:*",
-    "ws": "^8.18.0"
+    "ws": "^8.21.1"
   },
   "devDependencies": {
-    "@types/ws": "^8.18.0"
+    "@types/ws": "^8.18.1"
   }
 }
