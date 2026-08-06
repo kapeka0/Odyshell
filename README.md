@@ -228,8 +228,9 @@ ods login
 
 The CLI prints and opens a short-lived Odyshell activation link with the device code already
 included. After you approve it, `ods` receives an expiring workspace credential. The browser
-session and Clerk credentials never leave the web app. Self-hosted installations can still select
-their Server with `--server`.
+session and Clerk credentials never leave the web app. This login authorizes the human-facing CLI
+to use Workspace resources; it does not identify or enroll a target Client. Self-hosted
+installations can still select their Server with `--server`.
 
 From the dashboard, generate the one-time `ods up` command for a machine. The enrollment token
 expires after ten minutes and can only be used once. You explicitly select the local operations
@@ -300,7 +301,9 @@ through Kysely. Persistable Operation action fields and output are retained for 
 environment values and standard input are excluded. Content-minimal Control Events are retained for
 30 days. Session Timelines default to lifecycle events, Operation kind and exit status without
 commands, paths or output. Workspace administrators can enable Operational or Diagnostic detail for
-new Sessions.
+new Sessions. The authenticated Session screen can separately show a redacted recent Host Shell
+command while its temporary Operation data remains; Privacy-minimal exports and Event Sinks never
+receive it.
 
 Organizations provide the ownership boundary and workspaces isolate machines, Agents, Sessions,
 operations, and control events. Human and organization identity now live in the Clerk-backed web

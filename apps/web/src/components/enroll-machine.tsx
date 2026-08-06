@@ -40,6 +40,7 @@ import {
 import { machineEnrollmentCommand } from "@/lib/enrollment-command";
 import { formatDashboardTimestamp } from "@/lib/date-time";
 import { executionWarningState } from "@/lib/host-shell-access";
+import { updateMachineCapabilitySelection } from "@/lib/machine-capability-selection";
 
 const machineNameSchema = z
   .string()
@@ -230,8 +231,11 @@ export function EnrollMachine({
                     variant={readOnlyEnabled ? "default" : "outline"}
                     size="sm"
                     aria-pressed={readOnlyEnabled}
+                    disabled={hostShellSelected}
                     onClick={() => {
-                      setCapabilities(toggleReadOnlyPreset(capabilities));
+                      setCapabilities((current) =>
+                        toggleReadOnlyPreset(current),
+                      );
                       setCapabilitiesError(null);
                     }}
                   >
@@ -245,40 +249,44 @@ export function EnrollMachine({
                     <p className="text-xs font-medium text-muted-foreground">
                       {group.name}
                     </p>
-                    {group.capabilities.map((capability) => (
-                      <Field key={capability.value} orientation="horizontal">
-                        <Checkbox
-                          id={`enroll-${capability.value}`}
-                          checked={capabilities.includes(capability.value)}
-                          onCheckedChange={(checked) => {
-                            setCapabilities((current) =>
-                              checked
-                                ? [
-                                    ...new Set([
-                                      ...current,
-                                      capability.value,
-                                    ]),
-                                  ]
-                                : current.filter(
-                                    (value) => value !== capability.value,
-                                  ),
-                            );
-                            setCapabilitiesError(null);
-                          }}
-                          aria-invalid={Boolean(capabilitiesError)}
-                        />
-                        <FieldContent>
-                          <FieldLabel
-                            htmlFor={`enroll-${capability.value}`}
-                          >
-                            <FieldTitle>{capability.label}</FieldTitle>
-                          </FieldLabel>
-                          <FieldDescription>
-                            {capability.description}
-                          </FieldDescription>
-                        </FieldContent>
-                      </Field>
-                    ))}
+                    {group.capabilities.map((capability) => {
+                      const disabled =
+                        hostShellSelected && capability.value !== "host.shell";
+                      return (
+                        <Field
+                          key={capability.value}
+                          orientation="horizontal"
+                          data-disabled={disabled}
+                        >
+                          <Checkbox
+                            id={`enroll-${capability.value}`}
+                            checked={capabilities.includes(capability.value)}
+                            disabled={disabled}
+                            onCheckedChange={(checked) => {
+                              setCapabilities((current) =>
+                                updateMachineCapabilitySelection(
+                                  current,
+                                  capability.value,
+                                  checked === true,
+                                ),
+                              );
+                              setCapabilitiesError(null);
+                            }}
+                            aria-invalid={Boolean(capabilitiesError)}
+                          />
+                          <FieldContent>
+                            <FieldLabel
+                              htmlFor={`enroll-${capability.value}`}
+                            >
+                              <FieldTitle>{capability.label}</FieldTitle>
+                            </FieldLabel>
+                            <FieldDescription>
+                              {capability.description}
+                            </FieldDescription>
+                          </FieldContent>
+                        </Field>
+                      );
+                    })}
                   </div>
                 ))}
               </div>
@@ -286,7 +294,7 @@ export function EnrollMachine({
             </FieldSet>
 
             {hostShellSelected ? (
-              <HostShellWarning />
+              <HostShellWarning localPolicy />
             ) : null}
 
             {error ? (

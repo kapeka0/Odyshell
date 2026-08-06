@@ -236,7 +236,9 @@ const secretValuePatterns = [
   /([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/giu,
 ];
 const namedSecretValue =
-  /\b((?:token|secret|password|passwd|authorization|cookie|api[-_ ]?key)\s*[:=]\s*)[^\s,;]+/giu;
+  /\b((?:token|secret|password|passwd|authorization|cookie|api[-_ ]?key)\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:\\.|[^\s,;&|])+)/giu;
+const separatedSecretValue =
+  /(^|[\s;&|])((?:(?:--?)?(?:token|secret|password|passwd|authorization|cookie|api[-_]?key)|-[pk]))(\s+)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:\\.|[^\s;&|])+)/giu;
 
 export function operationTimelineMetadata(
   action: OperationAction,
@@ -379,6 +381,10 @@ export function redactTimelineMetadata(
   return result;
 }
 
+export function redactRecentHostShellCommand(command: string): string {
+  return redactOperationalString(command);
+}
+
 export function redactEventSinkMetadata(
   metadata: Record<string, unknown>,
   level: EventSinkDetailLevel,
@@ -474,7 +480,12 @@ function redactOperationalString(value: string): string {
         ),
       value,
     )
-    .replace(namedSecretValue, "$1[REDACTED]");
+    .replace(namedSecretValue, "$1[REDACTED]")
+    .replace(
+      separatedSecretValue,
+      (_match, prefix: string, flag: string, spacing: string) =>
+        `${prefix}${flag}${spacing}[REDACTED]`,
+    );
 }
 
 function redactOperationalArgs(args: string[]): string[] {

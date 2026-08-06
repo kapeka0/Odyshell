@@ -29,6 +29,9 @@ import {
   toggleReadOnlyPreset,
 } from "../apps/web/src/lib/agent-access-options.js";
 import {
+  updateMachineCapabilitySelection,
+} from "../apps/web/src/lib/machine-capability-selection.js";
+import {
   capabilitiesForHostShellSelection,
   capabilitiesForManualPreset,
   manualSessionSelectionIsValid,
@@ -1223,6 +1226,91 @@ describe("dashboard navigation performance boundary", () => {
     expect(activation).toContain('body?.error === "agent_limit_reached"');
     expect(activation).toContain("Disable or remove an Agent");
     expect(activation).toContain("then approve again");
+  });
+
+  it("makes Host Shell exclusive in machine Local Policy selection", () => {
+    expect(
+      updateMachineCapabilitySelection(["fs.read"], "host.shell", true),
+    ).toEqual(["host.shell"]);
+    expect(
+      updateMachineCapabilitySelection(["host.shell"], "fs.read", true),
+    ).toEqual(["host.shell"]);
+    expect(
+      updateMachineCapabilitySelection(["host.shell"], "host.shell", false),
+    ).toEqual([]);
+    expect(
+      updateMachineCapabilitySelection(
+        ["fs.read", "host.shell"],
+        "host.shell",
+        false,
+      ),
+    ).toEqual(["fs.read"]);
+    expect(
+      updateMachineCapabilitySelection(["fs.read"], "fs.write", true),
+    ).toEqual(["fs.read", "fs.write"]);
+    expect(
+      updateMachineCapabilitySelection(
+        ["fs.read", "host.shell"],
+        "fs.write",
+        true,
+      ),
+    ).toEqual(["fs.read", "host.shell"]);
+
+    const enrollment = readFileSync(
+      resolve(process.cwd(), "apps/web/src/components/enroll-machine.tsx"),
+      "utf8",
+    );
+    const machineEditor = readFileSync(
+      resolve(process.cwd(), "apps/web/src/components/machine-list.tsx"),
+      "utf8",
+    );
+    const warning = readFileSync(
+      resolve(process.cwd(), "apps/web/src/components/host-shell-warning.tsx"),
+      "utf8",
+    );
+    const alert = readFileSync(
+      resolve(process.cwd(), "apps/web/src/components/ui/alert.tsx"),
+      "utf8",
+    );
+
+    for (const surface of [enrollment, machineEditor]) {
+      expect(surface).toContain("updateMachineCapabilitySelection");
+      expect(surface).toContain("data-disabled={disabled}");
+      expect(surface).toContain("disabled={disabled}");
+      expect(surface).toContain("<HostShellWarning localPolicy />");
+    }
+    expect(enrollment).toContain("disabled={hostShellSelected}");
+    expect(machineEditor).not.toContain(
+      "normalizeMachineCapabilitySelection(machine.capabilities)",
+    );
+    expect(warning).toContain('variant="warning"');
+    expect(warning).toContain("Structured capabilities are disabled");
+    expect(alert).toContain("border-status-warning/35");
+  });
+
+  it("shows recent redacted Host Shell commands without adding them to Timeline exports", () => {
+    const sessionDetail = readFileSync(
+      resolve(process.cwd(), "apps/web/src/components/session-detail.tsx"),
+      "utf8",
+    );
+    const server = readFileSync(
+      resolve(process.cwd(), "apps/server/src/index.ts"),
+      "utf8",
+    );
+    const inspection = server.slice(
+      server.indexOf('"/v1/internal/cloud/sessions/inspect"'),
+      server.indexOf('"/v1/internal/cloud/sessions/export"'),
+    );
+    const timelineExportRoute = server.slice(
+      server.indexOf('"/v1/internal/cloud/sessions/export"'),
+      server.indexOf('"/v1/internal/cloud/event-sink"'),
+    );
+
+    expect(inspection).toContain("recentHostShellCommands");
+    expect(inspection).toContain("redactRecentHostShellCommand");
+    expect(timelineExportRoute).not.toContain("recentHostShellCommands");
+    expect(sessionDetail).toContain('event.eventType === "operation.completed"');
+    expect(sessionDetail).toContain("detail.recentHostShellCommands");
   });
 
   it("keeps persistent Agent deletion behind the organization administrator boundary", () => {

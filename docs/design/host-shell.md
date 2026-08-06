@@ -56,12 +56,17 @@ Shell authority; dashboard-created Sessions remain explicitly selectable without
 
 ## Authorization and product surfaces
 
-Enrollment presents Host Shell as an individual capability, never as part of a broad preset.
+Enrollment presents Host Shell as an individual capability, never as part of a broad preset. In
+the dashboard machine Local Policy form, selecting it clears and disables structured capabilities
+because they do not narrow the same user's authority; deselecting it restores the narrower choices.
+The same invariant applies when editing that form. Protocol capabilities remain distinct, and
+advanced clients may still express a Local Policy that supports both Host Shell and typed Sessions.
 Manual Session creation offers Read only as the structured convenience preset and Host Shell as a
 separate explicit selection. Approval surfaces repeat the same warning even when enrollment or
 creation already displayed it.
 
-The warning must state that commands run as the operating-system user running the Client, start in
+The warning uses the semantic yellow warning treatment and must state that commands run as the
+operating-system user running the Client, start in
 that user's Home, can access that user's files, credentials, network, and services, have no sandbox
 or isolation, and may persist changes after the Session ends.
 
@@ -110,10 +115,13 @@ termination path cannot prove that local authority ended, the Client persists a 
 stops accepting Server work, and refuses to reconnect after a service restart. Owner recovery is to
 investigate remaining processes and remove and re-enroll that Profile.
 
-Timeline handling follows the Session's selected detail level. Privacy-minimal data records
-structure and status without command text or output. Operational detail may expose automatically
-redacted commands and output while temporary Operation data remains available. Diagnostic detail
-may expose raw temporary values, can contain secrets, and requires its existing explicit warning.
+Durable Timeline handling follows the Session's selected detail level. Privacy-minimal data and
+exports record structure and status without command text or output. The authenticated Session view
+may separately show an automatically redacted Host Shell command from temporary Operation data;
+that command is not added to Privacy-minimal Timeline metadata and disappears after payload purge.
+Operational detail may expose automatically redacted commands and output while temporary Operation
+data remains available. Diagnostic detail may expose raw temporary values, can contain secrets,
+and requires its existing explicit warning.
 Environment values and standard input are never persisted. The process receives only the Client's
 allowlisted base environment plus explicit values for that Operation. On POSIX, the login shell can
 still load the user's startup files, and the command retains same-user access to those files.

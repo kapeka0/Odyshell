@@ -82,6 +82,7 @@ import {
   eventSinkRetryAt,
   postSignedTimeline,
   redactEventSinkMetadata,
+  redactRecentHostShellCommand,
   redactTimelineMetadata,
   signedTimelineDelivery,
   type EventSinkDetailLevel,
@@ -1706,12 +1707,20 @@ app.post(
     if (!session || !timeline) {
       return reply.code(404).send({ error: "session_not_found" });
     }
-    const exported = await timelineExport(
-      context.workspace.id,
-      parsed.data.sessionId,
-      timeline,
-      session.loggingLevel,
+    const operationIds = timeline.flatMap((event) =>
+      event.eventType === "operation.completed" && event.operationId
+        ? [event.operationId]
+        : [],
     );
+    const [exported, recentHostShellCommands] = await Promise.all([
+      timelineExport(
+        context.workspace.id,
+        parsed.data.sessionId,
+        timeline,
+        session.loggingLevel,
+      ),
+      db.recentHostShellCommands(context.workspace.id, operationIds),
+    ]);
     return {
       session: {
         ...session,
@@ -1720,6 +1729,12 @@ app.post(
         updatedAt: isoTimestamp(session.updatedAt),
       },
       timeline: exported.events,
+      recentHostShellCommands: Object.fromEntries(
+        [...recentHostShellCommands].map(([operationId, command]) => [
+          operationId,
+          redactRecentHostShellCommand(command),
+        ]),
+      ),
     };
   },
 );

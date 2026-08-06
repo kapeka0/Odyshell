@@ -5229,6 +5229,27 @@ export class PostgresDatabase {
     return metadata;
   }
 
+  async recentHostShellCommands(
+    workspaceId: string,
+    operationIds: string[],
+  ): Promise<Map<string, string>> {
+    if (operationIds.length === 0) return new Map();
+    const operations = await this.db
+      .selectFrom("operations")
+      .select(["id", "action"])
+      .where("workspaceId", "=", workspaceId)
+      .where("id", "in", [...new Set(operationIds)])
+      .execute();
+
+    return new Map(
+      operations.flatMap((operation) =>
+        operation.action.kind === "host.shell"
+          ? [[operation.id, operation.action.command] as const]
+          : [],
+      ),
+    );
+  }
+
   async workspaceEventSink(
     workspaceId: string,
   ): Promise<EventSinkRecord | null> {

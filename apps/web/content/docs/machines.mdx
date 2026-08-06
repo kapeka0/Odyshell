@@ -16,6 +16,11 @@ Open **Machines**, select **Add**, and configure:
 - a machine name;
 - the capabilities the machine will accept.
 
+Selecting **Host Shell** clears and disables the narrower structured capabilities in this form.
+Host Shell can already use everything available to the operating-system user running the Client;
+deselect it when you want to configure narrower typed access instead. The yellow warning is about
+that user's full authority, not automatic root or administrator access.
+
 Odyshell generates an `ods up` command containing a single-use enrollment token. Run it on the
 target machine. The target does not need `ods login`; the signed-in Workspace member authorizes
 enrollment by generating this command. The token expires after ten minutes and cannot be replayed.

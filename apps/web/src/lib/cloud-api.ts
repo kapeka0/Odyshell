@@ -118,6 +118,7 @@ export type SessionTimelineEvent = {
   id: string;
   eventType: string;
   source: "verified" | "agent";
+  operationId?: string;
   metadata: Record<string, unknown>;
   createdAt: string;
 };
@@ -125,6 +126,7 @@ export type SessionTimelineEvent = {
 export type SessionTimelineDetail = {
   session: CloudSession;
   timeline: SessionTimelineEvent[];
+  recentHostShellCommands: Record<string, string>;
 };
 
 export type CloudEventSink = {

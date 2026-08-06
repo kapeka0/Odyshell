@@ -82,7 +82,7 @@ The Workspace logging level is captured when the Session is requested and never 
 Session:
 
 - **Privacy-minimal** keeps lifecycle, Operation kind, status and exit code. It excludes commands,
-  paths, stdout and stderr.
+  paths, stdout and stderr from the durable Timeline and its exports.
 - **Operational** adds commands, paths and available stdout and stderr with automatic secret
   redaction.
 - **Diagnostic** keeps complete available details and can contain secrets.
@@ -91,6 +91,11 @@ Environment values and standard input are never persisted. Host Shell inherits a
 environment rather than all Client variables; explicit values apply only to one Operation. The
 POSIX login shell can still load user startup files. Command and output detail remains temporary
 and becomes unavailable when Operation retention expires.
+
+While that temporary Operation record still exists, the authenticated Session screen separately
+shows the automatically redacted Host Shell command beside its completed Operation. This recent
+command is not written into Privacy-minimal Timeline metadata, included in a Timeline export, or
+sent to an Event Sink. It disappears when temporary Operation retention expires.
 
 Operation output remains temporary and is eligible for deletion after one hour by default. Older
 Timeline events keep their structural result without recreating deleted output.

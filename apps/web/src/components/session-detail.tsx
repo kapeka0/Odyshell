@@ -115,6 +115,11 @@ export function SessionDetail({ initial }: { initial: SessionTimelineDetail }) {
                 members={members}
                 requester={requester}
                 timeZone={timeZone}
+                recentHostShellCommand={
+                  event.eventType === "operation.completed" && event.operationId
+                    ? detail.recentHostShellCommands[event.operationId]
+                    : undefined
+                }
               />
             ))}
           </Timeline>
@@ -190,6 +195,7 @@ function SessionEvent({
   members,
   requester,
   timeZone,
+  recentHostShellCommand,
 }: {
   event: SessionTimelineEvent;
   agentName: string;
@@ -200,6 +206,7 @@ function SessionEvent({
     | { kind: "human"; id: string; name: string; imageUrl?: string }
     | null;
   timeZone: string;
+  recentHostShellCommand?: string;
 }) {
   const actor = eventActor(event, agentName, agents, members, requester);
   return (
@@ -217,18 +224,37 @@ function SessionEvent({
           ) : <span className="flex size-5 items-center justify-center rounded-full border"><ShieldCheckIcon className="size-3" /></span>}
           {actor.name}
         </div>
-        <EventMetadata metadata={event.metadata} />
+        <EventMetadata
+          metadata={event.metadata}
+          recentHostShellCommand={recentHostShellCommand}
+        />
       </TimelineContent>
     </TimelineItem>
   );
 }
 
-function EventMetadata({ metadata }: { metadata: Record<string, unknown> }) {
-  const command = typeof metadata.command === "string"
-    ? metadata.command
-    : typeof metadata.program === "string"
-      ? [metadata.program, ...(Array.isArray(metadata.args) ? metadata.args.filter((value): value is string => typeof value === "string") : [])].join(" ")
-      : null;
+function EventMetadata({
+  metadata,
+  recentHostShellCommand,
+}: {
+  metadata: Record<string, unknown>;
+  recentHostShellCommand?: string;
+}) {
+  const command =
+    typeof metadata.command === "string"
+      ? metadata.command
+      : recentHostShellCommand
+        ? recentHostShellCommand
+        : typeof metadata.program === "string"
+          ? [
+              metadata.program,
+              ...(Array.isArray(metadata.args)
+                ? metadata.args.filter(
+                    (value): value is string => typeof value === "string",
+                  )
+                : []),
+            ].join(" ")
+          : null;
   const exitCode = typeof metadata.exitCode === "number" ? metadata.exitCode : null;
   const status = typeof metadata.status === "string" ? metadata.status : null;
   const stdout = typeof metadata.stdout === "string" ? metadata.stdout : null;

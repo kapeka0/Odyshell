@@ -69,6 +69,7 @@ import { capabilityGroups } from "@/lib/agent-access-options";
 import type { CloudMachine } from "@/lib/cloud-api";
 import { formatDashboardTimestamp } from "@/lib/date-time";
 import { executionWarningState } from "@/lib/host-shell-access";
+import { updateMachineCapabilitySelection } from "@/lib/machine-capability-selection";
 import {
   machinePlatform,
   machinePrivilegeEscalation,
@@ -501,23 +502,28 @@ function MachineActions({
                         machine.availableCapabilities.includes(
                           capability.value,
                         );
+                      const disabled =
+                        !available ||
+                        (warningState.hostShell &&
+                          capability.value !== "host.shell");
                       return (
                         <Field
                           key={capability.value}
                           orientation="horizontal"
                           className="py-1.5"
+                          data-disabled={disabled}
                         >
                           <Checkbox
                             id={`machine-${machine.id}-${capability.value}`}
                             checked={capabilities.includes(capability.value)}
-                            disabled={!available}
+                            disabled={disabled}
                             onCheckedChange={(checked) =>
                               setCapabilities((current) =>
-                                checked
-                                  ? [...new Set([...current, capability.value])]
-                                  : current.filter(
-                                      (value) => value !== capability.value,
-                                    ),
+                                updateMachineCapabilitySelection(
+                                  current,
+                                  capability.value,
+                                  checked === true,
+                                ),
                               )
                             }
                           />
@@ -533,7 +539,9 @@ function MachineActions({
                     })}
                 </div>
               </Field>
-              {warningState.hostShell ? <HostShellWarning /> : null}
+              {warningState.hostShell ? (
+                <HostShellWarning localPolicy />
+              ) : null}
               {warningState.rootAccess ? (
                 <Alert>
                   <AlertTitle>Root access possible</AlertTitle>

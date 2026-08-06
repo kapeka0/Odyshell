@@ -10,6 +10,7 @@ import {
   operationTimelineMetadata,
   privacyMinimalOperationMetadata,
   redactEventSinkMetadata,
+  redactRecentHostShellCommand,
   redactTimelineMetadata,
   signedTimelineDelivery,
   verifyTimelineDeliverySignature,
@@ -239,6 +240,32 @@ describe("Timeline Event Sinks", () => {
         },
       ]).stderr,
     ).toHaveLength(64 * 1024);
+  });
+
+  it("redacts recent Host Shell commands before authenticated Session inspection", () => {
+    expect(redactRecentHostShellCommand("curl --token hunter2")).toBe(
+      "curl --token [REDACTED]",
+    );
+    expect(
+      redactRecentHostShellCommand(
+        "tool --password 'correct horse battery staple' status",
+      ),
+    ).toBe("tool --password [REDACTED] status");
+    expect(
+      redactRecentHostShellCommand(
+        "curl https://user:pass@example.com --api-key=plain-secret",
+      ),
+    ).toBe("curl https://[REDACTED]@example.com --api-key=[REDACTED]");
+    expect(
+      redactRecentHostShellCommand(
+        "tool --password='correct horse battery staple' status",
+      ),
+    ).toBe("tool --password=[REDACTED] status");
+    expect(
+      redactRecentHostShellCommand(
+        "TOKEN='correct horse battery staple' command",
+      ),
+    ).toBe("TOKEN=[REDACTED] command");
   });
 
   it("redacts compact secret assignments in operational arguments", () => {

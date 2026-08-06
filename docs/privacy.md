@@ -20,6 +20,11 @@ keeps complete available details and can contain secrets. Command and output det
 temporary. Environment values and standard input are never persisted. Changing the Workspace
 setting affects only new Sessions.
 
+The authenticated Session screen may separately read an automatically redacted Host Shell command
+from temporary operation data while that data still exists. This recent execution aid is not added
+to Privacy-minimal Timeline metadata, durable control events, Timeline exports, or Event Sinks. It
+becomes unavailable when the temporary Operation is purged.
+
 ## Data classes
 
 ### Machine and access state

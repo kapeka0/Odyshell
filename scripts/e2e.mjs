@@ -2935,6 +2935,25 @@ try {
     throw new Error("Administrator machine list did not include the enrolled client");
   }
 
+  const privacyMinimalLoggingResponse = await fetch(
+    new URL("/v1/internal/cloud/workspace/settings/update", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        ...cloudIdentityBody,
+        section: "logging",
+        loggingLevel: "privacy-minimal",
+      }),
+    },
+  );
+  if (privacyMinimalLoggingResponse.status !== 200) {
+    throw new Error("Could not prepare privacy-minimal Host Shell coverage");
+  }
+
   const hostShellRunId = crypto.randomUUID();
   const hostShellRequestResponse = await fetch(
     new URL("/v1/agent-session-requests", apiUrl),
@@ -3184,6 +3203,53 @@ try {
       "Host Shell Operations did not preserve independent native same-user execution from Home",
     );
   }
+  const hostShellInspectionResponse = await fetch(
+    new URL("/v1/internal/cloud/sessions/inspect", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        ...cloudIdentityBody,
+        sessionId: hostShellSession.sessionId,
+      }),
+    },
+  );
+  const hostShellInspection = await hostShellInspectionResponse.json();
+  if (
+    hostShellInspectionResponse.status !== 200 ||
+    hostShellInspection.session?.loggingLevel !== "privacy-minimal" ||
+    hostShellInspection.recentHostShellCommands?.[continuedAfterFailure.id] !==
+      "echo odyshell-shell-still-usable" ||
+    JSON.stringify(hostShellInspection.timeline).includes('"command"')
+  ) {
+    throw new Error(
+      "Authenticated Session inspection did not separate the recent Host Shell command from its privacy-minimal Timeline",
+    );
+  }
+  const hostShellExportResponse = await fetch(
+    new URL("/v1/internal/cloud/sessions/export", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        ...cloudIdentityBody,
+        sessionId: hostShellSession.sessionId,
+      }),
+    },
+  );
+  const hostShellExport = await hostShellExportResponse.json();
+  if (
+    hostShellExportResponse.status !== 200 ||
+    JSON.stringify(hostShellExport).includes('"command"')
+  ) {
+    throw new Error("Privacy-minimal Timeline export exposed a Host Shell command");
+  }
   const hostShellCancellableId = await startHostShell({
     kind: "host.shell",
     command: 'node -e "setTimeout(() => {}, 30000)"',
@@ -3255,6 +3321,24 @@ try {
     (status) => status === "closed",
     "Host Shell target cleanup",
   );
+  const operationalLoggingRestoreResponse = await fetch(
+    new URL("/v1/internal/cloud/workspace/settings/update", apiUrl),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-odyshell-web-key": webKey,
+      },
+      body: JSON.stringify({
+        ...cloudIdentityBody,
+        section: "logging",
+        loggingLevel: "operational",
+      }),
+    },
+  );
+  if (operationalLoggingRestoreResponse.status !== 200) {
+    throw new Error("Could not restore operational Timeline logging after Host Shell coverage");
+  }
 
   const locallyDeniedResponse = await fetch(
     new URL("/v1/agent-session-requests", apiUrl),

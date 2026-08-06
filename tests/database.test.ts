@@ -1003,6 +1003,10 @@ describe("server storage boundaries", () => {
       database.indexOf("async operationTimelineMetadata("),
       database.indexOf("async workspaceEventSink("),
     );
+    const recentHostShell = database.slice(
+      database.indexOf("async recentHostShellCommands("),
+      database.indexOf("async workspaceEventSink("),
+    );
     const start = database.slice(
       database.indexOf("async markOperationStarted("),
       database.indexOf("async addOperationEvent("),
@@ -1020,6 +1024,9 @@ describe("server storage boundaries", () => {
     expect(diagnostics).toContain('.where("workspaceId", "=", workspaceId)');
     expect(diagnostics).toContain("operationTimelineMetadata(operation.action)");
     expect(diagnostics).toContain("diagnosticTimelineMetadata(operationEvents)");
+    expect(recentHostShell).toContain('.where("workspaceId", "=", workspaceId)');
+    expect(recentHostShell).toContain('operation.action.kind === "host.shell"');
+    expect(recentHostShell).not.toContain("operationEvents");
     expect(start).not.toContain("operationTimelineMetadata(operation.action)");
     expect(completion).not.toContain("diagnosticTimelineMetadata");
     expect(migration).toContain(
