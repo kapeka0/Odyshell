@@ -5,7 +5,7 @@
   "keywords": [
     "ai-agents",
     "cli",
-    "mcp",
+    "agent-infrastructure",
     "remote-execution"
   ],
   "homepage": "https://odyshell.com/docs/cli",
@@ -47,7 +47,6 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "^2.0.0",
     "commander": "^14.0.3",
     "open": "^11.0.0",
     "picocolors": "^1.1.1",
@@ -56,7 +55,6 @@
   },
   "devDependencies": {
     "@odyshell/client": "workspace:*",
-    "@odyshell/mcp": "workspace:*",
     "@odyshell/protocol": "workspace:*",
     "@odyshell/sdk": "workspace:*"
   }

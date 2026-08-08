@@ -28,7 +28,6 @@ import {
 } from "@odyshell/client";
 import {
   ApiError,
-  Odyshell,
   OdyshellApi,
   type OperationResult,
 } from "@odyshell/sdk";
@@ -59,9 +58,6 @@ import {
   assertClientServerReachable,
   resolveClientUpConfiguration,
 } from "./up.js";
-import {
-  serveApprovedOdyshellMcp,
-} from "./mcp.js";
 import { deviceLoginUrl } from "./login.js";
 import { resetLocalOdyshell } from "./reset.js";
 
@@ -748,60 +744,6 @@ program
     const result = await (await apiFor(command)).audit(Number(options.limit), options.all ?? false);
     if (global.json) printJson(result);
     else printAudit(result.principal, result.data);
-  });
-
-program
-  .command("mcp")
-  .description("serve Odyshell tools to AI agents over MCP stdio")
-  .option("--name <name>", "persistent agent name", "Odyshell MCP")
-  .action(async (mcpOptions: { name: string }, command: Command) => {
-    const global = globals(command);
-    const configPath = global.configFile
-      ? resolve(global.configFile)
-      : defaultConfigPath();
-    const config = await resolveConfig(global);
-    if (config.agentToken && config.mcpAgentId && config.mcpAgentName) {
-      serveApprovedOdyshellMcp(
-        new Odyshell({
-          serverUrl: config.serverUrl,
-          agentToken: config.agentToken,
-        }),
-        { id: config.mcpAgentId, name: config.mcpAgentName },
-      );
-      return;
-    }
-    if (config.cliToken) {
-      const agentId = config.mcpAgentId ?? randomUUID();
-      const agentName = config.mcpAgentName ?? mcpOptions.name;
-      if (!config.mcpAgentId || !config.mcpAgentName) {
-        await saveStoredConfig(
-          {
-            ...config,
-            mcpAgentId: agentId,
-            mcpAgentName: agentName,
-          },
-          configPath,
-        );
-      }
-      serveApprovedOdyshellMcp(
-        new Odyshell({
-          serverUrl: config.serverUrl,
-          cliToken: config.cliToken,
-        }),
-        { id: agentId, name: agentName },
-      );
-      return;
-    }
-    if (!config.agentToken) {
-      throw new ExpectedError(
-        "Sign in with \"ods login\" or configure an agent token.",
-        "mcp_credentials_required",
-      );
-    }
-    throw new ExpectedError(
-      'Agent Access was migrated. Register this Agent with "ods agent login".',
-      "legacy_agent_access_migrated",
-    );
   });
 
 program

@@ -267,19 +267,9 @@ keys, output is transient and cursor-readable, and Tasks and Commands remain ins
 caller reconnects. A Task may start immediately inside its autonomy policy or remain pending for
 optional human supervision.
 
-The local `ods mcp` command still exposes the earlier Session/Operation interface during the client
-cutover and is not the canonical agent-native interface.
-
-In that earlier local flow, the Agent keeps a persistent identity but receives no machine authority from login. It requests a
-temporary Session for either exact typed Operations or explicit broad Host Shell authority, shows
-the approval URL to the user and waits, privately claims the credential once approved, performs the
-task, and completes the Session.
-Programmatic Host Shell requests carry a stable Task Run identifier: failed commands can be
-corrected within that Session, but unrelated work cannot inherit its authority. The Agent
-explicitly completes the Session when the overall task succeeds or is abandoned; expiry is only a
-fallback.
-The Server enforces the immutable machine, capability, path, and expiry; the Client applies its own
-local policy as a second boundary.
+The CLI no longer embeds a second stdio MCP implementation. Agents connect to remote OAuth MCP or
+the canonical HTTP interface, so every transport exercises the same Organization, policy, Task,
+Command, idempotency, and audit checks.
 
 Independent Agents can propose versioned autoapproval policies for repeated bounded work. An
 administrator approves the exact ceiling once; requests inside it autoapprove, while wider

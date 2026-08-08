@@ -1,134 +1,69 @@
 ---
 title: Agents
-description: Give a persistent agent temporary, least-privilege machine access.
+description: Give a durable Agent temporary shell authority on private Linux Machines.
 ---
 
-An Agent is a persistent programmatic identity. Connecting the remote OAuth MCP or signing in with
-`ods login` lets Odyshell register that identity without granting it access to a machine.
+An Agent is a persistent programmatic identity inside one Organization. Authentication proves who
+the Agent is; it does not grant access to any Machine. Machine authority exists only inside an
+expiring Task.
 
-For an interactive task, the Agent requests a temporary Session with a short title, an optional
-purpose, a duration, and one or more independent machine scopes. A workspace member reviews every
-machine, capability, and restriction in the browser. The Agent then claims a Session Credential
-once; the Server stores only its hash.
+Agents are the primary Odyshell operators. Humans establish trust, define policy, optionally decide
+exceptions, and inspect evidence through the dashboard.
 
-The responsible member receives private dashboard notifications for approvals, Session lifecycle,
-machine enrollment and sustained machine outages. Opening one marks it read and goes to the
-related resource. Notifications can also be marked read or unread individually or together.
+## Connect an Agent
 
-## Connect an agent
+For an MCP-compatible runtime, add the Server's `/mcp` resource and complete OAuth in the browser:
 
-For a remote MCP client, add the `/mcp` URL of a Server configured with Odyshell Identity OAuth and approve the
-connection in the browser. For a local stdio client, install the CLI in the agent's environment:
-
-```npm
-npm install --global @odyshell/cli
+```text
+https://mcp.example.com/mcp
 ```
 
-Sign in and configure the MCP:
+Odyshell uses Authorization Code with PKCE for interactive MCP installations. Unattended Agent
+runtimes use Organization-bound OAuth Client Credentials against the canonical HTTP interface.
+Both transports call the same authorization module and expose the same Task and Command state.
 
-```bash
-ods login
-ods mcp
-```
+The CLI does not host a separate stdio MCP server. It is reserved for installing, diagnosing, and
+recovering the Machine Client.
 
-For an unattended runtime, register an Independent Agent instead:
+## Authority model
 
-```bash
-ods agent login "OpenClaw"
-```
+An Agent can discover only online Linux Machines whose Local Policy includes that Agent. To work,
+it requests a Task with:
 
-Open the displayed URL as a workspace administrator. Approval creates the persistent Agent and
-returns a 90-day Agent Credential to the runtime. It can request Sessions and inspect its own
-requests, but cannot execute an Operation or administer the workspace. Rotate it before expiry;
-the previous credential remains valid for at most ten minutes.
+- one Machine;
+- a title and optional purpose;
+- a bounded duration;
+- an idempotency key that identifies that exact logical request.
 
-The MCP requests either one or more exact typed Operations or explicit broad Host Shell authority.
-Typed Sessions can authorize explicit filesystem paths, exact `process.exec` program and argument
-rules, and exact Docker container names. Host Shell instead approves the capability without an
-advance command list. Programmatic Host Shell requests require a stable Task Run `runId`, and only
-the same Agent installation and Task Run may reuse that authority.
+The Machine owner controls the Local Policy ceiling. The Organization's Autonomy Policy decides
+whether a Task inside that ceiling opens automatically or waits for an Owner, Admin, or Supervisor.
+A human decision cannot widen Local Policy.
 
-Its effective authority is the intersection of:
+An active Task authorizes arbitrary non-interactive shell Commands as the operating-system user
+running that Client Profile. This is same-user authority, not a sandbox or a safe-command claim.
+Commands can access files, credentials, network, and services available to that user, and their
+side effects may persist after the Task ends.
 
-1. the selected machine scope and its typed restrictions;
-2. Session status and expiry;
-3. the target machine's local policy;
-4. the operating-system permissions of the Client process.
+## Task lifecycle
 
-## Expiry
+The Agent polls Task state after requesting authority. A Task may be pending approval, opening,
+active, cancelling, completed, cancelled, expired, or failed. Transport loss does not create a new
+Task: the Agent reads the existing resource again using its ID.
 
-Session authority begins when the Client confirms that a target is ready and cannot outlive its expiry. A Session Credential
-cannot create another Session or change its approved scope. The Server revokes the credential and
-the Client cancels active work when the Session expires or is cancelled. Completion is separate:
-it records the agent-reported outcome and fails while an Operation remains active.
+Each Command is asynchronous. It accepts shell text, an optional absolute working directory, and a
+bounded timeout. Caller-provided environment variables and standard input are not accepted. The
+Agent polls Command state and reads transient stdout/stderr chunks with a sequence cursor, then
+explicitly completes the Task after every Command reaches a terminal state.
 
-Renewal never extends an active Session. It creates a successor with the same immutable scope, a
-new expiry, and a new approval. Cancelling a Session is safe to retry and immediately prevents
-credential reuse.
+Reusing an idempotency key with different Task or Command input is rejected. Cancellation stops the
+Client process tree when it is reachable; expiry and reconnect reconciliation fail closed instead
+of silently restoring stale authority.
 
-Verified request, approval, target, Operation result and close events form the Session Timeline.
-Privacy-minimal Timeline events do not contain file contents or credentials.
+## Evidence and privacy
 
-Open **Sessions** to search current and historical Sessions, inspect their machine scopes and
-review the verified Timeline. Active Sessions also appear between their Agent and machines on the
-Overview canvas. An Agent remains visible when it has no active Session.
+Audit evidence binds the Organization, Agent, Machine, Task, human decision, exact command, working
+directory, timeout, status, and timestamps. Credentials and retained command output are excluded.
+Output is a short-lived delivery buffer for reconnect, not a session recording.
 
-Workspace administrators can remove a persistent Agent from **Agents**. Removal revokes its active
-credentials, policies and Sessions, removes its Managed Agents, and keeps privacy-minimal audit
-references instead of erasing history.
-For a remote MCP Agent, removal also revokes its OAuth installation and private Session grants.
-
-## Autoapproval policies
-
-An Independent Agent can propose a temporary approval ceiling with exact machines, capabilities,
-typed restrictions, a maximum Session duration, and a policy expiry. The policy remains inactive
-until a workspace administrator reviews its standalone approval page.
-
-Requests wholly inside an active policy are approved automatically. A request that adds a machine,
-capability, restriction, or longer duration remains pending for a human; Odyshell never partially
-approves it. Pausing or revoking a policy stops future automatic approvals without changing
-Sessions already issued from an earlier version.
-`host.shell` cannot be included in an Autoapproval Policy and is always sent to a human for review.
-
-Open **Policies** to review current and historical versions. Every autoapproved Session records the
-exact policy ID and version that justified it.
-
-## Managed agents
-
-An Independent Agent can propose a Delegation Policy with an exact scope, Session duration,
-validity, and Managed Agent limit. After an administrator approves it, the Agent can create
-persistent Managed Agent identities inside that ceiling.
-Delegation Policy scopes cannot contain `host.shell`, so Managed Agents cannot receive Host Shell
-authority through delegation.
-
-A Managed Agent has no durable credential and cannot create another Agent. Its parent requests
-Sessions in its name and gives a worker only the claimed Session Credential:
-
-```ts
-const child = await ods.createManagedAgent({
-  name: "Dependency updater",
-  scopes,
-  maxSessionSeconds: 600,
-  validForSeconds: 60 * 60,
-})
-
-const request = await ods.requestAgentSession({
-  agentId: child.id,
-  agentName: child.name,
-  title: "Check dependency updates",
-  purpose: "Check dependency updates",
-  scopes,
-  durationSeconds: 600,
-  runId: "update-run-42",
-})
-```
-
-The Timeline identifies the Managed Agent that executes, its requesting parent, and the optional
-run identifier. Pausing or replacing the parent Delegation Policy blocks new child Sessions.
-Disabling a Managed Agent closes its active Sessions; revoking the parent credential also disables
-its children and their active access.
-
-## Previous Agent Access credentials
-
-Agent Access credentials no longer authorize machines. Register a persistent Agent once, then use
-browser-approved Sessions or an Autoapproval Policy for repeated bounded work.
+The dashboard's **Tasks** view shows pending decisions first and recent Agent work separately.
+Human supervision is optional when policy allows autonomous execution.

@@ -186,10 +186,12 @@ authorization.
 - the dashboard exposes the same Task lifecycle as the agent protocols, prioritizes Tasks that
   require a human decision, confirms authority-changing actions, and keeps recent Task state
   observable without making human supervision mandatory.
+- the CLI no longer exposes the superseded local stdio MCP authorization path; Agents use the
+  remote OAuth MCP adapter or canonical HTTP interface backed by the same Task/Command module.
 
 ### DOING
 
-- remove the superseded Session/Operation, Workspace, typed-operation, Docker, SDK, local MCP,
+- remove the superseded Session/Operation, Workspace, typed-operation, Docker, SDK,
   Managed Agent, delegation, and Event Sink implementations after the replacement vertical works.
 
 ### BLOCKED

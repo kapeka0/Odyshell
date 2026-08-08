@@ -34,7 +34,7 @@ private network.
 | Agents | Persistent identities with expiring, rotatable credentials and no machine authority |
 | Sessions | Temporary, browser-approved authority with per-machine scopes and credentials |
 | Reliability | Reconnection, heartbeat, ping, cancellation, and idempotency |
-| Interfaces | HTTP API, TypeScript SDK, `ods` CLI, and local MCP server |
+| Interfaces | HTTP API, TypeScript SDK, `ods` CLI, and remote OAuth MCP |
 | Persistence | PostgreSQL through Kysely |
 | Tenancy | Organizations own isolated execution Workspaces |
 

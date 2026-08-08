@@ -62,7 +62,6 @@ describe("public documentation corpus", () => {
     );
     const sessions = readFileSync(resolve(docsRoot, "sessions.mdx"), "utf8");
     const agents = readFileSync(resolve(docsRoot, "agents.mdx"), "utf8");
-    const mcp = readFileSync(resolve(docsRoot, "mcp.mdx"), "utf8");
     const sdk = readFileSync(resolve(docsRoot, "sdk.mdx"), "utf8");
     const concepts = readFileSync(resolve(docsRoot, "concepts.mdx"), "utf8");
 
@@ -82,34 +81,28 @@ describe("public documentation corpus", () => {
     expect(sessions).toContain(
       "Transport loss alone does not terminate an already authorized Operation",
     );
-    for (const page of [agents, mcp]) {
-      expect(page).toContain("exact typed Operations");
-      expect(page).toContain("broad Host Shell authority");
-    }
+    expect(agents).toContain("same-user authority");
+    expect(agents).toContain("arbitrary non-interactive shell Commands");
     expect(sdk).toContain("requestHostShellSession");
     expect(sdk).toContain("claimedSession(shellClaim)");
     expect(sdk).toContain("operating-system user running the Client");
     expect(sdk).toContain("user's Home");
     expect(sdk).toContain("no sandbox, PTY, persistent shell process");
     expect(sdk).toContain("missing command can fail without ending the Session");
-    for (const page of [agents, concepts, sdk]) {
+    for (const page of [concepts, sdk]) {
       expect(page).toMatch(/host\.shell[\s\S]{0,160}(?:cannot|never)[\s\S]{0,80}(?:Autoapproval|autoapproved|Delegation|delegated)/u);
     }
     expect(corpus).not.toContain("Full access");
   });
 
-  it("distinguishes local in-process MCP reuse from persistent remote reuse", () => {
+  it("documents only the canonical remote Task and Command MCP", () => {
     const mcp = readFileSync(resolve(docsRoot, "mcp.mdx"), "utf8");
 
-    expect(mcp).toContain(
-      "Local `ods mcp` reuses only Sessions claimed by that same running process",
-    );
-    expect(mcp).toContain(
-      "Remote MCP keeps its installation-bound Session grant in PostgreSQL",
-    );
-    expect(mcp).toContain(
-      "restarting `ods mcp` requires a new Session request and approval",
-    );
+    expect(mcp).toContain("`task_request`");
+    expect(mcp).toContain("`command_run`");
+    expect(mcp).toContain("OAuth");
+    expect(mcp).not.toContain("`ods mcp`");
+    expect(mcp).not.toContain("Session Credential");
   });
 
   it("publishes the exact Host Shell CLI contract", () => {
@@ -178,8 +171,6 @@ describe("public documentation corpus", () => {
       "quickstart.mdx",
       "cli.mdx",
       "machines.mdx",
-      "agents.mdx",
-      "mcp.mdx",
       "self-hosting.mdx",
     ]) {
       const content = readFileSync(resolve(docsRoot, page), "utf8");

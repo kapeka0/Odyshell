@@ -97,10 +97,6 @@ sufficient.
 
 ## Agent integrations
 
-`ods mcp` starts the local MCP server over stdio. After `ods login`, it creates one persistent
-local Agent identity. That Agent requests temporary Sessions; the user approves the machine,
-typed operation and duration in the browser.
-
-The MCP exposes machine discovery and ping, Session request/status/completion, typed execution and
-the verified timeline. It cannot enroll machines, manage people, expose credentials, or use
-administrator commands.
+Agents connect to the Server's remote OAuth MCP or canonical HTTP interface. The CLI does not host
+a separate stdio MCP implementation. This keeps Organization identity, policy, Task, Command,
+idempotency, reconnect, and audit behavior behind the same Server interface.

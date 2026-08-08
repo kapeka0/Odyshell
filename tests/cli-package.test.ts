@@ -113,4 +113,13 @@ describe("CLI npm package", () => {
     expect(entry).not.toContain('.session(sessionId)');
     expect(entry).not.toContain('.closeSession(sessionId)');
   });
+
+  it("does not expose the superseded local MCP authorization path", () => {
+    const entry = readFileSync(resolve(cliRoot, "src/index.ts"), "utf8");
+
+    expect(entry).not.toContain('.command("mcp")');
+    expect(existsSync(resolve(cliRoot, "src/mcp.ts"))).toBe(false);
+    expect(packageJson.dependencies).not.toHaveProperty("@modelcontextprotocol/server");
+    expect(packageJson.devDependencies).not.toHaveProperty("@odyshell/mcp");
+  });
 });

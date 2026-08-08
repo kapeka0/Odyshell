@@ -44,7 +44,7 @@ Open `http://localhost:3000`, create the first account, and create the Organizat
 the web app, Server, and PostgreSQL. Its named volume keeps state across restarts. The
 included passwords and keys are development defaults; do not expose this setup to the internet.
 The development Agent key only authorizes the isolated `/v1/development/sessions` endpoint. It
-rejects `host.shell` and `process.exec`; it does not make `ods exec`, `ods shell`, or `ods mcp` skip
+rejects `host.shell` and `process.exec`; it does not make `ods exec` or `ods shell` skip
 the implemented browser-approved Session flow.
 
 Before upgrading an existing installation, take a PostgreSQL snapshot. The authority cutover
@@ -135,12 +135,10 @@ pnpm --filter @odyshell/web start
 Expose it at the exact HTTPS origin configured as the Server's `ODYSHELL_WEB_URL`. The shared web
 key stays between these two services; browsers and Agents never receive it.
 
-## Optional remote MCP
+## Remote MCP
 
-The local `ods mcp` transport uses the Agent Credential registered through the human control plane
-and does not require a separate MCP OAuth endpoint. To let hosted MCP clients connect directly,
-configure Odyshell Identity as the OAuth authorization server. Dynamic client registration and
-PKCE are exposed by the web app:
+To let MCP clients connect directly, configure Odyshell Identity as the OAuth authorization
+server. Dynamic client registration and PKCE are exposed by the web app:
 
 ```dotenv
 ODYSHELL_MCP_URL=https://mcp.example.com/mcp
@@ -152,7 +150,7 @@ ODYSHELL_IDENTITY_JWKS_URL=https://ods.example.com/api/auth/jwks
 Point the MCP hostname at the same Server process. PostgreSQL keeps MCP installation, Task, Command,
 authorization, and transient output state; OAuth access tokens are verified locally against
 Odyshell Identity JWKS and are not stored by the Server. Accounts with one
-Workspace can use `/mcp`; accounts with several use `/mcp/<workspace-id>`.
+Organization use `/mcp`.
 
 Remote MCP is an adapter over the canonical agent-native HTTP authorization path. It exposes
 Machine discovery plus Task and Command lifecycle tools. A Task identifies one Machine, objective,

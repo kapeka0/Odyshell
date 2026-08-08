@@ -37,9 +37,6 @@ importers:
 
   apps/cli:
     dependencies:
-      '@modelcontextprotocol/server':
-        specifier: ^2.0.0
-        version: 2.0.0
       commander:
         specifier: ^14.0.3
         version: 14.0.3
@@ -59,9 +56,6 @@ importers:
       '@odyshell/client':
         specifier: workspace:*
         version: link:../client
-      '@odyshell/mcp':
-        specifier: workspace:*
-        version: link:../../packages/mcp
       '@odyshell/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol

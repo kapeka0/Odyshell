@@ -96,7 +96,6 @@ ods --json exec raspberry -- uname -a
 - `ods profiles` lists, inspects, configures, and removes local Client Profiles.
 - `ods client` diagnoses and updates the Client running on a private machine.
 - `ods audit` shows actions visible to the current agent.
-- `ods mcp` lets a signed-in agent request temporary access over MCP stdio.
 
 Relative paths in structured host Operations start from the Home directory of the operating-system
 user running the Client. Those Operations can request an exact absolute path, which remains visible
@@ -119,42 +118,11 @@ ods client update
 Updates are downloaded from npm over HTTPS, verified against the registry SHA-512 integrity,
 limited to compatible patch releases, and rolled back if the background Client cannot restart.
 
-## MCP
+## Agent integrations
 
-Run `ods login`, then configure your agent to launch Odyshell:
-
-```json
-{
-  "mcpServers": {
-    "odyshell": {
-      "command": "ods",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-The signed-in flow exposes machine discovery and ping, Session request recovery/status/completion,
-typed operation execution, and the verified Session timeline. Machine discovery lets the agent
-choose operations for the actual platform and locally allowed capabilities.
-The agent receives an approval URL; after a member approves it, MCP claims the Session Credential.
-If a response is interrupted, the MCP can recover its recent request instead of asking for another
-approval.
-While the same `ods mcp` process remains running, `session_request` reuses a claimed typed Session
-only when it is still active, unexpired, ready, and covers every requested Operation. Host Shell
-additionally requires the same stable Task Run `runId`; unrelated work cannot inherit it. The
-Session Credential stays only in that process's memory. Restarting `ods mcp` does not recover
-already claimed authority and requires a new Session request and approval; remote MCP
-installations use a persistent Server-side grant instead.
-
-A request uses either exact typed Operations—exact paths for filesystem work, exact executables and
-arguments for `process.exec`, or exact containers for `docker.logs`—or explicit broad Host Shell
-authority without an advance command list. The MCP process cannot enroll or revoke machines,
-create broader authority, expose credentials, or use administrator controls. The MCP caller may
-omit the short approval title; Odyshell uses the purpose or derives a title from the requested
-authority before creating the Session Request. A failed Host Shell
-command leaves the Session usable for corrective commands, and MCP explicitly completes it after
-the overall task succeeds or is abandoned.
+Agents use the Server's remote OAuth MCP or canonical HTTP interface. The CLI does not host a
+separate stdio MCP implementation, which keeps authorization, idempotency, reconnect, and audit
+behavior identical across agent transports.
 
 `ods shell --purpose <purpose> [--title <title>] <machine> <command>` requests `host.shell`, waits
 for human approval, runs one command, and explicitly completes the Session with the command
