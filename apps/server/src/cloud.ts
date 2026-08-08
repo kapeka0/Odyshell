@@ -157,18 +157,8 @@ export const updateCloudMachineSchema = cloudIdentitySchema
     machineId: z.string().uuid(),
     name: z.string().trim().min(1).max(128),
     description: z.string().trim().max(280),
-    capabilities: z.array(capabilitySchema).max(32),
   })
-  .strict()
-  .superRefine((input, context) => {
-    if (new Set(input.capabilities).size !== input.capabilities.length) {
-      context.addIssue({
-        code: "custom",
-        message: "Capabilities must be unique",
-        path: ["capabilities"],
-      });
-    }
-  });
+  .strict();
 
 export const deleteCloudAgentSchema = cloudIdentitySchema.extend({
   agentId: z.string().uuid(),

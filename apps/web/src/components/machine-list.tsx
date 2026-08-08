@@ -1,6 +1,5 @@
 "use client";
 
-import type { Capability } from "@odyshell/protocol";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
   EllipsisIcon,
@@ -18,14 +17,8 @@ import {
   DataTableColumnHeader,
 } from "@/components/data-table";
 import { useDashboard } from "@/components/dashboard-provider";
-import { HostShellWarning } from "@/components/host-shell-warning";
 import { StatusBadge } from "@/components/status-badge";
 import { StatusDot } from "@/components/status-dot";
-import {
-  Alert,
-  AlertDescription,
-  AlertTitle,
-} from "@/components/ui/alert";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -38,7 +31,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -56,20 +48,15 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Field,
-  FieldContent,
   FieldGroup,
   FieldLabel,
-  FieldTitle,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
-import { capabilityGroups } from "@/lib/agent-access-options";
 import type { CloudMachine } from "@/lib/cloud-api";
 import { formatDashboardTimestamp } from "@/lib/date-time";
-import { executionWarningState } from "@/lib/host-shell-access";
-import { updateMachineCapabilitySelection } from "@/lib/machine-capability-selection";
 import {
   machinePlatform,
   machinePrivilegeEscalation,
@@ -233,18 +220,9 @@ function MachineActions({
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState(machine.name);
   const [description, setDescription] = useState(machine.description ?? "");
-  const [capabilities, setCapabilities] = useState<Capability[]>(
-    machine.capabilities,
-  );
-  const warningState = executionWarningState(
-    capabilities,
-    machinePrivilegeEscalation(machine.runtime),
-  );
-
   function openEdit() {
     setName(machine.name);
     setDescription(machine.description ?? "");
-    setCapabilities(machine.capabilities);
     setError(null);
     setEditOpen(true);
   }
@@ -258,30 +236,24 @@ function MachineActions({
       ...machine,
       name: name.trim(),
       description: description.trim() || null,
-      capabilities,
     };
     onUpdated(optimistic);
     try {
       const response = await fetch(`/api/machines/${machine.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, description, capabilities }),
+        body: JSON.stringify({ name, description }),
       });
       const body = (await response.json().catch(() => ({}))) as {
         error?: string;
         name?: string;
         description?: string | null;
-        capabilities?: Capability[];
-        availableCapabilities?: Capability[];
       };
       if (!response.ok) throw new Error(body.error ?? "Could not save machine");
       onUpdated({
         ...optimistic,
         name: body.name ?? optimistic.name,
         description: body.description ?? null,
-        capabilities: body.capabilities ?? optimistic.capabilities,
-        availableCapabilities:
-          body.availableCapabilities ?? machine.availableCapabilities,
       });
       setEditOpen(false);
       toast.add({ title: "Machine saved", type: "success" });
@@ -462,8 +434,8 @@ function MachineActions({
           <DialogHeader>
             <DialogTitle>Edit machine</DialogTitle>
             <DialogDescription>
-              Metadata helps Agents choose the right machine. Capabilities can
-              only reduce the Client Local Policy.
+              Metadata helps Agents choose the right Machine. Execution limits
+              remain controlled by its local Task Policy.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={saveMachine}>
@@ -492,64 +464,6 @@ function MachineActions({
                   placeholder="Home server for media and backups"
                 />
               </Field>
-              <Field>
-                <FieldLabel>Capabilities</FieldLabel>
-                <div className="rounded-lg border p-3">
-                  {capabilityGroups
-                    .flatMap((group) => group.capabilities)
-                    .map((capability) => {
-                      const available =
-                        machine.availableCapabilities.includes(
-                          capability.value,
-                        );
-                      const disabled =
-                        !available ||
-                        (warningState.hostShell &&
-                          capability.value !== "host.shell");
-                      return (
-                        <Field
-                          key={capability.value}
-                          orientation="horizontal"
-                          className="py-1.5"
-                          data-disabled={disabled}
-                        >
-                          <Checkbox
-                            id={`machine-${machine.id}-${capability.value}`}
-                            checked={capabilities.includes(capability.value)}
-                            disabled={disabled}
-                            onCheckedChange={(checked) =>
-                              setCapabilities((current) =>
-                                updateMachineCapabilitySelection(
-                                  current,
-                                  capability.value,
-                                  checked === true,
-                                ),
-                              )
-                            }
-                          />
-                          <FieldContent>
-                            <FieldLabel
-                              htmlFor={`machine-${machine.id}-${capability.value}`}
-                            >
-                              <FieldTitle>{capability.label}</FieldTitle>
-                            </FieldLabel>
-                          </FieldContent>
-                        </Field>
-                      );
-                    })}
-                </div>
-              </Field>
-              {warningState.hostShell ? (
-                <HostShellWarning localPolicy />
-              ) : null}
-              {warningState.rootAccess ? (
-                <Alert>
-                  <AlertTitle>Root access possible</AlertTitle>
-                  <AlertDescription>
-                    This Machine allows passwordless sudo during a Task.
-                  </AlertDescription>
-                </Alert>
-              ) : null}
               {error ? (
                 <p className="text-sm text-destructive" role="alert">
                   {error}

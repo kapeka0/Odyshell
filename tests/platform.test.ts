@@ -259,23 +259,6 @@ describe("client platform support", () => {
     });
   });
 
-  it("acknowledges a retained Client completion even after Server retention", () => {
-    const gateway = readFileSync(
-      resolve(process.cwd(), "apps/server/src/gateway.ts"),
-      "utf8",
-    );
-    const completion = gateway.slice(
-      gateway.indexOf('case "operation.completed":'),
-      gateway.indexOf('case "authenticate":'),
-    );
-
-    expect(completion).toContain('type: "operation.acknowledged"');
-    expect(completion).not.toMatch(
-      /if \(result\) \{[\s\S]*type: "operation\.acknowledged"/u,
-    );
-    expect(completion).toContain("if (result?.newlyCompleted)");
-  });
-
   it("remembers cancellation that arrives before process registration", async () => {
     const pending = new PendingOperation("session-a");
     let cancelled = false;
@@ -574,25 +557,18 @@ describe("client platform support", () => {
     );
   });
 
-  it("closes superseded local authority before reopening reconnect targets", () => {
+  it("reconciles only Task and Command authority after reconnect", () => {
     const gateway = readFileSync(
       resolve(process.cwd(), "apps/server/src/gateway.ts"),
       "utf8",
     );
     const authentication = gateway.slice(
       gateway.indexOf("private async authenticate("),
-      gateway.indexOf("private async persistMessage("),
+      gateway.length,
     );
-    expect(authentication.indexOf("for (const target of closeTargets)")).toBeLessThan(
-      authentication.indexOf("for (const target of reconnectTargets)"),
-    );
-    expect(authentication).toContain("pendingOperationCancellations(");
-    expect(
-      authentication.indexOf("for (const operationId of pendingCancellations)"),
-    ).toBeLessThan(
-      authentication.indexOf("for (const target of reconnectTargets)"),
-    );
-    expect(authentication).toContain('type: "operation.cancel"');
+    expect(authentication).toContain("this.taskHooks.reconnected({");
+    expect(authentication).not.toContain("pendingOperationCancellations(");
+    expect(authentication).not.toContain('type: "operation.cancel"');
   });
 
   it("terminates Operations and local Session state during graceful stop", async () => {

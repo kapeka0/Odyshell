@@ -16,7 +16,20 @@ const outputCursorSchema = z.coerce.number().int().min(-1).default(-1);
 export type TaskHttpDependencies = {
   authenticate: AgentOAuthAuthenticator;
   principal(identity: AgentOAuthIdentity): Promise<AgentPrincipal | null>;
-  repository: Pick<TaskRepository, "task" | "command" | "commandOutput">;
+  repository: Pick<
+    TaskRepository,
+    "task" | "command" | "commandOutput"
+  > & {
+    listMachineAuthorities(
+      organizationId: string,
+      agentId: string,
+    ): Promise<Array<{
+      machineId: string;
+      clientProfileId: string;
+      operatingSystemUser: string;
+      online: boolean;
+    }>>;
+  };
   service: Pick<
     TaskService,
     "requestTask" | "createCommand" | "finishTask" | "cancelCommand"
@@ -49,6 +62,22 @@ export function registerTaskHttp(
     if (!principal) throw new Error("Authenticated Task request has no Agent principal");
     return principal;
   };
+
+  app.get("/v1/machines", { preHandler: requireAgent }, async (request) => {
+    const principal = principalFor(request);
+    const machines = await dependencies.repository.listMachineAuthorities(
+      principal.organizationId,
+      principal.agentId,
+    );
+    return {
+      data: machines.map((machine) => ({
+        id: machine.machineId,
+        clientProfileId: machine.clientProfileId,
+        operatingSystemUser: machine.operatingSystemUser,
+        online: machine.online,
+      })),
+    };
+  });
 
   app.post("/v1/tasks", { preHandler: requireAgent }, async (request, reply) => {
     const parsed = taskRequestSchema.safeParse(request.body);

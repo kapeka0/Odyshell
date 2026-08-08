@@ -3,11 +3,6 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { safeAuthRedirect } from "../apps/web/src/lib/auth-redirect.js";
 import {
-  deviceApprovalErrorPath,
-  deviceApprovalReason,
-  deviceCodeSchema,
-} from "../apps/web/src/lib/device-activation.js";
-import {
   machineEnrollmentCommand,
   posixShellArgument,
 } from "../apps/web/src/lib/enrollment-command.js";
@@ -38,8 +33,8 @@ describe("web security boundaries", () => {
   });
 
   it("allows only local post-authentication redirects", () => {
-    expect(safeAuthRedirect("/activate?code=ABCD-EFGH", "/dashboard")).toBe(
-      "/activate?code=ABCD-EFGH",
+    expect(safeAuthRedirect("/dashboard/tasks", "/dashboard")).toBe(
+      "/dashboard/tasks",
     );
     for (const redirect of [
       "https://attacker.example/steal",
@@ -49,17 +44,6 @@ describe("web security boundaries", () => {
     ]) {
       expect(safeAuthRedirect(redirect, "/dashboard")).toBe("/dashboard");
     }
-  });
-
-  it("normalizes device codes and never reflects approval failure input", () => {
-    expect(deviceCodeSchema.parse("abcd-efgh")).toBe("ABCDEFGH");
-    expect(deviceCodeSchema.safeParse("ABCD-EFGI").success).toBe(false);
-    const secret = "ods_device_secret";
-    expect(deviceApprovalReason(secret)).toBe("approval_failed");
-    expect(deviceApprovalErrorPath(secret)).toBe(
-      "/activate/error?reason=approval_failed",
-    );
-    expect(deviceApprovalErrorPath(secret)).not.toContain(secret);
   });
 
   it("quotes every attacker-controlled Machine enrollment argument", () => {
@@ -133,15 +117,15 @@ describe("web security boundaries", () => {
   });
 
   it("loads Task state and Task audit into the shared dashboard context", () => {
-    const server = readFileSync(resolve(root, "apps/server/src/index.ts"), "utf8");
+    const server = readFileSync(resolve(root, "apps/server/src/control-http.ts"), "utf8");
     const database = readFileSync(
       resolve(root, "apps/server/src/task-database.ts"),
       "utf8",
     );
     const cloudApi = source("lib/cloud-api.ts");
 
-    expect(server).toContain("taskDb.listTasks(parsed.data.organization.externalId, 100)");
-    expect(server).toContain("taskDb.listAuditEvents(parsed.data.organization.externalId, 100)");
+    expect(server).toContain("taskDatabase.listTasks(parsed.data.organization.externalId, 100)");
+    expect(server).toContain("taskDatabase.listAuditEvents(parsed.data.organization.externalId, 100)");
     expect(server).toContain('domain !== "session" && domain !== "operation"');
     expect(database).toContain('selectFrom("taskAuditEvents")');
     expect(database).toContain('orderBy("createdAt", "desc")');

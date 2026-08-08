@@ -1,4 +1,3 @@
-import { capabilitySchema } from "@odyshell/protocol";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { cloudRequest } from "@/lib/cloud-api";
@@ -11,7 +10,6 @@ const machineIdSchema = z.string().uuid();
 const updateMachineSchema = z.object({
   name: z.string().trim().min(1).max(128),
   description: z.string().trim().max(280),
-  capabilities: z.array(capabilitySchema).max(32),
 }).strict();
 
 export async function PATCH(
@@ -32,8 +30,6 @@ export async function PATCH(
       id: string;
       name: string;
       description: string | null;
-      capabilities: z.infer<typeof updateMachineSchema>["capabilities"];
-      availableCapabilities: z.infer<typeof updateMachineSchema>["capabilities"];
     }>("/v1/internal/cloud/machines/update", authorization.identity, {
       extraBody: { machineId: machineId.data, ...input.data },
     });

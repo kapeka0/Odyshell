@@ -202,6 +202,12 @@ authorization.
   Agents integrate through canonical HTTP or its remote OAuth MCP adapter.
 - Docker execution Profiles and their local runner were removed; the Machine Client now advertises
   only native Linux host execution.
+- the production Server now mounts only Task/Command agent routes, Task supervision, enrollment,
+  Machine governance, Agent revocation, OAuth, remote MCP, live dashboard state, and health; legacy
+  Session/Operation, device activation, Agent Access, delegation, Event Sink, and policy endpoints
+  are no longer reachable.
+- Machine governance in Web is metadata and revocation only; remote capability widening and the
+  obsolete browser/device activation flows were deleted, leaving Local Policy Machine-owned.
 
 ### DOING
 
@@ -216,7 +222,6 @@ authorization.
 
 - validation process and thresholds are intentionally not fixed yet;
 - Stripe and exact pricing;
-- final landing inspired by Rivet's typography, restrained radii, spacing, and visual precision;
 - public artifact publication and production deployment.
 
 ## Verification gates

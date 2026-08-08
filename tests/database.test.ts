@@ -607,11 +607,11 @@ describe("server storage boundaries", () => {
     expect(expiry).toContain('status: "execution_unknown"');
     expect(expiry).toContain('eventType: "operation.completed"');
     expect(expiry.match(/\.insertInto\("sessionTimelineEvents"\)/gu)).toHaveLength(1);
-    expect(expiryTimer).toContain("await db.expireStaleOperations()");
-    expect(expiryTimer).toContain("if (sweepingExpiry) return");
-    expect(expiryTimer).toContain("sweepingExpiry = false");
-    expect(expiryTimer).toContain('type: "operation.cancel"');
-    expect(expiryTimer).toContain('error: "completion_not_received"');
+    expect(expiryTimer).toContain("await taskDatabase.expireTasks()");
+    expect(expiryTimer).toContain("if (sweepingTasks) return");
+    expect(expiryTimer).toContain("sweepingTasks = false");
+    expect(expiryTimer).toContain('type: "command.cancel"');
+    expect(expiryTimer).toContain('type: "task.close"');
   });
 
   it("persists cancellation before transport and retries its signal idempotently", () => {
@@ -635,9 +635,13 @@ describe("server storage boundaries", () => {
       database.indexOf("async expireStaleOperations("),
       database.indexOf("async getOperation("),
     );
-    const endpoint = server.slice(
-      server.indexOf('"/v1/operations/:operationId/cancel"'),
-      server.indexOf('"/v1/operations/:operationId/events"'),
+    const taskService = readFileSync(
+      resolve(process.cwd(), "apps/server/src/tasks.ts"),
+      "utf8",
+    );
+    const endpoint = taskService.slice(
+      taskService.indexOf("async cancelCommand("),
+      taskService.indexOf("function hash("),
     );
     const reconnect = database.slice(
       database.indexOf("async pendingOperationCancellations("),
@@ -650,14 +654,10 @@ describe("server storage boundaries", () => {
     expect(cancellation).toContain('error: "cancellation_requested"');
     expect(cancellation).toContain('.insertInto("auditEvents")');
     expect(cancellation).toContain('action: "operation.cancel_requested"');
-    expect(endpoint.indexOf("await db.requestOperationCancellation(")).toBeLessThan(
-      endpoint.indexOf('type: "operation.cancel"'),
+    expect(endpoint.indexOf("await this.repository.requestCommandCancellation(")).toBeLessThan(
+      endpoint.indexOf("await this.client.cancelCommand(command)"),
     );
-    expect(endpoint).toContain(
-      'operation.status !== "cancellation_requested"',
-    );
-    expect(endpoint).toContain("await gateway.runMachineLifecycle(");
-    expect(endpoint).not.toContain('"operation.cancel_requested"');
+    expect(endpoint).toContain('status: "cancellation_requested"');
     expect(reconnect).toContain('.where("operations.status", "=", "cancellation_requested")');
     expect(completion).toContain(
       '.where("status", "in", NONTERMINAL_OPERATION_STATUSES)',
@@ -877,8 +877,8 @@ describe("server storage boundaries", () => {
     expect(approval.indexOf("activeAgentEntitlementDecision(")).toBeLessThan(
       approval.indexOf('.insertInto("agents")'),
     );
-    expect(endpoint).toContain('error: "agent_limit_reached"');
-    expect(endpoint).toContain("activeAgentLimit");
+    expect(server).toContain('installation.status === "agent_limit_reached"');
+    expect(server).toContain("return null");
     expect(managedCreation).toContain("activeAgentEntitlementDecision(");
     expect(managedCreation).toContain('status: "agent_limit_reached"');
     expect(managedCreation).toContain('status: "created"');

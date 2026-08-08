@@ -1,6 +1,5 @@
 import {
   DEFAULT_CLOUD_SERVER_URL,
-  type Capability,
 } from "@odyshell/protocol";
 import { z } from "zod";
 
@@ -25,8 +24,6 @@ export type CloudMachine = {
   description: string | null;
   status: string;
   runtime: unknown;
-  capabilities: Capability[];
-  availableCapabilities: Capability[];
   lastSeenAt: string | null;
   enrolledAt: string;
   online: boolean;

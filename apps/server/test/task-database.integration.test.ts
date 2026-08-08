@@ -219,6 +219,7 @@ suite("PostgreSQL Task/Command vertical", () => {
 
   it("atomically binds human approval and denial to one Organization", async () => {
     const opened: string[] = [];
+    const supervisionNow = Date.now();
     await database.putMachineAuthority({
       organizationId,
       machineId,
@@ -245,7 +246,7 @@ suite("PostgreSQL Task/Command vertical", () => {
         async cancelCommand() {},
       },
       database,
-      () => Date.parse("2026-08-08T20:10:00.000Z"),
+      () => supervisionNow,
     );
     const requested = await service.requestTask(
       { organizationId, agentId },
@@ -302,9 +303,72 @@ suite("PostgreSQL Task/Command vertical", () => {
     );
     if (abandoned.status !== "created") throw new Error("Task was not created");
     expect(abandoned.task.status).toBe("pending_approval");
-    expect(await database.expireTasks(Date.parse("2026-08-08T20:11:01.000Z"))).toEqual([]);
+    expect(await database.expireTasks(supervisionNow + 61_000)).toEqual([]);
     expect(await database.task(organizationId, abandoned.task.id)).toMatchObject({
       status: "expired",
     });
+  });
+
+  it("revokes Agent Tasks and Commands without crossing Organization boundaries", async () => {
+    await database.putAutonomyPolicy({
+      organizationId,
+      agentId,
+      machineId,
+      maxTaskDurationSeconds: 600,
+      maxConcurrentTasks: 1,
+      maxConcurrentCommands: 1,
+      expiresAt: Date.now() + 60_000,
+    });
+    const service = new TaskService(
+      database,
+      {
+        async openTask() {},
+        async startCommand() {},
+        async closeTask() {},
+        async cancelCommand() {},
+      },
+      database,
+    );
+    const created = await service.requestTask(
+      { organizationId, agentId },
+      { machineId, title: "Revoke compromised Agent", durationSeconds: 300 },
+      "revocation-task-key",
+    );
+    if (created.status !== "created") throw new Error("Task was not created");
+    await database.markTaskOpened({
+      organizationId,
+      machineId,
+      taskId: created.task.id,
+      clientProfileId: "profile-a",
+      operatingSystemUser: "odyshell",
+    });
+    const command = await service.createCommand(
+      { organizationId, agentId },
+      created.task.id,
+      { command: "sleep 30", timeoutSeconds: 30 },
+      "revocation-command-key",
+    );
+    if (command.status !== "created") throw new Error("Command was not created");
+
+    await expect(database.revokeTasks({
+      organizationId,
+    })).rejects.toThrow("requires an Agent or Machine scope");
+    expect(await database.revokeTasks({
+      organizationId: "another-org",
+      agentId,
+    })).toEqual([]);
+    expect(await database.task(organizationId, created.task.id)).toMatchObject({
+      status: "active",
+    });
+
+    expect(await database.revokeTasks({ organizationId, agentId })).toMatchObject([{
+      task: { id: created.task.id, status: "revoked" },
+      commandIds: [command.command.id],
+    }]);
+    expect(await database.command(organizationId, command.command.id)).toMatchObject({
+      status: "cancellation_requested",
+    });
+    expect(await database.autonomyPolicy(organizationId, agentId, machineId)).toBeNull();
+    expect(await database.machineAuthority(organizationId, machineId)).not.toBeNull();
   });
 });

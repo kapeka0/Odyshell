@@ -183,17 +183,14 @@ describe("remote MCP security boundary", () => {
     expect(cancellation).toContain('status: "revoked"');
   });
 
-  it("keeps Host Shell behind canonical approval and clamps its timeout", async () => {
-    const server = await readFile("apps/server/src/index.ts", "utf8");
-    const operations = server.slice(
-      server.indexOf('"/v1/sessions/:sessionId/operations"'),
-      server.indexOf('app.get<{ Params: { operationId: string } }>',),
-    );
-    expect(operations).toContain("clampSessionOperationTimeout(");
-    expect(operations).toContain("developmentSessionDecision([");
-    expect(operations).toContain("capabilityForAction(parsed.data.action)");
-    expect(operations).toContain("error: developmentDecision.code");
-    expect(operations).toContain("timeoutSeconds,");
+  it("shares Task and Command policy between canonical HTTP and remote MCP", async () => {
+    const http = await readFile("apps/server/src/task-http.ts", "utf8");
+    const runtime = await readFile("apps/server/src/task-mcp-runtime.ts", "utf8");
+    expect(http).toContain("dependencies.service.requestTask(");
+    expect(http).toContain("dependencies.service.createCommand(");
+    expect(runtime).toContain("service.requestTask(principal");
+    expect(runtime).toContain("service.createCommand(principal");
+    expect(runtime).not.toContain("deliverOperation(");
   });
 
   it("rejects an MCP installation whose persistent Agent was deleted", async () => {

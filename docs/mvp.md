@@ -2,116 +2,120 @@
 
 ## Goal
 
-Prove that an AI agent can perform a bounded task on an existing private machine without SSH
-credentials, inbound connectivity, a VPN, or a full agent runtime installed on that machine.
+Prove that an external AI Agent can diagnose and remediate one existing private Linux Machine
+through temporary non-interactive shell authority, without SSH credentials, inbound connectivity,
+a VPN, or a general-purpose agent runtime on that Machine.
 
-The MVP serves agents through APIs. Humans are administrators.
+Agents are the primary operators. Humans establish trust, set policy, optionally supervise
+exceptions, and inspect evidence.
 
-## Current system
+## Shipped system
 
 ```mermaid
 flowchart LR
-    A["Agent"] -->|"Canonical HTTP or remote OAuth MCP"| S["Odyshell Server"]
-    C["Client on private machine"] -->|"Outbound authenticated WebSocket"| S
+    A["External Agent"] -->|"Canonical HTTP or remote OAuth MCP"| S["Odyshell Server"]
+    H["Optional Human Supervisor"] -->|"Dashboard"| S
+    C["Client on private Linux Machine"] -->|"Outbound authenticated WebSocket"| S
     S --> P["PostgreSQL"]
-    S -->|"Temporary operation"| C
-    C -->|"Short-lived result events"| S
+    S -->|"Authorized Command"| C
+    C -->|"Bounded result and state"| S
 ```
 
-The Client establishes the connection. The Server never opens a connection into the machine's
-private network.
+The Client establishes the connection. The Server never opens a connection into the Machine's
+private network. Cloud and self-hosted deployments use the same Server, Web, identity, database,
+protocol, and Client code.
 
-## Current capabilities
+## Public product model
 
 | Area | MVP behavior |
 | --- | --- |
-| Platforms | Linux Client |
-| Processes | Structured executable calls and explicit Host Shell commands |
-| Filesystem | Resource-bounded stat, list, search, read, write, mkdir, and remove |
-| Identity | Ed25519 machine identity |
-| Enrollment | Single-use, expiring enrollment tokens |
-| Agents | Persistent identities with expiring, rotatable credentials and no machine authority |
-| Sessions | Temporary, browser-approved authority with per-machine scopes and credentials |
-| Reliability | Reconnection, heartbeat, ping, cancellation, and idempotency |
-| Interfaces | Canonical HTTP and remote OAuth MCP for Agents; `ods` for Machine installation |
+| Platform | Linux Client running as a pre-existing operating-system user |
+| Identity | Better Auth Humans, OAuth Agents, and Ed25519 Machine identity |
+| Enrollment | Single-use, expiring, Organization-bound Machine enrollment |
+| Agent authority | One temporary Task binds one Agent to one Machine and OS user |
+| Execution | Asynchronous non-interactive shell Commands |
+| Policy | Machine-owned Local Policy ceiling and narrower Autonomy Policy |
+| Reliability | Reconnect reconciliation, heartbeat, cancellation, expiry, and idempotency |
+| Agent interfaces | Canonical OAuth HTTP and remote OAuth MCP |
+| Human interface | Dashboard for setup, optional supervision, revocation, and audit |
 | Persistence | PostgreSQL through Kysely |
-| Tenancy | Organizations own isolated execution Workspaces |
+| Tenancy | Organizations isolate identities and resources |
 
-Host execution is the default because the product is intended to operate on a real machine. The
-Client process should run as a dedicated operating-system user with only the privileges required
-for its approved Operations.
+There is no public Session, Operation, typed-filesystem, Docker-execution, local MCP, or SDK
+interface. The CLI installs, diagnoses, updates, and recovers Machine Clients; it is not an Agent
+protocol.
 
-## Security boundary
+## Authorization boundary
 
-An operation is accepted only when:
+A Command is accepted only when all of these remain true:
 
-1. the Agent Credential is valid, unexpired, and bound to the requesting Agent;
-2. the approved Session includes the target machine and typed restriction;
-3. the credential, machine, Session, Operation, and Control Events belong to the same Workspace;
-4. the Session includes the required capability;
-5. the session is active and unexpired;
-6. the machine is online;
-7. the Client's local policy allows the same capability;
-8. structured filesystem Operations satisfy any exact path restriction in the Session.
+1. the OAuth credential is valid, unexpired, unrevoked, and bound to the Agent and Organization;
+2. the Task belongs to the same Agent, Organization, Machine, and Client Profile;
+3. Local Policy permits that Agent, duration, concurrency, timeout, and output bound;
+4. Autonomy Policy permits automatic execution, or an Owner, Admin, or Supervisor approved the
+   Task without widening Local Policy;
+5. the Task is active and unexpired, the Machine is online, and its Client acknowledges authority;
+6. the idempotency key is either new or bound to exactly the same request.
 
-The model cannot override these checks with a prompt.
+The model cannot override these checks with a prompt. Cross-Organization, cross-Agent, expired,
+revoked, replayed, malformed, and over-limit requests fail closed.
 
-Structured filesystem reads accept regular files up to 1 MiB, and writes accept up to 1 MiB of
-decoded content. Directory listings accept up to 1,000 entries, and searches visit at most 2,048
-nodes and 32 directory levels. Hitting a limit fails the Operation without a partial result.
-Removal is limited to one file or empty directory; recursive removal is not exposed in the MVP.
-Session closure and Operation deadlines cancel iterative filesystem work cooperatively and
-suppress a late result. Relative Session scopes reject symlink roots and descendant symlinks that
-resolve outside the approved subtree.
+## Shell authority
 
-An allowed Host Shell command starts in the Client user's Home by default. An explicit per-command
-working directory does not narrow its authority. It can perform anything available to that
-operating-system user, including accessing files, credentials, network, and services. There is no
-sandbox or isolation, and changes may persist after the Session ends. Odyshell restricts authority;
-it does not prove that an allowed command is safe. The command process inherits an allowlisted
-base environment rather than every Client variable; explicit environment values are ephemeral to
-one Operation and never persisted. On POSIX, a login shell can still load same-user startup files.
+Each Command contains complete shell text, an optional absolute working directory, and a timeout
+bounded by the Task. Caller-provided environment variables, standard input, PTYs, and persistent
+shell state are not supported.
 
-Graceful cancellation stops the active process group. On POSIX, an abrupt Client crash can leave a
-detached command running until it exits by itself or is stopped externally because the MVP has no
-separate Operation supervisor. Restart reconciliation reports that execution as unknown.
+Commands run as the operating-system user that runs the Client. There is no sandbox, rollback,
+sudo setup, or command filter. An allowed Command can access every file, credential, network,
+service, and side effect available to that user. Operators should use a dedicated account without
+root, sudo, or Docker membership and grant it only the authority the Agent needs.
 
-## Privacy behavior
+Cancellation and Task closure request termination of the active process tree. Completed side
+effects cannot be reversed. After ambiguous transport or process failure, reconciliation reports
+an unknown or failed outcome instead of claiming success.
 
-Odyshell is not a session recorder.
+## Agent workflow
 
-- Durable control events store lifecycle metadata, not command text, arguments, paths, file
-  contents, stdout, or stderr.
-- Persistable Operation action fields and result events are temporary delivery data. Environment
-  values and standard input are excluded. The retained data becomes eligible for deletion after
-  one hour by default.
-- Content-minimal control events become eligible for deletion after 30 days by default.
-- Both retention periods are configurable by the self-hosting administrator.
+1. An Admin registers or authorizes one durable Agent identity.
+2. The Machine owner installs a Client with a conservative Local Policy for that Agent.
+3. The Agent discovers an available Machine and requests a bounded Task.
+4. The Task starts automatically inside Autonomy Policy or waits for optional Human approval.
+5. The Agent creates Commands, polls their state, and reads bounded transient output with a cursor.
+6. The Agent completes the Task, cancels it, or lets it expire.
+7. Humans and the Agent can inspect attributable Task and Command evidence.
 
-See [Privacy and event data](./privacy.md) for the exact boundary.
+Every mutation uses an idempotency key. A disconnected Agent resumes existing Task and Command
+resources instead of recreating authority or work.
 
-## What the MVP does not yet include
+## Audit and privacy
 
-- billing and plan checkout;
-- fine-grained custom human roles beyond Owner, Admin, and Supervisor;
-- object-storage or native SIEM event destinations beyond the signed HTTPS Event Sink;
-- SSO, SCIM, billing, or compliance certification;
-- high-availability routing across multiple Server replicas;
-- semantic tracking of every side effect made by a Host Shell command;
-- Kubernetes, browser automation, mobile devices, or GPU orchestration.
+Durable evidence binds Organization, Agent, Machine, Client Profile, Task, exact Command, working
+directory, timeout, policy decision, status, exit code when known, and lifecycle timestamps.
+OAuth credentials, cookies, enrollment secrets, and identity secrets are never audit content.
 
-These are not implied by the current API.
+Standard output and standard error are bounded transient delivery data and are not retained by
+default. Audit is attributable, but the MVP does not claim that evidence is immutable against the
+administrator of a self-hosted deployment.
+
+See [Privacy and event data](./privacy.md) for the detailed boundary.
+
+## Deliberate exclusions
+
+- terminal sessions, PTYs, SSH proxying, VPN, port forwarding, or private-network access;
+- typed filesystem, structured process, or Docker execution APIs;
+- multiple Machines per Task, Managed Agents, delegation, or agent orchestration;
+- caller-provided environment, stdin, secret injection, or secret storage;
+- command allowlists, semantic safety, rollback, or sandbox claims;
+- public SDK, local stdio MCP, webhooks, Event Sinks, scheduling, runbooks, SIEM, SCIM, or HA;
+- Windows or macOS Clients, billing automation, and compliance certification.
+
+These exclusions are intentional and are not implied by the current API or dashboard.
 
 ## Current validation milestone
 
-The web control plane now supports the smallest complete design-partner workflow:
-
-1. a member signs in through Odyshell Identity, selects an Organization, and authorizes `ods login`;
-2. the member generates a single-use command and runs it on a machine with an explicit local
-   capability policy; the target machine does not need a separate CLI login;
-3. an Agent registers a persistent identity without receiving machine authority;
-4. the Agent requests and claims a browser-approved Session for explicit machines and Operations;
-5. the member cancels the Session or lets it expire and reviews its privacy-minimal Timeline.
-
-The milestone succeeds when a design partner can complete this workflow reliably on a real task.
-Billing, customer-owned event delivery, and additional governance come after product validation.
+The smallest complete design-partner workflow is now the product path: establish an Organization,
+authorize an Agent, enroll a customer-controlled Linux Machine, complete a real Task through HTTP
+or MCP, optionally supervise it, revoke authority when necessary, and inspect the exact-command
+audit trail. Pricing and formal validation thresholds remain intentionally undecided until pilots
+produce evidence.

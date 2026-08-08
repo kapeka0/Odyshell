@@ -54,12 +54,38 @@ function appHarness(options: { token?: boolean; storedTask?: Task | null } = {})
   const app = Fastify();
   const storedTask = options.storedTask === undefined ? task() : options.storedTask;
   const repository = {
+    async listMachineAuthorities(org: string, agent: string) {
+      return org === organizationId && agent === agentId
+        ? [{
+            organizationId,
+            machineId,
+            clientProfileId: "profile-a",
+            operatingSystemUser: "odyshell",
+            online: true,
+            localPolicy: {
+              organizationId,
+              agentIds: [agentId],
+              maxTaskDurationSeconds: 600,
+              maxConcurrentTasks: 1,
+              maxConcurrentCommands: 1,
+              maxCommandTimeoutSeconds: 60,
+              maxCommandOutputBytes: 1024,
+              allowRemoteApproval: true,
+            },
+          }]
+        : [];
+    },
     async task(org: string, id: string) {
       return storedTask?.organizationId === org && storedTask.id === id ? storedTask : null;
     },
     async command() { return null; },
     async commandOutput() { return []; },
-  } satisfies Pick<TaskRepository, "task" | "command" | "commandOutput">;
+  } satisfies Pick<TaskRepository, "task" | "command" | "commandOutput"> & {
+    listMachineAuthorities: (
+      organizationId: string,
+      agentId: string,
+    ) => Promise<unknown[]>;
+  };
   const calls: Array<{ kind: "task" | "command"; input: unknown }> = [];
   registerTaskHttp(app, {
     authenticate: async (authorization) =>

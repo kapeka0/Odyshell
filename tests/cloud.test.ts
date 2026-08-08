@@ -162,7 +162,6 @@ describe("cloud identity and device authorization boundaries", () => {
       machineId: "2dc24de7-ec0e-45b3-88c1-acbb900e51f8",
       name: "Build server",
       description: "Linux builder",
-      capabilities: ["fs.read", "process.exec"],
     };
     expect(updateCloudMachineSchema.safeParse(machineUpdate).success).toBe(true);
     expect(updateCloudMachineSchema.safeParse({
@@ -171,7 +170,7 @@ describe("cloud identity and device authorization boundaries", () => {
     }).success).toBe(false);
     expect(updateCloudMachineSchema.safeParse({
       ...machineUpdate,
-      capabilities: ["fs.read", "fs.read"],
+      capabilities: ["host.shell"],
     }).success).toBe(false);
   });
 

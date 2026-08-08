@@ -981,6 +981,73 @@ export class PostgresTaskDatabase implements TaskRepository, TaskAudit {
     });
   }
 
+  async revokeTasks(input: {
+    organizationId: string;
+    agentId?: string;
+    machineId?: string;
+    now?: number;
+  }): Promise<Array<{ task: Task; commandIds: string[] }>> {
+    if (input.agentId === undefined && input.machineId === undefined) {
+      throw new Error("Task revocation requires an Agent or Machine scope");
+    }
+    const now = new Date(input.now ?? Date.now());
+    return await this.db.transaction().execute(async (transaction) => {
+      let tasks = transaction
+        .selectFrom("tasks")
+        .selectAll()
+        .where("organizationId", "=", input.organizationId)
+        .where("status", "in", ACTIVE_TASK_STATUSES)
+        .forUpdate();
+      if (input.agentId !== undefined) {
+        tasks = tasks.where("agentId", "=", input.agentId);
+      }
+      if (input.machineId !== undefined) {
+        tasks = tasks.where("machineId", "=", input.machineId);
+      }
+      const activeTasks = await tasks.execute();
+      const revoked: Array<{ task: Task; commandIds: string[] }> = [];
+      for (const activeTask of activeTasks) {
+        const commands = await transaction
+          .updateTable("commands")
+          .set({ status: "cancellation_requested", updatedAt: now })
+          .where("organizationId", "=", input.organizationId)
+          .where("taskId", "=", activeTask.id)
+          .where("status", "in", ACTIVE_COMMAND_STATUSES)
+          .returning("id")
+          .execute();
+        const task = await transaction
+          .updateTable("tasks")
+          .set({ status: "revoked", finishedAt: now, updatedAt: now })
+          .where("organizationId", "=", input.organizationId)
+          .where("id", "=", activeTask.id)
+          .returningAll()
+          .executeTakeFirstOrThrow();
+        revoked.push({
+          task: taskRecord(task),
+          commandIds: commands.map((command) => command.id),
+        });
+      }
+      if (input.machineId !== undefined) {
+        await transaction
+          .deleteFrom("machineAuthorities")
+          .where("organizationId", "=", input.organizationId)
+          .where("machineId", "=", input.machineId)
+          .execute();
+      }
+      let autonomy = transaction
+        .deleteFrom("autonomyPolicies")
+        .where("organizationId", "=", input.organizationId);
+      if (input.agentId !== undefined) {
+        autonomy = autonomy.where("agentId", "=", input.agentId);
+      }
+      if (input.machineId !== undefined) {
+        autonomy = autonomy.where("machineId", "=", input.machineId);
+      }
+      await autonomy.execute();
+      return revoked;
+    });
+  }
+
   async purgeExpiredCommandOutput(now = Date.now()): Promise<number> {
     const deleted = await this.db
       .deleteFrom("commandOutputChunks")

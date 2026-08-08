@@ -32,11 +32,11 @@ export function AuthShell({
         <section className="hidden max-w-xl lg:block">
           <p className="text-sm text-muted-foreground">Odyshell Cloud</p>
           <h1 className="mt-3 text-5xl leading-[1.02] font-semibold tracking-[-0.04em]">
-            Access machines without exposing them.
+            Govern agents acting on real machines.
           </h1>
           <p className="mt-6 max-w-lg text-lg leading-8 text-muted-foreground">
-            Manage outbound clients, temporary agent access and privacy-minimal
-            control events from one Organization.
+            Manage outbound Machine Clients, temporary Tasks, optional human
+            supervision, and exact-command audit from one Organization.
           </p>
         </section>
 

@@ -1,8 +1,8 @@
 # Agent-native Task model
 
-> **Status:** Accepted target architecture. Current public documentation continues to describe
-> shipped Session and Operation behavior until each replacement vertical is implemented and
-> verified.
+> **Status:** Accepted architecture. The public Server, Web, HTTP, and MCP surfaces are Task-native;
+> removal of superseded internal Client, protocol, and persistence implementations is still in
+> progress.
 
 ## Product contract
 

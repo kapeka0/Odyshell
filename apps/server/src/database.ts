@@ -7873,6 +7873,26 @@ export class PostgresDatabase {
     });
   }
 
+  async updateMachineDetails(input: {
+    workspaceId: string;
+    machineId: string;
+    name: string;
+    description: string;
+  }): Promise<MachineRecord | null> {
+    const machine = await this.db
+      .updateTable("machines")
+      .set({
+        name: input.name.trim(),
+        description: input.description.trim() || null,
+      })
+      .where("workspaceId", "=", input.workspaceId)
+      .where("id", "=", input.machineId)
+      .where("revokedAt", "is", null)
+      .returningAll()
+      .executeTakeFirst();
+    return machine ? machineRecord(machine) : null;
+  }
+
   async activeMachinesExist(workspaceId: string, machineIds: string[]): Promise<boolean> {
     if (machineIds.length === 0) return true;
     const result = await this.db
