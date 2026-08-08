@@ -1,10 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  googleSsoRedirects,
-  safeAuthRedirect,
-} from "../apps/web/src/lib/auth-redirect.js";
+import { safeAuthRedirect } from "../apps/web/src/lib/auth-redirect.js";
 import {
   facehashAvatarPath,
   safeFacehashIdentity,
@@ -67,23 +64,31 @@ describe("web authentication boundaries", () => {
     expect(workspaceRoute).not.toContain("workspaceId");
     expect(workspacePage).toContain("Enable Diagnostic logging?");
     expect(workspacePage).toContain('orientation="responsive"');
-    expect(userPage).toContain("user.setProfileImage");
-    expect(userPage).toContain("user.update");
+    expect(userPage).toContain("authClient.updateUser");
+    expect(userPage).not.toContain("setProfileImage");
     expect(skeletons).toContain("sections.map");
   });
 
-  it("initializes Clerk for every authenticated approval and API route", () => {
-    const proxy = readFileSync(
-      resolve(process.cwd(), "apps/web/src/proxy.ts"),
+  it("keeps session and authorization checks in the server identity seam", () => {
+    const identity = readFileSync(
+      resolve(process.cwd(), "apps/web/src/lib/identity.ts"),
       "utf8",
     );
-    expect(proxy).toContain('"/sessions/:path*"');
-    expect(proxy).toContain('"/policies/:path*"');
-    expect(proxy).toContain('"/sso-callback/:path*"');
-    expect(proxy).toContain('"/api/:path*"');
+    const route = readFileSync(
+      resolve(process.cwd(), "apps/web/src/app/api/auth/[...all]/route.ts"),
+      "utf8",
+    );
+    expect(identity).toContain("auth.api.getSession");
+    expect(identity).toContain("auth.api.getActiveMember");
+    expect(route).toContain("toNextJsHandler(auth)");
+    const identityAuth = readFileSync(
+      resolve(process.cwd(), "apps/web/src/lib/identity-auth.ts"),
+      "utf8",
+    );
+    expect(identityAuth).toContain("jwt: { issuer: configuration.baseUrl }");
   });
 
-  it("keeps documentation pages outside the Clerk UI boundary", () => {
+  it("keeps documentation pages outside the authenticated product boundary", () => {
     expect(isPublicDocumentationPath("/docs")).toBe(true);
     expect(isPublicDocumentationPath("/docs/quickstart")).toBe(true);
     expect(isPublicDocumentationPath("/docs/quickstart.md")).toBe(true);
@@ -111,18 +116,6 @@ describe("web authentication boundaries", () => {
     "/dashboard\u0000https://attacker.example",
   ])("rejects unsafe auth redirect %s", (redirect) => {
     expect(safeAuthRedirect(redirect, "/dashboard")).toBe("/dashboard");
-  });
-
-  it("keeps Google SSO completion on local Odyshell routes", () => {
-    expect(googleSsoRedirects("/activate?code=ABCD-EFGH")).toEqual({
-      redirectUrl: "/activate?code=ABCD-EFGH",
-      redirectCallbackUrl:
-        "/sso-callback?redirect_url=%2Factivate%3Fcode%3DABCD-EFGH",
-    });
-    expect(googleSsoRedirects("https://attacker.example/steal")).toEqual({
-      redirectUrl: "/dashboard",
-      redirectCallbackUrl: "/sso-callback?redirect_url=%2Fdashboard",
-    });
   });
 
   it("normalizes valid device codes without accepting ambiguous characters", () => {
@@ -745,7 +738,7 @@ describe("dashboard navigation performance boundary", () => {
       userMenu.indexOf('href="/dashboard/user-settings"'),
     );
     expect(userMenu.indexOf('href="/dashboard/user-settings"')).toBeLessThan(
-      userMenu.indexOf("void signOut"),
+      userMenu.indexOf("authClient.signOut"),
     );
     for (const label of ["System", "Light", "Dark", "Settings", "Sign out"]) {
       expect(userMenu).toContain(label);
@@ -1107,7 +1100,7 @@ describe("dashboard navigation performance boundary", () => {
       "utf8",
     );
     const onboarding = readFileSync(
-      resolve(webRoot, "components/workspace-onboarding.tsx"),
+      resolve(webRoot, "components/organization-onboarding.tsx"),
       "utf8",
     );
 
@@ -1118,8 +1111,8 @@ describe("dashboard navigation performance boundary", () => {
     }
     expect(workspaceSettings).toContain('href="/docs/sessions#timeline"');
     expect(skeletons).not.toContain('gap-6 border-b p-4');
-    expect(onboarding).toContain("suggestedWorkspaceName(user?.firstName)");
-    expect(onboarding).toContain("'s\"} Workspace");
+    expect(onboarding).toContain("suggestedOrganizationName(session.data?.user.name)");
+    expect(onboarding).toContain("'s\"} Organization");
   });
 
   it("loads page-view analytics once from the global Next.js boundary", () => {
@@ -1219,7 +1212,7 @@ describe("dashboard navigation performance boundary", () => {
     );
 
     expect(route).toContain("requireCloudAdminRouteIdentity");
-    expect(approvalPage).toContain('orgRole !== "org:admin"');
+    expect(approvalPage).toContain("canAdministerOrganization(humanIdentity.role)");
     expect(server).toContain('"/v1/auth/agent/device"');
     expect(server).toContain('"/v1/agent-credentials/rotate"');
     expect(server).toContain("agent_identity_mismatch");
@@ -1384,7 +1377,7 @@ describe("dashboard navigation performance boundary", () => {
     );
 
     expect(route).toContain("requireCloudAdminRouteIdentity");
-    expect(page).toContain('orgRole !== "org:admin"');
+    expect(page).toContain("canAdministerOrganization(humanIdentity.role)");
     expect(form).toContain("maxSessionSeconds");
     expect(loading).toContain("Skeleton");
     expect(server).toContain('"/v1/internal/cloud/agent-policies/approve"');
@@ -1432,7 +1425,7 @@ describe("dashboard navigation performance boundary", () => {
       "utf8",
     );
     const identity = readFileSync(
-      resolve(process.cwd(), "apps/web/src/lib/clerk-identity.ts"),
+      resolve(process.cwd(), "apps/web/src/lib/identity.ts"),
       "utf8",
     );
 
@@ -1444,8 +1437,8 @@ describe("dashboard navigation performance boundary", () => {
     expect(sessionList).toContain('?? "Member"');
     expect(sessionList).not.toContain("?? value.requestedByHumanId");
     expect(sessionList).not.toContain("?? value.requestedByAgentId");
-    expect(identity).toContain("getOrganizationMembershipList");
-    expect(identity).toContain("user.hasImage");
+    expect(identity).toContain("getFullOrganization");
+    expect(identity).toContain("member.user.image");
     expect(identity).toContain('return [];');
   });
 

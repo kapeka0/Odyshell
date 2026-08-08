@@ -1,10 +1,10 @@
-import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { ActivationShell } from "@/components/activation-shell";
 import { AgentActivation } from "@/components/agent-activation";
-import { currentCloudIdentity } from "@/lib/clerk-identity";
+import { currentCloudIdentity, currentHumanIdentity } from "@/lib/identity";
 import { cloudRequest } from "@/lib/cloud-api";
 import { deviceCodeSchema } from "@/lib/device-activation";
+import { canAdministerOrganization } from "@/lib/identity-permissions";
 
 export default async function ActivateAgentPage({
   searchParams,
@@ -16,12 +16,14 @@ export default async function ActivateAgentPage({
     typeof params.code === "string" ? params.code : "",
   );
   if (!parsed.success) redirect("/activate-agent/error");
-  const { userId, orgRole } = await auth();
-  if (!userId) {
+  const humanIdentity = await currentHumanIdentity();
+  if (!humanIdentity) {
     const destination = `/activate-agent?code=${encodeURIComponent(parsed.data)}`;
     redirect(`/sign-in?redirect_url=${encodeURIComponent(destination)}`);
   }
-  if (orgRole !== "org:admin") redirect("/activate-agent/error");
+  if (!canAdministerOrganization(humanIdentity.role)) {
+    redirect("/activate-agent/error");
+  }
   const identity = await currentCloudIdentity();
   if (!identity) redirect("/activate-agent/error");
   const approval = await cloudRequest<{ agentName: string; expiresAt: string }>(

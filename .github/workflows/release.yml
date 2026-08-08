@@ -26,6 +26,10 @@ jobs:
     env:
       RELEASE_TAG: v${{ inputs.version }}
       RELEASE_VERSION: ${{ inputs.version }}
+      DATABASE_URL: postgresql://build:build@127.0.0.1:5432/build
+      BETTER_AUTH_URL: http://localhost:3000
+      BETTER_AUTH_SECRET: release-check-identity-secret-00000000
+      ODYSHELL_MCP_URL: http://localhost:4100/mcp
 
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -47,10 +51,6 @@ jobs:
       - run: pnpm --filter @odyshell/web lint
       - run: pnpm build
       - name: Test public documentation
-        env:
-          # Synthetic Clerk configuration for unauthenticated route and redirect checks only.
-          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_Y2xlcmsuZXhhbXBsZS5jb20k
-          CLERK_SECRET_KEY: sk_test_docs_smoke_only
         shell: bash
         run: |
           set -euo pipefail

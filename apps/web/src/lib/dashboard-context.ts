@@ -1,10 +1,11 @@
-import { auth } from "@clerk/nextjs/server";
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import {
   currentCloudIdentity,
+  currentHumanIdentity,
+  currentHumanSession,
   organizationMembers,
-} from "@/lib/clerk-identity";
+} from "@/lib/identity";
 import {
   CloudApiError,
   cloudRequest,
@@ -17,11 +18,14 @@ export type DashboardState =
   | { status: "unavailable"; message: string };
 
 export const dashboardState = cache(async (): Promise<DashboardState> => {
-  const { userId, orgRole } = await auth();
-  if (!userId) redirect("/sign-in?redirect_url=%2Fdashboard");
+  const session = await currentHumanSession();
+  if (!session) redirect("/sign-in?redirect_url=%2Fdashboard");
 
-  const identity = await currentCloudIdentity();
-  if (!identity) return { status: "organization-required" };
+  const [identity, humanIdentity] = await Promise.all([
+    currentCloudIdentity(),
+    currentHumanIdentity(),
+  ]);
+  if (!identity || !humanIdentity) return { status: "organization-required" };
 
   try {
     const [context, members] = await Promise.all([
@@ -29,14 +33,14 @@ export const dashboardState = cache(async (): Promise<DashboardState> => {
         "/v1/internal/cloud/context",
         identity,
       ),
-      organizationMembers(identity.organization.externalId),
+      organizationMembers(),
     ]);
     return {
       status: "ready",
       context: {
         ...context,
         members,
-        currentMemberRole: orgRole === "org:admin" ? "admin" : "member",
+        currentMemberRole: humanIdentity.role,
       },
     };
   } catch (reason) {

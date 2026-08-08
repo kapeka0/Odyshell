@@ -303,7 +303,7 @@ particular component, library or interaction pattern.
   export command text, stdout, stderr, environment values or standard input at
   any detail level.
 - Keep public documentation outside the authenticated workspace and make it usable
-  without a Clerk session.
+  without an authenticated product session.
 - Documentation starts with the Cloud workflow, uses progressive disclosure and
   describes only behavior available in the current release.
 - Documentation must serve people and agents from one reviewed source. Keep

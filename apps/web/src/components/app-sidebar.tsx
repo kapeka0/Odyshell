@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { SidebarNav } from "@/components/sidebar-nav";
 import { SidebarUser } from "@/components/sidebar-user";
-import { SidebarWorkspaceSwitcher } from "@/components/sidebar-workspace-switcher";
+import { SidebarOrganizationSwitcher } from "@/components/sidebar-workspace-switcher";
 import {
   Sidebar,
   SidebarContent,
@@ -36,10 +36,10 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
   return (
     <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>
-        <SidebarWorkspaceSwitcher />
+        <SidebarOrganizationSwitcher />
       </SidebarHeader>
       <SidebarContent className="overflow-hidden">
-        <SidebarNav label="Workspace" items={workspaceItems} />
+        <SidebarNav label="Organization" items={workspaceItems} />
         <SidebarNav label="Manage" items={workspaceSettingsItems} />
       </SidebarContent>
       <SidebarFooter>

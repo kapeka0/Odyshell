@@ -1,6 +1,5 @@
 "use client";
 
-import { useClerk, useUser } from "@clerk/nextjs";
 import {
   ChevronsUpDownIcon,
   LogOutIcon,
@@ -35,6 +34,7 @@ import {
   nextUserTheme,
   type UserTheme,
 } from "@/lib/theme-cycle";
+import { authClient } from "@/lib/auth-client";
 
 const themeOptions = {
   system: { icon: MonitorIcon, label: "System" },
@@ -44,12 +44,11 @@ const themeOptions = {
 
 export function SidebarUser() {
   const { isMobile } = useSidebar();
-  const { isLoaded, user } = useUser();
-  const { signOut } = useClerk();
+  const session = authClient.useSession();
   const { theme, setTheme } = useTheme();
   const [pending, setPending] = useState(false);
 
-  if (!isLoaded || !user) {
+  if (session.isPending || !session.data?.user) {
     return (
       <SidebarMenu>
         <SidebarMenuItem>
@@ -59,8 +58,9 @@ export function SidebarUser() {
     );
   }
 
-  const name = user.fullName ?? user.primaryEmailAddress?.emailAddress ?? "Account";
-  const email = user.primaryEmailAddress?.emailAddress ?? "";
+  const user = session.data.user;
+  const name = user.name || user.email || "Account";
+  const email = user.email;
   const activeTheme = activeUserTheme(theme);
   const themeOption = themeOptions[activeTheme];
   const ThemeIcon = themeOption.icon;
@@ -80,7 +80,7 @@ export function SidebarUser() {
           >
             <UserIdentityAvatar
               identity={user.id}
-              imageUrl={user.hasImage ? user.imageUrl : undefined}
+              imageUrl={user.image ?? undefined}
               name={name}
             />
             <div className="grid min-w-0 flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
@@ -129,7 +129,9 @@ export function SidebarUser() {
                 disabled={pending}
                 onClick={() => {
                   setPending(true);
-                  void signOut({ redirectUrl: "/" });
+                  void authClient.signOut({
+                    fetchOptions: { onSuccess: () => window.location.assign("/") },
+                  });
                 }}
               >
                 {pending ? <Spinner /> : <LogOutIcon aria-hidden="true" />}

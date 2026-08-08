@@ -27,8 +27,12 @@ services:
       ODYSHELL_ADMIN_KEY: ${ODYSHELL_ADMIN_KEY:-dev-admin-key}
       ODYSHELL_AGENT_KEY: ${ODYSHELL_AGENT_KEY:-dev-agent-key}
       ODYSHELL_ALLOW_DEV_CREDENTIALS: "true"
-      ODYSHELL_WEB_KEY: ${ODYSHELL_WEB_KEY:-}
+      ODYSHELL_WEB_KEY: ${ODYSHELL_WEB_KEY:?Set ODYSHELL_WEB_KEY to at least 32 random characters}
       ODYSHELL_WEB_URL: ${ODYSHELL_WEB_URL:-}
+      ODYSHELL_MCP_URL: ${ODYSHELL_MCP_URL:-http://localhost:4100/mcp}
+      ODYSHELL_IDENTITY_ISSUER: ${BETTER_AUTH_URL:-http://localhost:3000}
+      ODYSHELL_IDENTITY_JWKS_URL: http://web:3000/api/auth/jwks
+      ODYSHELL_MCP_ALLOWED_ORIGINS: ${BETTER_AUTH_URL:-http://localhost:3000}
       ODYSHELL_EVENT_SINK_ENCRYPTION_KEY: ${ODYSHELL_EVENT_SINK_ENCRYPTION_KEY:-}
     ports:
       - "${ODYSHELL_BIND_ADDRESS:-127.0.0.1}:${ODYSHELL_SERVER_PORT:-4100}:4100"
@@ -46,6 +50,40 @@ services:
       interval: 3s
       timeout: 2s
       retries: 20
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://odyshell:odyshell@postgres:5432/odyshell
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Set BETTER_AUTH_SECRET to at least 32 random characters}
+      ODYSHELL_DEPLOYMENT_MODE: self-hosted
+      ODYSHELL_MCP_URL: ${ODYSHELL_MCP_URL:-http://localhost:4100/mcp}
+      NEXT_PUBLIC_ODYSHELL_SERVER_URL: ${NEXT_PUBLIC_ODYSHELL_SERVER_URL:-http://localhost:4100}
+      ODYSHELL_SERVER_URL: http://server:4100
+      ODYSHELL_WEB_KEY: ${ODYSHELL_WEB_KEY:?Set ODYSHELL_WEB_KEY to at least 32 random characters}
+      NEXT_PUBLIC_GOOGLE_AUTH_ENABLED: "false"
+    ports:
+      - "${ODYSHELL_BIND_ADDRESS:-127.0.0.1}:${ODYSHELL_WEB_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      server:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 3s
+      timeout: 2s
+      retries: 30
 
 volumes:
   odyshell-postgres:

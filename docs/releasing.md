@@ -35,9 +35,8 @@ matches the package built from the release commit, and fails closed on any misma
 read-only audit compares the coordinated repository version with npm, the git tag and GitHub's
 latest release every day.
 
-The documentation smoke step uses synthetic Clerk keys scoped only to that step so public search
-and protected-route denial can be verified without exposing or contacting a production Clerk
-instance.
+The documentation smoke step uses a synthetic Odyshell Identity secret and database URL scoped
+only to that step so public search can be verified without production credentials.
 
 ## Trusted Publishing setup
 

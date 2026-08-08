@@ -36,7 +36,7 @@ export function AuthShell({
           </h1>
           <p className="mt-6 max-w-lg text-lg leading-8 text-muted-foreground">
             Manage outbound clients, temporary agent access and privacy-minimal
-            control events from one workspace.
+            control events from one Organization.
           </p>
         </section>
 

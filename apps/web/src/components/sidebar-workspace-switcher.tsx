@@ -1,10 +1,6 @@
 "use client";
 
 import {
-  useOrganization,
-  useOrganizationList,
-} from "@clerk/nextjs";
-import {
   CheckIcon,
   ChevronsUpDownIcon,
   PlusIcon,
@@ -32,41 +28,39 @@ import {
 } from "@/components/ui/sidebar";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "@/components/ui/toast";
+import { authClient } from "@/lib/auth-client";
 
-export function SidebarWorkspaceSwitcher() {
+export function SidebarOrganizationSwitcher() {
   const router = useRouter();
   const { state } = useDashboard();
   const { isMobile } = useSidebar();
-  const { organization, isLoaded: organizationLoaded } = useOrganization();
-  const { isLoaded, setActive, userMemberships } = useOrganizationList({
-    userMemberships: { infinite: true },
-  });
+  const activeOrganization = authClient.useActiveOrganization();
+  const organizations = authClient.useListOrganizations();
   const [pendingId, setPendingId] = useState<string | null>(null);
   const currentWorkspace = state.status === "ready" ? state.context.workspace : null;
 
-  async function selectWorkspace(organizationId: string) {
-    if (!setActive || organizationId === organization?.id) return;
+  async function selectOrganization(organizationId: string) {
+    if (organizationId === activeOrganization.data?.id) return;
     setPendingId(organizationId);
-    try {
-      await setActive({ organization: organizationId });
+    const result = await authClient.organization.setActive({ organizationId });
+    if (!result.error) {
       router.refresh();
       toast.add({
-        title: "Workspace changed",
-        description: "Dashboard data now belongs to the selected workspace.",
+        title: "Organization changed",
+        description: "Dashboard data now belongs to the selected organization.",
         type: "success",
       });
-    } catch {
+    } else {
       toast.add({
-        title: "Workspace was not changed",
-        description: "Your previous workspace remains active.",
+        title: "Organization was not changed",
+        description: "Your previous organization remains active.",
         type: "error",
       });
-    } finally {
-      setPendingId(null);
     }
+    setPendingId(null);
   }
 
-  if (!isLoaded || !organizationLoaded || userMemberships.isLoading) {
+  if (activeOrganization.isPending || organizations.isPending) {
     return (
       <SidebarMenu>
         <SidebarMenuItem>
@@ -84,21 +78,21 @@ export function SidebarWorkspaceSwitcher() {
             render={
               <SidebarMenuButton
                 size="lg"
-                tooltip={organization?.name ?? "Select workspace"}
+                tooltip={activeOrganization.data?.name ?? "Select organization"}
               />
             }
           >
-            {organization ? (
+            {activeOrganization.data ? (
               <WorkspaceIdentityAvatar
-                identity={currentWorkspace?.avatarSeed ?? organization.id}
-                name={currentWorkspace?.name ?? organization.name}
+                identity={currentWorkspace?.avatarSeed ?? activeOrganization.data.id}
+                name={currentWorkspace?.name ?? activeOrganization.data.name}
               />
             ) : (
               <span className="size-8 rounded-lg bg-muted" aria-hidden="true" />
             )}
             <div className="grid min-w-0 flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
               <span className="truncate font-medium">
-                {currentWorkspace?.name ?? organization?.name ?? "Select workspace"}
+                {currentWorkspace?.name ?? activeOrganization.data?.name ?? "Select organization"}
               </span>
               {state.status === "ready" ? (
                 <Badge
@@ -120,28 +114,24 @@ export function SidebarWorkspaceSwitcher() {
             className="min-w-56"
           >
             <DropdownMenuGroup>
-              <DropdownMenuLabel>Workspaces</DropdownMenuLabel>
-              {(userMemberships.data ?? []).map((membership) => (
+              <DropdownMenuLabel>Organizations</DropdownMenuLabel>
+              {(organizations.data ?? []).map((organization) => (
                 <DropdownMenuItem
-                  key={membership.id}
+                  key={organization.id}
                   disabled={pendingId !== null}
-                  onClick={() =>
-                    void selectWorkspace(membership.organization.id)
-                  }
+                  onClick={() => void selectOrganization(organization.id)}
                 >
-                  {pendingId === membership.organization.id ? (
+                  {pendingId === organization.id ? (
                     <Spinner />
                   ) : (
                     <WorkspaceIdentityAvatar
-                      identity={membership.organization.id}
-                      name={membership.organization.name}
+                      identity={organization.id}
+                      name={organization.name}
                       className="size-6"
                     />
                   )}
-                  <span className="truncate">
-                    {membership.organization.name}
-                  </span>
-                  {membership.organization.id === organization?.id ? (
+                  <span className="truncate">{organization.name}</span>
+                  {organization.id === activeOrganization.data?.id ? (
                     <CheckIcon aria-hidden="true" className="ml-auto" />
                   ) : null}
                 </DropdownMenuItem>
@@ -151,7 +141,7 @@ export function SidebarWorkspaceSwitcher() {
             <DropdownMenuGroup>
               <DropdownMenuItem onClick={() => router.push("/onboarding")}>
                 <PlusIcon aria-hidden="true" />
-                Create workspace
+                Create organization
               </DropdownMenuItem>
             </DropdownMenuGroup>
           </DropdownMenuContent>

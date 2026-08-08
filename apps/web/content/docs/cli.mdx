@@ -33,7 +33,7 @@ ods audit
 
 `ods login` authenticates the human-facing CLI to one Workspace. It lets that CLI discover and
 manage Workspace resources, request Sessions, and create enrollment or Agent credentials when the
-member's role permits it. The browser identity and Clerk credentials remain in the web app; the CLI
+member's role permits it. The browser session and password credentials remain in the web app; the CLI
 receives an expiring Workspace credential.
 
 Machine enrollment is a different identity flow. A target machine does not need `ods login`: run

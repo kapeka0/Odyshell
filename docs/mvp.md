@@ -94,7 +94,7 @@ See [Privacy and event data](./privacy.md) for the exact boundary.
 ## What the MVP does not yet include
 
 - billing and plan checkout;
-- fine-grained custom human roles beyond Clerk organization members and administrators;
+- fine-grained custom human roles beyond Owner, Admin, and Supervisor;
 - object-storage or native SIEM event destinations beyond the signed HTTPS Event Sink;
 - SSO, SCIM, billing, or compliance certification;
 - high-availability routing across multiple Server replicas;
@@ -107,7 +107,7 @@ These are not implied by the current API.
 
 The web control plane now supports the smallest complete design-partner workflow:
 
-1. a member signs in to a Clerk Organization and authorizes `ods login`;
+1. a member signs in through Odyshell Identity, selects an Organization, and authorizes `ods login`;
 2. the member generates a single-use command and runs it on a machine with an explicit local
    capability policy; the target machine does not need a separate CLI login;
 3. an Agent registers a persistent identity without receiving machine authority;

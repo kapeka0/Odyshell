@@ -183,7 +183,7 @@ export type CloudNotification = {
 };
 
 export type CloudContext = {
-  currentMemberRole: "admin" | "member";
+  currentMemberRole: "owner" | "admin" | "supervisor";
   organization: {
     id: string;
     slug: string;

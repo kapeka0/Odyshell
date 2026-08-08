@@ -1,4 +1,3 @@
-import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { ActivationShell } from "@/components/activation-shell";
 import { AgentPolicyApprovalForm } from "@/components/agent-policy-approval";
@@ -7,8 +6,9 @@ import {
   agentPolicyErrorPath,
   type AgentPolicyApproval,
 } from "@/lib/agent-policy";
-import { currentCloudIdentity } from "@/lib/clerk-identity";
+import { currentCloudIdentity, currentHumanIdentity } from "@/lib/identity";
 import { cloudRequest, CloudApiError } from "@/lib/cloud-api";
+import { canAdministerOrganization } from "@/lib/identity-permissions";
 
 export default async function AgentPolicyApprovePage({
   searchParams,
@@ -20,12 +20,14 @@ export default async function AgentPolicyApprovePage({
     typeof params.code === "string" ? params.code : "",
   );
   if (!code.success) redirect(agentPolicyErrorPath());
-  const { userId, orgRole } = await auth();
-  if (!userId) {
+  const humanIdentity = await currentHumanIdentity();
+  if (!humanIdentity) {
     const destination = `/policies/approve?code=${encodeURIComponent(code.data)}`;
     redirect(`/sign-in?redirect_url=${encodeURIComponent(destination)}`);
   }
-  if (orgRole !== "org:admin") redirect(agentPolicyErrorPath());
+  if (!canAdministerOrganization(humanIdentity.role)) {
+    redirect(agentPolicyErrorPath());
+  }
   const identity = await currentCloudIdentity();
   if (!identity) redirect("/onboarding");
   let policy: AgentPolicyApproval;

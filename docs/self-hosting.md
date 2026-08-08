@@ -1,7 +1,7 @@
 # Self-hosting Odyshell
 
-Odyshell's data plane needs the Server and PostgreSQL. The implemented production Session flow
-also needs the Odyshell web app and Clerk Organizations for human identity and approval:
+Odyshell's self-hosted stack contains the Server, PostgreSQL, and the Odyshell web app. Odyshell
+Identity runs inside the web app for human sessions, Organization membership, OAuth, and approval:
 
 ```mermaid
 flowchart LR
@@ -9,8 +9,8 @@ flowchart LR
     C["Private-machine Clients"] -->|"Outbound WSS"| S
     H["Humans"] --> W["Odyshell web app"]
     W -->|"Authenticated control requests"| S
-    W --> K["Clerk Organizations"]
-    S --> P["PostgreSQL"]
+    W --> P["PostgreSQL + Odyshell Identity"]
+    S --> P
 ```
 
 Clients never need inbound ports. The Server needs an address reachable by Agents, Clients, and
@@ -30,7 +30,7 @@ cp .env.example .env
 cp apps/web/.env.example apps/web/.env.local
 ```
 
-Create a Clerk application with Organizations enabled and replace the Clerk keys in
+Replace `BETTER_AUTH_SECRET` with a random value of at least 32 characters in
 `apps/web/.env.local`. Set the same random `ODYSHELL_WEB_KEY` in `.env` and
 `apps/web/.env.local`; keep `ODYSHELL_WEB_URL=http://localhost:3000`. Then start PostgreSQL and the
 Server:
@@ -40,14 +40,8 @@ docker compose up -d --build
 curl --fail http://127.0.0.1:4100/health
 ```
 
-In another terminal, start the web app and create a Clerk Organization at
-`http://localhost:3000`:
-
-```bash
-pnpm dev:web
-```
-
-Compose starts the Server and PostgreSQL. Its named volume keeps state across restarts. The
+Open `http://localhost:3000`, create the first account, and create the Organization. Compose starts
+the web app, Server, and PostgreSQL. Its named volume keeps state across restarts. The
 included passwords and keys are development defaults; do not expose this setup to the internet.
 The development Agent key only authorizes the isolated `/v1/development/sessions` endpoint. It
 rejects `host.shell` and `process.exec`; it does not make `ods exec`, `ods shell`, or `ods mcp` skip
@@ -108,16 +102,19 @@ Put the Server behind HTTPS before connecting over the internet. Never enable
 
 ## Deploy the human control plane
 
-The current production Session flow requires the Odyshell web app and a Clerk application with
-Organizations enabled. A Server-only deployment can expose health, enrollment, and administrator
+The current production Session flow requires the Odyshell web app and its PostgreSQL-backed
+Odyshell Identity service. A Server-only deployment can expose health, enrollment, and administrator
 endpoints, but it cannot issue Agent Credentials or approve Agent Sessions; normal execution fails
 closed when `ODYSHELL_WEB_URL` is unavailable.
 
 Configure the web app with:
 
 ```dotenv
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=<clerk-publishable-key>
-CLERK_SECRET_KEY=<clerk-secret-key>
+DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<database>?sslmode=verify-full
+BETTER_AUTH_URL=https://ods.example.com
+BETTER_AUTH_SECRET=<strong-random-secret-at-least-32-characters>
+ODYSHELL_DEPLOYMENT_MODE=self-hosted
+ODYSHELL_MCP_URL=https://api.ods.example.com/mcp
 NEXT_PUBLIC_ODYSHELL_SERVER_URL=https://api.ods.example.com
 ODYSHELL_SERVER_URL=https://api.ods.example.com
 ODYSHELL_WEB_KEY=<same-value-as-the-server>
@@ -142,18 +139,18 @@ key stays between these two services; browsers and Agents never receive it.
 
 The local `ods mcp` transport uses the Agent Credential registered through the human control plane
 and does not require a separate MCP OAuth endpoint. To let hosted MCP clients connect directly,
-configure Clerk as the OAuth authorization server and enable dynamic client registration:
+configure Odyshell Identity as the OAuth authorization server. Dynamic client registration and
+PKCE are exposed by the web app:
 
 ```dotenv
 ODYSHELL_MCP_URL=https://mcp.example.com/mcp
 ODYSHELL_MCP_ALLOWED_ORIGINS=https://app.example.com
-CLERK_OAUTH_ISSUER=https://your-instance.clerk.accounts.dev
-CLERK_SECRET_KEY=<clerk-secret-key>
-CLERK_PUBLISHABLE_KEY=<clerk-publishable-key>
+ODYSHELL_IDENTITY_ISSUER=https://ods.example.com
+ODYSHELL_IDENTITY_JWKS_URL=https://ods.example.com/api/auth/jwks
 ```
 
 Point the MCP hostname at the same Server process. PostgreSQL keeps MCP installation and Session
-bindings; OAuth tokens are verified with Clerk and are not stored by Odyshell. Accounts with one
+bindings; OAuth access tokens are verified locally against Odyshell Identity JWKS and are not stored by the Server. Accounts with one
 Workspace can use `/mcp`; accounts with several use `/mcp/<workspace-id>`.
 
 Remote MCP requests either one or more exact typed Operations or explicit broad Host Shell
@@ -172,14 +169,14 @@ Authorize the CLI through the deployed web app:
 ods login --server https://api.ods.example.com
 ```
 
-Open the printed URL, choose the Clerk Organization, and approve the CLI. Then create a single-use
+Open the printed URL, choose the Odyshell Organization, and approve the CLI. Then create a single-use
 enrollment token:
 
 ```bash
 ods token create
 ```
 
-The selected Clerk Organization owns the Workspace. Organization membership is not managed by the
+The selected Organization owns the Workspace. Organization membership is not managed by the
 CLI. Only the administrator CLI needs `ods login`; the target machine uses the generated
 single-use enrollment token and does not log in separately.
 

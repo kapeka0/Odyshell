@@ -180,12 +180,10 @@ describe("0.16.0 release contract", () => {
       workflow.indexOf("- name: Test public documentation"),
       workflow.indexOf("- run: pnpm test:e2e"),
     );
-    expect(documentationSmoke).toContain(
-      "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_Y2xlcmsuZXhhbXBsZS5jb20k",
-    );
-    expect(documentationSmoke).toContain(
-      "CLERK_SECRET_KEY: sk_test_docs_smoke_only",
-    );
+      expect(workflow).toContain(
+        "BETTER_AUTH_SECRET: release-check-identity-secret-00000000",
+      );
+      expect(workflow).not.toContain("CLERK_SECRET_KEY");
     expect(workflow.indexOf("Publish verified npm packages")).toBeLessThan(
       workflow.indexOf("Create GitHub Release"),
     );

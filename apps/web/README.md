@@ -4,15 +4,15 @@
 
 <h1 align="center">Odyshell Web</h1>
 
-<p align="center"><strong>The human control plane for Odyshell Cloud.</strong></p>
+<p align="center"><strong>Optional human supervision for the agent-native Odyshell control plane.</strong></p>
 
 The web app is where workspace members approve CLI and Agent enrollment, connect or remove
 machines, approve temporary Sessions, manage persistent Agents and their policies, and review
 privacy-minimal Control Events. Organization administrators additionally manage people and
 organization settings.
 
-Agents do not use this interface. They use Agent Credentials and claimed Session Credentials
-through the API, SDK, CLI, or MCP server.
+Agents are the primary operators. They use OAuth tokens and claimed Session Credentials through
+the HTTP API, CLI, or MCP server; people use this interface for governance and optional supervision.
 
 Public product documentation lives in `content/docs` and is served at `/docs` with local search.
 The same reviewed source is available to agents through `/llms.txt`, `/llms-full.txt`, and a
@@ -20,19 +20,18 @@ Markdown version of every documentation page.
 
 ## Run locally
 
-Create a Clerk application with Organizations enabled, then copy this file:
+Copy the local identity configuration:
 
 ```bash
 cp apps/web/.env.example apps/web/.env.local
 ```
 
-Set the Clerk keys and use the same `ODYSHELL_WEB_KEY` in the web app and Server. For the Compose
+Set a strong `BETTER_AUTH_SECRET` and use the same `ODYSHELL_WEB_KEY` in the web app and Server. For the Compose
 Server, copy `.env.example` to `.env`; Compose forwards its key and
 `ODYSHELL_WEB_URL=http://localhost:3000`. Start the backend and web app from the monorepo root:
 
 ```bash
 docker compose up -d --build
-pnpm dev:web
 ```
 
 Open `http://localhost:3000`, create an organization, then connect the CLI:
@@ -57,8 +56,9 @@ stderr.
 
 ## Trust boundary
 
-Clerk authenticates people and organization membership. The web app forwards only the verified
-identity to the Odyshell Server over a shared internal key. PostgreSQL, machine credentials,
-agent tokens and execution policy remain owned by the Server.
+Odyshell Identity uses Better Auth and PostgreSQL for people, sessions, Organization membership,
+OAuth clients, and signed Agent access tokens. The web app forwards only verified identity to the
+Odyshell Server over a shared internal key. Machine credentials and execution policy remain owned
+by the Server.
 
 [Server](../server/README.md) · [Back to Odyshell](../../README.md)

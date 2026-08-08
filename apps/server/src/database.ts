@@ -2629,7 +2629,7 @@ async function migrateRemoteMcp(db: Kysely<DatabaseSchema>): Promise<void> {
     create table odyshell.mcp_installations (
       workspace_id text not null,
       id text not null,
-      provider text not null check (provider = 'clerk'),
+      provider text not null check (provider = 'odyshell_identity'),
       user_id text not null,
       oauth_client_id text not null,
       agent_id text not null,
@@ -3099,6 +3099,174 @@ async function migrateOperationIdempotencyKeys(
   `.execute(db);
 }
 
+async function migrateOdyshellIdentity(
+  db: Kysely<DatabaseSchema>,
+): Promise<void> {
+  const statements = [
+    `create table public."user" (
+      "id" uuid default pg_catalog.gen_random_uuid() primary key,
+      "name" text not null,
+      "email" text not null unique,
+      "emailVerified" boolean not null,
+      "image" text,
+      "createdAt" timestamptz default current_timestamp not null,
+      "updatedAt" timestamptz default current_timestamp not null
+    )`,
+    `create table public."session" (
+      "id" uuid default pg_catalog.gen_random_uuid() primary key,
+      "expiresAt" timestamptz not null,
+      "token" text not null unique,
+      "createdAt" timestamptz default current_timestamp not null,
+      "updatedAt" timestamptz not null,
+      "ipAddress" text,
+      "userAgent" text,
+      "userId" uuid not null references public."user" ("id") on delete cascade,
+      "activeOrganizationId" text
+    )`,
+    `create table public."account" (
+      "id" uuid default pg_catalog.gen_random_uuid() primary key,
+      "accountId" text not null,
+      "providerId" text not null,
+      "userId" uuid not null references public."user" ("id") on delete cascade,
+      "accessToken" text,
+      "refreshToken" text,
+      "idToken" text,
+      "accessTokenExpiresAt" timestamptz,
+      "refreshTokenExpiresAt" timestamptz,
+      "scope" text,
+      "password" text,
+      "createdAt" timestamptz default current_timestamp not null,
+      "updatedAt" timestamptz not null
+    )`,
+    `create table public."verification" (
+      "id" uuid default pg_catalog.gen_random_uuid() primary key,
+      "identifier" text not null,
+      "value" text not null,
+      "expiresAt" timestamptz not null,
+      "createdAt" timestamptz default current_timestamp not null,
+      "updatedAt" timestamptz default current_timestamp not null
+    )`,
+    `create table public."organization" (
+      "id" uuid default pg_catalog.gen_random_uuid() primary key,
+      "name" text not null,
+      "slug" text not null unique,
+      "logo" text,
+      "createdAt" timestamptz not null,
+      "metadata" text
+    )`,
+    `create table public."member" (
+      "id" uuid default pg_catalog.gen_random_uuid() primary key,
+      "organizationId" uuid not null references public."organization" ("id") on delete cascade,
+      "userId" uuid not null references public."user" ("id") on delete cascade,
+      "role" text not null,
+      "createdAt" timestamptz not null
+    )`,
+    `create table public."invitation" (
+      "id" uuid default pg_catalog.gen_random_uuid() primary key,
+      "organizationId" uuid not null references public."organization" ("id") on delete cascade,
+      "email" text not null,
+      "role" text,
+      "status" text not null,
+      "expiresAt" timestamptz not null,
+      "createdAt" timestamptz default current_timestamp not null,
+      "inviterId" uuid not null references public."user" ("id") on delete cascade
+    )`,
+    `create table public."jwks" (
+      "id" uuid default pg_catalog.gen_random_uuid() primary key,
+      "publicKey" text not null,
+      "privateKey" text not null,
+      "createdAt" timestamptz not null,
+      "expiresAt" timestamptz
+    )`,
+    `create table public."oauthClient" (
+      "id" uuid default pg_catalog.gen_random_uuid() primary key,
+      "clientId" text not null unique,
+      "clientSecret" text,
+      "disabled" boolean,
+      "skipConsent" boolean,
+      "enableEndSession" boolean,
+      "subjectType" text,
+      "scopes" jsonb,
+      "userId" uuid references public."user" ("id") on delete cascade,
+      "createdAt" timestamptz,
+      "updatedAt" timestamptz,
+      "name" text,
+      "uri" text,
+      "icon" text,
+      "contacts" jsonb,
+      "tos" text,
+      "policy" text,
+      "softwareId" text,
+      "softwareVersion" text,
+      "softwareStatement" text,
+      "redirectUris" jsonb not null,
+      "postLogoutRedirectUris" jsonb,
+      "tokenEndpointAuthMethod" text,
+      "grantTypes" jsonb,
+      "responseTypes" jsonb,
+      "public" boolean,
+      "type" text,
+      "requirePKCE" boolean,
+      "referenceId" text,
+      "metadata" jsonb
+    )`,
+    `create table public."oauthRefreshToken" (
+      "id" uuid default pg_catalog.gen_random_uuid() primary key,
+      "token" text not null unique,
+      "clientId" text not null references public."oauthClient" ("clientId") on delete cascade,
+      "sessionId" uuid references public."session" ("id") on delete set null,
+      "userId" uuid not null references public."user" ("id") on delete cascade,
+      "referenceId" text,
+      "expiresAt" timestamptz not null,
+      "createdAt" timestamptz not null,
+      "revoked" timestamptz,
+      "authTime" timestamptz,
+      "scopes" jsonb not null
+    )`,
+    `create table public."oauthAccessToken" (
+      "id" uuid default pg_catalog.gen_random_uuid() primary key,
+      "token" text not null unique,
+      "clientId" text not null references public."oauthClient" ("clientId") on delete cascade,
+      "sessionId" uuid references public."session" ("id") on delete set null,
+      "userId" uuid references public."user" ("id") on delete cascade,
+      "referenceId" text,
+      "refreshId" uuid references public."oauthRefreshToken" ("id") on delete cascade,
+      "expiresAt" timestamptz not null,
+      "createdAt" timestamptz not null,
+      "scopes" jsonb not null
+    )`,
+    `create table public."oauthConsent" (
+      "id" uuid default pg_catalog.gen_random_uuid() primary key,
+      "clientId" text not null references public."oauthClient" ("clientId") on delete cascade,
+      "userId" uuid references public."user" ("id") on delete cascade,
+      "referenceId" text,
+      "scopes" jsonb not null,
+      "createdAt" timestamptz not null,
+      "updatedAt" timestamptz not null
+    )`,
+    `create index "session_userId_idx" on public."session" ("userId")`,
+    `create index "account_userId_idx" on public."account" ("userId")`,
+    `create index "verification_identifier_idx" on public."verification" ("identifier")`,
+    `create index "member_organizationId_idx" on public."member" ("organizationId")`,
+    `create index "member_userId_idx" on public."member" ("userId")`,
+    `create index "invitation_organizationId_idx" on public."invitation" ("organizationId")`,
+    `create index "invitation_email_idx" on public."invitation" ("email")`,
+    `create index "oauthClient_userId_idx" on public."oauthClient" ("userId")`,
+    `create index "oauthRefreshToken_clientId_idx" on public."oauthRefreshToken" ("clientId")`,
+    `create index "oauthRefreshToken_sessionId_idx" on public."oauthRefreshToken" ("sessionId")`,
+    `create index "oauthRefreshToken_userId_idx" on public."oauthRefreshToken" ("userId")`,
+    `create index "oauthAccessToken_clientId_idx" on public."oauthAccessToken" ("clientId")`,
+    `create index "oauthAccessToken_sessionId_idx" on public."oauthAccessToken" ("sessionId")`,
+    `create index "oauthAccessToken_userId_idx" on public."oauthAccessToken" ("userId")`,
+    `create index "oauthAccessToken_refreshId_idx" on public."oauthAccessToken" ("refreshId")`,
+    `create index "oauthConsent_clientId_idx" on public."oauthConsent" ("clientId")`,
+    `create index "oauthConsent_userId_idx" on public."oauthConsent" ("userId")`,
+  ];
+  for (const statement of statements) {
+    await sql.raw(statement).execute(db);
+  }
+}
+
 const migrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
     return {
@@ -3187,6 +3355,9 @@ const migrationProvider: MigrationProvider = {
       },
       "023_operation_idempotency_keys": {
         up: migrateOperationIdempotencyKeys,
+      },
+      "024_odyshell_identity": {
+        up: migrateOdyshellIdentity,
       },
     };
   },
@@ -4136,7 +4307,7 @@ export class PostgresDatabase {
             "agents.deletedAt as agentDeletedAt",
           ])
           .where("mcpInstallations.workspaceId", "=", input.workspaceId)
-          .where("mcpInstallations.provider", "=", "clerk")
+          .where("mcpInstallations.provider", "=", "odyshell_identity")
           .where("mcpInstallations.userId", "=", input.userId)
           .where("mcpInstallations.oauthClientId", "=", input.oauthClientId)
           .executeTakeFirst();
@@ -4241,7 +4412,7 @@ export class PostgresDatabase {
         .values({
           workspaceId: input.workspaceId,
           id: installationId,
-          provider: "clerk",
+          provider: "odyshell_identity",
           userId: input.userId,
           oauthClientId: input.oauthClientId,
           agentId,

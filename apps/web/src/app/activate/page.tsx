@@ -1,7 +1,7 @@
-import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { ActivationShell } from "@/components/activation-shell";
 import { DeviceActivation } from "@/components/device-activation";
+import { currentHumanSession } from "@/lib/identity";
 
 export default async function ActivatePage({
   searchParams,
@@ -10,8 +10,8 @@ export default async function ActivatePage({
 }) {
   const params = await searchParams;
   const code = typeof params.code === "string" ? params.code : "";
-  const { userId } = await auth();
-  if (!userId) {
+  const session = await currentHumanSession();
+  if (!session) {
     const destination = `/activate${code ? `?code=${encodeURIComponent(code)}` : ""}`;
     redirect(`/sign-in?redirect_url=${encodeURIComponent(destination)}`);
   }

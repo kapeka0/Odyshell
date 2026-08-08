@@ -29,7 +29,8 @@ Approval codes expire, can be used once, and are looked up only inside the authe
 workspace. The credential produced by a claim is returned once to the trusted runtime. MCP keeps
 it outside model-visible results.
 
-Remote MCP uses Clerk OAuth to identify a user and client installation. The Server persists only
+Remote MCP uses Odyshell Identity OAuth to identify a user and client installation. The Server
+verifies signed access tokens against the configured JWKS and persists only
 the resulting Agent and Session bindings, not OAuth access or refresh tokens. Revoking or expiring
 the Odyshell Session blocks execution independently of the OAuth connection.
 

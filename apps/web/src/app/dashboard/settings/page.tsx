@@ -1,6 +1,5 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { useState } from "react";
 import { useDashboard } from "@/components/dashboard-provider";
@@ -71,7 +70,6 @@ const loggingOptions: Array<{
 
 export default function WorkspaceSettingsPage() {
   const { state, optimisticallyUpdate, refresh } = useDashboard();
-  const { orgRole } = useAuth();
   const [name, setName] = useState(
     state.status === "ready" ? state.context.workspace.name : "",
   );
@@ -96,7 +94,7 @@ export default function WorkspaceSettingsPage() {
     );
   }
 
-  const admin = orgRole === "org:admin";
+  const admin = state.context.currentMemberRole === "owner" || state.context.currentMemberRole === "admin";
   const workspace = state.context.workspace;
   const detailsDirty =
     name.trim() !== workspace.name ||
@@ -206,7 +204,7 @@ export default function WorkspaceSettingsPage() {
 
       <section className="flex flex-col gap-4">
         <div>
-          <h2 className="font-heading text-lg font-medium">Workspace details</h2>
+          <h2 className="font-heading text-lg font-medium">Organization details</h2>
           <p className="text-sm text-muted-foreground">Identity and plan.</p>
         </div>
         <Card>
@@ -215,7 +213,7 @@ export default function WorkspaceSettingsPage() {
               <Field orientation="responsive" className="p-4">
                 <FieldContent>
                   <FieldTitle>Avatar</FieldTitle>
-                  <FieldDescription>Identifies this workspace across Odyshell.</FieldDescription>
+                  <FieldDescription>Identifies this organization across Odyshell.</FieldDescription>
                 </FieldContent>
                 <div className="flex w-full items-center justify-end gap-3 @md/field-group:w-auto">
                   <WorkspaceIdentityAvatar identity={avatarSeed} name={name || workspace.name} className="size-10" />
@@ -231,7 +229,7 @@ export default function WorkspaceSettingsPage() {
                 </FieldContent>
                 <Input id="workspace-name" name="workspace-name" autoComplete="off" value={name} onChange={(event) => setName(event.target.value)} className="w-full @md/field-group:max-w-md" disabled={!admin} />
               </Field>
-              <ReadOnlyRow label="Slug" description="Stable workspace handle." value={workspace.slug} />
+              <ReadOnlyRow label="Slug" description="Stable organization handle." value={workspace.slug} />
               <ReadOnlyRow label="Plan" description="Current plan and included limits." value={state.context.plan.id} badge />
               <ReadOnlyRow label="Machines" description="Connected machine allowance." value={`${state.context.usage.machines} / ${state.context.plan.machineLimit}`} />
               <ReadOnlyRow label="Agents" description="Active Agent allowance." value={`${state.context.usage.activeAgents} / ${state.context.plan.activeAgentLimit}`} />

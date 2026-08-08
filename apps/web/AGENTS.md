@@ -16,8 +16,10 @@ This version has breaking changes — APIs, conventions, and file structure may 
 # Frontend implementation
 
 - Reuse the existing UI primitives before introducing new ones.
-- Use Clerk as the source of identity, session, and organization data while
-  keeping product presentation decoupled from vendor-provided interface
-  elements.
+- Use Odyshell Identity (Better Auth with PostgreSQL) as the source of human
+  sessions, OAuth clients, Agent tokens, organization membership, and roles.
+- Keep identity and authorization behind the shared `lib/identity` and
+  `lib/identity-permissions` seams. Never authorize a product mutation from
+  client state alone.
 - Reuse workspace and server data already loaded by a shared layout instead of
   repeating requests during route transitions.

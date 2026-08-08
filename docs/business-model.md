@@ -120,7 +120,7 @@ Human roles belong to the organization or workspace. Agents do not receive human
 request temporary Sessions scoped to machines, capabilities, typed restrictions, and duration.
 
 The MVP now persists Organizations and enforces Workspace isolation across enrollment, machines,
-Agents, Sessions, Operations, and Control Events. Clerk manages membership and the current
+Agents, Sessions, Operations, and Control Events. Odyshell Identity manages membership and the current
 human roles:
 
 | Role | MVP responsibility |

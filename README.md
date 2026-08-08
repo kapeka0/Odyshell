@@ -104,7 +104,7 @@ ods --json exec raspberry -- uname -a
 
 ## Try it locally
 
-You need Node.js 24+, pnpm, Docker, and a Clerk application with Organizations enabled. On macOS
+You need Node.js 24+, pnpm, and Docker. On macOS
 and Windows, use Docker Desktop with Linux containers enabled. The normal CLI uses the same human
 approval flow locally as it does in production, so the web app is part of this setup.
 
@@ -117,19 +117,16 @@ cp .env.example .env
 cp apps/web/.env.example apps/web/.env.local
 ```
 
-Replace the Clerk keys in `apps/web/.env.local`. Set the same random `ODYSHELL_WEB_KEY` in both
-files and keep `ODYSHELL_WEB_URL=http://localhost:3000`. Then start PostgreSQL and the Server:
+Set the same random `ODYSHELL_WEB_KEY` in both files, replace `BETTER_AUTH_SECRET` with a random
+32-character-or-longer secret, and keep `ODYSHELL_WEB_URL=http://localhost:3000`. Then start the
+complete self-hosted stack:
 
 ```bash
 docker compose up -d --build
 ```
 
-In another terminal, start the human control plane and create a Clerk Organization at
-`http://localhost:3000`:
-
-```bash
-pnpm dev:web
-```
+Open `http://localhost:3000`, create the first local account, and create the Organization. Compose
+runs the web control plane, Server, and PostgreSQL.
 
 State persists in a Docker volume. The bundled administrator and development credentials are only
 for local development and must not be exposed to the internet. They do not replace browser
@@ -228,7 +225,7 @@ ods login
 
 The CLI prints and opens a short-lived Odyshell activation link with the device code already
 included. After you approve it, `ods` receives an expiring workspace credential. The browser
-session and Clerk credentials never leave the web app. This login authorizes the human-facing CLI
+session and password credentials never leave the web app. This login authorizes the human-facing CLI
 to use Workspace resources; it does not identify or enroll a target Client. Self-hosted
 installations can still select their Server with `--server`.
 
@@ -258,7 +255,7 @@ MCP-compatible agents can use the browser-approved flow after `ods login`:
 }
 ```
 
-A Server configured with Clerk OAuth can expose the same tools as a remote MCP. It creates one
+A Server configured with Odyshell Identity OAuth can expose the same tools as a remote MCP. It creates one
 persistent Agent per approved installation and keeps Session authority inside the Server, so
 hosted clients such as Claude or ChatGPT do not need a local `ods` process.
 
@@ -306,8 +303,8 @@ command while its temporary Operation data remains; Privacy-minimal exports and 
 receive it.
 
 Organizations provide the ownership boundary and workspaces isolate machines, Agents, Sessions,
-operations, and control events. Human and organization identity now live in the Clerk-backed web
-app. Device authorization binds the CLI to one workspace, while Agent Credentials identify
+operations, and control events. Human sessions, Organization membership, OAuth clients, and Agent
+tokens are issued by the self-hostable Odyshell Identity service in the web app. Device authorization binds the CLI to one workspace, while Agent Credentials identify
 integrations and Session Credentials authorize temporary work. Organization members can operate workspace resources; organization
 administrators additionally manage people and organization settings. Billing is not enabled yet. It is an early development MVP; the
 default local credentials are only for development.

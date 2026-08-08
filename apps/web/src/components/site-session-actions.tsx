@@ -1,19 +1,19 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { authClient } from "@/lib/auth-client";
 
 export function SiteSessionActions() {
-  const { isLoaded, isSignedIn } = useAuth();
+  const session = authClient.useSession();
 
-  if (!isLoaded) {
+  if (session.isPending) {
     return <Skeleton className="h-11 w-28" />;
   }
 
-  if (isSignedIn) {
+  if (session.data?.session) {
     return (
       <Link
         className={cn(buttonVariants({ variant: "outline", size: "lg" }))}

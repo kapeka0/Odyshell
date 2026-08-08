@@ -3,7 +3,7 @@ import { SessionDetail } from "@/components/session-detail";
 import { Button } from "@/components/ui/button";
 import { DownloadIcon } from "lucide-react";
 import { DashboardPage, DashboardPageHeader } from "@/components/dashboard-state";
-import { currentCloudIdentity } from "@/lib/clerk-identity";
+import { currentCloudIdentity } from "@/lib/identity";
 import {
   CloudApiError,
   cloudRequest,

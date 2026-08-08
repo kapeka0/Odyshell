@@ -6,7 +6,7 @@
 @import "@xyflow/react/dist/style.css" layer(base);
 @import "../../tokens.css";
 
-@layer theme, base, clerk, components, utilities;
+@layer theme, base, components, utilities;
 
 @custom-variant dark (&:is(.dark *));
 

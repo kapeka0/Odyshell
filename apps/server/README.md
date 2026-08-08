@@ -19,7 +19,7 @@ machines.
 
 ## Run locally
 
-Create a Clerk application with Organizations enabled. From the monorepo root, copy both
+From the monorepo root, copy both
 environment examples and use the same `ODYSHELL_WEB_KEY` in them:
 
 ```bash
@@ -32,14 +32,14 @@ The development Server is available at `http://127.0.0.1:4100`. Compose starts P
 stores its data in a named volume, so local state survives Server restarts.
 
 The bundled database password and Odyshell keys are development defaults. Normal Agent Sessions
-still require the browser approval implemented by the web app. Replace the Clerk keys in
+still require the browser approval implemented by the web app. Replace the identity secret in
 `apps/web/.env.local`, then start it:
 
 ```bash
 pnpm dev:web
 ```
 
-After creating a Clerk Organization at `http://localhost:3000`, register an Agent once:
+After creating an Odyshell Organization at `http://localhost:3000`, register an Agent once:
 
 ```bash
 npm install --global @odyshell/cli
@@ -68,8 +68,8 @@ A production deployment needs:
   the web app. A Server without this bridge cannot execute the normal production Agent flow.
 - Optional `ODYSHELL_EVENT_SINK_ENCRYPTION_KEY`, a base64url-encoded 32-byte key, to enable signed
   Timeline delivery.
-- Optional `ODYSHELL_MCP_URL`, `CLERK_OAUTH_ISSUER`, `CLERK_SECRET_KEY`, and
-  `CLERK_PUBLISHABLE_KEY` to enable the remote OAuth MCP. `ODYSHELL_MCP_ALLOWED_ORIGINS` may contain
+- Optional `ODYSHELL_MCP_URL`, `ODYSHELL_IDENTITY_ISSUER`, and
+  `ODYSHELL_IDENTITY_JWKS_URL` to enable the remote OAuth MCP. `ODYSHELL_MCP_ALLOWED_ORIGINS` may contain
   a comma-separated list of exact browser origins.
 
 Railway supplies `PORT` automatically. PostgreSQL stores machine identities, scoped tokens,
@@ -92,7 +92,7 @@ Server stores only credential hashes and enforces the Session's exact machine, c
 and expiry on every Operation. Verified lifecycle transitions form a privacy-minimal Session
 Timeline without recording credentials or operation output.
 
-Remote MCP installations use Clerk OAuth only for human and client identity. The Server stores the
+Remote MCP installations use Odyshell Identity OAuth only for human and client identity. The Server stores the
 installation-to-Agent and installation-to-Session bindings in PostgreSQL, but never stores OAuth
 access or refresh tokens. Host Shell reuse also requires the same stable Task Run identifier, so
 unrelated requests cannot inherit broad authority. Every Operation still passes the normal Session

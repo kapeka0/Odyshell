@@ -13,7 +13,7 @@ export default async function SignInPage({
   return (
     <AuthShell
       title="Welcome back"
-      description="Sign in to your Odyshell workspace."
+      description="Sign in to your Odyshell Organization."
     >
       <AuthForm mode="sign-in" destination={destination} />
     </AuthShell>

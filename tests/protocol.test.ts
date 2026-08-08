@@ -522,7 +522,7 @@ describe("protocol validation", () => {
       humanIdentitySchema.safeParse({
         workspaceId: "workspace-a",
         id: "human-a",
-        externalId: "clerk-user-a",
+        externalId: "identity-user-a",
         status: "active",
       }).success,
     ).toBe(true);

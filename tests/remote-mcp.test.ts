@@ -11,7 +11,7 @@ import {
   registerRemoteMcp,
   remoteMcpAgentName,
   remoteMcpConfiguration,
-  remoteMcpOrganizationId,
+  remoteMcpIdentityFromClaims,
   remoteMcpOriginAllowed,
   type RemoteMcpOauth,
 } from "../apps/server/src/remote-mcp.js";
@@ -32,9 +32,7 @@ describe("remote MCP security boundary", () => {
       remoteMcpConfiguration({
         NODE_ENV: "production",
         ODYSHELL_MCP_URL: "http://mcp.test/mcp",
-        CLERK_OAUTH_ISSUER: "https://clerk.test",
-        CLERK_SECRET_KEY: "secret",
-        CLERK_PUBLISHABLE_KEY: "public",
+        ODYSHELL_IDENTITY_ISSUER: "https://identity.test",
       }),
     ).toThrow("must use HTTPS");
   });
@@ -108,19 +106,36 @@ describe("remote MCP security boundary", () => {
     expect(JSON.stringify(result)).not.toContain("nodeVersion");
   });
 
-  it("accepts only an OAuth-selected Organization from a scoped JWT", () => {
-    const token = unsignedJwt({ org_id: "org_member" });
-
+  it("accepts only verified Agent claims bound to an Organization and OAuth client", () => {
     expect(
-      remoteMcpOrganizationId(token, ["openid", "user:org:read"]),
-    ).toBe("org_member");
-    expect(remoteMcpOrganizationId(token, ["openid"])).toBeNull();
+      remoteMcpIdentityFromClaims(
+        {
+          sub: "human-id",
+          azp: "mcp-client-id",
+          scope: "openid odyshell:agent",
+          organization_id: "organization-id",
+        },
+        "verified-token",
+      ),
+    ).toEqual({
+      userId: "human-id",
+      clientId: "mcp-client-id",
+      scopes: ["openid", "odyshell:agent"],
+      organizationId: "organization-id",
+      token: "verified-token",
+    });
     expect(
-      remoteMcpOrganizationId(unsignedJwt({ org_id: "workspace-member" }), [
-        "user:org:read",
-      ]),
+      remoteMcpIdentityFromClaims(
+        { azp: "client", scope: "openid", organization_id: "organization-id" },
+        "verified-token",
+      ),
     ).toBeNull();
-    expect(remoteMcpOrganizationId("not-a-jwt", ["user:org:read"])).toBeNull();
+    expect(
+      remoteMcpIdentityFromClaims(
+        { azp: "client", scope: "odyshell:agent" },
+        "verified-token",
+      ),
+    ).toBeNull();
   });
 
   it("persists installation grants without OAuth or Session plaintext", async () => {
@@ -509,7 +524,7 @@ describe("remote MCP security boundary", () => {
     const authenticate = vi.fn(async () => ({
       userId: "user-id",
       clientId: "client-id",
-      scopes: ["openid", "user:org:read"],
+      scopes: ["openid", "odyshell:agent"],
       organizationId: "org-member",
       organizationIds: ["org-member", "org-private"],
       token: "safe-oauth-token",
@@ -1461,7 +1476,7 @@ function remoteMcpApp(
       vi.fn(async () => ({
         userId: "user-id",
         clientId: "client-id",
-        scopes: ["openid", "user:org:read"],
+        scopes: ["openid", "odyshell:agent"],
         organizationId: "org-member",
         token: "safe-oauth-token",
       })),
@@ -1473,9 +1488,7 @@ function remoteMcpApp(
       NODE_ENV: "test",
       ODYSHELL_MCP_URL: "https://mcp.test/mcp",
       ODYSHELL_MCP_ALLOWED_ORIGINS: "https://odyshell.com",
-      CLERK_OAUTH_ISSUER: "https://clerk.test",
-      CLERK_SECRET_KEY: "sk_test_placeholder",
-      CLERK_PUBLISHABLE_KEY: "pk_test_placeholder",
+      ODYSHELL_IDENTITY_ISSUER: "https://identity.test",
     },
     { database, oauth, runtime: () => overrides.runtime ?? fakeRuntime() },
   );
@@ -1509,12 +1522,6 @@ function initializeRequest() {
       clientInfo: { name: "security-test", version: "1.0.0" },
     },
   };
-}
-
-function unsignedJwt(payload: Record<string, unknown>) {
-  const encode = (value: Record<string, unknown>) =>
-    Buffer.from(JSON.stringify(value)).toString("base64url");
-  return `${encode({ alg: "RS256", typ: "at+jwt" })}.${encode(payload)}.${Buffer.from("signature").toString("base64url")}`;
 }
 
 function remoteRuntime(

@@ -12,7 +12,7 @@ export default async function SignUpPage({
 
   return (
     <AuthShell
-      title="Create your workspace"
+      title="Create your account"
       description="Start with a private machine and scoped agent access."
     >
       <AuthForm mode="sign-up" destination={destination} />

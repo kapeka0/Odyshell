@@ -1,9 +1,8 @@
-import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { ActivationShell } from "@/components/activation-shell";
 import { SessionApprovalForm } from "@/components/session-approval";
 import { cloudRequest, CloudApiError } from "@/lib/cloud-api";
-import { currentCloudIdentity } from "@/lib/clerk-identity";
+import { currentCloudIdentity, currentHumanSession } from "@/lib/identity";
 import {
   sessionApprovalRequestIdSchema,
   sessionApprovalErrorPath,
@@ -21,8 +20,8 @@ export default async function SessionApprovePage({
   );
   if (!parsedRequestId.success) redirect(sessionApprovalErrorPath());
 
-  const { userId } = await auth();
-  if (!userId) {
+  const session = await currentHumanSession();
+  if (!session) {
     const destination = `/sessions/approve?request=${encodeURIComponent(parsedRequestId.data)}`;
     redirect(`/sign-in?redirect_url=${encodeURIComponent(destination)}`);
   }

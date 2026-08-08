@@ -9,13 +9,13 @@ approves a temporary Session.
 
 ## Remote MCP
 
-On a Server with Clerk OAuth enabled, add its MCP resource to an MCP-compatible client:
+On a Server with Odyshell Identity OAuth enabled, add its MCP resource to an MCP-compatible client:
 
 ```text
 https://mcp.example.com/mcp
 ```
 
-The client opens Clerk in the browser. Sign in and approve access to your Odyshell account. If your
+The client opens Odyshell Identity in the browser. Sign in and approve access to your Organization. If your
 account can access more than one Workspace, use the Workspace-specific URL shown by Odyshell:
 
 ```text
@@ -32,7 +32,7 @@ them and no Session Credential is returned to the model.
 
 ## Local MCP
 
-Use the local process when a client supports stdio MCP or when you self-host without Clerk OAuth.
+Use the local process when a client supports stdio MCP or when remote OAuth is disabled.
 
 ### Install
 

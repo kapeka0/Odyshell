@@ -431,7 +431,7 @@ async function requireAgent(request: FastifyRequest, reply: FastifyReply): Promi
       requestPrincipals.set(request, {
         kind: "cli",
         id: cliPrincipal.id,
-        name: `Clerk user ${cliPrincipal.userId}`,
+        name: `Odyshell user ${cliPrincipal.userId}`,
         workspaceId: cliPrincipal.workspaceId,
         machineIds: null,
         capabilities: new Set(allCapabilities),

@@ -1,5 +1,4 @@
-import { createClerkClient } from "@clerk/backend";
-import { decodeJwt } from "@clerk/backend/jwt";
+import { oauthProviderResourceClient } from "@better-auth/oauth-provider/resource-client";
 import {
   createMcpHandler,
   type AuthInfo,
@@ -18,9 +17,8 @@ import type {
 type RemoteMcpConfiguration = {
   resource: URL;
   issuer: URL;
+  jwks: URL;
   allowedOrigins: Set<string>;
-  secretKey: string;
-  publishableKey: string;
 };
 
 export type RemoteMcpDependencies = {
@@ -46,23 +44,26 @@ export function remoteMcpConfiguration(
   environment: NodeJS.ProcessEnv,
 ): RemoteMcpConfiguration | null {
   const resource = environment.ODYSHELL_MCP_URL;
-  const issuer = environment.CLERK_OAUTH_ISSUER;
-  const secretKey = environment.CLERK_SECRET_KEY;
-  const publishableKey = environment.CLERK_PUBLISHABLE_KEY;
-  if (!resource || !issuer || !secretKey || !publishableKey) return null;
+  const issuer = environment.ODYSHELL_IDENTITY_ISSUER;
+  if (!resource || !issuer) return null;
   const resourceUrl = new URL(resource);
   const issuerUrl = new URL(issuer);
+  const jwksUrl = new URL(
+    environment.ODYSHELL_IDENTITY_JWKS_URL ?? "/api/auth/jwks",
+    issuerUrl,
+  );
   if (
     environment.NODE_ENV === "production" &&
-    (resourceUrl.protocol !== "https:" || issuerUrl.protocol !== "https:")
+    (resourceUrl.protocol !== "https:" ||
+      issuerUrl.protocol !== "https:" ||
+      jwksUrl.protocol !== "https:")
   ) {
     throw new Error("Remote MCP URLs must use HTTPS in production");
   }
   return {
     resource: resourceUrl,
     issuer: issuerUrl,
-    secretKey,
-    publishableKey,
+    jwks: jwksUrl,
     allowedOrigins: new Set(
       (environment.ODYSHELL_MCP_ALLOWED_ORIGINS ?? resourceUrl.origin)
         .split(",")
@@ -71,19 +72,29 @@ export function remoteMcpConfiguration(
   };
 }
 
-export function remoteMcpOrganizationId(
-  verifiedToken: string,
-  scopes: readonly string[],
-): string | null {
-  if (!scopes.includes("user:org:read")) return null;
-  try {
-    const organizationId = decodeJwt(verifiedToken).payload.org_id;
-    return typeof organizationId === "string" && organizationId.startsWith("org_")
-      ? organizationId
-      : null;
-  } catch {
+export function remoteMcpIdentityFromClaims(
+  claims: Record<string, unknown>,
+  token: string,
+): RemoteMcpOauthIdentity | null {
+  const scopes = typeof claims.scope === "string" ? claims.scope.split(" ").filter(Boolean) : [];
+  const organizationId = claims.organization_id;
+  const clientId = claims.azp;
+  if (
+    !scopes.includes("odyshell:agent") ||
+    typeof organizationId !== "string" ||
+    organizationId.length === 0 ||
+    typeof clientId !== "string" ||
+    clientId.length === 0
+  ) {
     return null;
   }
+  return {
+    userId: typeof claims.sub === "string" ? claims.sub : `agent:${clientId}`,
+    clientId,
+    scopes,
+    organizationId,
+    token,
+  };
 }
 
 export function remoteMcpOriginAllowed(
@@ -122,43 +133,26 @@ export function registerRemoteMcp(
     app.log.info("Remote MCP disabled because OAuth configuration is incomplete");
     return;
   }
-  const clerk = createClerkClient({
-    secretKey: configuration.secretKey,
-    publishableKey: configuration.publishableKey,
-  });
+  const resourceClient = oauthProviderResourceClient().getActions();
   const oauth: RemoteMcpOauth = dependencies.oauth ?? {
     async authenticate(webRequest) {
-      const state = await clerk.authenticateRequest(webRequest, {
-        acceptsToken: "oauth_token",
-      });
-      const auth = state.toAuth();
-      if (
-        !auth.isAuthenticated ||
-        auth.tokenType !== "oauth_token" ||
-        !auth.userId ||
-        !auth.clientId
-      ) {
-        return null;
-      }
       const token = bearerToken(webRequest.headers.get("authorization") ?? undefined);
       if (!token) return null;
-      const organizationId = remoteMcpOrganizationId(token, auth.scopes);
-      if (!organizationId) return null;
-      return {
-        userId: auth.userId,
-        clientId: auth.clientId,
-        scopes: auth.scopes,
-        organizationId,
-        token,
-      };
-    },
-    async applicationName(clientId) {
       try {
-        return (await clerk.oauthApplications.get(clientId)).name;
+        const claims = await resourceClient.verifyAccessToken(token, {
+          jwksUrl: configuration.jwks.href,
+          scopes: ["odyshell:agent"],
+          verifyOptions: {
+            audience: configuration.resource.href,
+            issuer: configuration.issuer.origin,
+          },
+        });
+        return remoteMcpIdentityFromClaims(claims, token);
       } catch {
-        return undefined;
+        return null;
       }
     },
+    async applicationName() { return undefined; },
   };
   const handler = createMcpHandler(
     async (context) => {
@@ -187,7 +181,7 @@ export function registerRemoteMcp(
     resource_name: "Odyshell",
     authorization_servers: [configuration.issuer.origin],
     bearer_methods_supported: ["header"],
-    scopes_supported: ["openid", "profile", "email", "user:org:read"],
+    scopes_supported: ["odyshell:agent"],
   };
   app.get("/.well-known/oauth-protected-resource", async () => metadata);
   app.get("/.well-known/oauth-protected-resource/mcp", async () => metadata);

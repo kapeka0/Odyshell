@@ -138,7 +138,7 @@ describe("public documentation corpus", () => {
   it("documents the implemented self-hosted approval flow", () => {
     const selfHosting = readFileSync(resolve(docsRoot, "self-hosting.mdx"), "utf8");
 
-    expect(selfHosting).toContain("Clerk application with Organizations enabled");
+    expect(selfHosting).toContain("BETTER_AUTH_SECRET");
     expect(selfHosting).toContain("ODYSHELL_WEB_URL");
     expect(selfHosting).toContain("ods agent login \"My Agent\"");
     expect(selfHosting).toContain("Legacy `ods agent create`");

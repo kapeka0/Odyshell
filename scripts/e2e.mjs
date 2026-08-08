@@ -564,7 +564,7 @@ try {
     "-c",
     [
       "update odyshell.organizations",
-      "set external_id = 'e2e-clerk-organization', plan = 'scale'",
+      "set external_id = 'e2e-identity-organization', plan = 'scale'",
       "where id = 'default';",
       "insert into odyshell.cli_tokens",
       "(workspace_id, id, user_id, token_hash, expires_at)",
@@ -666,7 +666,7 @@ try {
       body: JSON.stringify({
         userId: "other-user",
         organization: {
-          externalId: "other-clerk-organization",
+          externalId: "other-identity-organization",
           slug: "other-organization",
           name: "Other organization",
         },
@@ -681,7 +681,7 @@ try {
   const approvalBody = {
     userId: cliUserId,
     organization: {
-      externalId: "e2e-clerk-organization",
+      externalId: "e2e-identity-organization",
       slug: "default",
       name: "Default organization",
     },

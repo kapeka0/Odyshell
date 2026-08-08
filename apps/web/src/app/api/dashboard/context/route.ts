@@ -1,11 +1,10 @@
-import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { cloudRequest, type CloudContext } from "@/lib/cloud-api";
 import {
   cloudRouteError,
   requireCloudRouteIdentity,
 } from "@/lib/cloud-route";
-import { organizationMembers } from "@/lib/clerk-identity";
+import { currentHumanIdentity, organizationMembers } from "@/lib/identity";
 
 export async function GET() {
   const authorization = await requireCloudRouteIdentity();
@@ -16,16 +15,17 @@ export async function GET() {
         "/v1/internal/cloud/context",
         authorization.identity,
       ),
-      organizationMembers(authorization.identity.organization.externalId),
+      organizationMembers(),
     ]);
-    const { orgRole } = await auth();
+    const humanIdentity = await currentHumanIdentity();
+    if (!humanIdentity) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     return NextResponse.json(
       {
         status: "ready",
         context: {
           ...context,
           members,
-          currentMemberRole: orgRole === "org:admin" ? "admin" : "member",
+          currentMemberRole: humanIdentity.role,
         },
       },
       { headers: { "cache-control": "no-store" } },

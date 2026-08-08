@@ -9,7 +9,7 @@
     "build": "tsup"
   },
   "dependencies": {
-    "@clerk/backend": "^3.13.2",
+    "@better-auth/oauth-provider": "1.6.26",
     "@fastify/websocket": "^11.3.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "@odyshell/mcp": "workspace:*",
