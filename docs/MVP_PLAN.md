@@ -212,11 +212,16 @@ authorization.
   journal, reconnect buffer, expiry, cancellation, process-tree termination, and shell executor no
   longer contain Session adapters, typed filesystem actions, Docker actions, caller env/stdin,
   multi-platform services, remote sudo configuration, or executor capability profiles.
+- the Server control repository now persists only Organization context, Machines, OAuth Agents,
+  enrollment, preferences, notifications, and audit; the separate Task repository owns all
+  Task/Command state. Session/Operation tables, delegation, Event Sinks, compatibility migrations,
+  and their runtime modules were removed. Cloud plan limits apply only in Cloud; self-hosted mode
+  enforces one sovereign Organization without hosted entitlements.
 
 ### DOING
 
-- remove superseded Session/Operation protocol and persistence code, Workspace ownership, Managed
-  Agent delegation, and Event Sink implementations after the replacement vertical works.
+- remove the remaining internal one-to-one Workspace naming and legacy domain exports now that no
+  production persistence or transport depends on them.
 
 ### BLOCKED
 

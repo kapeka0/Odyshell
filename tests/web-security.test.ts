@@ -126,7 +126,8 @@ describe("web security boundaries", () => {
 
     expect(server).toContain("taskDatabase.listTasks(parsed.data.organization.externalId, 100)");
     expect(server).toContain("taskDatabase.listAuditEvents(parsed.data.organization.externalId, 100)");
-    expect(server).toContain('domain !== "session" && domain !== "operation"');
+    expect(server).toContain("...controlEvents.map(controlEventView)");
+    expect(server).not.toContain('notification.kind.startsWith("session.")');
     expect(database).toContain('selectFrom("taskAuditEvents")');
     expect(database).toContain('orderBy("createdAt", "desc")');
     expect(cloudApi).toContain("tasks: CloudTask[]");

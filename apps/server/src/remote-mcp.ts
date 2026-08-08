@@ -12,7 +12,7 @@ import type {
   Database,
   McpInstallationRecord,
   McpWorkspaceRecord,
-} from "./database.js";
+} from "./control-database.js";
 
 type RemoteMcpConfiguration = {
   resource: URL;

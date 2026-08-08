@@ -11,9 +11,9 @@ describe("self-hosted distribution", () => {
     const example = source(".env.example");
 
     expect(compose.match(/NODE_ENV: production/g)).toHaveLength(2);
+    expect(compose.match(/ODYSHELL_DEPLOYMENT_MODE: self-hosted/g)).toHaveLength(2);
     for (const secret of [
       "POSTGRES_PASSWORD",
-      "ODYSHELL_ADMIN_KEY",
       "ODYSHELL_WEB_KEY",
       "BETTER_AUTH_SECRET",
     ]) {
@@ -29,7 +29,6 @@ describe("self-hosted distribution", () => {
     expect(compose).not.toMatch(/POSTGRES_PASSWORD:\s+odyshell/u);
     for (const secret of [
       "POSTGRES_PASSWORD",
-      "ODYSHELL_ADMIN_KEY",
       "ODYSHELL_WEB_KEY",
       "BETTER_AUTH_SECRET",
     ]) {

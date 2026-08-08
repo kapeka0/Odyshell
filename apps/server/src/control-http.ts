@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { createOpaqueToken } from "./access.js";
+import { createEnrollmentToken } from "./access.js";
 import {
   CloudLiveTokenReplayGuard,
   cloudIdentitySchema,
@@ -18,7 +18,7 @@ import {
   updateCloudMachineSchema,
   verifyCloudLiveToken,
 } from "./cloud.js";
-import { audit, type AuditRecord, type Database } from "./database.js";
+import { audit, type AuditRecord, type Database } from "./control-database.js";
 import type { ClientGateway } from "./gateway.js";
 import type { PostgresTaskDatabase } from "./task-database.js";
 
@@ -146,13 +146,11 @@ export function registerControlHttp(
           createdAt: isoTimestamp(agent.createdAt),
         })),
         tasks,
-        notifications: notifications
-          .filter((notification) => !notification.kind.startsWith("session."))
-          .map((notification) => ({
-            ...notification,
-            readAt: isoTimestamp(notification.readAt),
-            createdAt: isoTimestamp(notification.createdAt),
-          })),
+        notifications: notifications.map((notification) => ({
+          ...notification,
+          readAt: isoTimestamp(notification.readAt),
+          createdAt: isoTimestamp(notification.createdAt),
+        })),
         controlEvents: [
           ...taskEvents.map((event) => ({
             id: `task:${event.id}`,
@@ -166,12 +164,7 @@ export function registerControlHttp(
             metadata: event.metadata,
             createdAt: event.createdAt,
           })),
-          ...controlEvents
-            .filter((event) => {
-              const domain = event.action.split(".")[0];
-              return domain !== "session" && domain !== "operation";
-            })
-            .map(controlEventView),
+          ...controlEvents.map(controlEventView),
         ].sort((left, right) =>
           String(right.createdAt).localeCompare(String(left.createdAt))
         ),
@@ -299,7 +292,7 @@ export function registerControlHttp(
           },
         });
       }
-      const token = createOpaqueToken("enroll");
+      const token = createEnrollmentToken();
       const expiresAt = Date.now() + 10 * 60_000;
       await database.createEnrollmentToken(
         context.workspace.id,

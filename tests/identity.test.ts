@@ -14,17 +14,20 @@ const validEnvironment = {
 };
 
 describe("Odyshell Identity configuration", () => {
-  it("ships the identity schema through the Server migration boundary", () => {
-    const database = readFileSync("apps/server/src/database.ts", "utf8");
-    const migration = database.slice(
-      database.indexOf("async function migrateOdyshellIdentity("),
-      database.indexOf("const migrationProvider"),
+  it("owns identity through Better Auth instead of the execution database", () => {
+    const identity = readFileSync("apps/web/src/lib/identity-auth.ts", "utf8");
+    const serverDatabase = readFileSync(
+      "apps/server/src/control-database.ts",
+      "utf8",
     );
-    expect(database).toContain('"024_odyshell_identity"');
-    expect(migration).toContain('create table public."user"');
-    expect(migration).toContain('create table public."oauthClient"');
-    expect(migration).toContain('create table public."jwks"');
-    expect(migration).not.toMatch(/BETTER_AUTH_SECRET|clientSecret\s*=|privateKey\s*=/);
+    expect(identity).toContain("betterAuth({");
+    expect(identity).toContain("organization({");
+    expect(identity).toContain("oauthProvider({");
+    expect(identity).toContain("jwt({ jwt: { issuer: configuration.baseUrl } })");
+    expect(serverDatabase).not.toMatch(
+      /create table public\."user"|create table[^;]*(?:oauthClient|jwks)/isu,
+    );
+    expect(serverDatabase).not.toMatch(/BETTER_AUTH_SECRET|clientSecret\s*=|privateKey\s*=/u);
   });
 
   it("does not let Compose start its identity boundary with default secrets", () => {

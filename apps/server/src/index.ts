@@ -12,7 +12,7 @@ import {
   cloudWebUrl,
 } from "./cloud.js";
 import { registerControlHttp } from "./control-http.js";
-import { audit, createDatabase } from "./database.js";
+import { audit, createDatabase } from "./control-database.js";
 import { ClientGateway } from "./gateway.js";
 import { SERVER_HTTP_BODY_LIMIT_BYTES } from "./http-limits.js";
 import { dataRetentionPolicy } from "./privacy.js";
@@ -312,9 +312,6 @@ app.post("/v1/clients/enroll", async (request, reply) => {
   }
   if (enrolled.status === "previous_machine_active") {
     return reply.code(409).send({ error: "previous_machine_still_active" });
-  }
-  if (enrolled.status === "organization_identity_required") {
-    return reply.code(409).send({ error: "organization_identity_required" });
   }
   await audit(
     database,

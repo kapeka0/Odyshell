@@ -26,7 +26,7 @@ pnpm test:self-host
 
 Fill every blank secret in `.env` first. The manifest starts PostgreSQL, Server, Better
 Auth identity, dashboard, and public documentation. It uses production mode and fails closed when
-`POSTGRES_PASSWORD`, `ODYSHELL_ADMIN_KEY`, `ODYSHELL_WEB_KEY`, or `BETTER_AUTH_SECRET` is absent.
+`POSTGRES_PASSWORD`, `ODYSHELL_WEB_KEY`, or `BETTER_AUTH_SECRET` is absent.
 
 Open `http://localhost:3000` and create the one Organization allowed by self-hosted mode. Agent
 runtimes connect to `http://localhost:4100/mcp`; Linux Machines enroll through the dashboard and

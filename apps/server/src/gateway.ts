@@ -8,7 +8,7 @@ import {
   type ClientToServerMessage,
   type ServerToClientMessage,
 } from "@odyshell/protocol";
-import type { Database } from "./database.js";
+import type { Database } from "./control-database.js";
 
 type AuthState = {
   connectionId: string;

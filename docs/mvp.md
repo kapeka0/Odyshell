@@ -38,7 +38,7 @@ protocol, and Client code.
 | Reliability | Reconnect reconciliation, heartbeat, cancellation, expiry, and idempotency |
 | Agent interfaces | Canonical OAuth HTTP and remote OAuth MCP |
 | Human interface | Dashboard for setup, optional supervision, revocation, and audit |
-| Persistence | PostgreSQL through Kysely |
+| Persistence | PostgreSQL through a parameterized control repository and the Kysely Task repository |
 | Tenancy | Organizations isolate identities and resources |
 
 There is no public Session, Operation, typed-filesystem, Docker-execution, local MCP, or SDK

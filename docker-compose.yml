@@ -24,10 +24,10 @@ services:
       dockerfile: apps/server/Dockerfile
     environment:
       NODE_ENV: production
+      ODYSHELL_DEPLOYMENT_MODE: self-hosted
       PORT: 4100
       HOST: 0.0.0.0
       DATABASE_URL: postgresql://odyshell:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD to a URL-safe random value}@postgres:5432/odyshell
-      ODYSHELL_ADMIN_KEY: ${ODYSHELL_ADMIN_KEY:?Set ODYSHELL_ADMIN_KEY to a strong random value}
       ODYSHELL_WEB_KEY: ${ODYSHELL_WEB_KEY:?Set ODYSHELL_WEB_KEY to at least 32 random characters}
       ODYSHELL_WEB_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
       ODYSHELL_MCP_URL: ${ODYSHELL_MCP_URL:-http://localhost:4100/mcp}

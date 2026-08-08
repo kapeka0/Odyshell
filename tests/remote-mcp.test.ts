@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import Fastify from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgenticMcpRuntime } from "../packages/mcp/src/index.js";
-import type { Database } from "../apps/server/src/database.js";
+import type { Database } from "../apps/server/src/control-database.js";
 import {
   registerRemoteMcp,
   remoteMcpAgentName,
