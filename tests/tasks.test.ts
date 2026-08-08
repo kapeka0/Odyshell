@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { Command, LocalPolicy, Task } from "@odyshell/protocol";
 import {
@@ -79,6 +80,38 @@ class MemoryRepository implements TaskRepository {
     const task = this.tasks.get(id);
     return task?.organizationId === org ? task : null;
   }
+  async command(org: string, id: string) {
+    const command = this.commands.get(id);
+    return command?.organizationId === org ? command : null;
+  }
+  async commandOutput() { return []; }
+  async finishTask(input: Parameters<TaskRepository["finishTask"]>[0]) {
+    const task = this.tasks.get(input.taskId);
+    if (!task || task.organizationId !== input.organizationId || task.agentId !== input.agentId) {
+      return { status: "not_found" as const };
+    }
+    const commandIds = [...this.commands.values()]
+      .filter((command) => command.taskId === task.id && ["queued", "delivered", "running", "cancellation_requested"].includes(command.status))
+      .map((command) => command.id);
+    if (input.outcome === "complete" && commandIds.length > 0) {
+      return { status: "commands_active" as const };
+    }
+    const updated = {
+      ...task,
+      status: input.outcome === "complete" ? "completed" as const : "cancellation_requested" as const,
+    };
+    this.tasks.set(task.id, updated);
+    return { status: "finished" as const, task: updated, commandIds };
+  }
+  async requestCommandCancellation(input: Parameters<TaskRepository["requestCommandCancellation"]>[0]) {
+    const command = this.commands.get(input.commandId);
+    if (!command || command.organizationId !== input.organizationId || command.agentId !== input.agentId) {
+      return null;
+    }
+    const updated = { ...command, status: "cancellation_requested" as const };
+    this.commands.set(command.id, updated);
+    return updated;
+  }
   async createTask(input: Parameters<TaskRepository["createTask"]>[0]) {
     const existing = this.taskKeys.get(input.idempotencyKeyHash);
     if (existing) return existing.fingerprint === input.requestFingerprint
@@ -110,9 +143,13 @@ function harness(repository = new MemoryRepository()) {
   const opened: Task[] = [];
   const started: Command[] = [];
   const events: Parameters<TaskAudit["append"]>[0][] = [];
+  const closed: Task[] = [];
+  const cancelled: Command[] = [];
   const client: TaskClient = {
     async openTask(task) { opened.push(task); },
     async startCommand(command) { started.push(command); },
+    async closeTask(task) { closed.push(task); },
+    async cancelCommand(command) { cancelled.push(command); },
   };
   const audit: TaskAudit = { async append(event) { events.push(event); } };
   return {
@@ -120,6 +157,8 @@ function harness(repository = new MemoryRepository()) {
     opened,
     started,
     events,
+    closed,
+    cancelled,
     service: new TaskService(repository, client, audit, () => now),
   };
 }
@@ -245,5 +284,47 @@ describe("TaskService", () => {
       "command-key-b",
     )).toEqual({ status: "denied", code: "task_expired" });
     expect(context.started).toEqual([]);
+  });
+
+  it("cancels active Commands before closing their Task authority", async () => {
+    const context = harness();
+    const taskResult = await context.service.requestTask(
+      { organizationId, agentId }, request, "task-key",
+    );
+    if (taskResult.status !== "created") throw new Error("Task was not created");
+    context.repository.tasks.set(taskResult.task.id, { ...taskResult.task, status: "active" });
+    const commandResult = await context.service.createCommand(
+      { organizationId, agentId },
+      taskResult.task.id,
+      { command: "sleep 60", timeoutSeconds: 60 },
+      "command-key",
+    );
+    if (commandResult.status !== "created") throw new Error("Command was not created");
+
+    expect(await context.service.finishTask(
+      { organizationId, agentId },
+      taskResult.task.id,
+      "complete",
+    )).toEqual({ status: "denied", code: "commands_active" });
+    expect(await context.service.finishTask(
+      { organizationId, agentId },
+      taskResult.task.id,
+      "cancel",
+    )).toMatchObject({ status: "cancellation_requested" });
+    expect(context.cancelled).toEqual([
+      expect.objectContaining({ id: commandResult.command.id }),
+    ]);
+    expect(context.closed).toEqual([
+      expect.objectContaining({ id: taskResult.task.id }),
+    ]);
+  });
+
+  it("hides Command cancellation from another Agent", async () => {
+    const context = harness();
+    expect(await context.service.cancelCommand(
+      { organizationId, agentId: "agent-b" },
+      randomUUID(),
+    )).toEqual({ status: "denied", code: "command_not_found" });
+    expect(context.cancelled).toEqual([]);
   });
 });

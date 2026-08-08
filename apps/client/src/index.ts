@@ -1,6 +1,7 @@
 import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { userInfo } from "node:os";
 import process from "node:process";
 import {
   MAX_CLIENT_CLOCK_SKEW_MILLISECONDS,
@@ -9,6 +10,7 @@ import {
   allCapabilities,
   capabilitySchema,
   clientConfigSchema,
+  localTaskDecision,
   parseServerMessage,
   sessionScopeSubsetDecision,
   type Capability,
@@ -301,35 +303,34 @@ export class ClientMessageBuffer {
   ) {}
 
   enqueue(message: ClientToServerMessage): ClientMessageBufferEnqueueResult {
-    const outputBytes = message.type === "operation.event"
-      ? Buffer.byteLength(message.dataBase64, "base64")
+    const output = outputMessage(message);
+    const outputBytes = output
+      ? Buffer.byteLength(output.dataBase64, "base64")
       : 0;
     if (
-      message.type === "operation.event" &&
+      output &&
       this.outputBytes + outputBytes > this.maximumOutputBytes
     ) {
-      this.beforeOutputDiscard?.(message.operationId);
+      this.beforeOutputDiscard?.(output.id);
       return { accepted: false };
     }
     let truncatedOperationId: string | undefined;
     if (this.messages.length >= this.maximumMessages) {
-      if (message.type === "operation.event") {
-        this.beforeOutputDiscard?.(message.operationId);
+      if (output) {
+        this.beforeOutputDiscard?.(output.id);
         return { accepted: false };
       }
       const eventIndex = this.messages.findIndex(
-        (entry) => entry.message.type === "operation.event",
+        (entry) => outputMessage(entry.message) !== null,
       );
       const removeAt = eventIndex >= 0 ? eventIndex : 0;
       const outputToDiscard = this.messages[removeAt]?.message;
-      if (outputToDiscard?.type === "operation.event") {
-        this.beforeOutputDiscard?.(outputToDiscard.operationId);
-      }
+      const discardedOutput = outputToDiscard ? outputMessage(outputToDiscard) : null;
+      if (discardedOutput) this.beforeOutputDiscard?.(discardedOutput.id);
       const [removed] = this.messages.splice(removeAt, 1);
       this.outputBytes -= removed?.outputBytes ?? 0;
-      if (removed?.message.type === "operation.event") {
-        truncatedOperationId = removed.message.operationId;
-      }
+      const removedOutput = removed ? outputMessage(removed.message) : null;
+      if (removedOutput) truncatedOperationId = removedOutput.id;
     }
     this.messages.push({ message, outputBytes });
     this.outputBytes += outputBytes;
@@ -344,18 +345,14 @@ export class ClientMessageBuffer {
 
   markOutputTruncated(operationId: string): void {
     for (const entry of this.messages) {
-      if (
-        entry.message.type !== "operation.completed" ||
-        entry.message.operationId !== operationId ||
-        entry.message.outputTruncated
-      ) {
-        continue;
+      if (entry.message.type === "operation.completed" &&
+          entry.message.operationId === operationId && !entry.message.outputTruncated) {
+        entry.message = { ...entry.message, error: entry.message.error ?? "Operation output is incomplete", outputTruncated: true };
       }
-      entry.message = {
-        ...entry.message,
-        error: entry.message.error ?? "Operation output is incomplete",
-        outputTruncated: true,
-      };
+      if (entry.message.type === "command.completed" &&
+          entry.message.commandId === operationId && !entry.message.outputTruncated) {
+        entry.message = { ...entry.message, error: entry.message.error ?? "Command output is incomplete", outputTruncated: true };
+      }
     }
   }
 
@@ -376,6 +373,18 @@ export class ClientMessageBuffer {
     this.outputBytes = 0;
     return messages;
   }
+}
+
+function outputMessage(
+  message: ClientToServerMessage,
+): { id: string; dataBase64: string } | null {
+  if (message.type === "operation.event") {
+    return { id: message.operationId, dataBase64: message.dataBase64 };
+  }
+  if (message.type === "command.output") {
+    return { id: message.commandId, dataBase64: message.dataBase64 };
+  }
+  return null;
 }
 
 export function operationTimeoutMilliseconds(
@@ -436,6 +445,12 @@ export class Client {
   private readonly closedSessions = new Set<string>();
   private readonly closingSessions = new Map<string, Promise<void>>();
   private readonly operations = new Map<string, PendingOperation>();
+  private readonly taskSessions = new Set<string>();
+  private readonly taskLimits = new Map<
+    string,
+    { maxConcurrentCommands: number; maxCommandTimeoutSeconds: number; maxCommandOutputBytes: number }
+  >();
+  private readonly commandOperations = new Set<string>();
   private readonly outputTruncatedOperations = new Set<string>();
   private readonly unconfirmedOutputOperations = new Set<string>();
   private readonly bufferedMessages = new ClientMessageBuffer(
@@ -609,9 +624,8 @@ export class Client {
   }
 
   private deliver(message: ClientToServerMessage): boolean {
-    if (message.type === "operation.event") {
-      this.markOperationOutputUnconfirmed(message.operationId);
-    }
+    const output = outputMessage(message);
+    if (output) this.markOperationOutputUnconfirmed(output.id);
     if (
       this.authenticated &&
       this.socket?.readyState === WebSocket.OPEN
@@ -699,6 +713,15 @@ export class Client {
           protocolVersion: PROTOCOL_VERSION,
           signature,
           ...(this.runtime ? { runtime: this.runtime } : {}),
+          ...(this.config.taskProfile
+            ? {
+                taskProfile: {
+                  id: this.config.taskProfile.id,
+                  operatingSystemUser: userInfo().username,
+                  localPolicy: this.config.taskProfile.localPolicy,
+                },
+              }
+            : {}),
         });
         break;
       }
@@ -729,6 +752,43 @@ export class Client {
           machineId: this.config.machineId,
           pingId: message.pingId,
         });
+        break;
+      case "task.open":
+        if (!this.authenticated) return;
+        await this.openTask(message);
+        break;
+      case "task.close":
+        if (!this.authenticated) return;
+        await this.closeSession(message.taskId, message.reason);
+        break;
+      case "command.start":
+        if (!this.authenticated) return;
+        this.commandOperations.add(message.commandId);
+        void this.startOperation({
+          type: "operation.start",
+          operationId: message.commandId,
+          sessionId: message.taskId,
+          action: {
+            kind: "host.shell",
+            command: message.command,
+            cwd: message.cwd ?? ".",
+            env: {},
+          },
+          timeoutSeconds: message.timeoutSeconds,
+          maxOutputBytes: message.maxOutputBytes,
+        }).catch((error: unknown) => console.error("Client Command failed:", error));
+        break;
+      case "command.acknowledged":
+        if (!this.authenticated) return;
+        this.journal.acknowledge(message.commandId);
+        this.commandOperations.delete(message.commandId);
+        this.unconfirmedOutputOperations.delete(message.commandId);
+        this.outputTruncatedOperations.delete(message.commandId);
+        break;
+      case "command.cancel":
+        if (!this.authenticated) return;
+        this.commandOperations.add(message.commandId);
+        await this.cancelOperation(message.commandId);
         break;
       case "session.open":
         if (!this.authenticated) return;
@@ -761,16 +821,61 @@ export class Client {
     }
   }
 
+  private async openTask(
+    message: Extract<ServerToClientMessage, { type: "task.open" }>,
+  ): Promise<void> {
+    const taskProfile = this.config.taskProfile;
+    try {
+      if (!taskProfile || taskProfile.id !== message.clientProfileId) {
+        throw new Error("Task Client Profile is not configured locally");
+      }
+      const deadline = adjustedSessionDeadline(message.expiresAt, message.serverTime);
+      const decision = localTaskDecision(taskProfile.localPolicy, {
+        organizationId: message.organizationId,
+        agentId: message.agentId,
+        durationSeconds: Math.ceil((deadline.getTime() - Date.now()) / 1_000),
+        activeTasks: [...this.taskSessions].filter(
+          (id) => id !== message.taskId && this.sessions.has(id),
+        ).length,
+        maxConcurrentCommands: message.maxConcurrentCommands,
+      });
+      if (!decision.allowed) {
+        throw new Error(`Task violates Local Policy: ${decision.code}`);
+      }
+      this.taskSessions.add(message.taskId);
+      this.taskLimits.set(message.taskId, {
+        maxConcurrentCommands: message.maxConcurrentCommands,
+        maxCommandTimeoutSeconds: taskProfile.localPolicy.maxCommandTimeoutSeconds,
+        maxCommandOutputBytes: taskProfile.localPolicy.maxCommandOutputBytes,
+      });
+      await this.openSession({
+        type: "session.open",
+        sessionId: message.taskId,
+        profile: taskProfile.executorProfile,
+        capabilities: ["host.shell"],
+        restrictions: {},
+        expiresAt: message.expiresAt,
+        serverTime: message.serverTime,
+      });
+    } catch (error) {
+      this.taskSessions.delete(message.taskId);
+      this.taskLimits.delete(message.taskId);
+      this.deliver({
+        type: "task.open_failed",
+        taskId: message.taskId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   private async openSession(
     message: Extract<ServerToClientMessage, { type: "session.open" }>,
   ): Promise<void> {
     try {
       if (this.closedSessions.has(message.sessionId)) {
-        this.deliver({
-          type: "session.closed",
-          sessionId: message.sessionId,
-          reason: "already_closed",
-        });
+        this.deliver(this.taskSessions.has(message.sessionId)
+          ? { type: "task.closed", taskId: message.sessionId, reason: "already_closed" }
+          : { type: "session.closed", sessionId: message.sessionId, reason: "already_closed" });
         return;
       }
       const existing = this.sessions.get(message.sessionId);
@@ -803,12 +908,7 @@ export class Client {
           expiresAt: message.expiresAt,
           ...(message.serverTime ? { serverTime: message.serverTime } : {}),
         });
-        this.deliver({
-          type: "session.opened",
-          sessionId: message.sessionId,
-          runner: existing.session.runner,
-          runtimeId: existing.session.runtimeId,
-        });
+        this.sendOpened(message.sessionId, existing.session);
         return;
       }
       const localDeadline = adjustedSessionDeadline(
@@ -835,27 +935,37 @@ export class Client {
       );
       if (this.closedSessions.has(message.sessionId)) {
         await executor.closeSession(session);
-        this.deliver({
-          type: "session.closed",
-          sessionId: message.sessionId,
-          reason: "closed_while_opening",
-        });
+        this.deliver(this.taskSessions.has(message.sessionId)
+          ? { type: "task.closed", taskId: message.sessionId, reason: "closed_while_opening" }
+          : { type: "session.closed", sessionId: message.sessionId, reason: "closed_while_opening" });
         return;
       }
       this.sessions.set(message.sessionId, { session, executor, closing: false });
-      this.deliver({
-        type: "session.opened",
-        sessionId: message.sessionId,
-        runner: session.runner,
-        runtimeId: session.runtimeId,
-      });
+      this.sendOpened(message.sessionId, session);
     } catch (error) {
-      this.deliver({
-        type: "session.open_failed",
-        sessionId: message.sessionId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      const reason = error instanceof Error ? error.message : String(error);
+      const isTask = this.taskSessions.delete(message.sessionId);
+      if (isTask) this.taskLimits.delete(message.sessionId);
+      this.deliver(isTask
+        ? { type: "task.open_failed", taskId: message.sessionId, error: reason }
+        : { type: "session.open_failed", sessionId: message.sessionId, error: reason });
     }
+  }
+
+  private sendOpened(sessionId: string, session: RunningSession): void {
+    this.deliver(this.taskSessions.has(sessionId)
+      ? {
+          type: "task.opened",
+          taskId: sessionId,
+          clientProfileId: this.config.taskProfile?.id ?? "",
+          operatingSystemUser: userInfo().username,
+        }
+      : {
+          type: "session.opened",
+          sessionId,
+          runner: session.runner,
+          runtimeId: session.runtimeId,
+        });
   }
 
   private updateSessionExpiry(
@@ -915,7 +1025,9 @@ export class Client {
       await Promise.all(
         operations.map((operation) => operation.waitUntilFinished()),
       );
-      this.deliver({ type: "session.closed", sessionId, reason });
+      this.deliver(this.taskSessions.has(sessionId)
+        ? { type: "task.closed", taskId: sessionId, reason }
+        : { type: "session.closed", sessionId, reason });
     })();
     this.closingSessions.set(sessionId, closing);
     try {
@@ -927,6 +1039,8 @@ export class Client {
       if (this.closingSessions.get(sessionId) === closing) {
         this.closingSessions.delete(sessionId);
       }
+      this.taskSessions.delete(sessionId);
+      this.taskLimits.delete(sessionId);
     }
   }
 
@@ -957,8 +1071,15 @@ export class Client {
     const operationsForProfile = [...this.operations.values()].filter(
       (operation) => operation.profile === active.session.profile,
     ).length;
+    const taskLimits = this.taskLimits.get(message.sessionId);
+    const commandsForTask = taskLimits
+      ? [...this.operations.values()].filter(
+          (operation) => operation.sessionId === message.sessionId,
+        ).length
+      : 0;
     if (
-      operationsForProfile >= active.session.profile.maxConcurrentOperations
+      operationsForProfile >= active.session.profile.maxConcurrentOperations ||
+      (taskLimits !== undefined && commandsForTask >= taskLimits.maxConcurrentCommands)
     ) {
       const result: JournalResult = {
         status: "failed",
@@ -1009,6 +1130,7 @@ export class Client {
     const maximum = Math.min(
       requestedMaximum,
       active.session.profile.maxOutputBytes,
+      taskLimits?.maxCommandOutputBytes ?? Number.POSITIVE_INFINITY,
     );
     const maximumEventBytes = 256 * 1024;
     const markOutputTruncated = (): void => {
@@ -1031,13 +1153,21 @@ export class Client {
       const accepted = data.subarray(0, remaining);
       for (let offset = 0; offset < accepted.length; offset += maximumEventBytes) {
         const chunk = accepted.subarray(offset, offset + maximumEventBytes);
-        const delivered = this.deliver({
-          type: "operation.event",
-          operationId: message.operationId,
-          sequence,
-          stream,
-          dataBase64: chunk.toString("base64"),
-        });
+        const delivered = this.deliver(this.commandOperations.has(message.operationId)
+          ? {
+              type: "command.output",
+              commandId: message.operationId,
+              sequence,
+              stream: stream === "result" ? "stdout" : stream,
+              dataBase64: chunk.toString("base64"),
+            }
+          : {
+              type: "operation.event",
+              operationId: message.operationId,
+              sequence,
+              stream,
+              dataBase64: chunk.toString("base64"),
+            });
         if (!delivered) {
           markOutputTruncated();
           return;
@@ -1057,14 +1187,15 @@ export class Client {
         throw new Error("Session closed before the Operation could start");
       }
       this.journal.markRunning(message.operationId);
-      this.deliver({
-        type: "operation.started",
-        operationId: message.operationId,
-        at: new Date().toISOString(),
-      });
+      this.deliver(this.commandOperations.has(message.operationId)
+        ? { type: "command.started", commandId: message.operationId, at: new Date().toISOString() }
+        : { type: "operation.started", operationId: message.operationId, at: new Date().toISOString() });
       const timeoutMilliseconds = operationTimeoutMilliseconds(
         message.timeoutSeconds,
-        active.session.profile.maxOperationTimeoutSeconds,
+        Math.min(
+          active.session.profile.maxOperationTimeoutSeconds,
+          taskLimits?.maxCommandTimeoutSeconds ?? Number.POSITIVE_INFINITY,
+        ),
         active.session.expiresAt,
       );
       if (timeoutMilliseconds <= 0) {
@@ -1201,15 +1332,16 @@ export class Client {
     const error =
       result.error ??
       (outputTruncated ? "Operation output is incomplete" : undefined);
-    this.deliver({
-      type: "operation.completed",
-      operationId,
+    const completion = {
       status: result.status,
       exitCode: result.exitCode,
       ...(error ? { error } : {}),
       outputTruncated,
       at: new Date().toISOString(),
-    });
+    };
+    this.deliver(this.commandOperations.has(operationId)
+      ? { type: "command.completed", commandId: operationId, ...completion }
+      : { type: "operation.completed", operationId, ...completion });
   }
 
   private reconcileJournalResults(): void {

@@ -7,6 +7,7 @@ import {
   taskRequestSchema,
   type Task,
 } from "../packages/protocol/src/task.js";
+import { parseClientMessage } from "../packages/protocol/src/index.js";
 
 const policy = localPolicySchema.parse({
   organizationId: "org-a",
@@ -85,5 +86,23 @@ describe("agent-native Task protocol", () => {
       allowed: false,
       code: "timeout_exceeds_local_policy",
     });
+  });
+
+  it("runtime-validates untrusted Task transport messages", () => {
+    expect(() => parseClientMessage(JSON.stringify({
+      type: "command.output",
+      commandId: "7a354999-6a6c-42db-9467-e1416da255f1",
+      sequence: -1,
+      stream: "secret",
+      dataBase64: "not base64",
+    }))).toThrow();
+    expect(() => parseClientMessage(JSON.stringify({
+      type: "command.completed",
+      commandId: "7a354999-6a6c-42db-9467-e1416da255f1",
+      status: "running",
+      exitCode: null,
+      outputTruncated: false,
+      at: new Date().toISOString(),
+    }))).toThrow();
   });
 });

@@ -63,6 +63,27 @@ export interface TaskRepository {
     | { status: "idempotency_conflict" }
   >;
   task(organizationId: string, taskId: string): Promise<Task | null>;
+  command(organizationId: string, commandId: string): Promise<Command | null>;
+  commandOutput(
+    organizationId: string,
+    commandId: string,
+    afterSequence: number,
+  ): Promise<Array<{ sequence: number; stream: "stdout" | "stderr"; dataBase64: string }>>;
+  finishTask(input: {
+    organizationId: string;
+    agentId: string;
+    taskId: string;
+    outcome: "complete" | "cancel";
+  }): Promise<
+    | { status: "not_found" }
+    | { status: "commands_active" }
+    | { status: "finished"; task: Task; commandIds: string[] }
+  >;
+  requestCommandCancellation(input: {
+    organizationId: string;
+    agentId: string;
+    commandId: string;
+  }): Promise<Command | null>;
   commandByIdempotency(
     organizationId: string,
     taskId: string,
@@ -79,6 +100,8 @@ export interface TaskRepository {
 export interface TaskClient {
   openTask(task: Task): Promise<void>;
   startCommand(command: Command): Promise<void>;
+  closeTask(task: Task, reason: string): Promise<void>;
+  cancelCommand(command: Command): Promise<void>;
 }
 
 export interface TaskAudit {
@@ -87,7 +110,13 @@ export interface TaskAudit {
     agentId: string;
     taskId: string;
     commandId?: string;
-    type: "task.requested" | "command.created";
+    type:
+      | "task.requested"
+      | "task.opened"
+      | "task.open_failed"
+      | "task.closed"
+      | "command.created"
+      | "command.completed";
     metadata: Record<string, unknown>;
   }): Promise<void>;
 }
@@ -321,6 +350,54 @@ export class TaskService {
     });
     await this.client.startCommand(command);
     return { status: "created", command };
+  }
+
+  async finishTask(
+    principal: AgentPrincipal,
+    taskId: string,
+    outcome: "complete" | "cancel",
+  ): Promise<
+    | { status: "completed" | "cancellation_requested"; task: Task }
+    | { status: "denied"; code: "task_not_found" | "commands_active" }
+  > {
+    const result = await this.repository.finishTask({
+      ...principal,
+      taskId,
+      outcome,
+    });
+    if (result.status === "not_found" || result.status === "commands_active") {
+      return {
+        status: "denied",
+        code: result.status === "not_found" ? "task_not_found" : "commands_active",
+      };
+    }
+    if (outcome === "cancel") {
+      for (const commandId of result.commandIds) {
+        const command = await this.repository.command(principal.organizationId, commandId);
+        if (command) await this.client.cancelCommand(command);
+      }
+    }
+    await this.client.closeTask(result.task, outcome === "complete" ? "completed" : "cancelled");
+    return {
+      status: outcome === "complete" ? "completed" : "cancellation_requested",
+      task: result.task,
+    };
+  }
+
+  async cancelCommand(
+    principal: AgentPrincipal,
+    commandId: string,
+  ): Promise<
+    | { status: "cancellation_requested"; command: Command }
+    | { status: "denied"; code: "command_not_found" }
+  > {
+    const command = await this.repository.requestCommandCancellation({
+      ...principal,
+      commandId,
+    });
+    if (!command) return { status: "denied", code: "command_not_found" };
+    await this.client.cancelCommand(command);
+    return { status: "cancellation_requested", command };
   }
 }
 

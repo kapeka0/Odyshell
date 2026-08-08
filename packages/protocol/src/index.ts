@@ -1,4 +1,13 @@
 import { z } from "zod";
+import {
+  clientTaskProfileSchema,
+  localPolicySchema,
+  taskClientToServerMessageSchema,
+} from "./task.js";
+import type {
+  TaskClientToServerMessage,
+  TaskServerToClientMessage,
+} from "./task.js";
 
 export * from "./task.js";
 
@@ -903,6 +912,14 @@ export const clientConfigSchema = z.object({
   privateKeyPem: z.string().min(1),
   stateDirectory: z.string().min(1).max(4096),
   allowPrivilegeEscalation: z.boolean().default(false),
+  taskProfile: z
+    .object({
+      id: z.string().trim().min(1).max(256),
+      executorProfile: z.string().min(1).max(64),
+      localPolicy: localPolicySchema,
+    })
+    .strict()
+    .optional(),
   profiles: z
     .record(z.string().min(1).max(64), clientProfileSchema)
     .refine((profiles) => Object.keys(profiles).length > 0, "At least one profile is required"),
@@ -910,6 +927,7 @@ export const clientConfigSchema = z.object({
 export type ClientConfig = z.infer<typeof clientConfigSchema>;
 
 export type ServerToClientMessage =
+  | TaskServerToClientMessage
   | { type: "challenge"; connectionId: string; nonce: string }
   | { type: "authenticated"; machineId: string }
   | {
@@ -947,12 +965,18 @@ export type ServerToClientMessage =
   | { type: "operation.cancel"; operationId: string };
 
 export type ClientToServerMessage =
+  | TaskClientToServerMessage
   | {
       type: "authenticate";
       machineId: string;
       protocolVersion: number;
       signature: string;
       runtime?: ClientRuntimeInfo;
+      taskProfile?: {
+        id: string;
+        operatingSystemUser: string;
+        localPolicy: import("./task.js").LocalPolicy;
+      };
     }
   | { type: "heartbeat"; machineId: string; at: string }
   | { type: "pong"; machineId: string; pingId: string }
@@ -1204,7 +1228,17 @@ function uniqueObjects<T>(values: T[]): T[] {
 }
 
 export function parseClientMessage(raw: string): ClientToServerMessage {
-  return JSON.parse(raw) as ClientToServerMessage;
+  const message = JSON.parse(raw) as { type?: unknown };
+  if (
+    typeof message.type === "string" &&
+    (message.type.startsWith("task.") || message.type.startsWith("command."))
+  ) {
+    return taskClientToServerMessageSchema.parse(message) as TaskClientToServerMessage;
+  }
+  if (message.type === "authenticate" && "taskProfile" in message) {
+    clientTaskProfileSchema.parse(message.taskProfile);
+  }
+  return message as ClientToServerMessage;
 }
 
 export function parseServerMessage(raw: string): ServerToClientMessage {

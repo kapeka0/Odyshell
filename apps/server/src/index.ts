@@ -6,6 +6,7 @@ import {
   agentSessionRequestInputSchema,
   allCapabilities,
   capabilityForAction,
+  DEFAULT_COMMAND_OUTPUT_BYTES,
   hostShellTaskRunRenewalDecision,
   operationRequestSchema,
   organizationRequestSchema,
@@ -73,6 +74,11 @@ import { dataRetentionPolicy } from "./privacy.js";
 import { deliverOperation } from "./operation-delivery.js";
 import { registerRemoteMcp } from "./remote-mcp.js";
 import { createRemoteMcpRuntime } from "./remote-mcp-runtime.js";
+import { createAgentOAuthAuthenticator } from "./agent-oauth.js";
+import { createTaskDatabase } from "./task-database.js";
+import { registerTaskHttp } from "./task-http.js";
+import { decodeCommandOutput } from "./task-output.js";
+import { TaskService } from "./tasks.js";
 import {
   decryptEventSinkSecret,
   encryptEventSinkSecret,
@@ -198,6 +204,8 @@ await app.register(websocket, { options: { maxPayload: 2 * 1024 * 1024 } });
 
 const db = createDatabase(process.env);
 await db.initialize();
+const taskDb = createTaskDatabase(process.env);
+await taskDb.initialize();
 const retention = dataRetentionPolicy(process.env);
 const eventSinkEncryptionKey =
   process.env.ODYSHELL_EVENT_SINK_ENCRYPTION_KEY;
@@ -227,8 +235,166 @@ const purgeExpiredData = async (): Promise<void> => {
   }
 };
 await purgeExpiredData();
-const gateway = new ClientGateway(db);
+let gateway: ClientGateway;
+gateway = new ClientGateway(db, {
+  async authenticated({ machineId, workspaceId, taskProfile }) {
+    const workspace = await db.mcpWorkspace(workspaceId);
+    if (
+      !workspace ||
+      workspace.organizationExternalId !== taskProfile.localPolicy.organizationId
+    ) {
+      throw new Error("Task Profile Organization does not own this Machine");
+    }
+    await taskDb.putMachineAuthority({
+      organizationId: taskProfile.localPolicy.organizationId,
+      machineId,
+      clientProfileId: taskProfile.id,
+      operatingSystemUser: taskProfile.operatingSystemUser,
+      online: true,
+      localPolicy: taskProfile.localPolicy,
+    });
+  },
+  async disconnected(machineId, organizationId) {
+    await taskDb.setMachineOnline(organizationId, machineId, false);
+  },
+  async message(message, context) {
+    switch (message.type) {
+      case "task.opened":
+        await taskDb.markTaskOpened({
+          ...context,
+          taskId: message.taskId,
+          clientProfileId: message.clientProfileId,
+          operatingSystemUser: message.operatingSystemUser,
+        });
+        break;
+      case "task.open_failed":
+        await taskDb.markTaskFailed(
+          context.organizationId,
+          context.machineId,
+          message.taskId,
+          message.error,
+        );
+        break;
+      case "task.closed":
+        await taskDb.markTaskClosed(
+          context.organizationId,
+          context.machineId,
+          message.taskId,
+          message.reason,
+        );
+        break;
+      case "command.started":
+        await taskDb.markCommandStarted(
+          context.organizationId,
+          context.machineId,
+          message.commandId,
+          message.at,
+        );
+        break;
+      case "command.output":
+        if (!await taskDb.addCommandOutput({
+          ...context,
+          commandId: message.commandId,
+          stream: message.stream,
+          sequence: message.sequence,
+          data: decodeCommandOutput(message.dataBase64),
+        })) {
+          throw new Error("Command output exceeded its server-side authority");
+        }
+        break;
+      case "command.completed": {
+        const command = await taskDb.markCommandCompleted({
+          ...context,
+          commandId: message.commandId,
+          status: message.status,
+          exitCode: message.exitCode,
+          ...(message.error ? { error: message.error } : {}),
+          outputTruncated: message.outputTruncated,
+          finishedAt: message.at,
+        });
+        if (command) {
+          gateway.send(context.machineId, {
+            type: "command.acknowledged",
+            commandId: command.id,
+          });
+        }
+        break;
+      }
+    }
+  },
+});
+
 gateway.register(app);
+
+const taskService = new TaskService(
+  taskDb,
+  {
+    async openTask(task) {
+      if (!gateway.send(task.machineId, {
+        type: "task.open",
+        taskId: task.id,
+        organizationId: task.organizationId,
+        agentId: task.agentId,
+        clientProfileId: task.clientProfileId,
+        expiresAt: task.expiresAt,
+        maxConcurrentCommands: task.maxConcurrentCommands,
+        serverTime: new Date().toISOString(),
+      })) {
+        throw new Error("Machine disconnected before Task delivery");
+      }
+    },
+    async startCommand(command) {
+      if (!gateway.send(command.machineId, {
+        type: "command.start",
+        commandId: command.id,
+        taskId: command.taskId,
+        command: command.command,
+        ...(command.cwd ? { cwd: command.cwd } : {}),
+        timeoutSeconds: command.timeoutSeconds,
+        maxOutputBytes: DEFAULT_COMMAND_OUTPUT_BYTES,
+      })) {
+        throw new Error("Machine disconnected before Command delivery");
+      }
+    },
+    async closeTask(task, reason) {
+      gateway.send(task.machineId, {
+        type: "task.close",
+        taskId: task.id,
+        reason,
+      });
+    },
+    async cancelCommand(command) {
+      gateway.send(command.machineId, {
+        type: "command.cancel",
+        commandId: command.id,
+      });
+    },
+  },
+  taskDb,
+);
+
+registerTaskHttp(app, {
+  authenticate: createAgentOAuthAuthenticator(process.env),
+  repository: taskDb,
+  service: taskService,
+  async principal(identity) {
+    const workspaces = await db.mcpWorkspacesForOrganizations([
+      identity.organizationId,
+    ]);
+    if (workspaces.length !== 1) return null;
+    const installation = await db.ensureMcpInstallation({
+      workspaceId: workspaces[0]!.workspaceId,
+      userId: identity.subject,
+      oauthClientId: identity.clientId,
+      agentName: "Agent",
+    });
+    if (!installation || installation.status === "agent_limit_reached") return null;
+    return {
+      organizationId: identity.organizationId,
+      agentId: installation.agentId,
+    };
+  },
+});
 
 type AgentPrincipal = {
   kind: "agent_identity" | "cli" | "development" | "session";
@@ -4548,6 +4714,19 @@ const expiryTimer = setInterval(() => {
         reason: "expired",
       });
     }
+    for (const expiredTask of await taskDb.expireTasks()) {
+      for (const commandId of expiredTask.commandIds) {
+        gateway.send(expiredTask.task.machineId, {
+          type: "command.cancel",
+          commandId,
+        });
+      }
+      gateway.send(expiredTask.task.machineId, {
+        type: "task.close",
+        taskId: expiredTask.task.id,
+        reason: "expired",
+      });
+    }
     for (const workspaceId of changedWorkspaces) {
       gateway.notifyWorkspace(workspaceId);
     }
@@ -4559,7 +4738,7 @@ const expiryTimer = setInterval(() => {
 }, 10_000);
 
 const retentionTimer = setInterval(() => {
-  void purgeExpiredData().catch((error: unknown) =>
+  void Promise.all([purgeExpiredData(), taskDb.purgeExpiredCommandOutput()]).catch((error: unknown) =>
     app.log.error(error, "Data retention sweep failed"),
   );
 }, 15 * 60_000);
@@ -4647,7 +4826,7 @@ app.addHook("onClose", async () => {
   clearInterval(expiryTimer);
   clearInterval(retentionTimer);
   clearInterval(eventSinkTimer);
-  await db.close();
+  await Promise.all([taskDb.close(), db.close()]);
 });
 
 await app.listen({ port, host });

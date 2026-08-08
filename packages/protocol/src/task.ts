@@ -158,6 +158,14 @@ export const localPolicySchema = z
   .strict();
 export type LocalPolicy = z.infer<typeof localPolicySchema>;
 
+export const clientTaskProfileSchema = z
+  .object({
+    id: idSchema,
+    operatingSystemUser: z.string().trim().min(1).max(256),
+    localPolicy: localPolicySchema,
+  })
+  .strict();
+
 export type LocalTaskDecision =
   | { allowed: true }
   | {
@@ -237,6 +245,7 @@ export type TaskServerToClientMessage =
       taskId: string;
       organizationId: string;
       agentId: string;
+      clientProfileId: string;
       expiresAt: string;
       maxConcurrentCommands: number;
       serverTime: string;
@@ -283,3 +292,48 @@ export type TaskClientToServerMessage =
       outputTruncated: boolean;
       at: string;
     };
+
+export const taskClientToServerMessageSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("task.opened"),
+    taskId: uuidSchema,
+    clientProfileId: idSchema,
+    operatingSystemUser: z.string().trim().min(1).max(256),
+  }).strict(),
+  z.object({
+    type: z.literal("task.open_failed"),
+    taskId: uuidSchema,
+    error: z.string().min(1).max(2048),
+  }).strict(),
+  z.object({
+    type: z.literal("task.closed"),
+    taskId: uuidSchema,
+    reason: z.string().trim().min(1).max(256),
+  }).strict(),
+  z.object({
+    type: z.literal("command.started"),
+    commandId: uuidSchema,
+    at: z.string().datetime({ offset: true }),
+  }).strict(),
+  z.object({
+    type: z.literal("command.output"),
+    commandId: uuidSchema,
+    sequence: z.number().int().min(0).max(1_000_000),
+    stream: z.enum(["stdout", "stderr"]),
+    dataBase64: z.string().max(4 * Math.ceil((256 * 1024) / 3)),
+  }).strict(),
+  z.object({
+    type: z.literal("command.completed"),
+    commandId: uuidSchema,
+    status: commandStatusSchema.exclude([
+      "queued",
+      "delivered",
+      "running",
+      "cancellation_requested",
+    ]),
+    exitCode: z.number().int().nullable(),
+    error: z.string().max(2048).optional(),
+    outputTruncated: z.boolean(),
+    at: z.string().datetime({ offset: true }),
+  }).strict(),
+]);

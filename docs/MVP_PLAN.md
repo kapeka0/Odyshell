@@ -173,10 +173,13 @@ authorization.
 - the agent-native Task/Command protocol, Local Policy ceiling, centralized authorization service,
   idempotency semantics, exact-command audit contract, and isolated PostgreSQL repository exist
   with focused denial tests.
+- canonical OAuth HTTP Task/Command routes, Client Profile policy negotiation, outbound Task and
+  Command transport, bounded transient output, cancellation, expiry, process-tree reuse, and
+  PostgreSQL integration tests are implemented; the self-hosted Server boots these migrations.
 
 ### DOING
 
-- connect the Task/Command repository to OAuth HTTP, remote MCP, and the Client transport;
+- replace the superseded remote MCP tools with the Task/Command adapter and complete reconnect;
 - remove the superseded Session/Operation, Workspace, typed-operation, Docker, SDK, local MCP,
   Managed Agent, delegation, and Event Sink implementations after the replacement vertical works.
 

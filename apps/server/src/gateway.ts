@@ -17,6 +17,20 @@ type AuthState = {
   workspaceId?: string;
   authenticated: boolean;
   lastHeartbeatPersistedAt?: number;
+  taskOrganizationId?: string;
+};
+
+export type ClientGatewayTaskHooks = {
+  authenticated(input: {
+    machineId: string;
+    workspaceId: string;
+    taskProfile: NonNullable<Extract<ClientToServerMessage, { type: "authenticate" }>["taskProfile"]>;
+  }): Promise<void>;
+  disconnected(machineId: string, organizationId: string): Promise<void>;
+  message(
+    message: Extract<ClientToServerMessage, { type: `task.${string}` | `command.${string}` }>,
+    context: { machineId: string; organizationId: string },
+  ): Promise<void>;
 };
 
 export class MachineLifecycleQueue {
@@ -45,7 +59,10 @@ export class ClientGateway {
   private readonly connections = new Map<string, WebSocket>();
   private readonly machineLifecycles = new MachineLifecycleQueue();
 
-  constructor(private readonly db: Database) {
+  constructor(
+    private readonly db: Database,
+    private readonly taskHooks?: ClientGatewayTaskHooks,
+  ) {
     this.events.setMaxListeners(0);
   }
 
@@ -84,6 +101,9 @@ export class ClientGateway {
             if (this.connections.get(state.machineId!) !== socket) return;
             this.connections.delete(state.machineId!);
             const result = await this.db.markMachineDisconnected(state.machineId!);
+            if (state.taskOrganizationId) {
+              await this.taskHooks?.disconnected(state.machineId!, state.taskOrganizationId);
+            }
             if (result && (result.operations > 0 || result.targets > 0)) {
               app.log.info(
                 {
@@ -232,6 +252,14 @@ export class ClientGateway {
         socket.close(4004, "Machine access revoked");
         return;
       }
+      if (message.taskProfile && this.taskHooks) {
+        await this.taskHooks.authenticated({
+          machineId: message.machineId,
+          workspaceId: machine.workspaceId,
+          taskProfile: message.taskProfile,
+        });
+        state.taskOrganizationId = message.taskProfile.localPolicy.organizationId;
+      }
       if (!socketReadyForAuthentication(socket)) {
         await this.db.setMachineOffline(message.machineId);
         return;
@@ -290,6 +318,20 @@ export class ClientGateway {
       throw new Error("Authenticated client has no machine context");
     }
     switch (message.type) {
+      case "task.opened":
+      case "task.open_failed":
+      case "task.closed":
+      case "command.started":
+      case "command.output":
+      case "command.completed":
+        if (!state.taskOrganizationId || !this.taskHooks) {
+          throw new Error("Client sent Task protocol data without a verified Task Profile");
+        }
+        await this.taskHooks.message(message, {
+          machineId: state.machineId,
+          organizationId: state.taskOrganizationId,
+        });
+        break;
       case "heartbeat":
         if (
           state.lastHeartbeatPersistedAt === undefined ||

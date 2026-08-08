@@ -146,6 +146,41 @@ describe("client platform support", () => {
     ]);
   });
 
+  it("applies the same reconnect bound to agent-native Command output", () => {
+    const buffer = new ClientMessageBuffer(3, 3);
+    expect(buffer.enqueue({
+      type: "command.output",
+      commandId: "command-a",
+      sequence: 0,
+      stream: "stdout",
+      dataBase64: Buffer.from("abc").toString("base64"),
+    })).toEqual({ accepted: true });
+    expect(buffer.enqueue({
+      type: "command.output",
+      commandId: "command-a",
+      sequence: 1,
+      stream: "stderr",
+      dataBase64: Buffer.from("d").toString("base64"),
+    })).toEqual({ accepted: false });
+    expect(buffer.enqueue({
+      type: "command.completed",
+      commandId: "command-a",
+      status: "succeeded",
+      exitCode: 0,
+      outputTruncated: false,
+      at: new Date(1).toISOString(),
+    })).toEqual({ accepted: true });
+    buffer.markOutputTruncated("command-a");
+    expect(buffer.drain()).toEqual([
+      expect.objectContaining({ type: "command.output", sequence: 0 }),
+      expect.objectContaining({
+        type: "command.completed",
+        outputTruncated: true,
+        error: "Command output is incomplete",
+      }),
+    ]);
+  });
+
   it("marks a completion truncated when retaining it evicts buffered output", () => {
     let outputVisibleWhenMarked = false;
     let buffer: ClientMessageBuffer;

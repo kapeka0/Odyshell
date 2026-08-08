@@ -28,7 +28,7 @@ services:
       ODYSHELL_AGENT_KEY: ${ODYSHELL_AGENT_KEY:-dev-agent-key}
       ODYSHELL_ALLOW_DEV_CREDENTIALS: "true"
       ODYSHELL_WEB_KEY: ${ODYSHELL_WEB_KEY:?Set ODYSHELL_WEB_KEY to at least 32 random characters}
-      ODYSHELL_WEB_URL: ${ODYSHELL_WEB_URL:-}
+      ODYSHELL_WEB_URL: ${ODYSHELL_WEB_URL:-http://localhost:3000}
       ODYSHELL_MCP_URL: ${ODYSHELL_MCP_URL:-http://localhost:4100/mcp}
       ODYSHELL_IDENTITY_ISSUER: ${BETTER_AUTH_URL:-http://localhost:3000}
       ODYSHELL_IDENTITY_JWKS_URL: http://web:3000/api/auth/jwks

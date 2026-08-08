@@ -1,4 +1,9 @@
-import type { Command, LocalPolicy, Task } from "@odyshell/protocol";
+import {
+  DEFAULT_COMMAND_OUTPUT_BYTES,
+  type Command,
+  type LocalPolicy,
+  type Task,
+} from "@odyshell/protocol";
 import {
   CamelCasePlugin,
   Kysely,
@@ -104,12 +109,23 @@ interface TaskAuditEventTable {
   createdAt: Generated<Date>;
 }
 
+interface CommandOutputChunkTable {
+  organizationId: string;
+  commandId: string;
+  sequence: number;
+  stream: string;
+  data: Buffer;
+  expiresAt: Date;
+  createdAt: Generated<Date>;
+}
+
 interface TaskDatabaseSchema {
   machineAuthorities: MachineAuthorityTable;
   autonomyPolicies: AutonomyPolicyTable;
   tasks: TaskTable;
   commands: CommandTable;
   taskAuditEvents: TaskAuditEventTable;
+  commandOutputChunks: CommandOutputChunkTable;
 }
 
 async function migrateTaskCommandCore(db: Kysely<TaskDatabaseSchema>): Promise<void> {
@@ -199,9 +215,29 @@ async function migrateTaskCommandCore(db: Kysely<TaskDatabaseSchema>): Promise<v
   for (const statement of statements) await sql.raw(statement).execute(db);
 }
 
+async function migrateTransientCommandOutput(
+  db: Kysely<TaskDatabaseSchema>,
+): Promise<void> {
+  await sql.raw(`create table odyshell.command_output_chunks (
+    organization_id text not null,
+    command_id uuid not null references odyshell.commands (id) on delete cascade,
+    sequence integer not null,
+    stream text not null,
+    data bytea not null,
+    expires_at timestamptz not null,
+    created_at timestamptz not null default current_timestamp,
+    primary key (organization_id, command_id, sequence)
+  )`).execute(db);
+  await sql.raw(`create index command_output_expiry_idx
+    on odyshell.command_output_chunks (expires_at)`).execute(db);
+}
+
 const taskMigrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
-    return { "001_task_command_core": { up: migrateTaskCommandCore } };
+    return {
+      "001_task_command_core": { up: migrateTaskCommandCore },
+      "002_transient_command_output": { up: migrateTransientCommandOutput },
+    };
   },
 };
 
@@ -369,6 +405,16 @@ export class PostgresTaskDatabase implements TaskRepository, TaskAudit {
     return row ? taskRecord(row) : null;
   }
 
+  async command(organizationId: string, commandId: string): Promise<Command | null> {
+    const row = await this.db
+      .selectFrom("commands")
+      .selectAll()
+      .where("organizationId", "=", organizationId)
+      .where("id", "=", commandId)
+      .executeTakeFirst();
+    return row ? commandRecord(row) : null;
+  }
+
   async countActiveCommands(organizationId: string, taskId: string): Promise<number> {
     const result = await this.db
       .selectFrom("commands")
@@ -419,6 +465,97 @@ export class PostgresTaskDatabase implements TaskRepository, TaskAudit {
     }
   }
 
+  async finishTask(input: {
+    organizationId: string;
+    agentId: string;
+    taskId: string;
+    outcome: "complete" | "cancel";
+  }): Promise<
+    | { status: "not_found" }
+    | { status: "commands_active" }
+    | { status: "finished"; task: Task; commandIds: string[] }
+  > {
+    return await this.db.transaction().execute(async (transaction) => {
+      const current = await transaction
+        .selectFrom("tasks")
+        .selectAll()
+        .where("organizationId", "=", input.organizationId)
+        .where("agentId", "=", input.agentId)
+        .where("id", "=", input.taskId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!current) return { status: "not_found" as const };
+      if (["completed", "cancelled", "revoked", "expired", "failed"].includes(current.status)) {
+        return { status: "finished" as const, task: taskRecord(current), commandIds: [] };
+      }
+      const activeCommands = await transaction
+        .selectFrom("commands")
+        .select("id")
+        .where("organizationId", "=", input.organizationId)
+        .where("taskId", "=", input.taskId)
+        .where("status", "in", ACTIVE_COMMAND_STATUSES)
+        .forUpdate()
+        .execute();
+      if (input.outcome === "complete" && activeCommands.length > 0) {
+        return { status: "commands_active" as const };
+      }
+      const now = new Date();
+      if (input.outcome === "cancel" && activeCommands.length > 0) {
+        await transaction
+          .updateTable("commands")
+          .set({ status: "cancellation_requested", updatedAt: now })
+          .where("organizationId", "=", input.organizationId)
+          .where("id", "in", activeCommands.map((command) => command.id))
+          .execute();
+      }
+      const task = await transaction
+        .updateTable("tasks")
+        .set({
+          status: input.outcome === "complete" ? "completed" : "cancellation_requested",
+          ...(input.outcome === "complete" ? { finishedAt: now } : {}),
+          updatedAt: now,
+        })
+        .where("organizationId", "=", input.organizationId)
+        .where("id", "=", input.taskId)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      return {
+        status: "finished" as const,
+        task: taskRecord(task),
+        commandIds: activeCommands.map((command) => command.id),
+      };
+    });
+  }
+
+  async requestCommandCancellation(input: {
+    organizationId: string;
+    agentId: string;
+    commandId: string;
+  }): Promise<Command | null> {
+    return await this.db.transaction().execute(async (transaction) => {
+      const current = await transaction
+        .selectFrom("commands")
+        .selectAll()
+        .where("organizationId", "=", input.organizationId)
+        .where("agentId", "=", input.agentId)
+        .where("id", "=", input.commandId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!current) return null;
+      if (!ACTIVE_COMMAND_STATUSES.includes(current.status as typeof ACTIVE_COMMAND_STATUSES[number])) {
+        return commandRecord(current);
+      }
+      const row = await transaction
+        .updateTable("commands")
+        .set({ status: "cancellation_requested", updatedAt: new Date() })
+        .where("organizationId", "=", input.organizationId)
+        .where("id", "=", input.commandId)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      return commandRecord(row);
+    });
+  }
+
   async append(event: Parameters<TaskAudit["append"]>[0]): Promise<void> {
     await this.db
       .insertInto("taskAuditEvents")
@@ -428,6 +565,280 @@ export class PostgresTaskDatabase implements TaskRepository, TaskAudit {
         metadata: JSON.stringify(event.metadata),
       })
       .execute();
+  }
+
+  async markTaskOpened(input: {
+    organizationId: string;
+    machineId: string;
+    taskId: string;
+    clientProfileId: string;
+    operatingSystemUser: string;
+  }): Promise<Task | null> {
+    const row = await this.db
+      .updateTable("tasks")
+      .set({ status: "active", readyAt: new Date(), updatedAt: new Date() })
+      .where("organizationId", "=", input.organizationId)
+      .where("machineId", "=", input.machineId)
+      .where("id", "=", input.taskId)
+      .where("clientProfileId", "=", input.clientProfileId)
+      .where("operatingSystemUser", "=", input.operatingSystemUser)
+      .where("status", "=", "opening")
+      .returningAll()
+      .executeTakeFirst();
+    if (!row) return null;
+    const task = taskRecord(row);
+    await this.append({
+      organizationId: task.organizationId,
+      agentId: task.agentId,
+      taskId: task.id,
+      type: "task.opened",
+      metadata: {
+        machineId: task.machineId,
+        clientProfileId: task.clientProfileId,
+        operatingSystemUser: task.operatingSystemUser,
+      },
+    });
+    return task;
+  }
+
+  async markTaskFailed(
+    organizationId: string,
+    machineId: string,
+    taskId: string,
+    error: string,
+  ): Promise<boolean> {
+    const now = new Date();
+    const row = await this.db
+      .updateTable("tasks")
+      .set({ status: "failed", finishedAt: now, updatedAt: now })
+      .where("organizationId", "=", organizationId)
+      .where("machineId", "=", machineId)
+      .where("id", "=", taskId)
+      .where("status", "=", "opening")
+      .returning(["agentId"])
+      .executeTakeFirst();
+    if (!row) return false;
+    await this.append({
+      organizationId,
+      agentId: row.agentId,
+      taskId,
+      type: "task.open_failed",
+      metadata: { outcome: "open_failed", error: error.slice(0, 2048) },
+    });
+    return true;
+  }
+
+  async markTaskClosed(
+    organizationId: string,
+    machineId: string,
+    taskId: string,
+    reason: string,
+  ): Promise<boolean> {
+    const now = new Date();
+    const status = reason === "expired" ? "expired" : "cancelled";
+    const row = await this.db
+      .updateTable("tasks")
+      .set({ status, finishedAt: now, updatedAt: now })
+      .where("organizationId", "=", organizationId)
+      .where("machineId", "=", machineId)
+      .where("id", "=", taskId)
+      .where("status", "in", ["opening", "active", "cancellation_requested"])
+      .returning(["id", "agentId"])
+      .executeTakeFirst();
+    if (!row) return false;
+    await this.append({
+      organizationId,
+      agentId: row.agentId,
+      taskId,
+      type: "task.closed",
+      metadata: { reason },
+    });
+    return true;
+  }
+
+  async markCommandStarted(
+    organizationId: string,
+    machineId: string,
+    commandId: string,
+    startedAt: string,
+  ): Promise<boolean> {
+    const row = await this.db
+      .updateTable("commands")
+      .set({ status: "running", startedAt: new Date(startedAt), updatedAt: new Date() })
+      .where("organizationId", "=", organizationId)
+      .where("machineId", "=", machineId)
+      .where("id", "=", commandId)
+      .where("status", "in", ["queued", "delivered"])
+      .returning("id")
+      .executeTakeFirst();
+    return row !== undefined;
+  }
+
+  async addCommandOutput(input: {
+    organizationId: string;
+    machineId: string;
+    commandId: string;
+    stream: "stdout" | "stderr";
+    sequence: number;
+    data: Buffer;
+  }): Promise<boolean> {
+    return await this.db.transaction().execute(async (transaction) => {
+      const command = await transaction
+        .selectFrom("commands")
+        .select(["stdoutBytes", "stderrBytes"])
+        .where("organizationId", "=", input.organizationId)
+        .where("machineId", "=", input.machineId)
+        .where("id", "=", input.commandId)
+        .where("status", "in", ACTIVE_COMMAND_STATUSES)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!command) return false;
+      if (
+        command.stdoutBytes + command.stderrBytes + input.data.length >
+        DEFAULT_COMMAND_OUTPUT_BYTES
+      ) {
+        return false;
+      }
+      const inserted = await transaction
+        .insertInto("commandOutputChunks")
+        .values({
+          organizationId: input.organizationId,
+          commandId: input.commandId,
+          sequence: input.sequence,
+          stream: input.stream,
+          data: input.data,
+          expiresAt: new Date(Date.now() + 60 * 60_000),
+        })
+        .onConflict((conflict) =>
+          conflict.columns(["organizationId", "commandId", "sequence"]).doNothing(),
+        )
+        .returning("sequence")
+        .executeTakeFirst();
+      if (!inserted) return true;
+      const column = input.stream === "stdout" ? "stdoutBytes" : "stderrBytes";
+      await transaction
+        .updateTable("commands")
+        .set({ [column]: sql`${sql.ref(column)} + ${input.data.length}`, updatedAt: new Date() })
+        .where("organizationId", "=", input.organizationId)
+        .where("id", "=", input.commandId)
+        .execute();
+      return true;
+    });
+  }
+
+  async commandOutput(
+    organizationId: string,
+    commandId: string,
+    afterSequence: number,
+  ): Promise<Array<{ sequence: number; stream: "stdout" | "stderr"; dataBase64: string }>> {
+    const chunks = await this.db
+      .selectFrom("commandOutputChunks")
+      .innerJoin("commands", (join) => join
+        .onRef("commands.organizationId", "=", "commandOutputChunks.organizationId")
+        .onRef("commands.id", "=", "commandOutputChunks.commandId"))
+      .select([
+        "commandOutputChunks.sequence",
+        "commandOutputChunks.stream",
+        "commandOutputChunks.data",
+      ])
+      .where("commandOutputChunks.organizationId", "=", organizationId)
+      .where("commandOutputChunks.commandId", "=", commandId)
+      .where("commandOutputChunks.sequence", ">", afterSequence)
+      .where("commandOutputChunks.expiresAt", ">", new Date())
+      .orderBy("commandOutputChunks.sequence")
+      .limit(256)
+      .execute();
+    return chunks.map((chunk) => ({
+      sequence: chunk.sequence,
+      stream: chunk.stream as "stdout" | "stderr",
+      dataBase64: chunk.data.toString("base64"),
+    }));
+  }
+
+  async markCommandCompleted(input: {
+    organizationId: string;
+    machineId: string;
+    commandId: string;
+    status: Command["status"];
+    exitCode: number | null;
+    error?: string;
+    outputTruncated: boolean;
+    finishedAt: string;
+  }): Promise<Command | null> {
+    const row = await this.db
+      .updateTable("commands")
+      .set({
+        status: input.status,
+        exitCode: input.exitCode,
+        error: input.error?.slice(0, 2048) ?? null,
+        outputTruncated: input.outputTruncated,
+        finishedAt: new Date(input.finishedAt),
+        updatedAt: new Date(),
+      })
+      .where("organizationId", "=", input.organizationId)
+      .where("machineId", "=", input.machineId)
+      .where("id", "=", input.commandId)
+      .where("status", "in", ACTIVE_COMMAND_STATUSES)
+      .returningAll()
+      .executeTakeFirst();
+    if (!row) {
+      return await this.command(input.organizationId, input.commandId);
+    }
+    const command = commandRecord(row);
+    await this.append({
+      organizationId: command.organizationId,
+      agentId: command.agentId,
+      taskId: command.taskId,
+      commandId: command.id,
+      type: "command.completed",
+      metadata: {
+        outcome: command.status,
+        exitCode: command.exitCode,
+        outputTruncated: command.outputTruncated,
+        stdoutBytes: command.stdoutBytes,
+        stderrBytes: command.stderrBytes,
+      },
+    });
+    return command;
+  }
+
+  async expireTasks(now = Date.now()): Promise<
+    Array<{ task: Task; commandIds: string[] }>
+  > {
+    return await this.db.transaction().execute(async (transaction) => {
+      const expired = await transaction
+        .updateTable("tasks")
+        .set({ status: "expired", finishedAt: new Date(now), updatedAt: new Date(now) })
+        .where("status", "in", ["opening", "active", "cancellation_requested"])
+        .where("expiresAt", "<=", new Date(now))
+        .returningAll()
+        .execute();
+      const result: Array<{ task: Task; commandIds: string[] }> = [];
+      for (const task of expired) {
+        const commands = await transaction
+          .updateTable("commands")
+          .set({ status: "cancellation_requested", updatedAt: new Date(now) })
+          .where("organizationId", "=", task.organizationId)
+          .where("taskId", "=", task.id)
+          .where("status", "in", ACTIVE_COMMAND_STATUSES)
+          .returning("id")
+          .execute();
+        result.push({
+          task: taskRecord(task),
+          commandIds: commands.map((command) => command.id),
+        });
+      }
+      return result;
+    });
+  }
+
+  async purgeExpiredCommandOutput(now = Date.now()): Promise<number> {
+    const deleted = await this.db
+      .deleteFrom("commandOutputChunks")
+      .where("expiresAt", "<=", new Date(now))
+      .returning("sequence")
+      .execute();
+    return deleted.length;
   }
 }
 
