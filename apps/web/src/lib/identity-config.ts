@@ -7,6 +7,12 @@ export type IdentityConfiguration = {
   databaseUrl: string;
   deploymentMode: "cloud" | "self-hosted";
   google?: { clientId: string; clientSecret: string };
+  oidc?: {
+    clientId: string;
+    clientSecret: string;
+    discoveryUrl: string;
+    providerId: string;
+  };
   mcpAudience: string;
   secret: string;
   trustedOrigins: string[];
@@ -46,6 +52,29 @@ export function identityConfiguration(
     );
   }
 
+  const oidcClientId = environment.OIDC_CLIENT_ID?.trim();
+  const oidcClientSecret = environment.OIDC_CLIENT_SECRET?.trim();
+  const oidcDiscovery = environment.OIDC_DISCOVERY_URL?.trim();
+  const oidcValues = [oidcClientId, oidcClientSecret, oidcDiscovery];
+  if (oidcValues.some(Boolean) && !oidcValues.every(Boolean)) {
+    throw new Error(
+      "OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, and OIDC_DISCOVERY_URL must be configured together",
+    );
+  }
+  const oidcProviderId = environment.OIDC_PROVIDER_ID?.trim() || "oidc";
+  if (!/^[a-z0-9][a-z0-9_-]{0,62}$/u.test(oidcProviderId)) {
+    throw new Error("OIDC_PROVIDER_ID must be a lowercase identifier");
+  }
+  const oidcDiscoveryUrl = oidcDiscovery ? new URL(oidcDiscovery) : undefined;
+  if (
+    oidcDiscoveryUrl &&
+    production &&
+    oidcDiscoveryUrl.protocol !== "https:" &&
+    !isLoopback(oidcDiscoveryUrl)
+  ) {
+    throw new Error("OIDC_DISCOVERY_URL must use HTTPS in production");
+  }
+
   const extraOrigins = (environment.ODYSHELL_AUTH_TRUSTED_ORIGINS ?? "")
     .split(",")
     .map((value) => value.trim())
@@ -71,6 +100,16 @@ export function identityConfiguration(
     trustedOrigins: [...new Set([parsedBaseUrl.origin, ...extraOrigins])],
     ...(googleClientId && googleClientSecret
       ? { google: { clientId: googleClientId, clientSecret: googleClientSecret } }
+      : {}),
+    ...(oidcClientId && oidcClientSecret && oidcDiscoveryUrl
+      ? {
+          oidc: {
+            clientId: oidcClientId,
+            clientSecret: oidcClientSecret,
+            discoveryUrl: oidcDiscoveryUrl.href,
+            providerId: oidcProviderId,
+          },
+        }
       : {}),
   };
 }

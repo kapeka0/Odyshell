@@ -1,6 +1,7 @@
 .git
 .env
 .env.*
+**/.env*
 .agents
 .claude
 .odyshell

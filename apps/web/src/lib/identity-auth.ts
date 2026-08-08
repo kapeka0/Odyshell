@@ -1,7 +1,7 @@
 import { oauthProvider } from "@better-auth/oauth-provider";
 import { betterAuth } from "better-auth";
 import { nextCookies } from "better-auth/next-js";
-import { jwt, organization } from "better-auth/plugins";
+import { genericOAuth, jwt, organization } from "better-auth/plugins";
 import { Pool } from "pg";
 import { identityConfiguration } from "@/lib/identity-config";
 import {
@@ -15,7 +15,10 @@ const oauthScopes = ["openid", "profile", "email", "offline_access", "odyshell:a
 
 export function createOdyshellAuth(environment: NodeJS.ProcessEnv) {
   const configuration = identityConfiguration(environment);
-  const database = new Pool({ connectionString: configuration.databaseUrl });
+  const database = new Pool({
+    connectionString: configuration.databaseUrl,
+    options: "-c search_path=public",
+  });
 
   async function organizationRoleFor(
     userId: string,
@@ -63,6 +66,23 @@ export function createOdyshellAuth(environment: NodeJS.ProcessEnv) {
         },
       }),
       jwt({ jwt: { issuer: configuration.baseUrl } }),
+      ...(configuration.oidc
+        ? [
+            genericOAuth({
+              config: [
+                {
+                  providerId: configuration.oidc.providerId,
+                  clientId: configuration.oidc.clientId,
+                  clientSecret: configuration.oidc.clientSecret,
+                  discoveryUrl: configuration.oidc.discoveryUrl,
+                  scopes: ["openid", "profile", "email"],
+                  pkce: true,
+                  requireIssuerValidation: true,
+                },
+              ],
+            }),
+          ]
+        : []),
       oauthProvider({
         silenceWarnings: {
           oauthAuthServerConfig: true,

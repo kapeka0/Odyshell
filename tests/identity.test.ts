@@ -23,11 +23,21 @@ describe("Odyshell Identity configuration", () => {
     expect(identity).toContain("betterAuth({");
     expect(identity).toContain("organization({");
     expect(identity).toContain("oauthProvider({");
+    expect(identity).toContain('options: "-c search_path=public"');
     expect(identity).toContain("jwt({ jwt: { issuer: configuration.baseUrl } })");
     expect(serverDatabase).not.toMatch(
       /create table public\."user"|create table[^;]*(?:oauthClient|jwks)/isu,
     );
     expect(serverDatabase).not.toMatch(/BETTER_AUTH_SECRET|clientSecret\s*=|privateKey\s*=/u);
+  });
+
+  it("migrates the complete identity schema before Web accepts traffic", () => {
+    const instrumentation = readFileSync("apps/web/src/instrumentation.ts", "utf8");
+    expect(instrumentation).toContain('import("better-auth/db/migration")');
+    expect(instrumentation).toContain("getMigrations(auth.options)");
+    expect(instrumentation).toContain("pg_advisory_lock");
+    expect(instrumentation).toContain('options: "-c search_path=public"');
+    expect(instrumentation).toContain("await runMigrations()");
   });
 
   it("does not let Compose start its identity boundary with default secrets", () => {
@@ -73,6 +83,33 @@ describe("Odyshell Identity configuration", () => {
         GOOGLE_CLIENT_ID: "google-client",
       }),
     ).toThrow("configured together");
+  });
+
+  it("accepts only complete HTTPS OIDC discovery configuration", () => {
+    expect(() =>
+      identityConfiguration({ ...validEnvironment, OIDC_CLIENT_ID: "client" }),
+    ).toThrow("must be configured together");
+    expect(() =>
+      identityConfiguration({
+        ...validEnvironment,
+        NODE_ENV: "production",
+        OIDC_CLIENT_ID: "client",
+        OIDC_CLIENT_SECRET: "secret",
+        OIDC_DISCOVERY_URL: "http://identity.example.test/.well-known/openid-configuration",
+      }),
+    ).toThrow("OIDC_DISCOVERY_URL must use HTTPS");
+    expect(identityConfiguration({
+      ...validEnvironment,
+      OIDC_CLIENT_ID: "client",
+      OIDC_CLIENT_SECRET: "secret",
+      OIDC_DISCOVERY_URL: "https://identity.example.test/.well-known/openid-configuration",
+      OIDC_PROVIDER_ID: "customer_oidc",
+    }).oidc).toEqual({
+      clientId: "client",
+      clientSecret: "secret",
+      discoveryUrl: "https://identity.example.test/.well-known/openid-configuration",
+      providerId: "customer_oidc",
+    });
   });
 
   it("normalizes trusted origins and defaults self-hosting safely", () => {

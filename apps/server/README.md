@@ -47,9 +47,10 @@ initiate their own authenticated outbound connection.
 - Deploy the Web and Server from the same release. Both use the same PostgreSQL database and
   `ODYSHELL_WEB_KEY`.
 
-The web app provides local email/password identity through Better Auth. Google sign-in is optional
-and requires both Google secrets plus the build-time UI flag. No Clerk or hosted identity service
-is required.
+The web app provides local email/password identity through Better Auth. Google sign-in and generic
+OIDC are optional and require their server credentials plus matching build-time UI flags. Generic
+OIDC uses discovery, PKCE, and strict issuer validation. No Clerk or hosted identity service is
+required.
 
 [Self-hosting guide](../../docs/self-hosting.md) ·
 [Privacy and event data](../../docs/privacy.md) ·

@@ -1,7 +1,10 @@
-const webUrl = new URL(process.env.ODYSHELL_SMOKE_WEB_URL ?? "http://localhost:3000");
+const webUrl = new URL(process.env.ODYSHELL_SMOKE_WEB_URL ?? "http://127.0.0.1:3000");
 const serverUrl = new URL(
-  process.env.ODYSHELL_SMOKE_SERVER_URL ?? "http://localhost:4100",
+  process.env.ODYSHELL_SMOKE_SERVER_URL ?? "http://127.0.0.1:4100",
 );
+const webOrigin = new URL(
+  process.env.ODYSHELL_SMOKE_WEB_ORIGIN ?? "http://localhost:3000",
+).origin;
 const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const cookies = new Map();
 
@@ -12,7 +15,7 @@ const metadata = await request(
   new URL("/.well-known/oauth-protected-resource", serverUrl),
   { expectedStatus: 200, label: "OAuth protected-resource metadata" },
 );
-if (metadata.body?.resource !== new URL("/mcp", serverUrl).href) {
+if (!sameLoopbackResource(metadata.body?.resource, new URL("/mcp", serverUrl))) {
   throw new Error("OAuth protected-resource metadata does not identify the MCP resource");
 }
 
@@ -61,7 +64,7 @@ const secondOrganization = await request(
     headers: {
       ...cookieHeaders(),
       "content-type": "application/json",
-      origin: webUrl.origin,
+      origin: webOrigin,
     },
     body: JSON.stringify({
       name: "Forbidden second Organization",
@@ -85,7 +88,7 @@ async function authPost(path, body, label) {
     headers: {
       ...cookieHeaders(),
       "content-type": "application/json",
-      origin: webUrl.origin,
+      origin: webOrigin,
     },
     body: JSON.stringify(body),
     captureCookies: true,
@@ -129,4 +132,13 @@ function cookieHeaders() {
   return {
     cookie: [...cookies].map(([name, value]) => `${name}=${value}`).join("; "),
   };
+}
+
+function sameLoopbackResource(candidate, expected) {
+  if (typeof candidate !== "string") return false;
+  const actual = new URL(candidate);
+  const loopbackHosts = new Set(["localhost", "127.0.0.1", "[::1]"]);
+  const sameHost = actual.hostname === expected.hostname ||
+    (loopbackHosts.has(actual.hostname) && loopbackHosts.has(expected.hostname));
+  return sameHost && actual.port === expected.port && actual.pathname === expected.pathname;
 }

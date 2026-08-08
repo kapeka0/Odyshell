@@ -73,6 +73,13 @@ Optional Google sign-in requires `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and
 `NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=true` before the Web image is built. Local email/password remains
 available and no external identity provider is required.
 
+Generic OIDC sign-in supports self-hosted IdPs such as Keycloak, Authentik, or ZITADEL. Set
+`OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and the HTTPS `OIDC_DISCOVERY_URL`; keep
+`OIDC_PROVIDER_ID` and `NEXT_PUBLIC_OIDC_PROVIDER_ID` aligned, then set
+`NEXT_PUBLIC_OIDC_AUTH_ENABLED=true` before building Web. Register
+`/api/auth/oauth2/callback/<provider-id>` at the IdP. PKCE and strict issuer validation are
+enforced.
+
 ## Connect an Agent and Machine
 
 1. Add the Server's `/mcp` resource to the external Agent runtime.

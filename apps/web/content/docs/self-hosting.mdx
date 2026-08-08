@@ -45,6 +45,9 @@ process-local.
 
 Self-hosted mode permits one Organization. Local email/password is built in. Google sign-in is
 optional and must be configured before building the Web image.
+Generic OIDC is also optional: configure `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, an HTTPS
+`OIDC_DISCOVERY_URL`, matching server/public provider IDs, and
+`NEXT_PUBLIC_OIDC_AUTH_ENABLED=true`. Odyshell uses PKCE and strict issuer validation.
 
 ## Connect the system
 

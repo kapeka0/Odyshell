@@ -1,6 +1,6 @@
 # Odyshell MVP Plan
 
-Updated: 2026-08-08.
+Updated: 2026-08-09.
 
 This is the internal working contract for turning Odyshell into a coherent, testable product. It
 records accepted product decisions, target architecture, scope, threat model, and delivery state.
@@ -100,7 +100,7 @@ event is the first useful Task completed on a real customer Machine without SSH 
 - secret injection, retained output by default, immutable audit, end-to-end signatures against a
   compromised Server, HA, scheduling, and runbooks;
 - public SDK, local MCP, Agent delegation, and orchestration;
-- the final marketing landing until shipped product and pricing are stable.
+- pricing-specific landing claims until product validation and pricing are stable.
 
 ## Target modules and seams
 
@@ -220,11 +220,21 @@ authorization.
 - the shared protocol now exports only the Client handshake/configuration and Task/Command
   authority. Session scopes, typed Operations, capabilities, legacy Agent Access, device flow, and
   their derivation helpers were deleted rather than retained as compatibility APIs.
+- Organization is now the only tenant in storage, HTTP, MCP, live refresh, and dashboard state.
+  Resources reference Organization directly; the one-to-one Workspace table, URL parameter,
+  settings route, limits, switcher vocabulary, and internal identifiers were removed.
+- Better Auth now migrates its complete identity schema automatically under a PostgreSQL advisory
+  lock, uses an explicit `public` search path separate from Server data, and supports optional
+  generic OIDC discovery with PKCE and strict issuer validation in addition to local credentials
+  and optional Google sign-in.
+- the obsolete legacy E2E harness was replaced with an isolated Task-native gate over real
+  PostgreSQL, Organization denial, HTTP/MCP authority, supervision, protocol, and Client Local
+  Policy; a fresh production Compose deployment passes identity, single-Organization, dashboard,
+  MCP, and documentation smoke tests without an external SaaS dependency.
 
 ### DOING
 
-- remove the remaining internal one-to-one Workspace naming now that no production persistence or
-  transport depends on a separate execution tenant.
+- none; the local MVP implementation and verification gates are complete.
 
 ### BLOCKED
 
@@ -252,3 +262,8 @@ and build. The final MVP gate additionally requires:
 - self-hosted bootstrap with no external SaaS dependency;
 - install, update, uninstall, and recovery documentation;
 - `test`, `typecheck`, `lint`, `build`, docs checks, and secret scan all passing.
+
+Verified locally on 2026-08-09 with 196 unit/security tests, 48 Task-native real-PostgreSQL gate
+checks, production typecheck/lint/build, a clean single-Organization Compose bootstrap, and docs
+smoke. A real external Agent on a customer Linux Machine remains product validation rather than a
+local implementation dependency; its process and thresholds are intentionally not fixed yet.

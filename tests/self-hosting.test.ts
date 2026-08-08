@@ -6,6 +6,10 @@ const root = process.cwd();
 const source = (path: string) => readFileSync(resolve(root, path), "utf8");
 
 describe("self-hosted distribution", () => {
+  it("keeps local identity environment files outside every Docker build context", () => {
+    expect(source(".dockerignore")).toContain("**/.env*");
+  });
+
   it("runs application services in production and fails closed on secrets", () => {
     const compose = source("docker-compose.yml");
     const example = source(".env.example");
@@ -45,7 +49,9 @@ describe("self-hosted distribution", () => {
     expect(serverDockerfile).toContain("pnpm install --frozen-lockfile");
     expect(serverDockerfile).not.toContain("--no-frozen-lockfile");
     expect(compose).toContain("NEXT_PUBLIC_ODYSHELL_SERVER_URL:");
+    expect(compose).toContain("NEXT_PUBLIC_OIDC_AUTH_ENABLED:");
     expect(webDockerfile).toContain("ARG NEXT_PUBLIC_ODYSHELL_SERVER_URL");
+    expect(webDockerfile).toContain("ARG NEXT_PUBLIC_OIDC_AUTH_ENABLED");
     expect(webDockerfile).toContain(
       "NEXT_PUBLIC_ODYSHELL_SERVER_URL=$NEXT_PUBLIC_ODYSHELL_SERVER_URL",
     );

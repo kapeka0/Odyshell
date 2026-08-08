@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeftIcon } from "lucide-react";
+import { ArrowLeftIcon, ShieldCheckIcon } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -43,6 +43,7 @@ export function AuthForm({
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [googlePending, setGooglePending] = useState(false);
+  const [oidcPending, setOidcPending] = useState(false);
 
   useEffect(() => {
     if (session) router.replace(destination);
@@ -97,38 +98,72 @@ export function AuthForm({
     }
   }
 
-  const disabled = pending || googlePending || sessionPending;
+  async function continueWithOidc() {
+    setError(null);
+    setOidcPending(true);
+    const result = await authClient.signIn.oauth2({
+      providerId: process.env.NEXT_PUBLIC_OIDC_PROVIDER_ID ?? "oidc",
+      callbackURL: destination,
+      newUserCallbackURL: "/onboarding",
+      errorCallbackURL: `/sign-in?redirect_url=${encodeURIComponent(destination)}`,
+    });
+    if (result?.error) {
+      setError(identityErrorMessage(result.error));
+      setOidcPending(false);
+    }
+  }
+
+  const googleEnabled = process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === "true";
+  const oidcEnabled = process.env.NEXT_PUBLIC_OIDC_AUTH_ENABLED === "true";
+  const disabled = pending || googlePending || oidcPending || sessionPending;
 
   return (
     <form onSubmit={submit}>
       <FieldGroup>
-        {process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === "true" ? (
-          <>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={disabled}
-              onClick={() => void continueWithGoogle()}
-            >
-              {googlePending ? (
-                <Spinner data-icon="inline-start" />
-              ) : (
-                <Image
-                  src="/brand/google.svg"
-                  alt=""
-                  width={16}
-                  height={16}
-                  aria-hidden="true"
-                />
-              )}
-              Continue with Google
-            </Button>
-            <div className="flex items-center gap-3" aria-hidden="true">
-              <Separator className="flex-1" />
-              <span className="text-xs text-muted-foreground">Or</span>
-              <Separator className="flex-1" />
-            </div>
-          </>
+        {googleEnabled ? (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={disabled}
+            onClick={() => void continueWithGoogle()}
+          >
+            {googlePending ? (
+              <Spinner data-icon="inline-start" />
+            ) : (
+              <Image
+                src="/brand/google.svg"
+                alt=""
+                width={16}
+                height={16}
+                aria-hidden="true"
+              />
+            )}
+            Continue with Google
+          </Button>
+        ) : null}
+
+        {oidcEnabled ? (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={disabled}
+            onClick={() => void continueWithOidc()}
+          >
+            {oidcPending ? (
+              <Spinner data-icon="inline-start" />
+            ) : (
+              <ShieldCheckIcon data-icon="inline-start" />
+            )}
+            Continue with SSO
+          </Button>
+        ) : null}
+
+        {googleEnabled || oidcEnabled ? (
+          <div className="flex items-center gap-3" aria-hidden="true">
+            <Separator className="flex-1" />
+            <span className="text-xs text-muted-foreground">Or</span>
+            <Separator className="flex-1" />
+          </div>
         ) : null}
 
         {mode === "sign-up" ? (

@@ -2,7 +2,7 @@
 
 import { oauthProviderClient } from "@better-auth/oauth-provider/client";
 import { createAuthClient } from "better-auth/react";
-import { organizationClient } from "better-auth/client/plugins";
+import { genericOAuthClient, organizationClient } from "better-auth/client/plugins";
 import {
   identityAccessControl,
   identityRoles,
@@ -14,6 +14,7 @@ export const authClient = createAuthClient({
       ac: identityAccessControl,
       roles: identityRoles,
     }),
+    genericOAuthClient(),
     oauthProviderClient(),
   ],
 });
