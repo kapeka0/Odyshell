@@ -3,22 +3,27 @@ import { betterAuth } from "better-auth";
 import { nextCookies } from "better-auth/next-js";
 import { genericOAuth, jwt, organization } from "better-auth/plugins";
 import { Pool } from "pg";
-import { identityConfiguration } from "@/lib/identity-config";
+import { identityConfiguration } from "./identity-config";
 import {
   canAdministerOrganization,
   identityAccessControl,
   identityRole,
   identityRoles,
-} from "@/lib/identity-permissions";
+} from "./identity-permissions";
 
 const oauthScopes = ["openid", "profile", "email", "offline_access", "odyshell:agent"];
 
-export function createOdyshellAuth(environment: NodeJS.ProcessEnv) {
+export function createOdyshellAuth(
+  environment: NodeJS.ProcessEnv,
+  providedDatabase?: Pool,
+) {
   const configuration = identityConfiguration(environment);
-  const database = new Pool({
-    connectionString: configuration.databaseUrl,
-    options: "-c search_path=public",
-  });
+  const database =
+    providedDatabase ??
+    new Pool({
+      connectionString: configuration.databaseUrl,
+      options: "-c search_path=public",
+    });
 
   async function organizationRoleFor(
     userId: string,

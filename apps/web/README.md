@@ -45,15 +45,11 @@ npm install --global @odyshell/cli
 ods login --server http://localhost:4100
 ```
 
-The CLI opens `/activate?code=...` with its short-lived device code already filled in. Approval
-creates a workspace-bound CLI token. The dashboard can then issue single-use machine enrollment
-commands, approve persistent Agent identities, and review their temporary Session requests.
-
-An Agent Credential identifies a persistent Agent but grants no machine authority. Each task uses
-an immutable Session for explicit machines and capabilities and expires within 24 hours. Host Shell
-authority is broad, explicit, always requires manual approval, and is reusable only by the same
-Task Run. Control Events never include command text, arguments, paths, file contents, stdout, or
-stderr.
+The CLI completes OAuth against Odyshell Identity. The dashboard can then issue single-use Machine
+enrollment commands, create persistent Agent identities, supervise Tasks, and inspect their
+Commands. An Agent identity grants no Machine authority by itself: every Task is Organization- and
+Machine-bound, evaluated against Autonomy Policy outside the Agent, and either starts immediately
+or waits for optional Human approval.
 
 ## Trust boundary
 
@@ -61,5 +57,9 @@ Odyshell Identity uses Better Auth and PostgreSQL for people, sessions, Organiza
 OAuth clients, and signed Agent access tokens. The web app forwards only verified identity to the
 Odyshell Server over a shared internal key. Machine credentials and execution policy remain owned
 by the Server.
+
+Self-hosted Web applies the identity schema automatically before accepting traffic. Cloud releases
+run `pnpm migrate:identity` once with the production identity environment before deploying Web;
+serverless cold starts never perform schema writes.
 
 [Server](../server/README.md) · [Back to Odyshell](../../README.md)

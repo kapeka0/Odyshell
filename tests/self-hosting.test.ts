@@ -16,6 +16,7 @@ describe("self-hosted distribution", () => {
 
     expect(compose.match(/NODE_ENV: production/g)).toHaveLength(2);
     expect(compose.match(/ODYSHELL_DEPLOYMENT_MODE: self-hosted/g)).toHaveLength(2);
+    expect(compose).toContain('ODYSHELL_RUN_IDENTITY_MIGRATIONS: "true"');
     for (const secret of [
       "POSTGRES_PASSWORD",
       "ODYSHELL_WEB_KEY",

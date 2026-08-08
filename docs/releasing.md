@@ -16,17 +16,20 @@ and protocol package.
    `docs/releases/<version>.md`. Confirm no credentials, enrollment tokens, Client identities,
    local state, or environment files are staged.
 2. Run `pnpm release:check`, push the commit, and wait for the cross-platform CI workflow.
-3. Deploy the Server first. Confirm its migration and health before deploying the web app.
-4. From the GitHub Actions page, run the `Release` workflow from `main` with the version number
+3. Deploy the Server first. Confirm its control and Task migrations and health before deploying
+   the web app.
+4. Run `pnpm migrate:identity` with the production Web identity environment. The command is
+   idempotent and takes a PostgreSQL advisory lock. Cloud Web instances never migrate from a
+   serverless cold start; self-hosted Web still migrates automatically before accepting traffic.
+5. From the GitHub Actions page, run the `Release` workflow from `main` with the version number
    and approve its protected `Production` environment.
-5. The workflow audits production dependencies, repeats type checking, tests, lint, build,
+6. The workflow audits production dependencies, repeats type checking, tests, lint, build,
    documentation smoke tests and E2E; packs protocol and CLI; creates the immutable tag;
    publishes the packages through npm Trusted Publishing; creates the GitHub Release; and audits
    all public version surfaces.
-6. Validate enrollment, Task approval, Command execution, audit, expiry, cancellation, and OAuth
+7. Validate enrollment, Task approval, Command execution, audit, expiry, cancellation, and OAuth
    revocation from a desktop and Raspberry Pi.
-7. If the Server migration fails, stop the rollout. Restore the pre-cutover PostgreSQL snapshot
-   only if no new Task was accepted; otherwise fix forward. A schema rollback must never
+8. If any migration fails, stop the rollout and fix forward. A schema rollback must never
    reactivate revoked authority.
 
 Manual `npm publish`, release-tag pushes and GitHub Release creation are not supported. The

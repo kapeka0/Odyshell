@@ -10,6 +10,7 @@
     "test:docs": "node scripts/docs-smoke.mjs",
     "test:e2e": "node scripts/e2e.mjs",
     "test:self-host": "node scripts/self-host-smoke.mjs",
+    "migrate:identity": "tsx apps/web/src/migrate-identity.ts",
     "release:check": "node scripts/release-check.mjs",
     "release:audit": "node scripts/release-audit.mjs",
     "install:ods": "pnpm --filter @odyshell/client build && pnpm --filter @odyshell/cli build && npm install --global ./apps/cli",

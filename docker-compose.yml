@@ -69,6 +69,7 @@ services:
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Set BETTER_AUTH_SECRET to at least 32 random characters}
       ODYSHELL_DEPLOYMENT_MODE: self-hosted
+      ODYSHELL_RUN_IDENTITY_MIGRATIONS: "true"
       ODYSHELL_MCP_URL: ${ODYSHELL_MCP_URL:-http://localhost:4100/mcp}
       NEXT_PUBLIC_ODYSHELL_SERVER_URL: ${NEXT_PUBLIC_ODYSHELL_SERVER_URL:-http://localhost:4100}
       ODYSHELL_SERVER_URL: http://server:4100

@@ -223,10 +223,12 @@ authorization.
 - Organization is now the only tenant in storage, HTTP, MCP, live refresh, and dashboard state.
   Resources reference Organization directly; the one-to-one Workspace table, URL parameter,
   settings route, limits, switcher vocabulary, and internal identifiers were removed.
-- Better Auth now migrates its complete identity schema automatically under a PostgreSQL advisory
-  lock, uses an explicit `public` search path separate from Server data, and supports optional
-  generic OIDC discovery with PKCE and strict issuer validation in addition to local credentials
-  and optional Google sign-in.
+- Better Auth now migrates its complete identity schema under a PostgreSQL advisory lock and uses
+  an explicit `public` search path separate from Server data. Self-hosted Web migrates before
+  accepting traffic; Cloud uses the idempotent `pnpm migrate:identity` deployment command so
+  serverless cold starts never write schema. Identity supports optional generic OIDC discovery
+  with PKCE and strict issuer validation in addition to local credentials and optional Google
+  sign-in.
 - the obsolete legacy E2E harness was replaced with an isolated Task-native gate over real
   PostgreSQL, Organization denial, HTTP/MCP authority, supervision, protocol, and Client Local
   Policy; a fresh production Compose deployment passes identity, single-Organization, dashboard,

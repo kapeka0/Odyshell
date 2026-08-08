@@ -5,6 +5,7 @@ import {
   canAdministerOrganization,
   identityRole,
 } from "../apps/web/src/lib/identity-permissions.js";
+import { identityMigrationsEnabled } from "../apps/web/src/lib/identity-migrations.js";
 
 const validEnvironment = {
   DATABASE_URL: "postgresql://odyshell:odyshell@127.0.0.1:55432/odyshell",
@@ -31,13 +32,40 @@ describe("Odyshell Identity configuration", () => {
     expect(serverDatabase).not.toMatch(/BETTER_AUTH_SECRET|clientSecret\s*=|privateKey\s*=/u);
   });
 
-  it("migrates the complete identity schema before Web accepts traffic", () => {
+  it("migrates self-hosted identity on boot and exposes an explicit cloud runner", () => {
     const instrumentation = readFileSync("apps/web/src/instrumentation.ts", "utf8");
-    expect(instrumentation).toContain('import("better-auth/db/migration")');
-    expect(instrumentation).toContain("getMigrations(auth.options)");
-    expect(instrumentation).toContain("pg_advisory_lock");
-    expect(instrumentation).toContain('options: "-c search_path=public"');
-    expect(instrumentation).toContain("await runMigrations()");
+    const migrations = readFileSync(
+      "apps/web/src/lib/identity-migrations.ts",
+      "utf8",
+    );
+    const rootPackage = readFileSync("package.json", "utf8");
+    expect(instrumentation).toContain("identityMigrationsEnabled(process.env)");
+    expect(migrations).toContain('from "better-auth/db/migration"');
+    expect(migrations).toContain("getMigrations(auth.options)");
+    expect(migrations).toContain("pg_advisory_lock");
+    expect(migrations).toContain('options: "-c search_path=public"');
+    expect(migrations).toContain("await runMigrations()");
+    expect(rootPackage).toContain('"migrate:identity"');
+  });
+
+  it("does not run schema writes in cloud serverless cold starts", () => {
+    expect(
+      identityMigrationsEnabled({ ODYSHELL_DEPLOYMENT_MODE: "cloud" }),
+    ).toBe(false);
+    expect(
+      identityMigrationsEnabled({ ODYSHELL_DEPLOYMENT_MODE: "self-hosted" }),
+    ).toBe(true);
+    expect(
+      identityMigrationsEnabled({
+        ODYSHELL_DEPLOYMENT_MODE: "cloud",
+        ODYSHELL_RUN_IDENTITY_MIGRATIONS: "true",
+      }),
+    ).toBe(true);
+    expect(() =>
+      identityMigrationsEnabled({
+        ODYSHELL_RUN_IDENTITY_MIGRATIONS: "yes",
+      }),
+    ).toThrow("must be true or false");
   });
 
   it("does not let Compose start its identity boundary with default secrets", () => {
