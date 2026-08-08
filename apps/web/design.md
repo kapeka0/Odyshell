@@ -42,7 +42,9 @@ Color must never be the sole carrier of meaning.
 
 ## Typography
 
-- Use Geist for display and body copy at weights 400–650.
+- Use Manrope for public landing display and body copy at weights 400–600.
+- Use Geist for authenticated, authentication and documentation display and body copy at weights
+  400–650.
 - Use Geist Mono for data, identifiers and commands at weights 400–550.
 - Keep body copy direct, compact and easy to scan.
 - Use tight display tracking only for the public landing headline.
@@ -84,7 +86,8 @@ Color must never be the sole carrier of meaning.
 Public pages may use broader typography and more whitespace. They should explain
 the product through a compact value proposition, a credible product example,
 clear trust boundaries and one direct next step. The real product is the primary
-source of visual interest.
+source of visual interest. Public geometry uses compact radii and a wide layout with deliberate
+24-pixel gutters at desktop scale; avoid pill-shaped page containers and oversized cards.
 
 ### Authenticated
 

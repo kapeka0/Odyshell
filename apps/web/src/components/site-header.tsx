@@ -8,18 +8,18 @@ export function SiteHeader() {
       <a className="skip-link" href="#main-content">
         Skip to content
       </a>
-      <header className="sticky top-0 z-40 pt-2">
-        <div className="page-shell flex h-16 items-center gap-3 rounded-xl border bg-background/92 px-4 shadow-sm backdrop-blur-md">
+      <header className="sticky top-0 z-40 border-b bg-background/90 backdrop-blur-md">
+        <div className="landing-shell flex h-[4.5rem] items-center gap-3">
           <Brand />
           <nav className="ml-8 hidden items-center gap-6 text-sm md:flex" aria-label="Main navigation">
-            <Link className="text-muted-foreground transition-colors hover:text-foreground" href="/#how-it-works">
-              How it works
+            <Link className="text-muted-foreground transition-colors hover:text-foreground" href="/#product">
+              Product
             </Link>
-            <Link className="text-muted-foreground transition-colors hover:text-foreground" href="/#plans">
-              Plans
+            <Link className="text-muted-foreground transition-colors hover:text-foreground" href="/#security">
+              Security
             </Link>
-            <Link className="text-muted-foreground transition-colors hover:text-foreground" href="/docs">
-              Docs
+            <Link className="text-muted-foreground transition-colors hover:text-foreground" href="/docs/self-hosting">
+              Self-hosting
             </Link>
           </nav>
           <div className="ml-auto flex items-center gap-2">

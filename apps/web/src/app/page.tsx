@@ -1,235 +1,355 @@
 import {
   ArrowRightIcon,
   CheckIcon,
-  LockKeyholeIcon,
+  CloudIcon,
+  EyeIcon,
+  KeyRoundIcon,
+  ShieldCheckIcon,
+  TerminalIcon,
 } from "lucide-react";
+import { Manrope } from "next/font/google";
 import Link from "next/link";
+import { AgentCommandTrace } from "@/components/agent-command-trace";
 import { ConnectionRoute } from "@/components/connection-route";
-import { ProductPreview } from "@/components/product-preview";
-import { Reveal } from "@/components/reveal";
 import { SiteHeader } from "@/components/site-header";
-import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+const marketingFont = Manrope({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-marketing",
+});
+
+const workflow = [
+  {
+    label: "Agent requests",
+    description:
+      "An external Agent asks for one temporary Task through remote MCP or canonical HTTP.",
+  },
+  {
+    label: "Server authorizes",
+    description:
+      "Identity, Machine, duration, concurrency and Autonomy Policy are checked outside the model.",
+  },
+  {
+    label: "Client enforces",
+    description:
+      "The Linux Client independently applies owner-controlled Local Policy before a Command runs.",
+  },
+  {
+    label: "Work stays attributable",
+    description:
+      "Exact Commands and security metadata remain auditable. stdout and stderr expire instead of becoming a recording.",
+  },
+] as const;
+
 const boundaries = [
-  ["Connection", "The machine connects outbound. No inbound port is opened."],
-  ["Identity", "Clients and agents receive separate, revocable identities."],
-  ["Authority", "The server and local Client both enforce capability limits."],
-  ["Privacy", "Audit events describe control actions without recording secrets."],
+  ["Network", "Outbound Machine connection. No inbound port, VPN route or shared SSH credential."],
+  ["Identity", "Every Agent, Machine and Human has a distinct, revocable identity."],
+  ["Authority", "The Server can narrow Local Policy, but it can never widen it."],
+  ["Execution", "Commands run as the dedicated Linux user that runs the Client—never inside an implied sandbox."],
+  ["Audit", "Command text and decisions are durable; credentials and retained output are not."],
+] as const;
+
+const interfaces = [
+  {
+    icon: TerminalIcon,
+    title: "Remote MCP",
+    description: "Agent-native tools with OAuth, resumable Tasks and explicit idempotency.",
+  },
+  {
+    icon: KeyRoundIcon,
+    title: "Canonical HTTP",
+    description: "The same Task and Command model for runtimes that speak directly to the API.",
+  },
+  {
+    icon: EyeIcon,
+    title: "Optional supervision",
+    description: "Humans observe, approve exceptions and audit work without becoming the primary operator.",
+  },
 ] as const;
 
 export default function HomePage() {
   return (
-    <>
+    <div className={cn(marketingFont.variable, "landing-page")}>
       <SiteHeader />
       <main id="main-content" tabIndex={-1}>
-        <section className="page-shell grid min-h-[calc(100svh-5rem)] gap-8 py-8 lg:grid-cols-[0.92fr_1.08fr] lg:items-stretch lg:py-10">
-          <Reveal className="flex min-w-0 flex-col justify-center py-10 lg:py-16">
-            <Badge variant="outline" className="mb-8 w-fit">
-              Infrastructure for AI agents
-            </Badge>
-            <h1 className="display-balance max-w-[10ch] text-[clamp(3.4rem,7vw,6.8rem)] leading-[0.9] font-semibold tracking-[-0.065em]">
-              Private machines, ready for agents.
-            </h1>
-            <p className="body-pretty mt-8 max-w-[38rem] text-lg leading-8 text-muted-foreground md:text-xl">
-              Let an AI agent use a real machine without giving it SSH credentials,
-              network access or a permanent key.
-            </p>
-            <div className="mt-9 flex flex-wrap gap-3">
-              <Link
-                className={cn(buttonVariants({ size: "lg" }), "whitespace-nowrap")}
-                href="/sign-up"
-              >
-                Create a workspace
-                <ArrowRightIcon data-icon="inline-end" />
-              </Link>
-              <Link
-                className={cn(
-                  buttonVariants({ variant: "outline", size: "lg" }),
-                  "whitespace-nowrap",
-                )}
-                href="/#how-it-works"
-              >
-                See how it works
-              </Link>
-            </div>
-            <p className="mt-6 font-mono text-xs text-muted-foreground">
-              Linux · macOS · Windows · outbound only
-            </p>
-          </Reveal>
-
-          <Reveal delay={0.08} className="min-h-[34rem] min-w-0">
-            <ProductPreview />
-          </Reveal>
-        </section>
-
-        <section className="page-shell pb-8 md:pb-16">
-          <Reveal className="overflow-hidden rounded-[2.5rem] bg-[var(--color-graphite)] text-[var(--color-graphite-ink)]">
-            <div className="grid gap-12 px-6 py-14 md:px-10 md:py-20 lg:grid-cols-[0.78fr_1.22fr] lg:items-center lg:px-16">
-              <div>
-                <p className="font-mono text-xs text-white/55">ONE SAFE ROUTE</p>
-                <h2 className="display-balance mt-5 max-w-[12ch] text-4xl leading-[1.02] font-semibold tracking-[-0.045em] md:text-6xl">
-                  Give agents access. Keep the network private.
-                </h2>
-                <p className="mt-6 max-w-md leading-7 text-white/62">
-                  Odyshell sits between the agent and the machine. It verifies identity,
-                  scope and time before forwarding a structured operation.
+        <section className="landing-shell py-4 md:py-6">
+          <div className="landing-inverted overflow-hidden rounded-xl bg-[var(--color-graphite)] text-[var(--color-graphite-ink)]">
+            <div className="grid min-h-[calc(100svh-7.5rem)] gap-14 px-6 py-14 sm:px-10 lg:grid-cols-[0.92fr_1.08fr] lg:items-center lg:px-16 lg:py-16 xl:px-20">
+              <div className="min-w-0">
+                <p className="font-mono text-xs tracking-[0.12em] text-white/52 uppercase">
+                  Agent-native infrastructure
                 </p>
+                <h1 className="display-balance mt-6 max-w-[13ch] text-[clamp(3.25rem,5.2vw,5.6rem)] leading-[0.94] font-medium tracking-[-0.05em]">
+                  The control plane for agents on real machines.
+                </h1>
+                <p className="body-pretty mt-8 max-w-[39rem] text-lg leading-8 text-white/64 md:text-xl">
+                  Give external Agents temporary, policy-bound shell access to customer
+                  Linux Machines—without SSH, inbound ports or permanent keys.
+                </p>
+                <div className="mt-10 flex flex-wrap gap-3">
+                  <Link
+                    className={cn(buttonVariants({ size: "lg" }), "whitespace-nowrap")}
+                    href="/sign-up"
+                  >
+                    Start free
+                    <ArrowRightIcon data-icon="inline-end" />
+                  </Link>
+                  <Link
+                    className={cn(
+                      buttonVariants({ variant: "outline", size: "lg" }),
+                      "whitespace-nowrap",
+                    )}
+                    href="/#agent-workflow"
+                  >
+                    See the control path
+                  </Link>
+                </div>
+                <div className="mt-10 flex flex-wrap gap-x-6 gap-y-2 border-t border-white/12 pt-5 font-mono text-xs text-white/48">
+                  <span>Linux Client</span>
+                  <span>OAuth MCP + HTTP</span>
+                  <span>Cloud or self-hosted</span>
+                </div>
               </div>
-              <ConnectionRoute />
+              <AgentCommandTrace />
             </div>
-          </Reveal>
+          </div>
         </section>
 
-        <section id="how-it-works" className="page-shell grid gap-12 py-20 md:py-28 lg:grid-cols-[0.72fr_1.28fr]">
+        <section id="agent-workflow" className="landing-shell grid gap-12 py-24 md:py-32 lg:grid-cols-[0.78fr_1.22fr]">
           <div>
-            <p className="font-mono text-xs text-muted-foreground">HOW IT WORKS</p>
-            <h2 className="display-balance mt-5 max-w-[12ch] text-4xl leading-[1.05] font-semibold tracking-[-0.04em] md:text-5xl">
-              Three steps from private to agent-ready.
+            <p className="font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">
+              One durable workflow
+            </p>
+            <h2 className="display-balance mt-5 max-w-[12ch] text-4xl leading-[1.05] font-medium tracking-[-0.035em] md:text-6xl">
+              Agents act. Policy decides.
             </h2>
+            <p className="body-pretty mt-6 max-w-md text-lg leading-8 text-muted-foreground">
+              A Task binds one Agent to one Machine for a limited time. Commands inherit
+              that boundary; they never invent their own authority.
+            </p>
           </div>
           <ol className="border-t">
-            {[
-              ["01", "Connect the machine", "Run ods up once. The lightweight Client keeps an authenticated outbound connection open."],
-              ["02", "Grant temporary access", "Choose the machine, allowed operations and expiry for one agent credential."],
-              ["03", "Let the agent work", "The SDK or MCP sends structured operations. Odyshell checks and records each control decision."],
-            ].map(([number, title, description]) => (
+            {workflow.map((step, index) => (
               <li
-                key={number}
-                className="grid gap-3 border-b py-7 sm:grid-cols-[3rem_minmax(0,1fr)]"
+                key={step.label}
+                className="grid gap-4 border-b py-7 sm:grid-cols-[3rem_minmax(0,0.72fr)_minmax(0,1fr)] sm:gap-6"
               >
-                <span className="font-mono text-xs text-muted-foreground">{number}</span>
-                <div>
-                  <h3 className="text-xl font-semibold">{title}</h3>
-                  <p className="mt-2 max-w-2xl leading-7 text-muted-foreground">
-                    {description}
-                  </p>
-                </div>
+                <span className="font-mono text-xs text-muted-foreground">
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+                <h3 className="text-lg font-medium">{step.label}</h3>
+                <p className="body-pretty leading-7 text-muted-foreground">
+                  {step.description}
+                </p>
               </li>
             ))}
           </ol>
         </section>
 
-        <section className="page-shell pb-20 md:pb-28">
-          <Reveal className="rounded-2xl border bg-card px-6 py-10 md:px-10 md:py-14">
-            <p className="font-mono text-xs text-muted-foreground">DOCUMENTATION</p>
-            <div className="mt-5 flex flex-col gap-8 md:flex-row md:items-end md:justify-between">
+        <section id="product" className="landing-shell pb-24 md:pb-32">
+          <div className="rounded-xl border bg-card px-6 py-8 sm:px-10 sm:py-12 lg:px-14 lg:py-16">
+            <div className="grid gap-10 lg:grid-cols-[0.72fr_1.28fr] lg:items-end">
               <div>
-                <h2 className="display-balance max-w-[14ch] text-4xl leading-[1.05] font-semibold tracking-[-0.04em] md:text-5xl">
-                  Connect a machine. Give an agent the route.
+                <p className="font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">
+                  One outbound route
+                </p>
+                <h2 className="display-balance mt-5 max-w-[13ch] text-4xl leading-[1.05] font-medium tracking-[-0.035em] md:text-5xl">
+                  Reach the Machine. Never enter its network.
                 </h2>
-                <p className="mt-5 max-w-xl leading-7 text-muted-foreground">
-                  Follow the quickstart, then integrate through MCP, the TypeScript SDK,
-                  or the CLI.
+              </div>
+              <p className="body-pretty max-w-2xl text-lg leading-8 text-muted-foreground">
+                The Client authenticates outward to Odyshell. Agents operate through a
+                policy-aware control plane, not through a reusable network credential.
+              </p>
+            </div>
+            <ConnectionRoute />
+          </div>
+        </section>
+
+        <section id="security" className="border-y bg-muted/40">
+          <div className="landing-shell grid gap-12 py-24 md:py-32 lg:grid-cols-[0.72fr_1.28fr]">
+            <div>
+              <ShieldCheckIcon aria-hidden="true" className="text-muted-foreground" />
+              <h2 className="display-balance mt-6 max-w-[12ch] text-4xl leading-[1.05] font-medium tracking-[-0.035em] md:text-5xl">
+                Authority lives outside the model.
+              </h2>
+              <p className="body-pretty mt-6 max-w-md leading-7 text-muted-foreground">
+                Prompts can request work. Odyshell and the Machine owner decide what can
+                actually run.
+              </p>
+            </div>
+            <dl className="border-t">
+              {boundaries.map(([term, description]) => (
+                <div
+                  key={term}
+                  className="grid gap-3 border-b py-6 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-8"
+                >
+                  <dt className="font-medium">{term}</dt>
+                  <dd className="body-pretty leading-7 text-muted-foreground">
+                    {description}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        </section>
+
+        <section className="landing-shell py-24 md:py-32">
+          <div className="max-w-3xl">
+            <p className="font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">
+              Built for Agents first
+            </p>
+            <h2 className="display-balance mt-5 text-4xl leading-[1.05] font-medium tracking-[-0.035em] md:text-6xl">
+              Protocols for autonomous work. A dashboard when humans need it.
+            </h2>
+          </div>
+          <div className="mt-14 grid border-t md:grid-cols-3">
+            {interfaces.map((item) => (
+              <div
+                key={item.title}
+                className="border-b py-7 md:border-r md:px-7 md:last:border-r-0 md:first:pl-0 md:last:pr-0"
+              >
+                <item.icon aria-hidden="true" className="text-muted-foreground" />
+                <h3 className="mt-8 text-xl font-medium">{item.title}</h3>
+                <p className="body-pretty mt-3 leading-7 text-muted-foreground">
+                  {item.description}
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="landing-shell pb-24 md:pb-32">
+          <div className="grid overflow-hidden rounded-xl border bg-card lg:grid-cols-[0.94fr_1.06fr]">
+            <div className="flex flex-col justify-between gap-12 px-6 py-10 sm:px-10 sm:py-14 lg:px-14">
+              <div>
+                <p className="font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">
+                  Same system, your boundary
+                </p>
+                <h2 className="display-balance mt-5 max-w-[12ch] text-4xl leading-[1.05] font-medium tracking-[-0.035em] md:text-5xl">
+                  Run Odyshell where your Machines live.
+                </h2>
+                <p className="body-pretty mt-6 max-w-xl leading-7 text-muted-foreground">
+                  Cloud and self-hosted deployments use the same Server, Better Auth
+                  identity, PostgreSQL schema, MCP, HTTP protocol, dashboard and Linux
+                  Client.
                 </p>
               </div>
               <Link
-                className={cn(
-                  buttonVariants({ variant: "outline", size: "lg" }),
-                  "w-fit whitespace-nowrap",
-                )}
-                href="/docs"
+                className={cn(buttonVariants({ size: "lg" }), "w-fit whitespace-nowrap")}
+                href="/docs/self-hosting"
               >
-                Read the docs
+                Self-host Odyshell
                 <ArrowRightIcon data-icon="inline-end" />
               </Link>
             </div>
-          </Reveal>
-        </section>
-
-        <section className="border-y bg-muted/35">
-          <div className="page-shell py-20 md:py-28">
-            <div className="grid gap-10 lg:grid-cols-[0.7fr_1.3fr]">
-              <div>
-                <LockKeyholeIcon aria-hidden="true" className="text-muted-foreground" />
-                <h2 className="display-balance mt-6 max-w-[12ch] text-4xl leading-[1.05] font-semibold tracking-[-0.04em] md:text-5xl">
-                  Safety outside the model.
-                </h2>
-                <p className="mt-5 max-w-md leading-7 text-muted-foreground">
-                  Prompts can request an action. Odyshell decides whether it may run.
-                </p>
+            <div className="flex min-h-[24rem] flex-col justify-between border-t bg-muted/55 p-6 sm:p-10 lg:border-t-0 lg:border-l">
+              <div className="flex items-center justify-between gap-4 font-mono text-xs text-muted-foreground">
+                <span>docker-compose.yml</span>
+                <span>Single Organization</span>
               </div>
-              <div className="border-t">
-                {boundaries.map(([title, description]) => (
-                  <div
-                    key={title}
-                    className="grid gap-2 border-b py-5 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-6"
-                  >
-                    <p className="font-medium">{title}</p>
-                    <p className="leading-6 text-muted-foreground">{description}</p>
-                  </div>
-                ))}
+              <pre className="overflow-x-auto rounded-lg border bg-background p-5 text-sm leading-7">
+                <code>{`cp .env.example .env
+docker compose up -d --build
+pnpm test:self-host`}</code>
+              </pre>
+              <div className="grid gap-3 text-sm text-muted-foreground sm:grid-cols-2">
+                <span className="flex items-center gap-2">
+                  <CheckIcon aria-hidden="true" className="text-status-success" />
+                  Local identity
+                </span>
+                <span className="flex items-center gap-2">
+                  <CheckIcon aria-hidden="true" className="text-status-success" />
+                  No hosted analytics
+                </span>
               </div>
             </div>
           </div>
         </section>
 
-        <section id="plans" className="page-shell grid gap-12 py-20 md:py-28 lg:grid-cols-[0.72fr_1.28fr]">
-          <div>
-            <p className="font-mono text-xs text-muted-foreground">START SMALL</p>
-            <h2 className="display-balance mt-5 max-w-[11ch] text-4xl leading-[1.05] font-semibold tracking-[-0.04em] md:text-5xl">
-              Prove the route for free.
-            </h2>
-            <p className="mt-5 max-w-md leading-7 text-muted-foreground">
-              The MVP includes the complete operation model. Plans limit capacity, not
-              security.
-            </p>
-          </div>
-          <div className="rounded-2xl border bg-card p-6 md:p-8">
-            <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <p className="text-2xl font-semibold">Free</p>
-                <p className="mt-2 text-muted-foreground">For testing the complete workflow.</p>
-              </div>
-              <p className="text-4xl font-semibold tracking-tight">$0</p>
+        <section className="landing-shell pb-24 md:pb-32">
+          <div className="grid gap-10 border-y py-14 lg:grid-cols-[1fr_auto] lg:items-end">
+            <div>
+              <p className="font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">
+                Build against one model
+              </p>
+              <h2 className="display-balance mt-5 max-w-[18ch] text-4xl leading-[1.05] font-medium tracking-[-0.035em] md:text-5xl">
+                Connect an Agent. Enroll a Machine. Request a Task.
+              </h2>
+              <p className="body-pretty mt-5 max-w-2xl leading-7 text-muted-foreground">
+                The documentation is written for both engineers and coding Agents from
+                the same reviewed source.
+              </p>
             </div>
-            <ul className="mt-8 grid gap-3 border-t pt-6 sm:grid-cols-2">
-              {["2 machines", "1 workspace", "3 active agent credentials", "All operation capabilities"].map((item) => (
-                <li key={item} className="flex items-center gap-3 text-sm">
-                  <CheckIcon aria-hidden="true" className="text-[var(--color-success)]" />
-                  {item}
-                </li>
-              ))}
-            </ul>
             <Link
-              className={cn(buttonVariants({ size: "lg" }), "mt-8 w-full whitespace-nowrap sm:w-auto")}
-              href="/sign-up"
+              className={cn(
+                buttonVariants({ variant: "outline", size: "lg" }),
+                "w-fit whitespace-nowrap",
+              )}
+              href="/docs"
             >
-              Create a workspace
+              Read the docs
+              <ArrowRightIcon data-icon="inline-end" />
             </Link>
+          </div>
+        </section>
+
+        <section className="landing-shell pb-6">
+          <div className="landing-inverted rounded-xl bg-[var(--color-graphite)] px-6 py-16 text-[var(--color-graphite-ink)] sm:px-10 md:py-20 lg:px-16">
+            <div className="flex max-w-4xl flex-col gap-8">
+              <div className="flex items-center gap-3 font-mono text-xs text-white/52">
+                <CloudIcon aria-hidden="true" />
+                Agent infrastructure, under control
+              </div>
+              <h2 className="display-balance text-4xl leading-[1.02] font-medium tracking-[-0.04em] md:text-6xl">
+                Give Agents a real Machine without giving away the network.
+              </h2>
+              <div className="flex flex-wrap gap-3">
+                <Link
+                  className={cn(buttonVariants({ size: "lg" }), "whitespace-nowrap")}
+                  href="/sign-up"
+                >
+                  Start free
+                  <ArrowRightIcon data-icon="inline-end" />
+                </Link>
+                <Link
+                  className={cn(
+                    buttonVariants({ variant: "outline", size: "lg" }),
+                    "whitespace-nowrap",
+                  )}
+                  href="/sign-in"
+                >
+                  Sign in
+                </Link>
+              </div>
+            </div>
           </div>
         </section>
       </main>
 
-      <footer className="page-shell pb-8">
-        <div className="rounded-2xl border px-6 py-8 md:px-8">
-          <p className="display-balance max-w-[24ch] text-3xl leading-tight font-semibold tracking-[-0.03em]">
-            A safer route from agents to real machines.
-          </p>
-          <div className="mt-12 flex flex-col gap-4 border-t pt-5 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-            <span className="font-semibold text-foreground">Odyshell</span>
-            <div className="flex flex-wrap gap-5">
-              <Link className="whitespace-nowrap hover:text-foreground" href="/#how-it-works">
-                How it works
-              </Link>
-              <Link className="whitespace-nowrap hover:text-foreground" href="/dashboard">
-                Dashboard
-              </Link>
-              <Link className="whitespace-nowrap hover:text-foreground" href="/docs">
-                Docs
-              </Link>
-              <a
-                className="whitespace-nowrap hover:text-foreground"
-                href="https://github.com/kapeka0/odyshell"
-              >
-                GitHub
-              </a>
-            </div>
-            <span>© 2026 Odyshell</span>
+      <footer className="landing-shell py-10">
+        <div className="flex flex-col gap-8 border-t pt-6 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+          <span className="font-medium text-foreground">Odyshell</span>
+          <div className="flex flex-wrap gap-x-6 gap-y-3">
+            <Link className="hover:text-foreground" href="/#product">
+              Product
+            </Link>
+            <Link className="hover:text-foreground" href="/#security">
+              Security
+            </Link>
+            <Link className="hover:text-foreground" href="/docs/self-hosting">
+              Self-hosting
+            </Link>
+            <a className="hover:text-foreground" href="https://github.com/kapeka0/odyshell">
+              GitHub
+            </a>
           </div>
+          <span>© 2026 Odyshell</span>
         </div>
       </footer>
-    </>
+    </div>
   );
 }

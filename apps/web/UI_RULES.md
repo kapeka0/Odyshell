@@ -120,6 +120,14 @@ particular component, library or interaction pattern.
 
 ## Current product decisions
 
+- The public landing leads with Odyshell as agent-native infrastructure. Agents are the primary
+  operators; Human supervision is presented as an optional policy exception and audit surface.
+- The public landing uses restrained neutral surfaces, medium-weight typography, compact radii and
+  generous page gutters. Its signature product visual is a real Task and Command crossing Server
+  and Local Policy, not decorative illustration.
+- Do not publish unvalidated pricing or make the dashboard look like the primary runtime. Public
+  copy names only the Linux, Task, Command, MCP, HTTP, Cloud and self-hosted behavior available in
+  the current release.
 - Machine enrollment gets a dedicated, uncluttered view. The one-time command
   must remain fully visible and must not be clipped by an overlay.
 - Short creation flows preserve context and remain comfortable at narrow
