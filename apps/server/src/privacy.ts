@@ -2,7 +2,7 @@ const SECOND = 1_000;
 const DAY = 24 * 60 * 60 * SECOND;
 
 export type DataRetentionPolicy = {
-  operationDataMilliseconds: number;
+  transientDataMilliseconds: number;
   auditMilliseconds: number;
 };
 
@@ -28,9 +28,9 @@ function integerSetting(
 export function dataRetentionPolicy(
   environment: NodeJS.ProcessEnv,
 ): DataRetentionPolicy {
-  const operationDataSeconds = integerSetting(
+  const transientDataSeconds = integerSetting(
     environment,
-    "ODYSHELL_OPERATION_RETENTION_SECONDS",
+    "ODYSHELL_TRANSIENT_RETENTION_SECONDS",
     60 * 60,
     60,
     7 * 24 * 60 * 60,
@@ -43,7 +43,7 @@ export function dataRetentionPolicy(
     3_650,
   );
   return {
-    operationDataMilliseconds: operationDataSeconds * SECOND,
+    transientDataMilliseconds: transientDataSeconds * SECOND,
     auditMilliseconds: auditDays * DAY,
   };
 }

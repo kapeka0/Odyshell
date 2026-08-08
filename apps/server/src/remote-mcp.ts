@@ -11,7 +11,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type {
   Database,
   McpInstallationRecord,
-  McpWorkspaceRecord,
+  McpOrganizationRecord,
 } from "./control-database.js";
 
 type RemoteMcpConfiguration = {
@@ -200,10 +200,9 @@ export function registerRemoteMcp(
   app.get("/.well-known/oauth-protected-resource", async () => metadata);
   app.get("/.well-known/oauth-protected-resource/mcp", async () => metadata);
 
-  for (const url of ["/mcp", "/mcp/:workspaceId"]) {
-    app.route<{ Params: { workspaceId?: string } }>({
+  app.route({
       method: ["GET", "POST", "DELETE"],
-      url,
+      url: "/mcp",
       async handler(request, reply) {
         if (
           !remoteMcpOriginAllowed(
@@ -222,20 +221,19 @@ export function registerRemoteMcp(
           );
           return reply.code(401).send({ error: "oauth_token_required" });
         }
-        const workspace = await resolveWorkspace(
+        const organization = await resolveOrganization(
           dependencies.database,
-          request.params.workspaceId,
           identity.organizationId,
         );
-        if (!workspace) {
-          return reply.code(403).send({ error: "workspace_access_denied" });
+        if (!organization) {
+          return reply.code(403).send({ error: "organization_access_denied" });
         }
         const agentName = remoteMcpAgentName(
           await oauth.applicationName(identity.clientId),
           request.headers["user-agent"],
         );
         const installation = await dependencies.database.ensureMcpInstallation({
-          workspaceId: workspace.workspaceId,
+          organizationId: organization.organizationId,
           userId: identity.userId,
           oauthClientId: identity.clientId,
           agentName,
@@ -268,22 +266,14 @@ export function registerRemoteMcp(
         return reply.send(Buffer.from(await response.arrayBuffer()));
       },
     });
-  }
 }
 
-async function resolveWorkspace(
+async function resolveOrganization(
   database: Database,
-  requestedWorkspaceId: string | undefined,
   organizationId: string,
-): Promise<McpWorkspaceRecord | null> {
-  if (requestedWorkspaceId) {
-    const workspace = await database.mcpWorkspace(requestedWorkspaceId);
-    return workspace && workspace.organizationExternalId === organizationId
-      ? workspace
-      : null;
-  }
-  const workspaces = await database.mcpWorkspacesForOrganizations([organizationId]);
-  return workspaces.length === 1 ? workspaces[0]! : null;
+): Promise<McpOrganizationRecord | null> {
+  const organizations = await database.mcpOrganizations([organizationId]);
+  return organizations.length === 1 ? organizations[0]! : null;
 }
 
 function fastifyWebRequest(request: FastifyRequest, resource: URL): Request {
@@ -317,7 +307,7 @@ function isMcpInstallation(value: unknown): value is McpInstallationRecord {
     typeof value === "object" &&
     value !== null &&
     typeof (value as { id?: unknown }).id === "string" &&
-    typeof (value as { workspaceId?: unknown }).workspaceId === "string" &&
+    typeof (value as { organizationId?: unknown }).organizationId === "string" &&
     typeof (value as { agentId?: unknown }).agentId === "string"
   );
 }

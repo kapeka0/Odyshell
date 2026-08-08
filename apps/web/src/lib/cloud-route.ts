@@ -29,7 +29,6 @@ export async function requireCloudRouteIdentity(): Promise<CloudRouteIdentity> {
   return {
     identity: {
       userId: humanIdentity.user.id,
-      userName: humanIdentity.user.name,
       role: humanIdentity.role,
       organization: {
         externalId: humanIdentity.organization.id,

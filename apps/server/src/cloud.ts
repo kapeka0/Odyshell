@@ -8,41 +8,36 @@ import { performance } from "node:perf_hooks";
 import { z } from "zod";
 
 export const cloudPlanIds = ["free", "team", "scale"] as const;
-export const workspaceLoggingLevels = [
+export const organizationLoggingLevels = [
   "privacy-minimal",
   "operational",
   "diagnostic",
 ] as const;
-export type WorkspaceLoggingLevel = (typeof workspaceLoggingLevels)[number];
+export type OrganizationLoggingLevel = (typeof organizationLoggingLevels)[number];
 export type CloudPlanId = (typeof cloudPlanIds)[number];
 
 export type PlanEntitlements = {
   machineLimit: number;
-  workspaceLimit: number;
   activeAgentLimit: number;
 };
 
 export const planEntitlements: Record<CloudPlanId, PlanEntitlements> = {
   free: {
     machineLimit: 2,
-    workspaceLimit: 1,
     activeAgentLimit: 3,
   },
   team: {
     machineLimit: 10,
-    workspaceLimit: 3,
     activeAgentLimit: 25,
   },
   scale: {
     machineLimit: 50,
-    workspaceLimit: 10,
     activeAgentLimit: 100,
   },
 };
 
 export const cloudIdentitySchema = z.object({
   userId: z.string().min(1).max(256),
-  userName: z.string().trim().min(1).max(128).optional(),
   role: z.enum(["owner", "admin", "supervisor"]),
   organization: z.object({
     externalId: z.string().min(1).max(256),
@@ -66,7 +61,7 @@ export const cloudUserSettingsSchema = cloudIdentitySchema.extend({
   ),
 }).strict();
 
-export const cloudWorkspaceSettingsSchema = z.discriminatedUnion("section", [
+export const cloudOrganizationSettingsSchema = z.discriminatedUnion("section", [
   cloudIdentitySchema.extend({
     section: z.literal("details"),
     name: z.string().trim().min(1).max(96),
@@ -74,7 +69,7 @@ export const cloudWorkspaceSettingsSchema = z.discriminatedUnion("section", [
   }).strict(),
   cloudIdentitySchema.extend({
     section: z.literal("logging"),
-    loggingLevel: z.enum(workspaceLoggingLevels),
+    loggingLevel: z.enum(organizationLoggingLevels),
   }).strict(),
 ]);
 
@@ -95,7 +90,7 @@ export const deleteCloudAgentSchema = cloudIdentitySchema.extend({
 });
 
 const cloudLiveClaimsSchema = z.object({
-  workspaceId: z.string().min(1).max(128),
+  organizationId: z.string().min(1).max(128),
   userId: z.string().min(1).max(256),
   nonce: z.string().regex(/^[A-Za-z0-9_-]{16,64}$/u),
   expiresAt: z.number().int().positive(),
@@ -186,38 +181,38 @@ export class CloudLiveTokenReplayGuard {
 }
 
 export class ScopedConcurrencyLimiter {
-  private readonly workspaces = new Map<string, number>();
+  private readonly organizations = new Map<string, number>();
   private readonly users = new Map<string, number>();
 
   constructor(
-    private readonly workspaceLimit: number,
+    private readonly organizationLimit: number,
     private readonly userLimit: number,
   ) {}
 
-  acquire(workspaceId: string, userId: string): boolean {
-    const userKey = `${workspaceId}:${userId}`;
-    const workspaceCount = this.workspaces.get(workspaceId) ?? 0;
+  acquire(organizationId: string, userId: string): boolean {
+    const userKey = `${organizationId}:${userId}`;
+    const organizationCount = this.organizations.get(organizationId) ?? 0;
     const userCount = this.users.get(userKey) ?? 0;
     if (
-      workspaceCount >= this.workspaceLimit ||
+      organizationCount >= this.organizationLimit ||
       userCount >= this.userLimit
     ) {
       return false;
     }
-    this.workspaces.set(workspaceId, workspaceCount + 1);
+    this.organizations.set(organizationId, organizationCount + 1);
     this.users.set(userKey, userCount + 1);
     return true;
   }
 
-  release(workspaceId: string, userId: string): void {
-    const userKey = `${workspaceId}:${userId}`;
+  release(organizationId: string, userId: string): void {
+    const userKey = `${organizationId}:${userId}`;
     if (!this.users.has(userKey)) return;
     decrementOrDelete(this.users, userKey);
-    decrementOrDelete(this.workspaces, workspaceId);
+    decrementOrDelete(this.organizations, organizationId);
   }
 
-  activeForWorkspace(workspaceId: string): number {
-    return this.workspaces.get(workspaceId) ?? 0;
+  activeForOrganization(organizationId: string): number {
+    return this.organizations.get(organizationId) ?? 0;
   }
 }
 
@@ -430,16 +425,16 @@ function monotonicMilliseconds(): number {
 }
 
 export class ScopedRateLimiter {
-  private readonly workspaceLimiter: FixedWindowRateLimiter;
+  private readonly organizationLimiter: FixedWindowRateLimiter;
   private readonly userLimiter: FixedWindowRateLimiter;
 
   constructor(
-    workspaceLimit: number,
+    organizationLimit: number,
     userLimit: number,
     windowMilliseconds: number,
   ) {
-    this.workspaceLimiter = new FixedWindowRateLimiter(
-      workspaceLimit,
+    this.organizationLimiter = new FixedWindowRateLimiter(
+      organizationLimit,
       windowMilliseconds,
     );
     this.userLimiter = new FixedWindowRateLimiter(
@@ -449,19 +444,19 @@ export class ScopedRateLimiter {
   }
 
   allow(
-    workspaceId: string,
+    organizationId: string,
     userId: string,
     now = monotonicMilliseconds(),
   ): boolean {
-    const userKey = `${workspaceId}:${userId}`;
+    const userKey = `${organizationId}:${userId}`;
     if (
       !this.userLimiter.canAllow(userKey, now) ||
-      !this.workspaceLimiter.canAllow(workspaceId, now)
+      !this.organizationLimiter.canAllow(organizationId, now)
     ) {
       return false;
     }
     this.userLimiter.consume(userKey, now);
-    this.workspaceLimiter.consume(workspaceId, now);
+    this.organizationLimiter.consume(organizationId, now);
     return true;
   }
 }

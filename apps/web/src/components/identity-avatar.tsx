@@ -72,7 +72,7 @@ export function UserIdentityAvatar({
   );
 }
 
-export function WorkspaceIdentityAvatar({
+export function OrganizationIdentityAvatar({
   identity,
   name,
   className,
@@ -85,7 +85,7 @@ export function WorkspaceIdentityAvatar({
     <Avatar className={cn("rounded-lg", className)}>
       <AvatarImage
         src={facehashAvatarPath(identity)}
-        alt={`${name} workspace`}
+        alt={`${name} organization`}
         referrerPolicy="no-referrer"
         className="rounded-lg"
       />

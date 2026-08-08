@@ -45,7 +45,7 @@ export function AppShell({
           className="min-h-0 overflow-hidden"
         >
           <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b bg-background/92 px-4 backdrop-blur-md md:px-6">
-            <SidebarTrigger aria-label="Toggle workspace navigation" />
+            <SidebarTrigger aria-label="Toggle organization navigation" />
             <div className="ml-auto flex items-center gap-1">
               <QuickActions />
               <NotificationsSheet />

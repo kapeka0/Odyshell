@@ -7,7 +7,7 @@ import {
   cloudIdentitySchema,
   cloudLiveOriginDecision,
   cloudUserSettingsSchema,
-  cloudWorkspaceSettingsSchema,
+  cloudOrganizationSettingsSchema,
   createCloudLiveToken,
   deleteCloudAgentSchema,
   entitlementsFor,
@@ -74,7 +74,6 @@ export function registerControlHttp(
         externalId: parsed.data.organization.externalId,
         slug: parsed.data.organization.slug,
         name: parsed.data.organization.name,
-        ...(parsed.data.userName ? { userName: parsed.data.userName } : {}),
       });
       const [
         machines,
@@ -87,14 +86,14 @@ export function registerControlHttp(
         notifications,
         userPreferences,
       ] = await Promise.all([
-        database.listMachines(context.workspace.id),
-        database.workspacePlan(context.workspace.id),
-        database.listWorkspaceAgents(context.workspace.id),
-        database.listRunnableAgentIds(context.workspace.id),
+        database.listMachines(context.organization.id),
+        database.organizationPlan(context.organization.id),
+        database.listOrganizationAgents(context.organization.id),
+        database.listRunnableAgentIds(context.organization.id),
         taskDatabase.listTasks(parsed.data.organization.externalId, 100),
         taskDatabase.listAuditEvents(parsed.data.organization.externalId, 100),
-        database.listAudit(context.workspace.id, 50),
-        database.listNotifications(context.workspace.id, parsed.data.userId),
+        database.listAudit(context.organization.id, 50),
+        database.listNotifications(context.organization.id, parsed.data.userId),
         database.userPreferences(parsed.data.userId),
       ]);
       const onlineMachines = machines.filter((machine) =>
@@ -103,7 +102,6 @@ export function registerControlHttp(
       const plan = entitlementsFor(context.organization.plan);
       return {
         organization: context.organization,
-        workspace: context.workspace,
         userPreferences: { timeZone: userPreferences.timeZone },
         plan: {
           id: context.organization.plan,
@@ -114,7 +112,6 @@ export function registerControlHttp(
         },
         usage: {
           machines: usage?.activeMachines ?? machines.length,
-          workspaces: 1,
           activeAgents: usage?.activeAgents ?? 0,
         },
         connections: {
@@ -190,33 +187,33 @@ export function registerControlHttp(
   );
 
   app.post(
-    "/v1/internal/cloud/workspace/settings/update",
+    "/v1/internal/cloud/organization/settings/update",
     { preHandler },
     async (request, reply) => {
-      const parsed = cloudWorkspaceSettingsSchema.safeParse(request.body);
+      const parsed = cloudOrganizationSettingsSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: "invalid_request" });
       }
       const context = await ensureContext(database, parsed.data);
-      const workspace = await database.updateWorkspaceSettings(
+      const organization = await database.updateOrganizationSettings(
         parsed.data.section === "details"
           ? {
-              workspaceId: context.workspace.id,
+              organizationId: context.organization.id,
               section: "details",
               name: parsed.data.name,
               avatarSeed: parsed.data.avatarSeed,
             }
           : {
-              workspaceId: context.workspace.id,
+              organizationId: context.organization.id,
               section: "logging",
               loggingLevel: parsed.data.loggingLevel,
             },
       );
-      if (!workspace) {
+      if (!organization) {
         return reply.code(404).send({ error: "organization_not_found" });
       }
-      gateway.notifyWorkspace(workspace.id);
-      return { workspace };
+      gateway.notifyOrganization(organization.id);
+      return { organization };
     },
   );
 
@@ -230,7 +227,7 @@ export function registerControlHttp(
       }
       const context = await ensureContext(database, parsed.data);
       const marked = await database.markNotificationRead(
-        context.workspace.id,
+        context.organization.id,
         parsed.data.userId,
         parsed.data.notificationId,
         parsed.data.read,
@@ -238,7 +235,7 @@ export function registerControlHttp(
       if (!marked) {
         return reply.code(404).send({ error: "notification_not_found" });
       }
-      gateway.notifyWorkspace(context.workspace.id);
+      gateway.notifyOrganization(context.organization.id);
       return { read: parsed.data.read };
     },
   );
@@ -253,10 +250,10 @@ export function registerControlHttp(
       }
       const context = await ensureContext(database, parsed.data);
       const marked = await database.markAllNotificationsRead(
-        context.workspace.id,
+        context.organization.id,
         parsed.data.userId,
       );
-      gateway.notifyWorkspace(context.workspace.id);
+      gateway.notifyOrganization(context.organization.id);
       return { read: true, marked };
     },
   );
@@ -273,12 +270,12 @@ export function registerControlHttp(
         });
       }
       const context = await ensureContext(database, parsed.data);
-      if (!enrollmentLimiter.allow(context.workspace.id, parsed.data.userId)) {
+      if (!enrollmentLimiter.allow(context.organization.id, parsed.data.userId)) {
         return reply.code(429).send({
           error: "enrollment_issuance_rate_limited",
         });
       }
-      const usage = await database.workspacePlan(context.workspace.id);
+      const usage = await database.organizationPlan(context.organization.id);
       const entitlement = entitlementsFor(context.organization.plan);
       if (
         usage?.cloudManaged &&
@@ -295,20 +292,20 @@ export function registerControlHttp(
       const token = createEnrollmentToken();
       const expiresAt = Date.now() + 10 * 60_000;
       await database.createEnrollmentToken(
-        context.workspace.id,
+        context.organization.id,
         hashToken(token),
         expiresAt,
         parsed.data.userId,
       );
       await audit(
         database,
-        context.workspace.id,
+        context.organization.id,
         parsed.data.userId,
         "enrollment_token.created",
         "enrollment_token",
         hashToken(token),
       );
-      gateway.notifyWorkspace(context.workspace.id);
+      gateway.notifyOrganization(context.organization.id);
       return reply.code(201).send({
         token,
         expiresAt: isoTimestamp(expiresAt),
@@ -329,7 +326,7 @@ export function registerControlHttp(
       }
       const context = await ensureContext(database, parsed.data);
       const machine = await database.updateMachineDetails({
-        workspaceId: context.workspace.id,
+        organizationId: context.organization.id,
         machineId: parsed.data.machineId,
         name: parsed.data.name,
         description: parsed.data.description,
@@ -339,13 +336,13 @@ export function registerControlHttp(
       }
       await audit(
         database,
-        context.workspace.id,
+        context.organization.id,
         parsed.data.userId,
         "machine.updated",
         "machine",
         machine.id,
       );
-      gateway.notifyWorkspace(context.workspace.id);
+      gateway.notifyOrganization(context.organization.id);
       return {
         id: machine.id,
         name: machine.name,
@@ -363,7 +360,7 @@ export function registerControlHttp(
         return reply.code(400).send({ error: "invalid_request" });
       }
       const context = await ensureContext(database, parsed.data);
-      const machine = (await database.listMachines(context.workspace.id)).find(
+      const machine = (await database.listMachines(context.organization.id)).find(
         (candidate) => candidate.id === parsed.data.machineId,
       );
       if (!machine) {
@@ -376,7 +373,7 @@ export function registerControlHttp(
       closeRevokedTasks(gateway, tasks, "machine_revoked");
       const disconnected = gateway.disconnect(parsed.data.machineId);
       const revoked = await database.revokeMachine(
-        context.workspace.id,
+        context.organization.id,
         parsed.data.machineId,
       );
       if (!revoked) {
@@ -384,14 +381,14 @@ export function registerControlHttp(
       }
       await audit(
         database,
-        context.workspace.id,
+        context.organization.id,
         parsed.data.userId,
         "machine.revoked",
         "machine",
         parsed.data.machineId,
         { revokedTasks: tasks.length, disconnected },
       );
-      gateway.notifyWorkspace(context.workspace.id);
+      gateway.notifyOrganization(context.organization.id);
       return {
         id: revoked.id,
         name: revoked.name,
@@ -412,7 +409,7 @@ export function registerControlHttp(
         return reply.code(400).send({ error: "invalid_request" });
       }
       const context = await ensureContext(database, parsed.data);
-      const agents = await database.listWorkspaceAgents(context.workspace.id);
+      const agents = await database.listOrganizationAgents(context.organization.id);
       if (!agents.some((agent) => agent.id === parsed.data.agentId)) {
         return reply.code(404).send({ error: "agent_not_found" });
       }
@@ -426,8 +423,8 @@ export function registerControlHttp(
         revokedTasks += tasks.length;
         closeRevokedTasks(gateway, tasks, "agent_revoked");
       }
-      const deleted = await database.deleteWorkspaceAgent(
-        context.workspace.id,
+      const deleted = await database.deleteOrganizationAgent(
+        context.organization.id,
         parsed.data.agentId,
       );
       if (!deleted) {
@@ -435,7 +432,7 @@ export function registerControlHttp(
       }
       await audit(
         database,
-        context.workspace.id,
+        context.organization.id,
         parsed.data.userId,
         "agent.deleted",
         "agent",
@@ -443,7 +440,7 @@ export function registerControlHttp(
         { deletedAgents: deleted.agentIds.length, revokedTasks },
       );
       await database.createNotification({
-        workspaceId: context.workspace.id,
+        organizationId: context.organization.id,
         userId: parsed.data.userId,
         kind: "agent.revoked",
         title: "Agent removed",
@@ -451,7 +448,7 @@ export function registerControlHttp(
         href: "/dashboard/agents",
         resourceId: parsed.data.agentId,
       });
-      gateway.notifyWorkspace(context.workspace.id);
+      gateway.notifyOrganization(context.organization.id);
       return {
         deleted: true,
         deletedAgents: deleted.agentIds.length,
@@ -469,11 +466,11 @@ export function registerControlHttp(
         return reply.code(400).send({ error: "invalid_request" });
       }
       const context = await ensureContext(database, parsed.data);
-      if (!pingLimiter.allow(context.workspace.id, parsed.data.userId)) {
+      if (!pingLimiter.allow(context.organization.id, parsed.data.userId)) {
         return reply.code(429).send({ error: "machine_ping_rate_limited" });
       }
       if (
-        !await database.activeMachinesExist(context.workspace.id, [
+        !await database.activeMachinesExist(context.organization.id, [
           parsed.data.machineId,
         ])
       ) {
@@ -482,7 +479,7 @@ export function registerControlHttp(
       if (!gateway.isOnline(parsed.data.machineId)) {
         return reply.code(409).send({ error: "machine_offline" });
       }
-      if (!pingConcurrency.acquire(context.workspace.id, parsed.data.userId)) {
+      if (!pingConcurrency.acquire(context.organization.id, parsed.data.userId)) {
         return reply.code(429).send({ error: "machine_ping_limit_reached" });
       }
       try {
@@ -491,7 +488,7 @@ export function registerControlHttp(
       } catch {
         return reply.code(504).send({ error: "machine_ping_timeout" });
       } finally {
-        pingConcurrency.release(context.workspace.id, parsed.data.userId);
+        pingConcurrency.release(context.organization.id, parsed.data.userId);
       }
     },
   );
@@ -508,14 +505,14 @@ export function registerControlHttp(
         return reply.code(503).send({ error: "cloud_authentication_disabled" });
       }
       const context = await ensureContext(database, parsed.data);
-      if (!liveTokenLimiter.allow(context.workspace.id, parsed.data.userId)) {
+      if (!liveTokenLimiter.allow(context.organization.id, parsed.data.userId)) {
         return reply.code(429).send({ error: "live_token_rate_limited" });
       }
       const now = Date.now();
       return {
         token: createCloudLiveToken(
           webKey,
-          { workspaceId: context.workspace.id, userId: parsed.data.userId },
+          { organizationId: context.organization.id, userId: parsed.data.userId },
           now,
           60_000,
         ),
@@ -544,11 +541,11 @@ export function registerControlHttp(
     if (!liveReplayGuard.consume(request.body, claims.expiresAt)) {
       return reply.code(401).send({ error: "live_token_replayed" });
     }
-    if (!liveStreams.acquire(claims.workspaceId, claims.userId)) {
+    if (!liveStreams.acquire(claims.organizationId, claims.userId)) {
       return reply.code(429).send({ error: "live_stream_limit_reached" });
     }
 
-    const eventName = `workspace:${claims.workspaceId}`;
+    const eventName = `organization:${claims.organizationId}`;
     const emitRefresh = (): void => {
       reply.raw.write(
         `event: refresh\ndata: ${JSON.stringify({ at: Date.now() })}\n\n`,
@@ -563,7 +560,7 @@ export function registerControlHttp(
       if (heartbeat) clearInterval(heartbeat);
       if (expiry) clearTimeout(expiry);
       gateway.events.off(eventName, emitRefresh);
-      liveStreams.release(claims.workspaceId, claims.userId);
+      liveStreams.release(claims.organizationId, claims.userId);
       if (!reply.raw.writableEnded) reply.raw.end();
     };
     try {
@@ -621,7 +618,6 @@ async function ensureContext(
     externalId: identity.organization.externalId,
     slug: identity.organization.slug,
     name: identity.organization.name,
-    ...(identity.userName ? { userName: identity.userName } : {}),
   });
 }
 

@@ -97,7 +97,7 @@ describe("remote MCP security boundary", () => {
     const app = remoteMcpApp({ authenticate });
     const response = await app.inject({
       method: "POST",
-      url: "/mcp/workspace-id",
+      url: "/mcp",
       headers: { origin: "https://odyshell.com.evil.test" },
       payload: initializeRequest(),
     });
@@ -110,7 +110,7 @@ describe("remote MCP security boundary", () => {
     const app = remoteMcpApp({ authenticate: vi.fn(async () => null) });
     const response = await app.inject({
       method: "POST",
-      url: "/mcp/workspace-id",
+      url: "/mcp",
       payload: initializeRequest(),
     });
     expect(response.statusCode).toBe(401);
@@ -125,7 +125,7 @@ describe("remote MCP security boundary", () => {
     const request = (id: number, method: string, params: Record<string, unknown>) =>
       app.inject({
         method: "POST",
-        url: "/mcp/workspace-id",
+        url: "/mcp",
         headers: {
           accept: "application/json, text/event-stream",
           authorization: "Bearer safe-oauth-token",
@@ -168,26 +168,22 @@ describe("remote MCP security boundary", () => {
     expect(machines).toHaveBeenCalledOnce();
   });
 
-  it("binds workspace access to the Organization selected in OAuth", async () => {
+  it("binds access to the Organization selected in OAuth", async () => {
     const ensureMcpInstallation = vi.fn();
     const app = remoteMcpApp({
       database: {
-        mcpWorkspace: vi.fn(async () => ({
-          workspaceId: "private-workspace",
-          workspaceName: "Private",
-          organizationExternalId: "org-private",
-        })),
+        mcpOrganizations: vi.fn(async () => []),
         ensureMcpInstallation,
       },
     });
     const response = await app.inject({
       method: "POST",
-      url: "/mcp/private-workspace",
+      url: "/mcp",
       headers: { authorization: "Bearer safe-oauth-token" },
       payload: initializeRequest(),
     });
     expect(response.statusCode).toBe(403);
-    expect(response.json()).toEqual({ error: "workspace_access_denied" });
+    expect(response.json()).toEqual({ error: "organization_access_denied" });
     expect(ensureMcpInstallation).not.toHaveBeenCalled();
   });
 
@@ -197,7 +193,7 @@ describe("remote MCP security boundary", () => {
     });
     const revokedResponse = await revoked.inject({
       method: "POST",
-      url: "/mcp/workspace-id",
+      url: "/mcp",
       headers: { authorization: "Bearer safe-oauth-token" },
       payload: initializeRequest(),
     });
@@ -215,7 +211,7 @@ describe("remote MCP security boundary", () => {
     });
     const fullResponse = await full.inject({
       method: "POST",
-      url: "/mcp/workspace-id",
+      url: "/mcp",
       headers: { authorization: "Bearer safe-oauth-token" },
       payload: initializeRequest(),
     });
@@ -235,14 +231,13 @@ function remoteMcpApp(overrides: {
   const app = Fastify();
   apps.push(app);
   const database = {
-    mcpWorkspace: vi.fn(async () => ({
-      workspaceId: "workspace-id",
-      workspaceName: "Workspace",
+    mcpOrganizations: vi.fn(async () => [{
+      organizationId: "organization-id",
+      organizationName: "Organization",
       organizationExternalId: "org-member",
-    })),
-    mcpWorkspacesForOrganizations: vi.fn(async () => []),
+    }]),
     ensureMcpInstallation: vi.fn(async () => ({
-      workspaceId: "workspace-id",
+      organizationId: "organization-id",
       id: "installation-id",
       userId: "user-id",
       oauthClientId: "client-id",

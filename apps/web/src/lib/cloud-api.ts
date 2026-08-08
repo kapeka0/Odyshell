@@ -7,7 +7,6 @@ export { DEFAULT_CLOUD_SERVER_URL };
 
 const cloudIdentitySchema = z.object({
   userId: z.string().min(1),
-  userName: z.string().trim().min(1).max(128).optional(),
   role: z.enum(["owner", "admin", "supervisor"]),
   organization: z.object({
     externalId: z.string().min(1),
@@ -113,12 +112,6 @@ export type CloudContext = {
     slug: string;
     name: string;
     plan: "free" | "team" | "scale";
-  };
-  workspace: {
-    id: string;
-    organizationId: string;
-    slug: string;
-    name: string;
     avatarSeed: string;
   };
   userPreferences: {
@@ -127,13 +120,11 @@ export type CloudContext = {
   plan: {
     id: "free" | "team" | "scale";
     machineLimit: number;
-    workspaceLimit: number;
     activeAgentLimit: number;
     controlEventRetentionDays: number;
   };
   usage: {
     machines: number;
-    workspaces: number;
     activeAgents: number;
   };
   connections: {

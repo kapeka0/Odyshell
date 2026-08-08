@@ -10,7 +10,7 @@ export default async function DashboardLayout({
 }) {
   const state = await dashboardState();
   const providerKey =
-    state.status === "ready" ? state.context.workspace.id : state.status;
+    state.status === "ready" ? state.context.organization.id : state.status;
 
   return (
     <DashboardProvider

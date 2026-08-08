@@ -319,7 +319,7 @@ function activityRows(
     const actor = actorIdentity(event.principalId, agentsById, membersById);
     const target = targetLabel(event, machineNames, agentNames);
     const label = actionLabel(event.action);
-    const type = event.action.split(".")[0] ?? "workspace";
+    const type = event.action.split(".")[0] ?? "organization";
     return {
       ...event,
       actor,
@@ -374,7 +374,7 @@ function ActivityActorIdentity({ actor }: { actor: ActivityActor }) {
 function targetLabel(
   event: ControlEvent,
   machineNames: Map<string, string>,
-  accessNames: Map<string, string>,
+  agentNames: Map<string, string>,
 ): string {
   if (event.metadata.machineId) {
     return (
@@ -385,18 +385,17 @@ function targetLabel(
   if (event.targetType === "machine") {
     return machineNames.get(event.targetId) ?? "Removed machine";
   }
-  if (event.targetType === "agent_token") {
-    return accessNames.get(event.targetId) ?? "Removed agent";
+  if (event.targetType === "agent") {
+    return agentNames.get(event.targetId) ?? "Removed Agent";
   }
   if (event.targetType === "task") return `Task ${event.targetId}`;
   if (event.targetType === "command") return `Command ${event.targetId}`;
-  return "Workspace";
+  return "Organization";
 }
 
 function actionLabel(action: string): string {
   const labels: Record<string, string> = {
-    "agent_token.created": "Agent created",
-    "agent_token.revoked": "Agent revoked",
+    "agent.deleted": "Agent removed",
     "machine.enrolled": "Machine enrolled",
     "machine.revoked": "Machine removed",
     "machine.ping": "Machine reached",

@@ -14,7 +14,7 @@ type AuthState = {
   connectionId: string;
   nonce: string;
   machineId?: string;
-  workspaceId?: string;
+  controlOrganizationId?: string;
   organizationId?: string;
   authenticated: boolean;
   lastHeartbeatPersistedAt?: number;
@@ -23,7 +23,7 @@ type AuthState = {
 export type ClientGatewayTaskHooks = {
   authenticated(input: {
     machineId: string;
-    workspaceId: string;
+    controlOrganizationId: string;
     taskProfile: NonNullable<
       Extract<ClientToServerMessage, { type: "authenticate" }>["taskProfile"]
     >;
@@ -125,7 +125,9 @@ export class ClientGateway {
               state.organizationId,
             );
           }
-          if (state.workspaceId) this.notifyWorkspace(state.workspaceId);
+          if (state.controlOrganizationId) {
+            this.notifyOrganization(state.controlOrganizationId);
+          }
         });
       });
     });
@@ -150,8 +152,8 @@ export class ClientGateway {
     return true;
   }
 
-  notifyWorkspace(workspaceId: string): void {
-    this.events.emit(`workspace:${workspaceId}`);
+  notifyOrganization(organizationId: string): void {
+    this.events.emit(`organization:${organizationId}`);
   }
 
   async ping(machineId: string, timeoutMilliseconds = 5_000): Promise<number> {
@@ -203,7 +205,7 @@ export class ClientGateway {
     if ("machineId" in message && message.machineId !== state.machineId) {
       throw new Error("Machine identity mismatch");
     }
-    if (!state.machineId || !state.workspaceId || !state.organizationId) {
+    if (!state.machineId || !state.controlOrganizationId || !state.organizationId) {
       throw new Error("Authenticated Machine has no Task authority context");
     }
 
@@ -230,7 +232,7 @@ export class ClientGateway {
           machineId: state.machineId,
           organizationId: state.organizationId,
         });
-        this.notifyWorkspace(state.workspaceId);
+        this.notifyOrganization(state.controlOrganizationId);
         return;
       default:
         throw new Error(`Unsupported Machine message: ${message.type}`);
@@ -262,11 +264,11 @@ export class ClientGateway {
         message: `This Server requires protocol ${PROTOCOL_VERSION}; the Client reported ${message.protocolVersion}. Update the Odyshell Client and reconnect.`,
       });
       socket.close(4005, "client_upgrade_required");
-      this.notifyWorkspace(machine.workspaceId);
+      this.notifyOrganization(machine.organizationId);
       return;
     }
     state.machineId = message.machineId;
-    state.workspaceId = machine.workspaceId;
+    state.controlOrganizationId = machine.organizationId;
     state.organizationId = message.taskProfile.localPolicy.organizationId;
     await this.runMachineLifecycle(message.machineId, async () => {
       if (!socketReadyForAuthentication(socket)) return;
@@ -274,7 +276,7 @@ export class ClientGateway {
       if (
         !current ||
         current.publicKey !== machine.publicKey ||
-        current.workspaceId !== machine.workspaceId
+        current.organizationId !== machine.organizationId
       ) {
         throw new Error("Machine identity changed during authentication");
       }
@@ -284,7 +286,7 @@ export class ClientGateway {
       }
       await this.taskHooks.authenticated({
         machineId: message.machineId,
-        workspaceId: machine.workspaceId,
+        controlOrganizationId: machine.organizationId,
         taskProfile: message.taskProfile,
       });
       const previous = this.connections.get(message.machineId);
@@ -313,7 +315,7 @@ export class ClientGateway {
         this.sendSocket(socket, taskMessage);
       }
       this.events.emit("machine.online", message.machineId);
-      this.notifyWorkspace(machine.workspaceId);
+      this.notifyOrganization(machine.organizationId);
     });
   }
 }

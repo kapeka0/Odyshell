@@ -7,7 +7,6 @@ import { registerTaskSupervisionHttp } from "../apps/server/src/task-supervision
 const taskId = randomUUID();
 const identity = {
   userId: "human-a",
-  userName: "Supervisor",
   role: "supervisor" as const,
   organization: { externalId: "org-a", slug: "org-a", name: "Organization A" },
 };

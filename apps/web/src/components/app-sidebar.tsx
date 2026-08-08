@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { SidebarNav } from "@/components/sidebar-nav";
 import { SidebarUser } from "@/components/sidebar-user";
-import { SidebarOrganizationSwitcher } from "@/components/sidebar-workspace-switcher";
+import { SidebarOrganizationSwitcher } from "@/components/sidebar-organization-switcher";
 import {
   Sidebar,
   SidebarContent,
@@ -17,14 +17,14 @@ import {
   SidebarHeader,
 } from "@/components/ui/sidebar";
 
-const workspaceItems = [
+const organizationItems = [
   { label: "Machines", href: "/dashboard/machines", icon: CpuIcon },
   { label: "Agents", href: "/dashboard/agents", icon: BotIcon },
   { label: "Tasks", href: "/dashboard/tasks", icon: ListTodoIcon },
   { label: "Activity", href: "/dashboard/activity", icon: ActivityIcon },
 ] as const;
 
-const workspaceSettingsItems = [
+const organizationSettingsItems = [
   { label: "Settings", href: "/dashboard/settings", icon: SettingsIcon },
 ] as const;
 
@@ -35,8 +35,8 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
         <SidebarOrganizationSwitcher />
       </SidebarHeader>
       <SidebarContent className="overflow-hidden">
-        <SidebarNav label="Organization" items={workspaceItems} />
-        <SidebarNav label="Manage" items={workspaceSettingsItems} />
+        <SidebarNav label="Organization" items={organizationItems} />
+        <SidebarNav label="Manage" items={organizationSettingsItems} />
       </SidebarContent>
       <SidebarFooter>
         <SidebarUser />

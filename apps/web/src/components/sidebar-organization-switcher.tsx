@@ -8,7 +8,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useDashboard } from "@/components/dashboard-provider";
-import { WorkspaceIdentityAvatar } from "@/components/identity-avatar";
+import { OrganizationIdentityAvatar } from "@/components/identity-avatar";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -37,7 +37,7 @@ export function SidebarOrganizationSwitcher() {
   const activeOrganization = authClient.useActiveOrganization();
   const organizations = authClient.useListOrganizations();
   const [pendingId, setPendingId] = useState<string | null>(null);
-  const currentWorkspace = state.status === "ready" ? state.context.workspace : null;
+  const currentOrganization = state.status === "ready" ? state.context.organization : null;
 
   async function selectOrganization(organizationId: string) {
     if (organizationId === activeOrganization.data?.id) return;
@@ -83,16 +83,16 @@ export function SidebarOrganizationSwitcher() {
             }
           >
             {activeOrganization.data ? (
-              <WorkspaceIdentityAvatar
-                identity={currentWorkspace?.avatarSeed ?? activeOrganization.data.id}
-                name={currentWorkspace?.name ?? activeOrganization.data.name}
+              <OrganizationIdentityAvatar
+                identity={currentOrganization?.avatarSeed ?? activeOrganization.data.id}
+                name={currentOrganization?.name ?? activeOrganization.data.name}
               />
             ) : (
               <span className="size-8 rounded-lg bg-muted" aria-hidden="true" />
             )}
             <div className="grid min-w-0 flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
               <span className="truncate font-medium">
-                {currentWorkspace?.name ?? activeOrganization.data?.name ?? "Select organization"}
+                {currentOrganization?.name ?? activeOrganization.data?.name ?? "Select organization"}
               </span>
               {state.status === "ready" ? (
                 <Badge
@@ -124,7 +124,7 @@ export function SidebarOrganizationSwitcher() {
                   {pendingId === organization.id ? (
                     <Spinner />
                   ) : (
-                    <WorkspaceIdentityAvatar
+                    <OrganizationIdentityAvatar
                       identity={organization.id}
                       name={organization.name}
                       className="size-6"

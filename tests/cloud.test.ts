@@ -5,7 +5,7 @@ import {
   cloudLiveOriginDecision,
   cloudIdentitySchema,
   cloudUserSettingsSchema,
-  cloudWorkspaceSettingsSchema,
+  cloudOrganizationSettingsSchema,
   cloudWebRequestDecision,
   cloudWebKey,
   cloudWebUrl,
@@ -23,7 +23,6 @@ import { cloudRouteIdentityDecision } from "../apps/web/src/lib/cloud-route-poli
 
 const identity = {
   userId: "user_123",
-  userName: "Karim Ahmed",
   role: "owner" as const,
   organization: { externalId: "org_123", slug: "acme", name: "Acme" },
 };
@@ -38,17 +37,17 @@ describe("cloud control boundaries", () => {
       ...identity,
       timeZone: "Mars/Olympus",
     }).success).toBe(false);
-    expect(cloudWorkspaceSettingsSchema.safeParse({
+    expect(cloudOrganizationSettingsSchema.safeParse({
       ...identity,
       section: "details",
       name: "Production",
       avatarSeed: "seed",
     }).success).toBe(true);
-    expect(cloudWorkspaceSettingsSchema.safeParse({
+    expect(cloudOrganizationSettingsSchema.safeParse({
       ...identity,
       section: "logging",
       loggingLevel: "operational",
-      workspaceId: "attacker-workspace",
+      organizationId: "attacker-organization",
     }).success).toBe(false);
   });
 
@@ -76,10 +75,6 @@ describe("cloud control boundaries", () => {
       ...identity,
       organization: { ...identity.organization, slug: "../escape" },
     }).success).toBe(false);
-    expect(cloudIdentitySchema.safeParse({
-      ...identity,
-      userName: "x".repeat(129),
-    }).success).toBe(false);
   });
 
   it("binds Machine and Agent mutations to the authenticated identity", () => {
@@ -92,7 +87,7 @@ describe("cloud control boundaries", () => {
     expect(updateCloudMachineSchema.safeParse(machineUpdate).success).toBe(true);
     expect(updateCloudMachineSchema.safeParse({
       ...machineUpdate,
-      workspaceId: "attacker-workspace",
+      organizationId: "attacker-organization",
     }).success).toBe(false);
     expect(revokeCloudMachineSchema.safeParse({
       ...identity,
@@ -156,7 +151,6 @@ describe("cloud control boundaries", () => {
     expect(cloudWebUrl({ NODE_ENV: "production" }, false)).toBeUndefined();
     expect(entitlementsFor("unknown")).toEqual({
       machineLimit: 2,
-      workspaceLimit: 1,
       activeAgentLimit: 3,
     });
   });
@@ -165,13 +159,13 @@ describe("cloud control boundaries", () => {
     const secret = "a-secure-internal-web-key-with-32-characters";
     const token = createCloudLiveToken(
       secret,
-      { workspaceId: "workspace-a", userId: "user-a" },
+      { organizationId: "organization-a", userId: "user-a" },
       1_000,
       60_000,
     );
 
     expect(verifyCloudLiveToken(secret, token, 60_999)).toEqual({
-      workspaceId: "workspace-a",
+      organizationId: "organization-a",
       userId: "user-a",
       expiresAt: 61_000,
       nonce: expect.stringMatching(/^[A-Za-z0-9_-]+$/u),
@@ -217,7 +211,7 @@ describe("cloud control boundaries", () => {
     limiter.release("organization-a", "user-a");
     expect(limiter.acquire("organization-a", "user-c")).toBe(true);
     limiter.release("organization-a", "user-a");
-    expect(limiter.activeForWorkspace("organization-a")).toBe(2);
+    expect(limiter.activeForOrganization("organization-a")).toBe(2);
   });
 
   it("accepts live streams only from the exact configured web origin", () => {

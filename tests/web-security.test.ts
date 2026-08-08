@@ -18,15 +18,16 @@ describe("web security boundaries", () => {
     const identity = source("lib/identity.ts");
     const identityAuth = source("lib/identity-auth.ts");
     const authRoute = source("app/api/auth/[...all]/route.ts");
-    const workspaceRoute = source("app/api/workspace-settings/route.ts");
+    const organizationRoute = source("app/api/organization-settings/route.ts");
     const taskRoute = source("app/api/tasks/[taskId]/approve/route.ts");
 
     expect(identity).toContain("auth.api.getSession");
     expect(identity).toContain("auth.api.getActiveMember");
     expect(identityAuth).toContain("jwt: { issuer: configuration.baseUrl }");
     expect(authRoute).toContain("toNextJsHandler(auth)");
-    expect(workspaceRoute).toContain("requireCloudAdminRouteIdentity");
-    expect(workspaceRoute).not.toContain('z.literal("logging")');
+    expect(organizationRoute).toContain("requireCloudAdminRouteIdentity");
+    expect(organizationRoute).toContain("auth.api.updateOrganization");
+    expect(organizationRoute).not.toContain('z.literal("logging")');
     expect(taskRoute).toContain("requireCloudRouteIdentity");
     expect(taskRoute).not.toContain("role:");
   });

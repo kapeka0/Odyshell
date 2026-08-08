@@ -67,7 +67,6 @@ export async function currentCloudIdentity(): Promise<CloudIdentity | null> {
   if (!identity) return null;
   return {
     userId: identity.user.id,
-    userName: identity.user.name,
     role: identity.role,
     organization: {
       externalId: identity.organization.id,

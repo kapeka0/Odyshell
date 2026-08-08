@@ -60,12 +60,13 @@ Odyshell should remain:
 - agent-first and programmatic;
 - neutral across agent vendors and machine providers;
 - focused on real, existing hosts;
-- based on structured operations rather than an interactive terminal;
+- based on bounded Tasks and asynchronous shell Commands rather than an interactive terminal;
 - enforceable at the Client, outside the model;
 - integrable through canonical HTTP and remote OAuth MCP;
 
-Host Shell can remain an explicit high-risk capability, but Odyshell must disclose its same-user,
-unsandboxed boundary and must not claim to infer every side effect of an arbitrary command.
+Shell execution is an explicit high-risk boundary. Odyshell must disclose that Commands run as the
+Client's operating-system user, are not sandboxed, and may have persistent side effects after the
+Task ends.
 
 ## Commercial model
 
@@ -74,29 +75,28 @@ The pricing anchor should be managed capacity, not human seats.
 A managed subscription should include:
 
 - a number of active machines;
-- one or more isolated workspaces;
-- a generous operation allowance;
+- a number of active OAuth Agents;
+- a generous Task and Command allowance;
 - a defined control-event retention period;
 - a support level.
 
-Operations are useful as a fair-use and overage metric, but they should not be the main sales
-language. A filesystem stat and a long package upgrade have very different value despite both
-being one operation. Customers should primarily understand the bill as governed capacity over a
-predictable number of machines.
+Commands are useful as a fair-use and overage metric, but they should not be the main sales
+language. Customers should primarily understand the bill as governed capacity over a predictable
+number of Machines and Agents.
 
 ### Packaging hypothesis
 
 | Package | Intended customer | Commercial boundary |
 | --- | --- | --- |
 | Developer | Evaluation and personal prototypes | Few machines, short retention, community support |
-| Team | Agent startups and small platform teams | More machines and workspaces, team roles, webhooks |
+| Team | Agent startups and small platform teams | More Machines and Agents, team roles, webhooks |
 | Business | Production agent products | Approvals, longer retention, event integrations, priority support |
 | Enterprise | Regulated or large deployments | SSO/SCIM, SIEM, private deployment, SLA, data residency |
 
 Exact prices and allowances should be set only after design-partner usage is measured.
 
-Core safety must not be paywalled. Temporary grants, capability scopes, revocation, machine
-identity, workspace isolation, and basic content-minimal events belong in every edition.
+Core safety must not be paywalled. Temporary Tasks, Local Policy, revocation, Machine identity,
+Organization isolation, and useful audit events belong in every edition.
 Monetization comes from managed scale, collaboration, retention, integrations, deployment options,
 reliability, and support.
 

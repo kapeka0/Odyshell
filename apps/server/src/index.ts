@@ -69,11 +69,11 @@ async function requireWeb(
 
 let gateway: ClientGateway;
 gateway = new ClientGateway(database, {
-  async authenticated({ machineId, workspaceId, taskProfile }) {
-    const workspace = await database.mcpWorkspace(workspaceId);
+  async authenticated({ machineId, controlOrganizationId, taskProfile }) {
+    const organization = await database.mcpOrganization(controlOrganizationId);
     if (
-      !workspace ||
-      workspace.organizationExternalId !==
+      !organization ||
+      organization.organizationExternalId !==
         taskProfile.localPolicy.organizationId
     ) {
       throw new Error("Task Profile Organization does not own this Machine");
@@ -221,12 +221,12 @@ registerTaskHttp(app, {
   repository: taskDatabase,
   service: taskService,
   async principal(identity) {
-    const workspaces = await database.mcpWorkspacesForOrganizations([
+    const organizations = await database.mcpOrganizations([
       identity.organizationId,
     ]);
-    if (workspaces.length !== 1) return null;
+    if (organizations.length !== 1) return null;
     const installation = await database.ensureMcpInstallation({
-      workspaceId: workspaces[0]!.workspaceId,
+      organizationId: organizations[0]!.organizationId,
       userId: identity.subject,
       oauthClientId: identity.clientId,
       agentName: "Agent",
@@ -244,11 +244,13 @@ registerTaskHttp(app, {
 registerRemoteMcp(app, process.env, {
   database,
   async agenticRuntime(installation) {
-    const workspace = await database.mcpWorkspace(installation.workspaceId);
-    if (!workspace) throw new Error("Agent Organization is unavailable");
+    const organization = await database.mcpOrganization(
+      installation.organizationId,
+    );
+    if (!organization) throw new Error("Agent Organization is unavailable");
     return createTaskMcpRuntime(
       {
-        organizationId: workspace.organizationExternalId,
+        organizationId: organization.organizationExternalId,
         agentId: installation.agentId,
       },
       taskService,
@@ -315,7 +317,7 @@ app.post("/v1/clients/enroll", async (request, reply) => {
   }
   await audit(
     database,
-    enrolled.workspaceId,
+    enrolled.controlOrganizationId,
     "client-enrollment",
     "machine.enrolled",
     "machine",
@@ -324,7 +326,7 @@ app.post("/v1/clients/enroll", async (request, reply) => {
   );
   if (enrolled.createdByHumanId) {
     await database.createNotification({
-      workspaceId: enrolled.workspaceId,
+      organizationId: enrolled.controlOrganizationId,
       userId: enrolled.createdByHumanId,
       kind: "machine.enrolled",
       title: "Machine added",
@@ -332,11 +334,10 @@ app.post("/v1/clients/enroll", async (request, reply) => {
       resourceId: machineId,
     });
   }
-  gateway.notifyWorkspace(enrolled.workspaceId);
+  gateway.notifyOrganization(enrolled.controlOrganizationId);
   return reply.code(201).send({
     machineId: enrolled.machineId,
     name: enrolled.name,
-    workspaceId: enrolled.workspaceId,
     organizationId: enrolled.organizationId,
   });
 });
@@ -369,7 +370,7 @@ const expiryTimer = setInterval(() => {
 const retentionTimer = setInterval(() => {
   void Promise.all([
     database.purgeExpiredData({
-      operationDataBefore: Date.now() - retention.operationDataMilliseconds,
+      transientDataBefore: Date.now() - retention.transientDataMilliseconds,
       auditBefore: Date.now() - retention.auditMilliseconds,
     }),
     taskDatabase.purgeExpiredCommandOutput(),

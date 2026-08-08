@@ -7,7 +7,7 @@ import {
   DashboardPageHeader,
   DashboardStateNotice,
 } from "@/components/dashboard-state";
-import { WorkspaceIdentityAvatar } from "@/components/identity-avatar";
+import { OrganizationIdentityAvatar } from "@/components/identity-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,13 +27,13 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "@/components/ui/toast";
 
-export default function WorkspaceSettingsPage() {
+export default function OrganizationSettingsPage() {
   const { state, optimisticallyUpdate, refresh } = useDashboard();
   const [name, setName] = useState(
-    state.status === "ready" ? state.context.workspace.name : "",
+    state.status === "ready" ? state.context.organization.name : "",
   );
   const [avatarSeed, setAvatarSeed] = useState(
-    state.status === "ready" ? state.context.workspace.avatarSeed : "",
+    state.status === "ready" ? state.context.organization.avatarSeed : "",
   );
   const [savingDetails, setSavingDetails] = useState(false);
 
@@ -47,22 +47,22 @@ export default function WorkspaceSettingsPage() {
   }
 
   const admin = state.context.currentMemberRole === "owner" || state.context.currentMemberRole === "admin";
-  const workspace = state.context.workspace;
+  const organization = state.context.organization;
   const detailsDirty =
-    name.trim() !== workspace.name ||
-    avatarSeed !== workspace.avatarSeed;
+    name.trim() !== organization.name ||
+    avatarSeed !== organization.avatarSeed;
 
   async function saveDetails() {
     if (!admin || !detailsDirty || savingDetails) return;
-    const previous = workspace;
+    const previous = organization;
     const nextName = name.trim();
     setSavingDetails(true);
     optimisticallyUpdate((context) => ({
       ...context,
-      workspace: { ...context.workspace, name: nextName, avatarSeed },
+      organization: { ...context.organization, name: nextName, avatarSeed },
     }));
     try {
-      const response = await fetch("/api/workspace-settings", {
+      const response = await fetch("/api/organization-settings", {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -71,20 +71,20 @@ export default function WorkspaceSettingsPage() {
           avatarSeed,
         }),
       });
-      if (!response.ok) throw new Error("workspace_details_not_saved");
+      if (!response.ok) throw new Error("organization_details_not_saved");
       await refresh();
-      toast.add({ title: "Workspace saved", type: "success" });
+      toast.add({ title: "Organization saved", type: "success" });
     } catch {
       optimisticallyUpdate((context) => ({
         ...context,
-        workspace: {
-          ...context.workspace,
+        organization: {
+          ...context.organization,
           name: previous.name,
           avatarSeed: previous.avatarSeed,
         },
       }));
       toast.add({
-        title: "Workspace was not saved",
+        title: "Organization was not saved",
         description: "Your previous settings were restored.",
         type: "error",
       });
@@ -94,8 +94,8 @@ export default function WorkspaceSettingsPage() {
   }
 
   function cancelDetails() {
-    setName(workspace.name);
-    setAvatarSeed(workspace.avatarSeed);
+    setName(organization.name);
+    setAvatarSeed(organization.avatarSeed);
   }
 
   return (
@@ -116,7 +116,7 @@ export default function WorkspaceSettingsPage() {
                   <FieldDescription>Identifies this organization across Odyshell.</FieldDescription>
                 </FieldContent>
                 <div className="flex w-full items-center justify-end gap-3 @md/field-group:w-auto">
-                  <WorkspaceIdentityAvatar identity={avatarSeed} name={name || workspace.name} className="size-10" />
+                  <OrganizationIdentityAvatar identity={avatarSeed} name={name || organization.name} className="size-10" />
                   {admin ? (
                     <Button variant="outline" onClick={() => setAvatarSeed(crypto.randomUUID())}>Regenerate</Button>
                   ) : null}
@@ -124,12 +124,12 @@ export default function WorkspaceSettingsPage() {
               </Field>
               <Field orientation="responsive" className="p-4">
                 <FieldContent>
-                  <FieldLabel htmlFor="workspace-name">Name</FieldLabel>
+                  <FieldLabel htmlFor="organization-name">Name</FieldLabel>
                   <FieldDescription>Shown to members and Agents.</FieldDescription>
                 </FieldContent>
-                <Input id="workspace-name" name="workspace-name" autoComplete="off" value={name} onChange={(event) => setName(event.target.value)} className="w-full @md/field-group:max-w-md" disabled={!admin} />
+                <Input id="organization-name" name="organization-name" autoComplete="off" value={name} onChange={(event) => setName(event.target.value)} className="w-full @md/field-group:max-w-md" disabled={!admin} />
               </Field>
-              <ReadOnlyRow label="Slug" description="Stable organization handle." value={workspace.slug} />
+              <ReadOnlyRow label="Slug" description="Stable organization handle." value={organization.slug} />
               <ReadOnlyRow label="Plan" description="Current plan and included limits." value={state.context.plan.id} badge />
               <ReadOnlyRow label="Machines" description="Connected machine allowance." value={`${state.context.usage.machines} / ${state.context.plan.machineLimit}`} />
               <ReadOnlyRow label="Agents" description="Active Agent allowance." value={`${state.context.usage.activeAgents} / ${state.context.plan.activeAgentLimit}`} />

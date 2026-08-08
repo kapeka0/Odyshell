@@ -11,9 +11,9 @@ export function DashboardStateNotice({
     return (
       <Alert>
         <KeyRoundIcon />
-        <AlertTitle>Select a workspace</AlertTitle>
+        <AlertTitle>Select an organization</AlertTitle>
         <AlertDescription>
-          Choose or create a workspace from the sidebar to continue.
+          Choose or create an organization from the sidebar to continue.
         </AlertDescription>
       </Alert>
     );

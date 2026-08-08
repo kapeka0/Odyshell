@@ -60,7 +60,7 @@ is compromised.
 
 The stored Client configuration is strict and Task-native. It contains one Machine identity and
 one Local Policy; legacy runner profiles, Session/Operation limits, remote sudo flags, and
-Workspace identifiers are rejected rather than interpreted.
+Removed tenant identifiers are rejected rather than interpreted.
 
 An active Task provides arbitrary non-interactive shell authority as the Client's Linux user. It
 does not configure sudo, isolate the process, filter commands, or claim rollback. Use a dedicated

@@ -21,7 +21,7 @@ async function liveToken(signal: AbortSignal): Promise<LiveToken> {
   return (await response.json()) as LiveToken;
 }
 
-async function consumeWorkspaceEvents(
+async function consumeOrganizationEvents(
   serverUrl: string,
   token: string,
   signal: AbortSignal,
@@ -76,7 +76,7 @@ export function DashboardLiveRefresh({
     const connect = async (): Promise<void> => {
       try {
         const authorization = await liveToken(controller.signal);
-        await consumeWorkspaceEvents(
+        await consumeOrganizationEvents(
           serverUrl,
           authorization.token,
           controller.signal,
