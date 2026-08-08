@@ -38,6 +38,27 @@ describe("remote MCP security boundary", () => {
         ODYSHELL_IDENTITY_ISSUER: "https://identity.test",
       }),
     ).toThrow("must use HTTPS");
+    expect(
+      remoteMcpConfiguration({
+        NODE_ENV: "production",
+        ODYSHELL_MCP_URL: "http://localhost:4100/mcp",
+        ODYSHELL_IDENTITY_ISSUER: "http://localhost:3000",
+        ODYSHELL_IDENTITY_JWKS_URL: "http://web:3000/api/auth/jwks",
+        ODYSHELL_IDENTITY_JWKS_ALLOW_HTTP: "true",
+      }),
+    ).toMatchObject({
+      resource: new URL("http://localhost:4100/mcp"),
+      issuer: new URL("http://localhost:3000"),
+    });
+    expect(() =>
+      remoteMcpConfiguration({
+        NODE_ENV: "production",
+        ODYSHELL_MCP_URL: "http://mcp.test/mcp",
+        ODYSHELL_IDENTITY_ISSUER: "https://identity.test",
+        ODYSHELL_IDENTITY_JWKS_URL: "http://web:3000/api/auth/jwks",
+        ODYSHELL_IDENTITY_JWKS_ALLOW_HTTP: "true",
+      }),
+    ).toThrow("must use HTTPS");
   });
 
   it("matches browser origins exactly while allowing server clients without Origin", () => {

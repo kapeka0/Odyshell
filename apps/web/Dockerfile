@@ -1,6 +1,8 @@
 FROM node:24-alpine AS build
 RUN corepack enable
 WORKDIR /app
+ARG NEXT_PUBLIC_ODYSHELL_SERVER_URL=http://localhost:4100
+ARG NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=false
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* tsconfig.json ./
 COPY packages/protocol/package.json packages/protocol/package.json
 COPY apps/web/package.json apps/web/package.json
@@ -10,7 +12,8 @@ COPY apps/web apps/web
 RUN DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build \
     BETTER_AUTH_SECRET=build-only-identity-secret-000000000 \
     BETTER_AUTH_URL=http://localhost:3000 \
-    NEXT_PUBLIC_ODYSHELL_SERVER_URL=http://localhost:4100 \
+    NEXT_PUBLIC_ODYSHELL_SERVER_URL=$NEXT_PUBLIC_ODYSHELL_SERVER_URL \
+    NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=$NEXT_PUBLIC_GOOGLE_AUTH_ENABLED \
     pnpm --filter @odyshell/web build
 
 FROM node:24-alpine

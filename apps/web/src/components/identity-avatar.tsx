@@ -6,7 +6,7 @@ import {
   AvatarFallback,
   AvatarImage,
 } from "@/components/ui/avatar";
-import { facehashAvatarPath, vercelAvatarUrl } from "@/lib/avatar";
+import { facehashAvatarPath } from "@/lib/avatar";
 import { agentBrand } from "@/lib/agent-brand";
 import { cn } from "@/lib/utils";
 
@@ -84,7 +84,7 @@ export function WorkspaceIdentityAvatar({
   return (
     <Avatar className={cn("rounded-lg", className)}>
       <AvatarImage
-        src={vercelAvatarUrl(identity)}
+        src={facehashAvatarPath(identity)}
         alt={`${name} workspace`}
         referrerPolicy="no-referrer"
         className="rounded-lg"

@@ -3,39 +3,48 @@ title: Self-hosting
 description: Run the sovereign Odyshell control plane and PostgreSQL on your infrastructure.
 ---
 
-Self-hosting uses the same web app, Better Auth identity layer, Server, PostgreSQL schema, remote
-MCP and HTTP protocols, dashboard, and Linux Client as Cloud. Identity, policy, Task, audit, and
-credential data stay in the deployment owner's PostgreSQL database.
+Self-hosting uses the same Better Auth identity layer, Server, PostgreSQL schema, remote MCP and
+HTTP protocols, dashboard, and Linux Client as Cloud. Identity, policy, Task, Command, audit, and
+credential data stay in the deployment owner's PostgreSQL database. Clerk and hosted analytics
+are not required.
 
-## Local stack
+## Start the stack
 
 ```bash
-pnpm install
 cp .env.example .env
-cp apps/web/.env.example apps/web/.env.local
+docker compose config
 docker compose up -d --build
-curl --fail http://127.0.0.1:4100/health
+pnpm test:self-host
 ```
 
-Set a random `BETTER_AUTH_SECRET` of at least 32 characters and the same random
-`ODYSHELL_WEB_KEY` in both environment files. Keep `BETTER_AUTH_URL=http://localhost:3000`, open
-that address, create the first local account, and bootstrap the single Organization.
+Fill every blank secret in the root `.env` first. `BETTER_AUTH_SECRET` and
+`ODYSHELL_WEB_KEY` require at least 32 random characters, and `POSTGRES_PASSWORD` must be a URL-safe
+random value. Compose runs Web and Server in production mode, binds every published port to
+loopback by default, and fails when a required secret is absent.
 
-The bundled example values are for local development only. Do not expose them to the Internet.
+The smoke test creates the first local account and Organization, verifies authenticated dashboard
+access, proves the single-Organization boundary, and checks anonymous MCP denial. Use a fresh
+PostgreSQL volume if you want to perform first-user onboarding manually instead.
 
-## Production boundary
+## Public deployment
 
-- Run PostgreSQL with TLS and backups you have restored in a drill.
-- Put web, OAuth/MCP, HTTP, and Client gateway traffic behind TLS.
-- Keep `BETTER_AUTH_SECRET`, `ODYSHELL_WEB_KEY`, database credentials, and optional OIDC secrets in
-  a secret manager.
-- Set `BETTER_AUTH_URL` and every public Server/web URL to their canonical HTTPS origins.
-- Keep development credentials disabled in production.
-- Run one Server replica in the current release because live Client connections are held in memory.
-- Run every Client as a dedicated Linux user with least privilege.
+Put Web and Server behind TLS, keep PostgreSQL private, and set the canonical public URLs before
+building:
 
-Self-hosted mode is single-Organization. Missing sovereign Organization identity fails enrollment
-before the one-time token is consumed.
+```dotenv
+BETTER_AUTH_URL=https://app.example.com
+NEXT_PUBLIC_ODYSHELL_SERVER_URL=https://api.example.com
+ODYSHELL_MCP_URL=https://api.example.com/mcp
+```
+
+The public Server URL is embedded into the Web image at build time. The private Compose network
+uses HTTP only for JWKS fetches from Server to Web; use HTTPS if that hop crosses a trusted network
+boundary. Store database and application secrets in the deployment platform, encrypt backups,
+test restores, and run one Server replica in this release because live Machine connections are
+process-local.
+
+Self-hosted mode permits one Organization. Local email/password is built in. Google sign-in is
+optional and must be configured before building the Web image.
 
 ## Connect the system
 
@@ -48,13 +57,14 @@ before the one-time token is consumed.
 ```npm
 npm install --global @odyshell/cli
 
-ods --server https://api.ods.example.com up \
+ods --server https://api.example.com up \
   --token <single-use-token> \
   --name production-api \
   --agent-id <agent-id>
 ```
 
-The Machine initiates the connection and needs no inbound port, SSH credential, or VPN route.
+The Machine initiates the connection and needs no inbound port, SSH credential, or VPN route. Run
+the Client as a dedicated Linux user without root, sudo, or Docker membership.
 
-For the complete deployment variables and operations checklist, see the
+For the complete production and lifecycle checklist, see the
 [repository self-hosting guide](https://github.com/kapeka0/odyshell/blob/main/docs/self-hosting.md).

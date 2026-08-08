@@ -55,11 +55,16 @@ export function remoteMcpConfiguration(
     environment.ODYSHELL_IDENTITY_JWKS_URL ?? "/api/auth/jwks",
     issuerUrl,
   );
+  const allowInternalHttpJwks =
+    environment.ODYSHELL_IDENTITY_JWKS_ALLOW_HTTP === "true";
   if (
     environment.NODE_ENV === "production" &&
-    (resourceUrl.protocol !== "https:" ||
-      issuerUrl.protocol !== "https:" ||
-      jwksUrl.protocol !== "https:")
+    ([resourceUrl, issuerUrl].some(
+      (url) => url.protocol !== "https:" && !isLoopback(url),
+    ) ||
+      (jwksUrl.protocol !== "https:" &&
+        !isLoopback(jwksUrl) &&
+        !allowInternalHttpJwks))
   ) {
     throw new Error("Remote MCP URLs must use HTTPS in production");
   }
@@ -73,6 +78,14 @@ export function remoteMcpConfiguration(
         .map((origin) => new URL(origin.trim()).origin),
     ),
   };
+}
+
+function isLoopback(url: URL): boolean {
+  return (
+    url.hostname === "localhost" ||
+    url.hostname === "127.0.0.1" ||
+    url.hostname === "[::1]"
+  );
 }
 
 export function remoteMcpIdentityFromClaims(

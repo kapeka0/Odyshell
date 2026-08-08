@@ -353,6 +353,15 @@ describe("cloud identity and device authorization boundaries", () => {
         true,
       ),
     ).toBe("https://app.example");
+    expect(
+      cloudWebUrl(
+        {
+          NODE_ENV: "production",
+          ODYSHELL_WEB_URL: "http://localhost:3000",
+        },
+        true,
+      ),
+    ).toBe("http://localhost:3000");
   });
 
   it("denies cloud mutations when the internal web credential is missing or wrong", () => {

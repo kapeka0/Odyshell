@@ -82,15 +82,15 @@ ods client update --check --profile default
 You need Node.js 24+, pnpm, and Docker:
 
 ```bash
-pnpm install
 cp .env.example .env
-cp apps/web/.env.example apps/web/.env.local
 docker compose up -d --build
+pnpm test:self-host
 ```
 
-Set a random `BETTER_AUTH_SECRET` of at least 32 characters and the same random
-`ODYSHELL_WEB_KEY` in both environment files. Open `http://localhost:3000`, create the first local
-account and Organization, then follow the Quickstart.
+Fill every blank secret in the root `.env` before starting. Open
+`http://localhost:3000`, create the first local account and Organization, then follow the
+Quickstart. Compose runs both application services in production mode, binds them to loopback by
+default, and rejects missing secrets.
 
 Self-hosting uses the same Server, web app, PostgreSQL schema, identity architecture, protocols,
 dashboard, and Client as Cloud. The deployment owner keeps identity, policy, Task, audit, and

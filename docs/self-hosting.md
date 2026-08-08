@@ -1,69 +1,92 @@
 # Self-hosting Odyshell
 
-Self-hosted Odyshell runs the web app, Better Auth identity layer, Server, PostgreSQL, remote MCP
-adapter, dashboard, and Linux Client protocol on infrastructure you control. The deployment owner
-keeps identity, policy, Task, audit, and credential data in its own PostgreSQL database.
+Self-hosted Odyshell runs the same agent-facing protocols, Server, Better Auth identity, dashboard,
+PostgreSQL schema, and Linux Client as Cloud. The deployment owner controls identity, policy,
+Task, Command, audit, and credential data. Clerk and third-party analytics are not runtime
+dependencies.
 
 ```mermaid
 flowchart LR
   A["External Agent"] -->|"OAuth MCP or HTTP"| S["Odyshell Server"]
   H["Optional Human Supervisor"] -->|"Dashboard"| W["Odyshell web app"]
-  W --> P["PostgreSQL + Odyshell Identity"]
+  W --> P["PostgreSQL + Better Auth"]
   S --> P
   M["Private Linux Machine"] -->|"Authenticated outbound connection"| S
 ```
 
-## Local evaluation
+## Start a loopback deployment
+
+Requirements: Docker with Compose and Node.js 24+ for the smoke test.
 
 ```bash
-pnpm install
 cp .env.example .env
-cp apps/web/.env.example apps/web/.env.local
 ```
 
-Set a random `BETTER_AUTH_SECRET` of at least 32 characters and the same random
-`ODYSHELL_WEB_KEY` in both files. Then start the local-only Compose stack:
+Fill every blank secret in `.env`. Generate each application secret independently with a
+cryptographically secure generator; `BETTER_AUTH_SECRET` and `ODYSHELL_WEB_KEY` must contain at
+least 32 characters. `POSTGRES_PASSWORD` must be URL-safe because Compose places it in the internal
+connection URL.
 
 ```bash
+docker compose config
 docker compose up -d --build
-curl --fail http://127.0.0.1:4100/health
+pnpm test:self-host
 ```
 
-Open `http://localhost:3000`, create the first account, and bootstrap the Organization. The
-Compose file binds ports to loopback by default and enables explicit development credentials on
-the Server; do not expose it to the Internet or treat it as the production manifest.
+The manifest binds Web, Server, and PostgreSQL to `127.0.0.1` by default, runs application services
+with `NODE_ENV=production`, and refuses to render when required secrets are absent. The smoke test
+uses a clean database: it creates a local account and the first Organization, verifies the
+authenticated dashboard, proves a second Organization is denied, and confirms anonymous MCP and
+dashboard requests fail closed.
 
-## Production requirements
+Open `http://localhost:3000` after the smoke test. The smoke Organization already owns the
+single-Organization deployment; use a fresh volume if you want to perform first-user onboarding
+manually.
 
-Deploy the Server and web images with:
+## Public deployment
 
-- PostgreSQL over TLS, protected backups, and a tested restore procedure;
-- `NODE_ENV=production` for both services;
-- `ODYSHELL_ALLOW_DEV_CREDENTIALS` absent;
-- a stable random `BETTER_AUTH_SECRET` of at least 32 characters;
-- one stable random `ODYSHELL_WEB_KEY` shared only between web and Server;
-- canonical HTTPS `BETTER_AUTH_URL`, public Server URL, web URL, and MCP URL;
-- `ODYSHELL_IDENTITY_ISSUER` and `ODYSHELL_IDENTITY_JWKS_URL` matching the web identity service;
-- secrets supplied by the deployment platform rather than committed environment files;
-- one Server replica for the MVP because live Client connections are in memory.
+Keep the ports private behind a TLS reverse proxy and set these values before building:
 
-Optional Google or generic OIDC sign-in adds identity providers without replacing local
-email/password. Self-hosted mode remains single-Organization.
+```dotenv
+BETTER_AUTH_URL=https://app.example.com
+NEXT_PUBLIC_ODYSHELL_SERVER_URL=https://api.example.com
+ODYSHELL_MCP_URL=https://api.example.com/mcp
+```
+
+`BETTER_AUTH_URL` is the OAuth issuer and dashboard origin. The Server publishes
+`ODYSHELL_MCP_URL` as its protected resource. `NEXT_PUBLIC_ODYSHELL_SERVER_URL` is embedded into the
+Web image at build time, so changing only the running container environment is insufficient.
+
+Production operators must also:
+
+- keep the Compose network private: it intentionally permits HTTP only for JWKS fetches from the
+  Server to the Web container; use HTTPS for that hop if it crosses a trusted network boundary;
+- keep PostgreSQL private and use TLS when database traffic leaves the Docker network;
+- encrypt backups and prove restoration works;
+- store all secrets outside the repository and rotate them deliberately;
+- run one Server replica because live Machine connections are process-local in this release;
+- deploy Web and Server from the same release;
+- monitor Web, Server, PostgreSQL, and every Client;
+- run each Client as a dedicated user without root, sudo, or Docker membership.
+
+Optional Google sign-in requires `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and
+`NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=true` before the Web image is built. Local email/password remains
+available and no external identity provider is required.
 
 ## Connect an Agent and Machine
 
-1. Add `https://api.ods.example.com/mcp` to the external Agent runtime.
+1. Add the Server's `/mcp` resource to the external Agent runtime.
 2. Complete OAuth and approve the Organization-bound Agent installation.
 3. Install the Machine CLI as a dedicated least-privilege Linux user:
 
-   ```bash
+   ```npm
    npm install --global @odyshell/cli
    ```
 
 4. In **Machines**, select **Add Machine**, choose the Agent, and run the generated command:
 
    ```bash
-   ods --server https://api.ods.example.com up \
+   ods --server https://api.example.com up \
      --token <single-use-token> \
      --name production-api \
      --agent-id <agent-id>
@@ -72,17 +95,17 @@ email/password. Self-hosted mode remains single-Organization.
 5. From the Agent, call `machines_list`, `task_request`, `command_run`, `command_get`,
    `command_output`, and `task_complete`.
 
-The Machine needs no inbound port, SSH credential, or VPN route. Enrollment fails before token
-consumption when the Organization lacks its sovereign identity binding. The Client independently
-denies mismatched Organization or Agent identity and any request outside Local Policy.
+The Machine needs no inbound port, SSH credential, or VPN route. The Client rejects a mismatched
+Organization or Agent, expired authority, replay, and any request outside Local Policy.
 
-## Operations checklist
+## Lifecycle
 
-- Run each Client as a dedicated Linux user without root, sudo, or Docker membership.
-- Back up PostgreSQL and account for independent proxy and backup retention.
-- Monitor Server, web, PostgreSQL, and Client service health.
-- Rotate web/OIDC credentials deliberately; never copy Machine private keys or enrollment tokens.
-- Keep the web app and Server on the same release and update Client patch releases with
-  `ods client update`.
-- Verify a real Task and Command after deployment, including optional approval, reconnect, output
-  pagination, cancellation, and explicit completion.
+```bash
+docker compose build --pull
+docker compose up -d
+docker compose logs --tail 200 server web
+```
+
+Before upgrades, back up PostgreSQL. Never copy Machine private keys or one-time enrollment tokens.
+After upgrades, verify one real Task and Command, including approval when required, reconnect,
+bounded output, cancellation, and explicit completion.

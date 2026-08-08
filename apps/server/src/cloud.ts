@@ -467,11 +467,20 @@ export function cloudWebUrl(
   const url = new URL(value);
   if (
     environment.NODE_ENV === "production" &&
-    url.protocol !== "https:"
+    url.protocol !== "https:" &&
+    !isLoopback(url)
   ) {
     throw new Error("ODYSHELL_WEB_URL must use HTTPS in production");
   }
   return url.origin;
+}
+
+function isLoopback(url: URL): boolean {
+  return (
+    url.hostname === "localhost" ||
+    url.hostname === "127.0.0.1" ||
+    url.hostname === "[::1]"
+  );
 }
 
 export class FixedWindowRateLimiter {

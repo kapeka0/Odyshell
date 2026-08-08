@@ -26,11 +26,16 @@ export function agentOAuthConfiguration(
     environment.ODYSHELL_IDENTITY_JWKS_URL ?? "/api/auth/jwks",
     issuerUrl,
   );
+  const allowInternalHttpJwks =
+    environment.ODYSHELL_IDENTITY_JWKS_ALLOW_HTTP === "true";
   if (
     environment.NODE_ENV === "production" &&
-    [issuerUrl, audienceUrl, jwksUrl].some(
+    ([issuerUrl, audienceUrl].some(
       (url) => url.protocol !== "https:" && !isLoopback(url),
-    )
+    ) ||
+      (jwksUrl.protocol !== "https:" &&
+        !isLoopback(jwksUrl) &&
+        !allowInternalHttpJwks))
   ) {
     throw new Error("Agent OAuth URLs must use HTTPS in production");
   }

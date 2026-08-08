@@ -5,7 +5,7 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* tsconfig.json ./
 COPY packages/protocol/package.json packages/protocol/package.json
 COPY packages/mcp/package.json packages/mcp/package.json
 COPY apps/server/package.json apps/server/package.json
-RUN pnpm install --no-frozen-lockfile
+RUN pnpm install --frozen-lockfile
 COPY packages/protocol packages/protocol
 COPY packages/mcp packages/mcp
 COPY apps/server apps/server

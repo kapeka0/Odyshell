@@ -4,126 +4,52 @@
 
 <h1 align="center">Odyshell Server</h1>
 
-<p align="center"><strong>The meeting point between AI agents and private machines.</strong></p>
+<p align="center"><strong>The agent-native control plane for private Linux Machines.</strong></p>
 
-The Server exposes the Odyshell API and accepts outbound Client connections. It authenticates
-agents, checks machine and capability scopes, relays temporary tasks, and records an audit trail.
+The Server exposes canonical Task and Command HTTP endpoints, the remote OAuth MCP adapter, and an
+authenticated outbound Client gateway. It owns Agent authorization, idempotency, lifecycle and
+audit, while each Linux Client independently enforces the Machine owner's Local Policy.
 
-Machine names and descriptions are Server metadata for humans and agents. Once configured, a
-Server capability selection is only a subset of the Client Local Policy; request creation and
-claim both fail closed when a Session asks for a capability disabled by that Server selection. The
-Client always enforces its independent Local Policy when opening the Session.
+The Server never opens a connection into a private network. A Machine connects outbound, and a
+Command runs as the operating-system user that runs the Client. Odyshell does not add a sandbox,
+sudo, rollback, or an inbound SSH surface.
 
-It does not connect directly to private networks and does not require inbound access to Client
-machines.
+## Run the self-hosted stack
 
-## Run locally
-
-From the monorepo root, copy both
-environment examples and use the same `ODYSHELL_WEB_KEY` in them:
+From the repository root:
 
 ```bash
 cp .env.example .env
-cp apps/web/.env.example apps/web/.env.local
 docker compose up -d --build
+pnpm test:self-host
 ```
 
-The development Server is available at `http://127.0.0.1:4100`. Compose starts PostgreSQL and
-stores its data in a named volume, so local state survives Server restarts.
+Fill every blank secret in `.env` first. The manifest starts PostgreSQL, Server, Better
+Auth identity, dashboard, and public documentation. It uses production mode and fails closed when
+`POSTGRES_PASSWORD`, `ODYSHELL_ADMIN_KEY`, `ODYSHELL_WEB_KEY`, or `BETTER_AUTH_SECRET` is absent.
 
-The bundled database password and Odyshell keys are development defaults. Normal Agent Sessions
-still require the browser approval implemented by the web app. Replace the identity secret in
-`apps/web/.env.local`, then start it:
+Open `http://localhost:3000` and create the one Organization allowed by self-hosted mode. Agent
+runtimes connect to `http://localhost:4100/mcp`; Linux Machines enroll through the dashboard and
+initiate their own authenticated outbound connection.
 
-```bash
-pnpm dev:web
-```
+## Production boundary
 
-After creating an Odyshell Organization at `http://localhost:3000`, register an Agent once:
+- Put the public web and Server origins behind TLS and set `BETTER_AUTH_URL`,
+  `NEXT_PUBLIC_ODYSHELL_SERVER_URL`, and `ODYSHELL_MCP_URL` to their canonical HTTPS URLs before
+  building the images.
+- Keep PostgreSQL private, require TLS when it crosses a host boundary, and test encrypted backups
+  and restores.
+- Supply secrets through the deployment platform. Never commit `.env`, Machine private keys,
+  OAuth secrets, or enrollment tokens.
+- Keep one Server replica for this release because live Client connections are process-local.
+- Run each Client as a dedicated least-privilege Linux user without root, sudo, or Docker group
+  membership.
+- Deploy the Web and Server from the same release. Both use the same PostgreSQL database and
+  `ODYSHELL_WEB_KEY`.
 
-```bash
-npm install --global @odyshell/cli
-ods agent login "Coding agent" --server http://127.0.0.1:4100
-```
-
-The Agent requests expiring Sessions for its tasks. Its credential identifies the Agent but never
-authorizes a machine Operation directly. The development Agent key is limited to the explicit
-development Session endpoint, which rejects `host.shell` and `process.exec`, and does not make
-normal CLI execution bypass approval.
-
-To test from another device, bind the development Server to a specific reachable host interface:
-
-```bash
-ODYSHELL_BIND_ADDRESS=<host-ip> docker compose up -d --build
-```
-
-## Deploy
-
-A production deployment needs:
-
-- `DATABASE_URL` pointing to PostgreSQL with TLS enabled.
-- `ODYSHELL_ADMIN_KEY` set to a strong, private value.
-- `HOST=0.0.0.0`.
-- `ODYSHELL_WEB_KEY` and `ODYSHELL_WEB_URL` for Agent registration and Session approval through
-  the web app. A Server without this bridge cannot execute the normal production Agent flow.
-- Optional `ODYSHELL_EVENT_SINK_ENCRYPTION_KEY`, a base64url-encoded 32-byte key, to enable signed
-  Timeline delivery.
-- Optional `ODYSHELL_MCP_URL`, `ODYSHELL_IDENTITY_ISSUER`, and
-  `ODYSHELL_IDENTITY_JWKS_URL` to enable the remote OAuth MCP. `ODYSHELL_MCP_ALLOWED_ORIGINS` may contain
-  a comma-separated list of exact browser origins.
-
-Railway supplies `PORT` automatically. PostgreSQL stores machine identities, scoped tokens,
-temporary sessions, operations, and content-minimal control events. Operation payloads expire
-after one hour and control events after 30 days by default. Configure these windows with
-`ODYSHELL_OPERATION_RETENTION_SECONDS` and `ODYSHELL_AUDIT_RETENTION_DAYS`.
-
-Database credentials belong only to the Server; agents and Clients never receive them.
-Cloud credential issuance is rate-limited per member and workspace. Expired enrollment records
-and unreferenced inactive Agent Access records are removed by the retention sweep.
-Deleting an Agent revokes its credential and closes active sessions atomically. The hidden record
-remains only while retained sessions or Control Events still reference it.
-
-Startup applies the authority cutover and verifies that every Workspace is complete and that no
-legacy credential, Session or Operation remains active. Partial state stops startup instead of
-serving two authorization models.
-
-Browser-approved Sessions use persistent Agent identities and one-time Session Credentials. The
-Server stores only credential hashes and enforces the Session's exact machine, capability, path,
-and expiry on every Operation. Verified lifecycle transitions form a privacy-minimal Session
-Timeline without recording credentials or operation output.
-
-Remote MCP installations use Odyshell Identity OAuth only for human and client identity. The Server stores the
-installation-to-Agent and installation-to-Session bindings in PostgreSQL, but never stores OAuth
-access or refresh tokens. Host Shell reuse also requires the same stable Task Run identifier, so
-unrelated requests cannot inherit broad authority. Every Operation still passes the normal Session
-scope and expiry checks.
-Explicit idempotency keys and Server Operation IDs prevent transport retries from dispatching
-duplicate work. Session completion revokes authority only after every Operation has reached a
-terminal state. The verified
-OAuth token must include `user:org:read`, and its selected Organization is the only Workspace
-ownership boundary accepted for that installation.
-
-Independent Agents may propose versioned autoapproval policies. Policies stay inactive until an
-administrator approves their exact machine, capability, restriction, duration, and validity
-ceiling. Out-of-policy requests remain pending, and every autoapproved Session retains the policy
-ID and version used. `host.shell` is rejected when an Agent proposes either an Autoapproval or
-Delegation Policy and always requires manual approval.
-
-An approved Delegation Policy can derive one level of Managed Agent identities. Managed Agents
-receive no durable credential and cannot delegate. The Server intersects the live parent policy,
-child policy, Session scope, and Client policy for every request. Disabling a child or revoking
-its parent closes derived Sessions and preserves attribution in Activity and Session Timelines.
-
-Organizations own execution Workspaces. Existing self-hosted administrator endpoints use the
-`x-odyshell-workspace-id` header and default to the `default` workspace when
-it is absent. Enrollment tokens, machines, Agents, Sessions, Operations, and Control Events
-remain inside the selected Workspace. Agent requests do not accept a workspace selector: their
-workspace comes from the hashed token record.
-
-Keep one Server replica for the MVP because active Client connections are held by the running
-process. The frontend calls authenticated internal endpoints and never accesses PostgreSQL
-directly. `ODYSHELL_WEB_KEY` must be shared only between the web app and Server; production
-startup rejects weak keys and non-HTTPS web origins.
+The web app provides local email/password identity through Better Auth. Google sign-in is optional
+and requires both Google secrets plus the build-time UI flag. No Clerk or hosted identity service
+is required.
 
 [Self-hosting guide](../../docs/self-hosting.md) ·
 [Privacy and event data](../../docs/privacy.md) ·

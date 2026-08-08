@@ -1,12 +1,3 @@
-export function vercelAvatarUrl(identity: string): string {
-  const url = new URL(
-    `${encodeURIComponent(identity)}.svg`,
-    "https://avatar.vercel.sh/",
-  );
-  url.searchParams.set("size", "64");
-  return url.toString();
-}
-
 export function facehashAvatarPath(identity: string): string {
   const search = new URLSearchParams({
     name: identity,
