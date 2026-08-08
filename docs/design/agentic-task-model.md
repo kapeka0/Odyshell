@@ -1,8 +1,8 @@
 # Agent-native Task model
 
-> **Status:** Accepted architecture. The public Server, Web, HTTP, and MCP surfaces are Task-native;
-> removal of superseded internal Client, protocol, and persistence implementations is still in
-> progress.
+> **Status:** Accepted architecture. The public Server, Web, HTTP, MCP, and Linux Client execution
+> surfaces are Task-native; removal of superseded protocol and persistence implementations is still
+> in progress.
 
 ## Product contract
 

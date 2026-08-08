@@ -1,38 +1,27 @@
 import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
 import { userInfo } from "node:os";
+import { dirname, resolve } from "node:path";
 import process from "node:process";
 import {
   MAX_CLIENT_CLOCK_SKEW_MILLISECONDS,
-  MAX_AGENT_SESSION_SECONDS,
   PROTOCOL_VERSION,
-  allCapabilities,
-  capabilitySchema,
   clientConfigSchema,
   localTaskDecision,
   parseServerMessage,
-  sessionScopeSubsetDecision,
-  type Capability,
   type ClientConfig,
   type ClientRuntimeInfo,
   type ClientToServerMessage,
   type ServerToClientMessage,
 } from "@odyshell/protocol";
 import WebSocket from "ws";
-import type {
-  OperationExecutor,
-  RunningOperation,
-  RunningSession,
-} from "./executor.js";
-import { HostExecutor } from "./host-executor.js";
-import { OperationJournal, type JournalResult } from "./journal.js";
-import { PendingOperation } from "./operation-control.js";
-import { passwordlessSudoAvailable } from "./profile.js";
+import { PendingCommand } from "./command-control.js";
+import { CommandJournal, type CommandResult } from "./journal.js";
 import {
   assertLocalAuthorityNotQuarantined,
   quarantineLocalAuthority,
 } from "./quarantine.js";
+import { ShellExecutor } from "./shell-executor.js";
 import {
   clientConfigPathForProfile,
   defaultClientConfigPath,
@@ -49,57 +38,24 @@ export {
   normalizeClientProfileName,
   normalizeServerUrl,
 } from "./platform.js";
-
-export function adjustedSessionDeadline(
-  expiresAt: string,
-  serverTime: string | undefined,
-  localNow = Date.now(),
-): Date {
-  const serverNow = serverTime === undefined ? localNow : Date.parse(serverTime);
-  const absoluteExpiry = Date.parse(expiresAt);
-  if (!Number.isFinite(serverNow) || !Number.isFinite(absoluteExpiry)) {
-    throw new Error("Session deadline is invalid");
-  }
-  if (
-    serverTime !== undefined &&
-    Math.abs(localNow - serverNow) > MAX_CLIENT_CLOCK_SKEW_MILLISECONDS
-  ) {
-    throw new Error("Client clock is outside the allowed Session skew");
-  }
-  return new Date(localNow + (absoluteExpiry - serverNow));
-}
 export {
-  activateMacLaunchAgent,
   activateLinuxUserService,
   clientServiceStatus,
   installClientService,
   installLinuxUserService,
-  installMacLaunchAgent,
-  installWindowsTask,
   linuxServiceNameForConfig,
   linuxUserServicePath,
-  macLaunchAgentLabelForConfig,
-  macLaunchAgentPath,
   removeLinuxUserService,
   removeClientService,
-  renderMacLaunchAgent,
   renderLinuxUserService,
-  renderWindowsTaskAction,
-  renderWindowsTaskLauncher,
   restartClientService,
   stopClientService,
   stopLinuxUserService,
-  windowsTaskLauncherPath,
-  windowsTaskActionIsCurrent,
-  windowsTaskNameForConfig,
 } from "./service.js";
 export {
-  configureClientPrivilegeEscalation,
   listClientProfiles,
   removeAllClientProfiles,
   removeClientProfile,
-  verifyPasswordlessSudo,
-  type ConfigureClientPrivilegeEscalationOptions,
   type ListedClientProfile,
   type ListClientProfilesOptions,
   type RemoveAllClientProfilesOptions,
@@ -121,7 +77,7 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
   machineId: string;
   configPath: string;
 }> {
-  const serverUrl = options.serverUrl;
+  const serverUrl = normalizeServerUrl(options.serverUrl);
   const configPath = resolve(options.configPath);
   const agentId = options.agentId.trim();
   if (agentId.length === 0 || agentId.length > 256) {
@@ -145,7 +101,6 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
   });
   const body = (await response.json()) as {
     machineId?: string;
-    workspaceId?: string;
     organizationId?: string;
     error?: string;
   };
@@ -153,27 +108,15 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
     throw new Error(body.error ?? `Enrollment failed: ${response.status}`);
   }
 
-  const profile = {
-    runner: "host" as const,
-    maxSessionTtlSeconds: MAX_AGENT_SESSION_SECONDS,
-    maxConcurrentSessions: 1,
-    maxConcurrentOperations: 1,
-    maxOperationTimeoutSeconds: 600,
-    maxOutputBytes: 1024 * 1024,
-    capabilities: ["host.shell" as const],
-  };
   const config: ClientConfig = clientConfigSchema.parse({
     serverUrl,
-    ...(body.workspaceId ? { workspaceId: body.workspaceId } : {}),
     ...(options.profileName ? { profileName: options.profileName } : {}),
     machineId: body.machineId,
     machineName: options.machineName,
     privateKeyPem: privateKey,
     stateDirectory: resolve(dirname(configPath), "state"),
-    allowPrivilegeEscalation: false,
     taskProfile: {
       id: options.profileName ?? "default",
-      executorProfile: "workspace",
       localPolicy: {
         organizationId: body.organizationId,
         agentIds: [agentId],
@@ -185,9 +128,6 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
         allowRemoteApproval: true,
       },
     },
-    profiles: {
-      workspace: profile,
-    },
   });
   await mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, {
@@ -198,59 +138,90 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
   return { machineId: body.machineId, configPath };
 }
 
-export async function inspectClientRuntime(
-  runners: Array<"host"> = ["host"],
-  profiles?: ClientConfig["profiles"],
-  allowPrivilegeEscalation = false,
-): Promise<ClientRuntimeInfo> {
-  const uniqueRunners = [...new Set(runners)];
-  const effectivePasswordlessSudo =
-    process.platform === "linux" && uniqueRunners.includes("host")
-      ? await passwordlessSudoAvailable()
-      : false;
-  const runtime: ClientRuntimeInfo = {
+export async function inspectClientRuntime(): Promise<ClientRuntimeInfo> {
+  return {
     hostPlatform: hostPlatform(),
     architecture: process.arch,
     defaultShell: hostAccountShell().program,
-    privilegeEscalation: reportedPrivilegeEscalation(
-      allowPrivilegeEscalation,
-      effectivePasswordlessSudo,
-    ),
+    privilegeEscalation: "none",
     nodeVersion: process.version,
     protocolVersion: PROTOCOL_VERSION,
     clientVersion: CLIENT_VERSION,
-    supportedCapabilities: supportedCapabilitiesForRunners(uniqueRunners),
-    executionRunners: uniqueRunners,
-    ...(profiles
-      ? {
-          profiles: Object.entries(profiles).map(([name, profile]) => ({
-            name,
-            runner: profile.runner,
-            capabilities: profile.capabilities,
-          })),
-        }
-      : {}),
   };
-  return runtime;
 }
 
-export function reportedPrivilegeEscalation(
-  configured: boolean,
-  passwordlessSudoAvailable: boolean,
-): "none" | "sudo" {
-  return configured || passwordlessSudoAvailable ? "sudo" : "none";
+export function adjustedTaskDeadline(
+  expiresAt: string,
+  serverTime: string | undefined,
+  localNow = Date.now(),
+): Date {
+  const serverNow = serverTime === undefined ? localNow : Date.parse(serverTime);
+  const absoluteExpiry = Date.parse(expiresAt);
+  if (!Number.isFinite(serverNow) || !Number.isFinite(absoluteExpiry)) {
+    throw new Error("Task deadline is invalid");
+  }
+  if (
+    serverTime !== undefined &&
+    Math.abs(localNow - serverNow) > MAX_CLIENT_CLOCK_SKEW_MILLISECONDS
+  ) {
+    throw new Error("Client clock is outside the allowed Task skew");
+  }
+  return new Date(localNow + (absoluteExpiry - serverNow));
 }
 
-export function supportedCapabilitiesForRunners(
-  runners: Array<"host">,
-): Capability[] {
-  return runners.includes("host") ? [...allCapabilities] : [];
+export function commandTimeoutMilliseconds(
+  requestedSeconds: number,
+  localMaximumSeconds: number,
+  taskExpiresAt: Date,
+  now = Date.now(),
+): number {
+  if (
+    !Number.isInteger(requestedSeconds) ||
+    requestedSeconds <= 0 ||
+    !Number.isInteger(localMaximumSeconds) ||
+    localMaximumSeconds <= 0 ||
+    requestedSeconds > localMaximumSeconds
+  ) {
+    return 0;
+  }
+  return Math.max(
+    0,
+    Math.min(requestedSeconds * 1_000, taskExpiresAt.getTime() - now),
+  );
 }
 
-type ActiveSession = {
-  session: RunningSession;
-  executor: OperationExecutor;
+export async function terminateLocalAuthority(
+  cancelCommands: Array<() => Promise<void>>,
+  closeTasks: Array<() => Promise<void>>,
+): Promise<void> {
+  const results = [
+    ...await Promise.allSettled(cancelCommands.map(async (cancel) => cancel())),
+    ...await Promise.allSettled(closeTasks.map(async (close) => close())),
+  ];
+  const failures = results.filter(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  );
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures.map((failure) => failure.reason),
+      "Unable to prove local authority was terminated",
+    );
+  }
+}
+
+export function terminalMachineClose(code: number): boolean {
+  return code === 4004;
+}
+
+type ActiveTask = {
+  organizationId: string;
+  agentId: string;
+  clientProfileId: string;
+  contractExpiresAt: string;
+  expiresAt: Date;
+  maxConcurrentCommands: number;
   closing: boolean;
+  expiryTimer: NodeJS.Timeout;
 };
 
 type BufferedClientMessage = {
@@ -260,7 +231,7 @@ type BufferedClientMessage = {
 
 export type ClientMessageBufferEnqueueResult =
   | { accepted: false }
-  | { accepted: true; truncatedOperationId?: string };
+  | { accepted: true; truncatedCommandId?: string };
 
 export class ClientMessageBuffer {
   private readonly messages: BufferedClientMessage[] = [];
@@ -269,59 +240,57 @@ export class ClientMessageBuffer {
   constructor(
     private readonly maximumMessages = 4_096,
     private readonly maximumOutputBytes = 16 * 1024 * 1024,
-    private readonly beforeOutputDiscard?: (operationId: string) => void,
+    private readonly beforeOutputDiscard?: (commandId: string) => void,
   ) {}
 
   enqueue(message: ClientToServerMessage): ClientMessageBufferEnqueueResult {
     const output = outputMessage(message);
-    const outputBytes = output
-      ? Buffer.byteLength(output.dataBase64, "base64")
-      : 0;
-    if (
-      output &&
-      this.outputBytes + outputBytes > this.maximumOutputBytes
-    ) {
-      this.beforeOutputDiscard?.(output.id);
+    const outputBytes = output ? Buffer.byteLength(output.dataBase64, "base64") : 0;
+    if (output && this.outputBytes + outputBytes > this.maximumOutputBytes) {
+      this.beforeOutputDiscard?.(output.commandId);
       return { accepted: false };
     }
-    let truncatedOperationId: string | undefined;
+    let truncatedCommandId: string | undefined;
     if (this.messages.length >= this.maximumMessages) {
       if (output) {
-        this.beforeOutputDiscard?.(output.id);
+        this.beforeOutputDiscard?.(output.commandId);
         return { accepted: false };
       }
-      const eventIndex = this.messages.findIndex(
+      const outputIndex = this.messages.findIndex(
         (entry) => outputMessage(entry.message) !== null,
       );
-      const removeAt = eventIndex >= 0 ? eventIndex : 0;
+      const removeAt = outputIndex >= 0 ? outputIndex : 0;
       const outputToDiscard = this.messages[removeAt]?.message;
       const discardedOutput = outputToDiscard ? outputMessage(outputToDiscard) : null;
-      if (discardedOutput) this.beforeOutputDiscard?.(discardedOutput.id);
+      if (discardedOutput) this.beforeOutputDiscard?.(discardedOutput.commandId);
       const [removed] = this.messages.splice(removeAt, 1);
       this.outputBytes -= removed?.outputBytes ?? 0;
       const removedOutput = removed ? outputMessage(removed.message) : null;
-      if (removedOutput) truncatedOperationId = removedOutput.id;
+      if (removedOutput) {
+        truncatedCommandId = removedOutput.commandId;
+      }
     }
     this.messages.push({ message, outputBytes });
     this.outputBytes += outputBytes;
-    if (truncatedOperationId) {
-      this.markOutputTruncated(truncatedOperationId);
-    }
+    if (truncatedCommandId) this.markOutputTruncated(truncatedCommandId);
     return {
       accepted: true,
-      ...(truncatedOperationId ? { truncatedOperationId } : {}),
+      ...(truncatedCommandId ? { truncatedCommandId } : {}),
     };
   }
 
-  markOutputTruncated(operationId: string): void {
+  markOutputTruncated(commandId: string): void {
     for (const entry of this.messages) {
-      if (entry.message.type === "operation.completed" &&
-          entry.message.operationId === operationId && !entry.message.outputTruncated) {
-        entry.message = { ...entry.message, error: entry.message.error ?? "Operation output is incomplete", outputTruncated: true };
-      }
-      if (entry.message.type === "command.completed" &&
-          entry.message.commandId === operationId && !entry.message.outputTruncated) {
-        entry.message = { ...entry.message, error: entry.message.error ?? "Command output is incomplete", outputTruncated: true };
+      if (
+        entry.message.type === "command.completed" &&
+        entry.message.commandId === commandId &&
+        !entry.message.outputTruncated
+      ) {
+        entry.message = {
+          ...entry.message,
+          error: entry.message.error ?? "Command output is incomplete",
+          outputTruncated: true,
+        };
       }
     }
   }
@@ -347,61 +316,10 @@ export class ClientMessageBuffer {
 
 function outputMessage(
   message: ClientToServerMessage,
-): { id: string; dataBase64: string } | null {
-  if (message.type === "operation.event") {
-    return { id: message.operationId, dataBase64: message.dataBase64 };
-  }
-  if (message.type === "command.output") {
-    return { id: message.commandId, dataBase64: message.dataBase64 };
-  }
-  return null;
-}
-
-export function operationTimeoutMilliseconds(
-  requestedSeconds: number,
-  localMaximumSeconds: number,
-  sessionExpiresAt: Date,
-  now = Date.now(),
-): number {
-  if (
-    !Number.isFinite(requestedSeconds) ||
-    requestedSeconds <= 0 ||
-    !Number.isFinite(localMaximumSeconds) ||
-    localMaximumSeconds <= 0
-  ) {
-    return 0;
-  }
-  return Math.max(
-    0,
-    Math.min(
-      Math.floor(requestedSeconds * 1_000),
-      Math.floor(localMaximumSeconds * 1_000),
-      sessionExpiresAt.getTime() - now,
-    ),
-  );
-}
-
-export async function terminateLocalAuthority(
-  cancelOperations: Array<() => Promise<void>>,
-  closeSessions: Array<() => Promise<void>>,
-): Promise<void> {
-  const results = [
-    ...await Promise.allSettled(cancelOperations.map(async (cancel) => cancel())),
-    ...await Promise.allSettled(closeSessions.map(async (close) => close())),
-  ];
-  const failures = results.filter(
-    (result): result is PromiseRejectedResult => result.status === "rejected",
-  );
-  if (failures.length > 0) {
-    throw new AggregateError(
-      failures.map((failure) => failure.reason),
-      "Unable to prove local authority was terminated",
-    );
-  }
-}
-
-export function terminalMachineClose(code: number): boolean {
-  return code === 4004;
+): { commandId: string; dataBase64: string } | null {
+  return message.type === "command.output"
+    ? { commandId: message.commandId, dataBase64: message.dataBase64 }
+    : null;
 }
 
 export class Client {
@@ -411,49 +329,40 @@ export class Client {
   private reconnectTimer: NodeJS.Timeout | undefined;
   private reconnectDelay = 1_000;
   private stopped = false;
-  private readonly sessions = new Map<string, ActiveSession>();
-  private readonly closedSessions = new Set<string>();
-  private readonly closingSessions = new Map<string, Promise<void>>();
-  private readonly operations = new Map<string, PendingOperation>();
-  private readonly taskSessions = new Set<string>();
-  private readonly taskLimits = new Map<
-    string,
-    { maxConcurrentCommands: number; maxCommandTimeoutSeconds: number; maxCommandOutputBytes: number }
-  >();
-  private readonly commandOperations = new Set<string>();
-  private readonly outputTruncatedOperations = new Set<string>();
-  private readonly unconfirmedOutputOperations = new Set<string>();
+  private readonly tasks = new Map<string, ActiveTask>();
+  private readonly closedTasks = new Set<string>();
+  private readonly closingTasks = new Map<string, Promise<void>>();
+  private readonly commands = new Map<string, PendingCommand>();
+  private readonly outputTruncatedCommands = new Set<string>();
+  private readonly unconfirmedOutputCommands = new Set<string>();
   private readonly bufferedMessages = new ClientMessageBuffer(
     4_096,
     16 * 1024 * 1024,
-    (operationId) => this.markOperationOutputTruncated(operationId),
+    (commandId) => this.markCommandOutputTruncated(commandId),
   );
-  private readonly executors = new Map<"host", OperationExecutor>();
-  private readonly journal: OperationJournal;
+  private readonly executor = new ShellExecutor();
+  private readonly journal: CommandJournal;
   private messageQueue = Promise.resolve();
   private shutdown: Promise<void> | undefined;
   private runtime: ClientRuntimeInfo | undefined;
   private failClosedKeepalive: NodeJS.Timeout | undefined;
 
   constructor(private readonly config: ClientConfig) {
+    if (!config.taskProfile) {
+      throw new Error("Client configuration requires one Task Profile");
+    }
     assertLocalAuthorityNotQuarantined(config.stateDirectory);
-    this.executors.set("host", new HostExecutor());
-    this.journal = new OperationJournal(resolve(config.stateDirectory, "operations.sqlite"));
+    this.journal = new CommandJournal(resolve(config.stateDirectory, "commands.sqlite"));
   }
 
   async start(): Promise<void> {
-    const interruptedOperations = this.journal.recoverInterrupted();
-    if (interruptedOperations > 0) {
+    const interruptedCommands = this.journal.recoverInterrupted();
+    if (interruptedCommands > 0) {
       console.error(
-        `Recovered ${interruptedOperations} interrupted Operation${interruptedOperations === 1 ? "" : "s"} as execution_unknown`,
+        `Recovered ${interruptedCommands} interrupted Command${interruptedCommands === 1 ? "" : "s"} as execution_unknown`,
       );
     }
-    this.runtime = await inspectClientRuntime(
-      [...this.executors.keys()],
-      this.config.profiles,
-      this.config.allowPrivilegeEscalation,
-    );
-    await Promise.all([...this.executors.values()].map((executor) => executor.cleanupOrphans()));
+    this.runtime = await inspectClientRuntime();
     await this.connect();
   }
 
@@ -475,9 +384,7 @@ export class Client {
       await this.messageQueue;
       try {
         await this.dropLocalAuthority();
-        if (outputReconciliationError !== undefined) {
-          throw outputReconciliationError;
-        }
+        if (outputReconciliationError !== undefined) throw outputReconciliationError;
       } finally {
         this.journal.close();
       }
@@ -502,6 +409,7 @@ export class Client {
         })
         .catch((error: unknown) => {
           console.error("Client message failed:", error);
+          socket.close(4002, "Protocol error");
         });
     });
     socket.on("close", (code) => {
@@ -509,10 +417,7 @@ export class Client {
       try {
         this.markUnconfirmedOutputTruncated();
       } catch (error) {
-        this.beginTerminalFailure(
-          "Unable to preserve unconfirmed Operation output",
-          error,
-        );
+        this.beginTerminalFailure("Unable to preserve unconfirmed Command output", error);
         return;
       }
       if (this.socket !== socket) return;
@@ -568,9 +473,7 @@ export class Client {
       try {
         await this.messageQueue;
         await this.dropLocalAuthority();
-        if (outputReconciliationError !== undefined) {
-          throw outputReconciliationError;
-        }
+        if (outputReconciliationError !== undefined) throw outputReconciliationError;
       } finally {
         this.journal.close();
       }
@@ -589,11 +492,8 @@ export class Client {
 
   private deliver(message: ClientToServerMessage): boolean {
     const output = outputMessage(message);
-    if (output) this.markOperationOutputUnconfirmed(output.id);
-    if (
-      this.authenticated &&
-      this.socket?.readyState === WebSocket.OPEN
-    ) {
+    if (output) this.markCommandOutputUnconfirmed(output.commandId);
+    if (this.authenticated && this.socket?.readyState === WebSocket.OPEN) {
       try {
         this.send(message);
         return true;
@@ -604,30 +504,27 @@ export class Client {
     return this.bufferedMessages.enqueue(message).accepted;
   }
 
-  private markOperationOutputTruncated(operationId: string): void {
-    this.journal.markOutputTruncated(operationId);
-    this.bufferedMessages.markOutputTruncated(operationId);
-    this.unconfirmedOutputOperations.delete(operationId);
-    this.outputTruncatedOperations.add(operationId);
+  private markCommandOutputTruncated(commandId: string): void {
+    this.journal.markOutputTruncated(commandId);
+    this.bufferedMessages.markOutputTruncated(commandId);
+    this.unconfirmedOutputCommands.delete(commandId);
+    this.outputTruncatedCommands.add(commandId);
   }
 
-  private markOperationOutputUnconfirmed(operationId: string): void {
-    if (this.unconfirmedOutputOperations.has(operationId)) return;
-    this.journal.markOutputUnconfirmed(operationId);
-    this.unconfirmedOutputOperations.add(operationId);
+  private markCommandOutputUnconfirmed(commandId: string): void {
+    if (this.unconfirmedOutputCommands.has(commandId)) return;
+    this.journal.markOutputUnconfirmed(commandId);
+    this.unconfirmedOutputCommands.add(commandId);
   }
 
   private markUnconfirmedOutputTruncated(): void {
-    for (const operationId of [...this.unconfirmedOutputOperations]) {
-      this.markOperationOutputTruncated(operationId);
+    for (const commandId of [...this.unconfirmedOutputCommands]) {
+      this.markCommandOutputTruncated(commandId);
     }
   }
 
   private flushBufferedMessages(): void {
-    while (
-      this.authenticated &&
-      this.socket?.readyState === WebSocket.OPEN
-    ) {
+    while (this.authenticated && this.socket?.readyState === WebSocket.OPEN) {
       const message = this.bufferedMessages.peek();
       if (!message) return;
       try {
@@ -641,24 +538,21 @@ export class Client {
   }
 
   private async dropLocalAuthority(): Promise<void> {
-    const operations = [...this.operations.values()];
-    const sessions = [...this.sessions.values()];
-    for (const active of sessions) active.closing = true;
-    this.sessions.clear();
+    const commands = [...this.commands.values()];
+    const tasks = [...this.tasks.values()];
+    for (const task of tasks) task.closing = true;
+    this.tasks.clear();
     let terminationError: unknown;
     try {
       await terminateLocalAuthority(
-        operations.map((operation) => async () => operation.cancel()),
-        sessions.map(
-          (active) => async () =>
-            active.executor.closeSession(active.session),
-        ),
+        commands.map((command) => async () => command.cancel()),
+        tasks.map((task) => async () => clearTimeout(task.expiryTimer)),
       );
     } catch (error) {
       terminationError = error;
     }
-    await Promise.all(operations.map((operation) => operation.waitUntilFinished()));
-    this.operations.clear();
+    await Promise.all(commands.map((command) => command.waitUntilFinished()));
+    this.commands.clear();
     if (terminationError !== undefined) throw terminationError;
   }
 
@@ -677,15 +571,11 @@ export class Client {
           protocolVersion: PROTOCOL_VERSION,
           signature,
           ...(this.runtime ? { runtime: this.runtime } : {}),
-          ...(this.config.taskProfile
-            ? {
-                taskProfile: {
-                  id: this.config.taskProfile.id,
-                  operatingSystemUser: userInfo().username,
-                  localPolicy: this.config.taskProfile.localPolicy,
-                },
-              }
-            : {}),
+          taskProfile: {
+            id: this.config.taskProfile!.id,
+            operatingSystemUser: userInfo().username,
+            localPolicy: this.config.taskProfile!.localPolicy,
+          },
         });
         break;
       }
@@ -718,112 +608,92 @@ export class Client {
         });
         break;
       case "task.open":
-        if (!this.authenticated) return;
-        await this.openTask(message);
+        if (this.authenticated) await this.openTask(message);
         break;
       case "task.close":
-        if (!this.authenticated) return;
-        await this.closeSession(message.taskId, message.reason);
+        if (this.authenticated) await this.closeTask(message.taskId, message.reason);
         break;
       case "command.start":
-        if (!this.authenticated) return;
-        this.commandOperations.add(message.commandId);
-        void this.startOperation({
-          type: "operation.start",
-          operationId: message.commandId,
-          sessionId: message.taskId,
-          action: {
-            kind: "host.shell",
-            command: message.command,
-            cwd: message.cwd ?? ".",
-            env: {},
-          },
-          timeoutSeconds: message.timeoutSeconds,
-          maxOutputBytes: message.maxOutputBytes,
-        }).catch((error: unknown) => console.error("Client Command failed:", error));
+        if (this.authenticated) {
+          void this.startCommand(message).catch((error: unknown) => {
+            console.error("Client Command failed:", error);
+          });
+        }
         break;
       case "command.acknowledged":
         if (!this.authenticated) return;
         this.journal.acknowledge(message.commandId);
-        this.commandOperations.delete(message.commandId);
-        this.unconfirmedOutputOperations.delete(message.commandId);
-        this.outputTruncatedOperations.delete(message.commandId);
+        this.unconfirmedOutputCommands.delete(message.commandId);
+        this.outputTruncatedCommands.delete(message.commandId);
         break;
       case "command.cancel":
-        if (!this.authenticated) return;
-        this.commandOperations.add(message.commandId);
-        await this.cancelOperation(message.commandId);
+        if (this.authenticated) await this.cancelCommand(message.commandId);
         break;
-      case "session.open":
-        if (!this.authenticated) return;
-        await this.openSession(message);
-        break;
-      case "session.expires":
-        if (!this.authenticated) return;
-        this.updateSessionExpiry(message);
-        break;
-      case "session.close":
-        if (!this.authenticated) return;
-        await this.closeSession(message.sessionId, message.reason);
-        break;
-      case "operation.start":
-        if (!this.authenticated) return;
-        void this.startOperation(message).catch((error: unknown) => {
-          console.error("Client Operation failed:", error);
-        });
-        break;
-      case "operation.acknowledged":
-        if (!this.authenticated) return;
-        this.journal.acknowledge(message.operationId);
-        this.unconfirmedOutputOperations.delete(message.operationId);
-        this.outputTruncatedOperations.delete(message.operationId);
-        break;
-      case "operation.cancel":
-        if (!this.authenticated) return;
-        await this.cancelOperation(message.operationId);
-        break;
+      default:
+        throw new Error(`Unsupported Server message: ${message.type}`);
     }
   }
 
   private async openTask(
     message: Extract<ServerToClientMessage, { type: "task.open" }>,
   ): Promise<void> {
-    const taskProfile = this.config.taskProfile;
+    const taskProfile = this.config.taskProfile!;
     try {
-      if (!taskProfile || taskProfile.id !== message.clientProfileId) {
+      if (taskProfile.id !== message.clientProfileId) {
         throw new Error("Task Client Profile is not configured locally");
       }
-      const deadline = adjustedSessionDeadline(message.expiresAt, message.serverTime);
+      if (this.closedTasks.has(message.taskId)) {
+        this.deliver({ type: "task.closed", taskId: message.taskId, reason: "already_closed" });
+        return;
+      }
+      const existing = this.tasks.get(message.taskId);
+      if (existing) {
+        if (
+          existing.closing ||
+          existing.organizationId !== message.organizationId ||
+          existing.agentId !== message.agentId ||
+          existing.clientProfileId !== message.clientProfileId ||
+          existing.contractExpiresAt !== message.expiresAt ||
+          existing.maxConcurrentCommands !== message.maxConcurrentCommands
+        ) {
+          throw new Error("Task retry does not match active local authority");
+        }
+        this.sendTaskOpened(message.taskId);
+        return;
+      }
+      const deadline = adjustedTaskDeadline(message.expiresAt, message.serverTime);
+      const durationSeconds = Math.ceil((deadline.getTime() - Date.now()) / 1_000);
       const decision = localTaskDecision(taskProfile.localPolicy, {
         organizationId: message.organizationId,
         agentId: message.agentId,
-        durationSeconds: Math.ceil((deadline.getTime() - Date.now()) / 1_000),
-        activeTasks: [...this.taskSessions].filter(
-          (id) => id !== message.taskId && this.sessions.has(id),
-        ).length,
+        durationSeconds,
+        activeTasks: this.tasks.size,
         maxConcurrentCommands: message.maxConcurrentCommands,
       });
       if (!decision.allowed) {
         throw new Error(`Task violates Local Policy: ${decision.code}`);
       }
-      this.taskSessions.add(message.taskId);
-      this.taskLimits.set(message.taskId, {
+      if (durationSeconds <= 0) throw new Error("Task expired before local authority opened");
+      const task: ActiveTask = {
+        organizationId: message.organizationId,
+        agentId: message.agentId,
+        clientProfileId: message.clientProfileId,
+        contractExpiresAt: message.expiresAt,
+        expiresAt: deadline,
         maxConcurrentCommands: message.maxConcurrentCommands,
-        maxCommandTimeoutSeconds: taskProfile.localPolicy.maxCommandTimeoutSeconds,
-        maxCommandOutputBytes: taskProfile.localPolicy.maxCommandOutputBytes,
-      });
-      await this.openSession({
-        type: "session.open",
-        sessionId: message.taskId,
-        profile: taskProfile.executorProfile,
-        capabilities: ["host.shell"],
-        restrictions: {},
-        expiresAt: message.expiresAt,
-        serverTime: message.serverTime,
-      });
+        closing: false,
+        expiryTimer: setTimeout(
+          () => this.closeTaskSafely(message.taskId, "expired"),
+          deadline.getTime() - Date.now(),
+        ),
+      };
+      this.tasks.set(message.taskId, task);
+      if (this.closedTasks.has(message.taskId)) {
+        await this.closeTask(message.taskId, "closed_while_opening");
+        return;
+      }
+      this.sendTaskOpened(message.taskId);
     } catch (error) {
-      this.taskSessions.delete(message.taskId);
-      this.taskLimits.delete(message.taskId);
       this.deliver({
         type: "task.open_failed",
         taskId: message.taskId,
@@ -832,243 +702,99 @@ export class Client {
     }
   }
 
-  private async openSession(
-    message: Extract<ServerToClientMessage, { type: "session.open" }>,
-  ): Promise<void> {
-    try {
-      if (this.closedSessions.has(message.sessionId)) {
-        this.deliver(this.taskSessions.has(message.sessionId)
-          ? { type: "task.closed", taskId: message.sessionId, reason: "already_closed" }
-          : { type: "session.closed", sessionId: message.sessionId, reason: "already_closed" });
-        return;
-      }
-      const existing = this.sessions.get(message.sessionId);
-      if (existing) {
-        if (existing.closing) {
-          throw new Error("Session is already closing on this client");
-        }
-        const requested = {
-          machineId: this.config.machineId,
-          profile: message.profile,
-          capabilities: message.capabilities,
-          restrictions: message.restrictions ?? {},
-        };
-        const current = {
-          machineId: this.config.machineId,
-          profile: message.profile,
-          capabilities: [...existing.session.capabilities],
-          restrictions: existing.session.restrictions ?? {},
-        };
-        if (
-          existing.session.profile !== this.config.profiles[message.profile] ||
-          !sessionScopeSubsetDecision(requested, current).allowed ||
-          !sessionScopeSubsetDecision(current, requested).allowed
-        ) {
-          throw new Error("Session retry scope does not match active local authority");
-        }
-        this.updateSessionExpiry({
-          type: "session.expires",
-          sessionId: message.sessionId,
-          expiresAt: message.expiresAt,
-          ...(message.serverTime ? { serverTime: message.serverTime } : {}),
-        });
-        this.sendOpened(message.sessionId, existing.session);
-        return;
-      }
-      const localDeadline = adjustedSessionDeadline(
-        message.expiresAt,
-        message.serverTime,
-      );
-      const profile = this.config.profiles[message.profile];
-      if (!profile) throw new Error(`Unknown local profile: ${message.profile}`);
-      const activeForProfile = [...this.sessions.values()].filter(
-        (item) => item.session.profile === profile,
-      ).length;
-      if (activeForProfile >= profile.maxConcurrentSessions) {
-        throw new Error("Local concurrent session limit reached");
-      }
-      const executor = this.executors.get(profile.runner);
-      if (!executor) throw new Error(`Executor ${profile.runner} is unavailable`);
-      const session = await executor.openSession(
-        message.sessionId,
-        profile,
-        message.capabilities,
-        message.restrictions,
-        localDeadline,
-        () => this.closeSessionSafely(message.sessionId, "expired"),
-      );
-      if (this.closedSessions.has(message.sessionId)) {
-        await executor.closeSession(session);
-        this.deliver(this.taskSessions.has(message.sessionId)
-          ? { type: "task.closed", taskId: message.sessionId, reason: "closed_while_opening" }
-          : { type: "session.closed", sessionId: message.sessionId, reason: "closed_while_opening" });
-        return;
-      }
-      this.sessions.set(message.sessionId, { session, executor, closing: false });
-      this.sendOpened(message.sessionId, session);
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      const isTask = this.taskSessions.delete(message.sessionId);
-      if (isTask) this.taskLimits.delete(message.sessionId);
-      this.deliver(isTask
-        ? { type: "task.open_failed", taskId: message.sessionId, error: reason }
-        : { type: "session.open_failed", sessionId: message.sessionId, error: reason });
-    }
+  private sendTaskOpened(taskId: string): void {
+    this.deliver({
+      type: "task.opened",
+      taskId,
+      clientProfileId: this.config.taskProfile!.id,
+      operatingSystemUser: userInfo().username,
+    });
   }
 
-  private sendOpened(sessionId: string, session: RunningSession): void {
-    this.deliver(this.taskSessions.has(sessionId)
-      ? {
-          type: "task.opened",
-          taskId: sessionId,
-          clientProfileId: this.config.taskProfile?.id ?? "",
-          operatingSystemUser: userInfo().username,
-        }
-      : {
-          type: "session.opened",
-          sessionId,
-          runner: session.runner,
-          runtimeId: session.runtimeId,
-        });
-  }
-
-  private updateSessionExpiry(
-    message: Extract<ServerToClientMessage, { type: "session.expires" }>,
-  ): void {
-    const active = this.sessions.get(message.sessionId);
-    if (!active) return;
-    const expiresAt = adjustedSessionDeadline(message.expiresAt, message.serverTime);
-    const ttlMilliseconds = expiresAt.getTime() - Date.now();
-    if (
-      ttlMilliseconds <= 0 ||
-      ttlMilliseconds > active.session.profile.maxSessionTtlSeconds * 1_000
-    ) {
-      this.closeSessionSafely(message.sessionId, "invalid_expiry");
-      return;
-    }
-    clearTimeout(active.session.expiryTimer);
-    active.session.expiresAt = expiresAt;
-    active.session.expiryTimer = setTimeout(
-      () => this.closeSessionSafely(message.sessionId, "expired"),
-      ttlMilliseconds,
-    );
-  }
-
-  private closeSessionSafely(sessionId: string, reason: string): void {
-    void this.closeSession(sessionId, reason).catch((error: unknown) => {
+  private closeTaskSafely(taskId: string, reason: string): void {
+    void this.closeTask(taskId, reason).catch((error: unknown) => {
       this.beginTerminalFailure(
-        `Session ${reason} cleanup could not prove local authority termination`,
+        `Task ${reason} cleanup could not prove local authority termination`,
         error,
       );
     });
   }
 
-  private async closeSession(sessionId: string, reason: string): Promise<void> {
-    const pending = this.closingSessions.get(sessionId);
-    if (pending) {
-      await pending;
-      return;
+  private async closeTask(taskId: string, reason: string): Promise<void> {
+    const pending = this.closingTasks.get(taskId);
+    if (pending) return await pending;
+    this.closedTasks.add(taskId);
+    if (this.closedTasks.size > 1_000) {
+      const oldest = this.closedTasks.values().next().value;
+      if (oldest !== undefined) this.closedTasks.delete(oldest);
     }
-    this.closedSessions.add(sessionId);
-    if (this.closedSessions.size > 1_000) {
-      const oldest = this.closedSessions.values().next().value;
-      if (oldest !== undefined) this.closedSessions.delete(oldest);
-    }
-    const active = this.sessions.get(sessionId);
-    if (active) active.closing = true;
-    const operations = [...this.operations.values()].filter(
-      (operation) => operation.sessionId === sessionId,
+    const task = this.tasks.get(taskId);
+    if (task) task.closing = true;
+    const commands = [...this.commands.values()].filter(
+      (command) => command.taskId === taskId,
     );
     const closing = (async (): Promise<void> => {
       await terminateLocalAuthority(
-        operations.map((operation) => async () => operation.cancel()),
-        active
-          ? [async () => active.executor.closeSession(active.session)]
-          : [],
+        commands.map((command) => async () => command.cancel()),
+        task ? [async () => clearTimeout(task.expiryTimer)] : [],
       );
-      await Promise.all(
-        operations.map((operation) => operation.waitUntilFinished()),
-      );
-      this.deliver(this.taskSessions.has(sessionId)
-        ? { type: "task.closed", taskId: sessionId, reason }
-        : { type: "session.closed", sessionId, reason });
+      await Promise.all(commands.map((command) => command.waitUntilFinished()));
+      this.deliver({ type: "task.closed", taskId, reason });
     })();
-    this.closingSessions.set(sessionId, closing);
+    this.closingTasks.set(taskId, closing);
     try {
       await closing;
     } finally {
-      if (active && this.sessions.get(sessionId) === active) {
-        this.sessions.delete(sessionId);
-      }
-      if (this.closingSessions.get(sessionId) === closing) {
-        this.closingSessions.delete(sessionId);
-      }
-      this.taskSessions.delete(sessionId);
-      this.taskLimits.delete(sessionId);
+      if (task && this.tasks.get(taskId) === task) this.tasks.delete(taskId);
+      if (this.closingTasks.get(taskId) === closing) this.closingTasks.delete(taskId);
     }
   }
 
-  private async startOperation(
-    message: Extract<ServerToClientMessage, { type: "operation.start" }>,
+  private async startCommand(
+    message: Extract<ServerToClientMessage, { type: "command.start" }>,
   ): Promise<void> {
-    const receipt = this.journal.receive(message.operationId);
+    const receipt = this.journal.receive(message.commandId);
     if (receipt === "completed") {
-      const previous = this.journal.result(message.operationId);
-      if (previous) this.sendCompletion(message.operationId, previous);
+      const previous = this.journal.result(message.commandId);
+      if (previous) this.sendCompletion(message.commandId, previous);
       return;
     }
     if (receipt !== "new") return;
 
-    const active = this.sessions.get(message.sessionId);
-    if (!active || active.closing) {
-      const result: JournalResult = {
-        status: "failed",
-        exitCode: null,
-        error: "Session is not active on this client",
-        outputTruncated: false,
-      };
-      this.journal.complete(message.operationId, result);
-      this.sendCompletion(message.operationId, result);
-      return;
+    const task = this.tasks.get(message.taskId);
+    if (!task || task.closing || task.expiresAt.getTime() <= Date.now()) {
+      return this.failCommand(message.commandId, "Task is not active on this Client");
     }
-
-    const operationsForProfile = [...this.operations.values()].filter(
-      (operation) => operation.profile === active.session.profile,
+    const commandsForTask = [...this.commands.values()].filter(
+      (command) => command.taskId === message.taskId,
     ).length;
-    const taskLimits = this.taskLimits.get(message.sessionId);
-    const commandsForTask = taskLimits
-      ? [...this.operations.values()].filter(
-          (operation) => operation.sessionId === message.sessionId,
-        ).length
-      : 0;
-    if (
-      operationsForProfile >= active.session.profile.maxConcurrentOperations ||
-      (taskLimits !== undefined && commandsForTask >= taskLimits.maxConcurrentCommands)
-    ) {
-      const result: JournalResult = {
-        status: "failed",
-        exitCode: null,
-        error: "Local concurrent Operation limit reached",
-        outputTruncated: false,
-      };
-      this.journal.complete(message.operationId, result);
-      this.sendCompletion(message.operationId, result);
-      return;
+    if (commandsForTask >= task.maxConcurrentCommands) {
+      return this.failCommand(message.commandId, "Local concurrent Command limit reached");
     }
 
-    const control = new PendingOperation(
-      message.sessionId,
-      active.session.profile,
+    const policy = this.config.taskProfile!.localPolicy;
+    const maximumOutputBytes = Math.min(
+      message.maxOutputBytes,
+      policy.maxCommandOutputBytes,
     );
-    this.operations.set(message.operationId, control);
+    const timeoutMilliseconds = commandTimeoutMilliseconds(
+      message.timeoutSeconds,
+      policy.maxCommandTimeoutSeconds,
+      task.expiresAt,
+    );
+    if (maximumOutputBytes < 1 || timeoutMilliseconds <= 0) {
+      return this.failCommand(message.commandId, "Command exceeds Local Policy or Task expiry");
+    }
 
+    const control = new PendingCommand(message.taskId);
+    this.commands.set(message.commandId, control);
     let sequence = 0;
     let outputBytes = 0;
     let outputTruncated = false;
     let timedOut = false;
     let terminalFailure: unknown;
     let timer: NodeJS.Timeout | undefined;
-    const deadlineMarker = Symbol("operation-deadline");
+    const deadlineMarker = Symbol("command-deadline");
     const executionSignal = control.executionSignal();
     const deadlineReached = new Promise<typeof deadlineMarker>((resolveDeadline) => {
       if (executionSignal.aborted) {
@@ -1087,52 +813,31 @@ export class Client {
         throw error;
       },
     );
-    const requestedMaximum = Number.isInteger(message.maxOutputBytes) &&
-        message.maxOutputBytes > 0
-      ? message.maxOutputBytes
-      : 0;
-    const maximum = Math.min(
-      requestedMaximum,
-      active.session.profile.maxOutputBytes,
-      taskLimits?.maxCommandOutputBytes ?? Number.POSITIVE_INFINITY,
-    );
-    const maximumEventBytes = 256 * 1024;
     const markOutputTruncated = (): void => {
       if (outputTruncated) return;
-      if (!this.outputTruncatedOperations.has(message.operationId)) {
-        this.markOperationOutputTruncated(message.operationId);
+      if (!this.outputTruncatedCommands.has(message.commandId)) {
+        this.markCommandOutputTruncated(message.commandId);
       }
       outputTruncated = true;
     };
-    const emit = (stream: "stdout" | "stderr" | "result", data: Buffer): void => {
-      if (this.outputTruncatedOperations.has(message.operationId)) {
-        outputTruncated = true;
-      }
+    const emit = (stream: "stdout" | "stderr", data: Buffer): void => {
+      if (this.outputTruncatedCommands.has(message.commandId)) outputTruncated = true;
       if (outputTruncated) return;
-      const remaining = maximum - outputBytes;
+      const remaining = maximumOutputBytes - outputBytes;
       if (remaining <= 0) {
         markOutputTruncated();
         return;
       }
       const accepted = data.subarray(0, remaining);
-      for (let offset = 0; offset < accepted.length; offset += maximumEventBytes) {
-        const chunk = accepted.subarray(offset, offset + maximumEventBytes);
-        const delivered = this.deliver(this.commandOperations.has(message.operationId)
-          ? {
-              type: "command.output",
-              commandId: message.operationId,
-              sequence,
-              stream: stream === "result" ? "stdout" : stream,
-              dataBase64: chunk.toString("base64"),
-            }
-          : {
-              type: "operation.event",
-              operationId: message.operationId,
-              sequence,
-              stream,
-              dataBase64: chunk.toString("base64"),
-            });
-        if (!delivered) {
+      for (let offset = 0; offset < accepted.length; offset += 256 * 1024) {
+        const chunk = accepted.subarray(offset, offset + 256 * 1024);
+        if (!this.deliver({
+          type: "command.output",
+          commandId: message.commandId,
+          sequence,
+          stream,
+          dataBase64: chunk.toString("base64"),
+        })) {
           markOutputTruncated();
           return;
         }
@@ -1144,75 +849,52 @@ export class Client {
 
     try {
       if (
-        active.closing ||
-        this.sessions.get(message.sessionId) !== active ||
-        active.session.expiresAt.getTime() <= Date.now()
+        task.closing ||
+        this.tasks.get(message.taskId) !== task ||
+        task.expiresAt.getTime() <= Date.now()
       ) {
-        throw new Error("Session closed before the Operation could start");
+        throw new Error("Task closed before the Command could start");
       }
-      this.journal.markRunning(message.operationId);
-      this.deliver(this.commandOperations.has(message.operationId)
-        ? { type: "command.started", commandId: message.operationId, at: new Date().toISOString() }
-        : { type: "operation.started", operationId: message.operationId, at: new Date().toISOString() });
-      const timeoutMilliseconds = operationTimeoutMilliseconds(
-        message.timeoutSeconds,
-        Math.min(
-          active.session.profile.maxOperationTimeoutSeconds,
-          taskLimits?.maxCommandTimeoutSeconds ?? Number.POSITIVE_INFINITY,
-        ),
-        active.session.expiresAt,
-      );
-      if (timeoutMilliseconds <= 0) {
-        timedOut = true;
-        control.failStart();
-        await control.cancel();
-        throw new Error("Operation deadline elapsed before process start");
-      }
+      this.journal.markRunning(message.commandId);
+      this.deliver({
+        type: "command.started",
+        commandId: message.commandId,
+        at: new Date().toISOString(),
+      });
       timer = setTimeout(() => {
         timedOut = true;
         void control.cancel().catch(() => {});
       }, timeoutMilliseconds);
-      const executionPreparation = active.executor.execute(
-        message.operationId,
-        active.session,
-        message.action,
-        {
-          stdout: (data) => emit("stdout", data),
-          stderr: (data) => emit("stderr", data),
-          result: (data) => emit("result", data),
-        },
-        { signal: executionSignal },
+      const preparation = this.executor.execute(
+        message.command,
+        message.cwd,
+        { stdout: (data) => emit("stdout", data), stderr: (data) => emit("stderr", data) },
+        executionSignal,
       );
-      void executionPreparation.then(
+      void preparation.then(
         (lateRunning) => {
           if (!executionSignal.aborted) return;
           void lateRunning.cancel().catch((error: unknown) => {
-            this.beginTerminalFailure(
-              "Late Operation preparation could not be terminated",
-              error,
-            );
+            this.beginTerminalFailure("Late Command preparation could not be terminated", error);
           });
         },
         () => {},
       );
-      const prepared = await Promise.race([executionPreparation, deadlineReached]);
+      const prepared = await Promise.race([preparation, deadlineReached]);
       if (prepared === deadlineMarker) {
         control.failStart();
         await control.cancel();
         throw new Error(
           timedOut
-            ? "Operation deadline elapsed before process start"
-            : "Operation was cancelled before process start",
+            ? "Command deadline elapsed before process start"
+            : "Command was cancelled before process start",
         );
       }
-      const running = prepared;
-      control.attach(running);
+      control.attach(prepared);
       if (control.cancelRequested) await control.cancel();
-      const { exitCode } = await Promise.race([running.done, cancellationFailure]);
-      outputTruncated ||= this.outputTruncatedOperations.has(
-        message.operationId,
-      );
-      const result: JournalResult = {
+      const { exitCode } = await Promise.race([prepared.done, cancellationFailure]);
+      outputTruncated ||= this.outputTruncatedCommands.has(message.commandId);
+      const result: CommandResult = {
         status: timedOut
           ? "timed_out"
           : control.cancelRequested
@@ -1224,15 +906,13 @@ export class Client {
         ...(outputTruncated ? { error: "Output limit reached" } : {}),
         outputTruncated,
       };
-      this.journal.complete(message.operationId, result);
-      this.sendCompletion(message.operationId, result);
+      this.journal.complete(message.commandId, result);
+      this.sendCompletion(message.commandId, result);
     } catch (error) {
       control.failStart();
       const terminationUnconfirmed = terminalFailure !== undefined;
-      outputTruncated ||= this.outputTruncatedOperations.has(
-        message.operationId,
-      );
-      const result: JournalResult = {
+      outputTruncated ||= this.outputTruncatedCommands.has(message.commandId);
+      const result: CommandResult = {
         status: terminationUnconfirmed
           ? "execution_unknown"
           : timedOut
@@ -1248,69 +928,77 @@ export class Client {
             : String(error),
         outputTruncated,
       };
-      this.journal.complete(message.operationId, result);
-      this.sendCompletion(message.operationId, result);
+      this.journal.complete(message.commandId, result);
+      this.sendCompletion(message.commandId, result);
     } finally {
       if (timer) clearTimeout(timer);
-      if (this.operations.get(message.operationId) === control) {
-        this.operations.delete(message.operationId);
+      if (this.commands.get(message.commandId) === control) {
+        this.commands.delete(message.commandId);
       }
       control.markFinished();
       if (terminalFailure !== undefined) {
         this.beginTerminalFailure(
-          "Operation process-tree termination could not be proved",
+          "Command process-tree termination could not be proved",
           terminalFailure,
         );
       }
     }
   }
 
-  private async cancelOperation(operationId: string): Promise<void> {
-    const operation = this.operations.get(operationId);
-    if (operation) {
-      await operation.cancel();
+  private failCommand(commandId: string, error: string): void {
+    const result: CommandResult = {
+      status: "failed",
+      exitCode: null,
+      error,
+      outputTruncated: false,
+    };
+    this.journal.complete(commandId, result);
+    this.sendCompletion(commandId, result);
+  }
+
+  private async cancelCommand(commandId: string): Promise<void> {
+    const command = this.commands.get(commandId);
+    if (command) {
+      await command.cancel();
       return;
     }
-    const previous = this.journal.result(operationId);
+    const previous = this.journal.result(commandId);
     if (previous) {
-      this.sendCompletion(operationId, previous);
+      this.sendCompletion(commandId, previous);
       return;
     }
-    const receipt = this.journal.receive(operationId);
-    const result: JournalResult = {
+    const receipt = this.journal.receive(commandId);
+    const result: CommandResult = {
       status: receipt === "new" ? "cancelled" : "execution_unknown",
       exitCode: null,
       error:
         receipt === "new"
-          ? "Operation was cancelled before execution started"
-          : "Operation execution state was unavailable when cancellation arrived",
+          ? "Command was cancelled before execution started"
+          : "Command execution state was unavailable when cancellation arrived",
       outputTruncated: false,
     };
-    this.journal.complete(operationId, result);
-    this.sendCompletion(operationId, result);
+    this.journal.complete(commandId, result);
+    this.sendCompletion(commandId, result);
   }
 
-  private sendCompletion(operationId: string, result: JournalResult): void {
+  private sendCompletion(commandId: string, result: CommandResult): void {
     const outputTruncated =
-      result.outputTruncated || this.outputTruncatedOperations.has(operationId);
-    const error =
-      result.error ??
-      (outputTruncated ? "Operation output is incomplete" : undefined);
-    const completion = {
+      result.outputTruncated || this.outputTruncatedCommands.has(commandId);
+    const error = result.error ?? (outputTruncated ? "Command output is incomplete" : undefined);
+    this.deliver({
+      type: "command.completed",
+      commandId,
       status: result.status,
       exitCode: result.exitCode,
       ...(error ? { error } : {}),
       outputTruncated,
       at: new Date().toISOString(),
-    };
-    this.deliver(this.commandOperations.has(operationId)
-      ? { type: "command.completed", commandId: operationId, ...completion }
-      : { type: "operation.completed", operationId, ...completion });
+    });
   }
 
   private reconcileJournalResults(): void {
     for (const entry of this.journal.resultsForReconciliation()) {
-      this.sendCompletion(entry.operationId, entry.result);
+      this.sendCompletion(entry.commandId, entry.result);
     }
   }
 }
@@ -1324,10 +1012,9 @@ export async function runClient(
     const details = parsed.error.issues
       .map((issue) => `${issue.path.join(".") || "config"}: ${issue.message}`)
       .join("; ");
-    throw new Error(`Invalid client configuration: ${details}`);
+    throw new Error(`Invalid Client configuration: ${details}`);
   }
-  const config: ClientConfig = parsed.data;
-  const client = new Client(config);
+  const client = new Client(parsed.data);
   let shuttingDown = false;
   const shutdown = (): void => {
     if (shuttingDown) return;

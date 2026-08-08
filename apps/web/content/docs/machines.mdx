@@ -58,6 +58,10 @@ The Server can grant less authority but cannot widen this ceiling. A mismatched 
 Agent, duration, concurrency request, or Command bound is denied by the Client even if the Server
 is compromised.
 
+The stored Client configuration is strict and Task-native. It contains one Machine identity and
+one Local Policy; legacy runner profiles, Session/Operation limits, remote sudo flags, and
+Workspace identifiers are rejected rather than interpreted.
+
 An active Task provides arbitrary non-interactive shell authority as the Client's Linux user. It
 does not configure sudo, isolate the process, filter commands, or claim rollback. Use a dedicated
 user with only the filesystem, credential, network, and service access the Agent needs.

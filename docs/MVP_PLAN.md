@@ -208,11 +208,15 @@ authorization.
   are no longer reachable.
 - Machine governance in Web is metadata and revocation only; remote capability widening and the
   obsolete browser/device activation flows were deleted, leaving Local Policy Machine-owned.
+- the Linux Client now executes Task/Command directly: its strict configuration, SQLite Command
+  journal, reconnect buffer, expiry, cancellation, process-tree termination, and shell executor no
+  longer contain Session adapters, typed filesystem actions, Docker actions, caller env/stdin,
+  multi-platform services, remote sudo configuration, or executor capability profiles.
 
 ### DOING
 
-- remove the superseded Session/Operation, Workspace, typed-operation, Docker, SDK,
-  Managed Agent, delegation, and Event Sink implementations after the replacement vertical works.
+- remove superseded Session/Operation protocol and persistence code, Workspace ownership, Managed
+  Agent delegation, and Event Sink implementations after the replacement vertical works.
 
 ### BLOCKED
 

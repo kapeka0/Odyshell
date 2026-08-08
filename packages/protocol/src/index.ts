@@ -844,61 +844,22 @@ export type ClientRuntimeInfo = {
   /** Additive runtime metadata used for compatibility diagnostics. */
   protocolVersion?: number;
   clientVersion?: string;
-  supportedCapabilities?: Capability[];
-  executionRunners?: Array<"host">;
-  profiles?: Array<{
-    name: string;
-    runner: "host";
-    capabilities: Capability[];
-  }>;
 };
-
-const profilePolicySchema = z
-  .object({
-    maxSessionTtlSeconds: z.number().int().min(10).max(MAX_AGENT_SESSION_SECONDS),
-    maxConcurrentSessions: z.number().int().min(1).max(32),
-    maxConcurrentOperations: z.number().int().min(1).max(16).default(4),
-    maxOperationTimeoutSeconds: z
-      .number()
-      .int()
-      .min(1)
-      .max(MAX_OPERATION_TIMEOUT_SECONDS)
-      .default(3_600),
-    maxOutputBytes: z.number().int().min(1024).max(16 * 1024 * 1024),
-    capabilities: z.array(capabilitySchema).min(1),
-    restrictions: sessionRestrictionsSchema.optional(),
-  })
-  .strict();
-
-export const hostClientProfileSchema = profilePolicySchema.extend({
-  runner: z.literal("host"),
-});
-
-export const clientProfileSchema = hostClientProfileSchema;
-export type ClientProfile = z.infer<typeof clientProfileSchema>;
-export type HostClientProfile = z.infer<typeof hostClientProfileSchema>;
 
 export const clientConfigSchema = z.object({
   serverUrl: z.string().url(),
-  workspaceId: z.string().min(1).max(128).optional(),
   profileName: z.string().min(1).max(40).optional(),
   machineId: z.string().uuid(),
   machineName: z.string().min(1).max(128),
   privateKeyPem: z.string().min(1),
   stateDirectory: z.string().min(1).max(4096),
-  allowPrivilegeEscalation: z.boolean().default(false),
   taskProfile: z
     .object({
       id: z.string().trim().min(1).max(256),
-      executorProfile: z.string().min(1).max(64),
       localPolicy: localPolicySchema,
     })
-    .strict()
-    .optional(),
-  profiles: z
-    .record(z.string().min(1).max(64), clientProfileSchema)
-    .refine((profiles) => Object.keys(profiles).length > 0, "At least one profile is required"),
-});
+    .strict(),
+}).strict();
 export type ClientConfig = z.infer<typeof clientConfigSchema>;
 
 export type ServerToClientMessage =

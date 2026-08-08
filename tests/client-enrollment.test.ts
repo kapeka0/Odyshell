@@ -49,11 +49,9 @@ describe("Client enrollment", () => {
     expect(source).not.toContain("ods_enroll_secret");
     const saved = JSON.parse(source) as {
       taskProfile: unknown;
-      profiles: { workspace: Record<string, unknown> };
     };
     expect(saved.taskProfile).toEqual({
       id: "default",
-      executorProfile: "workspace",
       localPolicy: {
         organizationId: "organization-one",
         agentIds: ["agent-primary"],
@@ -65,13 +63,9 @@ describe("Client enrollment", () => {
         allowRemoteApproval: true,
       },
     });
-    expect(saved.profiles.workspace).toMatchObject({
-      runner: "host",
-      maxConcurrentSessions: 1,
-      maxConcurrentOperations: 1,
-      capabilities: ["host.shell"],
-    });
-    expect(saved.profiles.workspace).not.toHaveProperty("mountSource");
+    expect(saved).not.toHaveProperty("profiles");
+    expect(saved).not.toHaveProperty("allowPrivilegeEscalation");
+    expect(saved).not.toHaveProperty("workspaceId");
   });
 
   it("rejects an empty Agent identity before consuming enrollment", async () => {

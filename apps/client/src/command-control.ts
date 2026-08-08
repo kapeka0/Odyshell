@@ -1,15 +1,13 @@
-import type { ClientProfile } from "@odyshell/protocol";
-import type { RunningOperation } from "./executor.js";
+import type { RunningCommand } from "./shell-executor.js";
 
-export class PendingOperation {
-  readonly sessionId: string;
-  readonly profile: ClientProfile | undefined;
+export class PendingCommand {
+  readonly taskId: string;
   cancelRequested = false;
 
-  private running: RunningOperation | undefined;
+  private running: RunningCommand | undefined;
   private readySettled = false;
-  private readonly ready: Promise<RunningOperation | undefined>;
-  private resolveReady!: (running: RunningOperation | undefined) => void;
+  private readonly ready: Promise<RunningCommand | undefined>;
+  private resolveReady!: (running: RunningCommand | undefined) => void;
   private cancellation: Promise<void> | undefined;
   private readonly preparationAbort = new AbortController();
   private readonly cancellationFailure: Promise<never>;
@@ -18,9 +16,8 @@ export class PendingOperation {
   private readonly finished: Promise<void>;
   private resolveFinished!: () => void;
 
-  constructor(sessionId: string, profile?: ClientProfile) {
-    this.sessionId = sessionId;
-    this.profile = profile;
+  constructor(taskId: string) {
+    this.taskId = taskId;
     this.ready = new Promise((resolveReady) => {
       this.resolveReady = resolveReady;
     });
@@ -33,8 +30,8 @@ export class PendingOperation {
     });
   }
 
-  attach(running: RunningOperation): void {
-    if (this.readySettled) throw new Error("Operation execution was already registered");
+  attach(running: RunningCommand): void {
+    if (this.readySettled) throw new Error("Command execution was already registered");
     this.running = running;
     this.readySettled = true;
     this.resolveReady(running);
@@ -78,9 +75,5 @@ export class PendingOperation {
 
   executionSignal(): AbortSignal {
     return this.preparationAbort.signal;
-  }
-
-  activeRunningOperation(): RunningOperation | undefined {
-    return this.running;
   }
 }

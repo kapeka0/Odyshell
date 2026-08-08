@@ -5,12 +5,10 @@ import { mkdtemp } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
   clientConfigPathForProfile,
-  configureClientPrivilegeEscalation,
   listClientProfiles,
   removeAllClientProfiles,
   removeClientProfile,
 } from "../apps/client/src/index.js";
-import { sudoListingGrantsPasswordlessCommand } from "../apps/client/src/profile.js";
 
 const stoppedService = {
   supported: true,
@@ -186,105 +184,6 @@ describe("Client Profile removal", () => {
   });
 });
 
-describe("Client Profile privilege escalation", () => {
-  it("detects narrow NOPASSWD rules without requiring sudo true", () => {
-    expect(
-      sudoListingGrantsPasswordlessCommand(`
-User developer may run the following commands:
-    (root) NOPASSWD: /usr/bin/systemctl restart odyshell-worker
-      `),
-    ).toBe(true);
-    expect(
-      sudoListingGrantsPasswordlessCommand(`
-User developer may run the following commands:
-    (root) PASSWD: /usr/bin/systemctl restart odyshell-worker
-      `),
-    ).toBe(false);
-  });
-
-  it("keeps sudo blocked unless the local owner explicitly enables it", async () => {
-    const home = await mkdtemp(join(tmpdir(), "odyshell-profile-sudo-"));
-    const configPath = clientConfigPathForProfile("work", "linux", home, {});
-    await writeProfileConfig(configPath, "work", "server");
-    const events: string[] = [];
-
-    const result = await configureClientPrivilegeEscalation({
-      profileName: "work",
-      allow: true,
-      platform: "linux",
-      home,
-      environment: {},
-      verifyPasswordlessSudo: async () => {
-        events.push("verified");
-      },
-      applyService: async (path) => {
-        events.push(`applied:${path}`);
-      },
-    });
-
-    expect(result).toEqual({
-      profileName: "work",
-      configPath,
-      allowPrivilegeEscalation: true,
-    });
-    expect(events).toEqual(["verified", `applied:${configPath}`]);
-    const saved = JSON.parse(await readFile(configPath, "utf8"));
-    expect(saved.allowPrivilegeEscalation).toBe(true);
-    expect(saved.privateKeyPem).toBe("private-key");
-  });
-
-  it("fails closed when passwordless sudo is unavailable", async () => {
-    const home = await mkdtemp(join(tmpdir(), "odyshell-profile-sudo-deny-"));
-    const configPath = clientConfigPathForProfile("work", "linux", home, {});
-    await writeProfileConfig(configPath, "work", "server");
-
-    await expect(
-      configureClientPrivilegeEscalation({
-        profileName: "work",
-        allow: true,
-        platform: "linux",
-        home,
-        environment: {},
-        verifyPasswordlessSudo: async () => {
-          throw new Error("sudo requires a password");
-        },
-        applyService: async () => {
-          throw new Error("must not run");
-        },
-      }),
-    ).rejects.toThrow("sudo requires a password");
-
-    const saved = JSON.parse(await readFile(configPath, "utf8"));
-    expect(saved.allowPrivilegeEscalation).toBeUndefined();
-  });
-
-  it("restores the secure policy when service regeneration fails", async () => {
-    const home = await mkdtemp(join(tmpdir(), "odyshell-profile-sudo-rollback-"));
-    const configPath = clientConfigPathForProfile("work", "linux", home, {});
-    await writeProfileConfig(configPath, "work", "server");
-    let applications = 0;
-
-    await expect(
-      configureClientPrivilegeEscalation({
-        profileName: "work",
-        allow: true,
-        platform: "linux",
-        home,
-        environment: {},
-        verifyPasswordlessSudo: async () => {},
-        applyService: async () => {
-          applications += 1;
-          if (applications === 1) throw new Error("systemd unavailable");
-        },
-      }),
-    ).rejects.toThrow("systemd unavailable");
-
-    const saved = JSON.parse(await readFile(configPath, "utf8"));
-    expect(saved.allowPrivilegeEscalation).toBeUndefined();
-    expect(applications).toBe(2);
-  });
-});
-
 async function writeProfileConfig(
   path: string,
   profileName: string,
@@ -300,15 +199,17 @@ async function writeProfileConfig(
       machineName,
       privateKeyPem: "private-key",
       stateDirectory: join(path, "..", "state"),
-      profiles: {
-        host: {
-          runner: "host",
-          maxConcurrentSessions: 2,
-          maxConcurrentOperations: 4,
-          maxOperationTimeoutSeconds: 3600,
-          maxOutputBytes: 1024 * 1024,
-          maxSessionTtlSeconds: 3600,
-          capabilities: ["fs.read"],
+      taskProfile: {
+        id: profileName,
+        localPolicy: {
+          organizationId: "organization-one",
+          agentIds: ["agent-one"],
+          maxTaskDurationSeconds: 3600,
+          maxConcurrentTasks: 1,
+          maxConcurrentCommands: 1,
+          maxCommandTimeoutSeconds: 600,
+          maxCommandOutputBytes: 1024 * 1024,
+          allowRemoteApproval: true,
         },
       },
     }),

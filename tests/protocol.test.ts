@@ -893,124 +893,49 @@ describe("protocol validation", () => {
     }
   });
 
-  it("rejects removed Docker execution profiles", () => {
-    const config = {
-      serverUrl: "http://127.0.0.1:4100",
-      machineId: "2dc24de7-ec0e-45b3-88c1-acbb900e51f8",
-      machineName: "test-machine",
-      privateKeyPem: "private-key",
-      stateDirectory: "/tmp/odyshell",
-      profiles: {
-        workspace: {
-          runner: "docker",
-          mountSource: "/tmp/workspace",
-          image: "alpine:3.22",
-          network: "bridge",
-          maxSessionTtlSeconds: 1800,
-          maxConcurrentSessions: 2,
-          maxOutputBytes: 1024 * 1024,
-          capabilities: ["process.exec"],
-        },
-      },
-    };
-
-    expect(clientConfigSchema.safeParse(config).success).toBe(false);
-    expect(
-      clientConfigSchema.safeParse({
-        ...config,
-        workspaceId: "workspace-a",
-        profiles: {
-          workspace: { ...config.profiles.workspace, network: "none" },
-        },
-      }).success,
-    ).toBe(false);
-  });
-
-  it("accepts direct host execution as an explicit local profile", () => {
-    const parsed = clientConfigSchema.safeParse({
-        serverUrl: "https://api.odyshell.test",
-        workspaceId: "workspace-a",
-        machineId: "2dc24de7-ec0e-45b3-88c1-acbb900e51f8",
-        machineName: "linux-server",
-        privateKeyPem: "private-key",
-        stateDirectory: "/home/odyshell/.local/state/odyshell",
-        profiles: {
-          workspace: {
-            runner: "host",
-            maxSessionTtlSeconds: 1800,
-            maxConcurrentSessions: 2,
-            maxOutputBytes: 1024 * 1024,
-            capabilities: ["process.exec", "host.shell", "fs.read", "fs.write"],
-          },
-        },
-      });
-    expect(parsed.success).toBe(true);
-    if (!parsed.success) throw new Error("Client config should parse");
-    expect(parsed.data.allowPrivilegeEscalation).toBe(false);
-    expect(parsed.data.profiles.workspace).toMatchObject({
-      maxConcurrentOperations: 4,
-      maxOperationTimeoutSeconds: 3_600,
-    });
-    expect(
-      clientConfigSchema.safeParse({
-        ...parsed.data,
-        profiles: {
-          workspace: {
-            ...parsed.data.profiles.workspace,
-            workspaceRoot: "/obsolete/root",
-          },
-        },
-      }).success,
-    ).toBe(false);
-    expect(
-      clientConfigSchema.safeParse({
-        ...parsed.data,
-        allowPrivilegeEscalation: true,
-      }).success,
-    ).toBe(true);
-    expect(
-      clientConfigSchema.safeParse({
-        ...parsed.data,
-        profiles: {
-          workspace: {
-            ...parsed.data.profiles.workspace,
-            runner: "docker",
-            image: "alpine:3.22",
-            mountSource: "/srv/app",
-            network: "none",
-          },
-        },
-      }).success,
-    ).toBe(false);
-  });
-
-  it("keeps Client policy compatible with the 24-hour Session boundary", () => {
-    const profile = {
-      runner: "host" as const,
-      maxConcurrentSessions: 2,
-      maxOutputBytes: 1024 * 1024,
-      capabilities: ["process.exec" as const],
-    };
+  it("accepts only the Task-native Client configuration", () => {
     const config = {
       serverUrl: "https://api.odyshell.test",
-      workspaceId: "workspace-a",
       machineId: "2dc24de7-ec0e-45b3-88c1-acbb900e51f8",
       machineName: "linux-server",
       privateKeyPem: "private-key",
       stateDirectory: "/tmp/odyshell",
-      profiles: {
-        workspace: { ...profile, maxSessionTtlSeconds: 24 * 60 * 60 },
+      taskProfile: {
+        id: "default",
+        localPolicy: {
+          organizationId: "organization-a",
+          agentIds: ["agent-a"],
+          maxTaskDurationSeconds: 3_600,
+          maxConcurrentTasks: 1,
+          maxConcurrentCommands: 1,
+          maxCommandTimeoutSeconds: 600,
+          maxCommandOutputBytes: 1024 * 1024,
+          allowRemoteApproval: true,
+        },
       },
     };
 
     expect(clientConfigSchema.safeParse(config).success).toBe(true);
-    expect(
-      clientConfigSchema.safeParse({
-        ...config,
-        profiles: {
-          workspace: { ...profile, maxSessionTtlSeconds: 24 * 60 * 60 + 1 },
+    for (const legacy of [
+      { workspaceId: "workspace-a" },
+      { allowPrivilegeEscalation: true },
+      { profiles: { workspace: { runner: "host" } } },
+    ]) {
+      expect(clientConfigSchema.safeParse({ ...config, ...legacy }).success).toBe(false);
+    }
+    expect(clientConfigSchema.safeParse({
+      ...config,
+      taskProfile: { ...config.taskProfile, executorProfile: "workspace" },
+    }).success).toBe(false);
+    expect(clientConfigSchema.safeParse({
+      ...config,
+      taskProfile: {
+        ...config.taskProfile,
+        localPolicy: {
+          ...config.taskProfile.localPolicy,
+          maxTaskDurationSeconds: 24 * 60 * 60 + 1,
         },
-      }).success,
-    ).toBe(false);
+      },
+    }).success).toBe(false);
   });
 });
