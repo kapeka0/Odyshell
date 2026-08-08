@@ -5,12 +5,6 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { performance } from "node:perf_hooks";
-import {
-  agentSessionRequestInputSchema,
-  agentTokenRequestSchema,
-  capabilitySchema,
-  manualSessionSelectableCapabilities,
-} from "@odyshell/protocol";
 import { z } from "zod";
 
 export const cloudPlanIds = ["free", "team", "scale"] as const;
@@ -83,70 +77,6 @@ export const cloudWorkspaceSettingsSchema = z.discriminatedUnion("section", [
     loggingLevel: z.enum(workspaceLoggingLevels),
   }).strict(),
 ]);
-
-export const cloudManualSessionSchema = cloudIdentitySchema
-  .extend({
-    title: z.string().trim().min(1).max(96),
-    purpose: z.string().trim().max(280).optional(),
-    agentId: z.string().uuid(),
-    scopes: agentSessionRequestInputSchema.shape.scopes,
-    durationSeconds: z.number().int().min(5 * 60).max(24 * 60 * 60),
-  })
-  .strict()
-  .superRefine((request, context) => {
-    if (request.scopes.length !== 1) {
-      context.addIssue({
-        code: "custom",
-        message: "Manual Sessions require exactly one machine",
-        path: ["scopes"],
-      });
-    }
-    request.scopes.forEach((scope, index) => {
-      if (
-        scope.capabilities.some(
-          (capability) =>
-            !manualSessionSelectableCapabilities.includes(capability),
-        )
-      ) {
-        context.addIssue({
-          code: "custom",
-          message: "Capability is unavailable in manual Sessions",
-          path: ["scopes", index, "capabilities"],
-        });
-      }
-      if (Object.keys(scope.restrictions).length > 0) {
-        context.addIssue({
-          code: "custom",
-          message: "Manual Sessions do not accept typed restrictions",
-          path: ["scopes", index, "restrictions"],
-        });
-      }
-    });
-  });
-
-export const approveDeviceSchema = cloudIdentitySchema.extend({
-  userCode: z.string().min(8).max(16),
-});
-
-export const sessionApprovalSchema = cloudIdentitySchema.extend({
-  requestId: z.string().uuid(),
-});
-
-export function sessionApprovalUrl(webUrl: string, requestId: string): string {
-  return `${webUrl}/sessions/approve?request=${encodeURIComponent(requestId)}`;
-}
-
-export const createCloudAgentAccessSchema = cloudIdentitySchema.extend(
-  agentTokenRequestSchema.shape,
-);
-
-export const revokeCloudAgentAccessSchema = cloudIdentitySchema.extend({
-  tokenId: z.string().uuid(),
-});
-
-export const deleteCloudAgentAccessSchema = cloudIdentitySchema.extend({
-  tokenId: z.string().uuid(),
-});
 
 export const revokeCloudMachineSchema = cloudIdentitySchema.extend({
   machineId: z.string().uuid(),
@@ -301,126 +231,23 @@ function decrementOrDelete(counts: Map<string, number>, key: string): void {
   }
 }
 
-export const startDeviceAuthorizationSchema = z.object({
-  clientName: z.string().trim().min(1).max(120).default("Odyshell CLI"),
-});
-
-export const exchangeDeviceAuthorizationSchema = z.object({
-  deviceCode: z.string().min(32).max(128),
-});
-
-const userCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-
-export function createDeviceUserCode(bytes = randomBytes(8)): string {
-  let code = "";
-  for (let index = 0; index < 8; index += 1) {
-    code += userCodeAlphabet[bytes[index]! % userCodeAlphabet.length];
-  }
-  return `${code.slice(0, 4)}-${code.slice(4)}`;
-}
-
-export function normalizeDeviceUserCode(value: string): string {
-  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
-}
-
 export function privacySafeControlMetadata(
   metadata: Record<string, unknown>,
 ): Record<string, string> {
   const safe: Record<string, string> = {};
-  const kind = capabilitySchema.safeParse(metadata.kind);
-  if (kind.success) safe.kind = kind.data;
-  const reason = controlEventReasonSchema.safeParse(metadata.reason);
-  if (reason.success) safe.reason = reason.data;
-  const machineId = z.string().uuid().safeParse(metadata.machineId);
-  if (machineId.success) {
-    safe.machineId = machineId.data;
+  for (const key of ["revokedTasks", "deletedAgents"] as const) {
+    const value = z.number().int().nonnegative().safeParse(metadata[key]);
+    if (value.success) safe[key] = String(value.data);
   }
-  for (const key of [
-    "parentAgentId",
-    "managedAgentId",
-    "requesterAgentId",
-    "executorAgentId",
-  ]) {
-    const value = z.string().uuid().safeParse(metadata[key]);
-    if (value.success) safe[key] = value.data;
-  }
+  const disconnected = z.boolean().safeParse(metadata.disconnected);
+  if (disconnected.success) safe.disconnected = String(disconnected.data);
   return safe;
 }
-
-type WorkspaceConnection = {
-  id: string;
-  machineId: string;
-  principalId: string;
-  status: string;
-};
-
-export function cloudConnectionView(
-  connection: WorkspaceConnection,
-  agentName: string,
-): {
-  id: string;
-  machineId: string;
-  agentId: string;
-  agentName: string;
-  status: string;
-} {
-  return {
-    id: connection.id,
-    machineId: connection.machineId,
-    agentId: connection.principalId,
-    agentName,
-    status: connection.status,
-  };
-}
-
-const controlEventReasonSchema = z.enum([
-  "agent_request",
-  "agent_token_revoked",
-  "capability_scope",
-  "client_rejected",
-  "expired",
-  "machine_revoked",
-  "machine_scope",
-  "session_capability",
-]);
 
 export function entitlementsFor(plan: string): PlanEntitlements {
   return planEntitlements[cloudPlanIds.includes(plan as CloudPlanId) ? plan as CloudPlanId : "free"];
 }
 
-type DeviceAuthorizationState = {
-  status: string;
-  expiresAt: Date;
-  workspaceId: string | null;
-  userId: string | null;
-};
-
-export function deviceApprovalDecision(
-  authorization: DeviceAuthorizationState | null,
-  now = new Date(),
-): "approved" | "expired" | "invalid" | "already_used" {
-  if (!authorization) return "invalid";
-  if (authorization.expiresAt <= now) return "expired";
-  return authorization.status === "pending" ? "approved" : "already_used";
-}
-
-export function deviceExchangeDecision(
-  authorization: DeviceAuthorizationState | null,
-  now = new Date(),
-): "authorized" | "consumed" | "denied" | "expired" | "invalid" | "pending" {
-  if (!authorization) return "invalid";
-  if (authorization.expiresAt <= now) return "expired";
-  if (authorization.status === "pending") return "pending";
-  if (authorization.status === "denied") return "denied";
-  if (
-    authorization.status !== "approved" ||
-    !authorization.workspaceId ||
-    !authorization.userId
-  ) {
-    return "consumed";
-  }
-  return "authorized";
-}
 
 export function cloudWebKey(environment: NodeJS.ProcessEnv): string | undefined {
   const value = environment.ODYSHELL_WEB_KEY;

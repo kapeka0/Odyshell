@@ -108,24 +108,22 @@ mechanisms. Odyshell Cloud should monetize the managed control plane and operati
 The long-term license for commercial embedding is a separate decision. It should be made before
 offering white-label or OEM distribution, but it is not required to validate the MVP.
 
-## Organization and workspace model
+## Organization model
 
-The business model requires two boundaries:
+Organization is the sole tenant boundary: it owns Humans, Agents, Machines, Local Policies, Tasks,
+Commands, audit, plan, and billing relationship. Cloud may host many isolated Organizations;
+self-hosted mode permits exactly one sovereign Organization. A second Workspace tenant would add
+authorization and navigation complexity without serving the MVP.
 
-- **Organization:** the paying company, its people, plan, and billing relationship.
-- **Workspace:** an execution boundary for machines, Agents, Sessions, policies, and control events.
+Human roles belong to the Organization. Agents do not receive Human roles or broad credentials;
+OAuth identifies each Agent and server-side plus Machine-local policy determine whether it may open
+a temporary Task. Commands execute only inside that Task's one-Machine authority.
 
-One organization may use workspaces for production, development, teams, or individual customers.
-Human roles belong to the organization or workspace. Agents do not receive human roles; they
-request temporary Sessions scoped to machines, capabilities, typed restrictions, and duration.
-
-The MVP now persists Organizations and enforces Workspace isolation across enrollment, machines,
-Agents, Sessions, Operations, and Control Events. Odyshell Identity manages membership and the current
-human roles:
+Odyshell Identity manages Organization membership and the current Human roles:
 
 | Role | MVP responsibility |
 | --- | --- |
-| Organization Member | Operate workspace machines, approve Sessions, and review Control Events |
+| Organization Member | Govern Machines, optionally supervise Tasks, and review audit events |
 | Organization Admin | Member capabilities plus people and organization governance |
 
 More specialized roles are a later governance feature:
@@ -133,8 +131,8 @@ More specialized roles are a later governance feature:
 | Role | Responsibility |
 | --- | --- |
 | Owner | Ownership, billing, administrators, and organization deletion |
-| Admin | Members, workspaces, machine policy, and integrations |
-| Operator | Machine enrollment and temporary Session approval |
+| Admin | Members, Machine policy, Agents, and integrations |
+| Operator | Machine enrollment and optional Task supervision |
 | Auditor | Read and export content-minimal control events |
 | Billing admin | Plan and invoice management only |
 
@@ -142,21 +140,21 @@ More specialized roles are a later governance feature:
 
 The first motion should be design partnerships, not enterprise feature breadth.
 
-1. Recruit five agent vendors with a real need to operate on customer-owned Linux machines.
+1. Recruit five teams running Agent or MSP workflows on customer-owned Linux Machines.
 2. Integrate one repeatable workflow for each, such as updating a dependency or changing a
    configuration file.
 3. Measure installation time, successful task completion, repeat use, denied operations, and
    support burden.
 4. Convert customers when Odyshell becomes part of a recurring production workflow.
-5. Expand by connected customer workspaces and active machines.
+5. Expand by connected customer Organizations and active Machines.
 
 The primary activation metric is:
 
-> A new customer connects a private machine and completes the first scoped agent operation in
+> A new customer connects a private Machine and completes the first Agent Task in
 > less than ten minutes.
 
-Retention should be measured through workspaces with successful weekly operations, not logins to
-an administrator dashboard.
+Retention should be measured through Organizations with successful weekly Tasks, not logins to an
+administrator dashboard.
 
 ## Main risks
 

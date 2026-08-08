@@ -6,7 +6,6 @@ import {
   machineEnrollmentCommand,
   posixShellArgument,
 } from "../apps/web/src/lib/enrollment-command.js";
-import { executionWarningState } from "../apps/web/src/lib/host-shell-access.js";
 import { isPublicDocumentationPath } from "../apps/web/src/lib/public-documentation.js";
 import { validDocumentationSearchQuery } from "../apps/web/src/lib/documentation-search.js";
 
@@ -60,24 +59,6 @@ describe("web security boundaries", () => {
     expect(command).toContain("--token 'ods_enroll_'\"'\"'_synthetic'");
     expect(command).toContain("--name 'production; touch /tmp/pwned'");
     expect(command).toContain("--agent-id 'agent-'\"'\"'primary'");
-  });
-
-  it("keeps same-user shell warnings independent from sudo detection", () => {
-    expect(executionWarningState([], "none")).toEqual({
-      hostShell: false,
-      rootAccess: false,
-    });
-    expect(executionWarningState(["host.shell"], "none")).toEqual({
-      hostShell: true,
-      rootAccess: false,
-    });
-    expect(executionWarningState(["host.shell"], "sudo")).toEqual({
-      hostShell: true,
-      rootAccess: true,
-    });
-    expect(source("components/host-shell-warning.tsx")).toContain(
-      "persist after the Task ends",
-    );
   });
 
   it("keeps documentation public while bounding its search input", () => {

@@ -23,10 +23,10 @@ and protocol package.
    documentation smoke tests and E2E; packs protocol and CLI; creates the immutable tag;
    publishes the packages through npm Trusted Publishing; creates the GitHub Release; and audits
    all public version surfaces.
-6. Validate registration, approval, execution, Timeline, expiry, cancellation, and credential
+6. Validate enrollment, Task approval, Command execution, audit, expiry, cancellation, and OAuth
    revocation from a desktop and Raspberry Pi.
 7. If the Server migration fails, stop the rollout. Restore the pre-cutover PostgreSQL snapshot
-   only if no new Session was accepted; otherwise fix forward. A schema rollback must never
+   only if no new Task was accepted; otherwise fix forward. A schema rollback must never
    reactivate revoked authority.
 
 Manual `npm publish`, release-tag pushes and GitHub Release creation are not supported. The

@@ -257,9 +257,6 @@ function ActivityActions({ event, timeZone }: { event: ActivityRow; timeZone: st
               {event.result === "denied" ? "Denied" : "Recorded"}
             </Detail>
             <Detail label="Time">{formatDashboardTimestamp(event.createdAt, timeZone)}</Detail>
-            {event.metadata.kind ? (
-              <Detail label="Capability">{event.metadata.kind}</Detail>
-            ) : null}
             {event.metadata.reason ? (
               <Detail label="Reason">{event.metadata.reason}</Detail>
             ) : null}

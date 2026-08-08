@@ -30,7 +30,7 @@ describe("Task-native authority cutover", () => {
       resolve(process.cwd(), "packages/protocol/src/index.ts"),
       "utf8",
     );
-    expect(protocol).toContain("clientMessageSchema.parse(message)");
+    expect(protocol).toContain("clientMessageSchema.parse(JSON.parse(raw))");
     expect(protocol).toContain("taskProfile: {");
     expect(protocol).not.toContain('type: "session.open"');
     expect(protocol).not.toContain('type: "operation.start"');

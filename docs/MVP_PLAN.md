@@ -217,11 +217,14 @@ authorization.
   Task/Command state. Session/Operation tables, delegation, Event Sinks, compatibility migrations,
   and their runtime modules were removed. Cloud plan limits apply only in Cloud; self-hosted mode
   enforces one sovereign Organization without hosted entitlements.
+- the shared protocol now exports only the Client handshake/configuration and Task/Command
+  authority. Session scopes, typed Operations, capabilities, legacy Agent Access, device flow, and
+  their derivation helpers were deleted rather than retained as compatibility APIs.
 
 ### DOING
 
-- remove the remaining internal one-to-one Workspace naming and legacy domain exports now that no
-  production persistence or transport depends on them.
+- remove the remaining internal one-to-one Workspace naming now that no production persistence or
+  transport depends on a separate execution tenant.
 
 ### BLOCKED
 

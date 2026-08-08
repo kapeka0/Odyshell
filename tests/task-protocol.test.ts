@@ -8,6 +8,7 @@ import {
   type Task,
 } from "../packages/protocol/src/task.js";
 import {
+  clientConfigSchema,
   parseClientMessage,
   parseServerMessage,
 } from "../packages/protocol/src/index.js";
@@ -131,5 +132,42 @@ describe("agent-native Task protocol", () => {
       pingId: "7a354999-6a6c-42db-9467-e1416da255f1",
       unexpectedAuthority: true,
     }))).toThrow();
+  });
+
+  it("accepts only Task-native Client configuration", () => {
+    const config = {
+      serverUrl: "https://api.odyshell.test",
+      machineId: "2dc24de7-ec0e-45b3-88c1-acbb900e51f8",
+      machineName: "linux-server",
+      privateKeyPem: "private-key",
+      stateDirectory: "/tmp/odyshell",
+      taskProfile: {
+        id: "default",
+        localPolicy: policy,
+      },
+    };
+
+    expect(clientConfigSchema.safeParse(config).success).toBe(true);
+    for (const legacy of [
+      { workspaceId: "workspace-a" },
+      { allowPrivilegeEscalation: true },
+      { profiles: { workspace: { runner: "host" } } },
+    ]) {
+      expect(clientConfigSchema.safeParse({ ...config, ...legacy }).success).toBe(false);
+    }
+    expect(clientConfigSchema.safeParse({
+      ...config,
+      taskProfile: { ...config.taskProfile, executorProfile: "workspace" },
+    }).success).toBe(false);
+    expect(clientConfigSchema.safeParse({
+      ...config,
+      taskProfile: {
+        ...config.taskProfile,
+        localPolicy: {
+          ...config.taskProfile.localPolicy,
+          maxTaskDurationSeconds: 24 * 60 * 60 + 1,
+        },
+      },
+    }).success).toBe(false);
   });
 });
