@@ -1,125 +1,54 @@
 ---
 title: Security
-description: Understand Odyshell's trust boundaries, least-privilege controls, and privacy model.
+description: Understand Odyshell trust boundaries, least privilege, and audit evidence.
 ---
 
-The Server and Client enforce identity, scope, expiry, and local policy for every operation.
-Allowed command execution can still change anything available to the Client's operating-system
-user.
+Odyshell grants remote Agents same-user shell authority on customer-controlled Linux Machines. The
+Server and Client enforce identity, Organization isolation, policy, expiry, and resource bounds;
+an allowed Command can still change anything available to the Client's operating-system user.
 
 ## Authorization path
 
-An operation is accepted only when:
+A Command is accepted only when:
 
-1. the Session Credential is valid, unexpired, and stored only as a hash;
-2. the Session belongs to the authenticated Agent and workspace;
-3. the target machine and capability match the immutable Session scope, including any typed
-   restriction it contains;
-4. the Session is active;
-5. the machine is online;
-6. the Client's local policy allows the capability;
-7. operation-specific validation succeeds.
+1. the OAuth access token is valid and bound to the Agent's Organization;
+2. the Task belongs to that Agent and Organization and is active and unexpired;
+3. the Task is bound to the requested Machine, Client Profile, and operating-system user;
+4. the authenticated Machine identity matches that binding;
+5. Local Policy still allows the Agent, duration, concurrency, timeout, and output ceiling;
+6. Autonomy Policy authorized the Task or a permitted Human approved it;
+7. the idempotency key and request fingerprint agree.
 
-The model cannot override these checks with a prompt. A Session Credential cannot request another
-Session, read another Agent's Operations, or access a different machine. A typed restriction
-cannot be bypassed; without one, the selected capability applies across the machine subject to its
-local policy.
+These checks run outside the model. Requests fail closed on an unknown identity, stale Task,
+cross-Organization ID, replay conflict, offline Machine, or policy mismatch.
 
-Approval codes expire, can be used once, and are looked up only inside the authenticated
-workspace. The credential produced by a claim is returned once to the trusted runtime. MCP keeps
-it outside model-visible results.
+## Identity and enrollment
 
-Remote MCP uses Odyshell Identity OAuth to identify a user and client installation. The Server
-verifies signed access tokens against the configured JWKS and persists only
-the resulting Agent and Session bindings, not OAuth access or refresh tokens. Revoking or expiring
-the Odyshell Session blocks execution independently of the OAuth connection.
+Odyshell Identity uses Better Auth with PostgreSQL for Human sessions, Organization membership,
+OAuth clients, and tokens. Authorization Code with PKCE serves interactive MCP installations;
+Organization-bound Client Credentials serve unattended Agents. Revocation blocks later access.
 
-Autoapproval policies are inactive until an administrator approves their exact ceiling. They are
-versioned, expire within one year, and fail closed for unknown restrictions. Requests outside the
-ceiling remain pending rather than being reduced silently. Each automatically approved Session
-retains the policy ID and version that authorized it.
-`host.shell` is deliberately broader than structured execution. It is never autoapproved or
-delegated, requires an explicit Session capability, remains bounded by expiry and the Client Local
-Policy, and records structural status in the privacy-minimal Timeline. Persistable command action
-fields and output remain temporary delivery data; environment values and standard input are never
-persisted. Programmatic requests require a stable Task Run identifier, and reuse requires the same
-Agent installation and Task Run so unrelated work cannot inherit authority. Prefer `process.exec`
-whenever an exact program and argument list is sufficient.
-`process.exec` has no caller-supplied environment field; its contract is limited to the exact
-program, arguments, and working directory. Host Shell can supply per-command environment values
-under its broad authority, but those values are never persisted or shared with later Operations.
-Host Shell
-inherits only an allowlisted base environment from the Client process. On POSIX, its login shell
-can still load the user's startup files and read other same-user resources.
-
-Delegation is limited to one level. A Managed Agent receives no Agent Credential and cannot
-delegate again. Its policy must remain inside the active parent Delegation Policy, and the Server
-rechecks that relationship for every new Session Request. Pausing, replacing, expiring, or
-revoking the parent ceiling fails closed. Revoking the parent credential disables its Managed
-Agents and terminates their active Sessions.
-
-The Client derives its local deadline from Server time and rejects excessive clock skew. Session
-closure is idempotent and waits for active host or Docker operations to stop before releasing
-local execution state.
-
-## Machine identity
-
-Enrollment is single-use and expiring. Each Client generates an Ed25519 identity and proves
-possession when it connects. Private machine key material remains in the local Client
-configuration. Named Client Profiles keep separate configuration, state, Server, Workspace, and
-machine identities. Configuration files use owner-only permissions where the operating system
-supports them, and a selected Profile never falls back to another Profile's credential.
+Machine enrollment tokens expire, work once, and are not persisted. Each Client Profile generates
+an Ed25519 identity and keeps its private key on the Machine with owner-only permissions. Profiles
+never fall back to another Server or identity.
 
 ## Host authority
 
-Host Shell commands run as the operating-system user running the Client. Each command starts in
-that user's Home by default. A command can choose another working directory, but this does not
-narrow access. Commands can access that user's files, credentials, network, and services. There is
-no sandbox or isolation. Changes may persist after the Session ends. Session expiry stops future
-commands but cannot undo a change a completed command already made.
+Commands run without a PTY as the Linux user running the Client. They can read that user's files
+and credentials, use its network and services, and make changes that outlive the Task. Odyshell
+does not configure sudo. Use a dedicated user with only the resources the Agent needs.
 
-Graceful cancellation terminates the active process group. There is no separate Operation
-supervisor, so an abrupt Client crash can leave a detached POSIX command running until it exits or
-is stopped externally. Restart reconciliation records an unknown result instead of claiming the
-command was terminated. Windows tree termination is best effort once the command leader has exited.
-If a graceful termination attempt cannot be confirmed, the Client persists a Profile quarantine and
-refuses to reconnect it after restart.
+Graceful cancellation targets the Command process group. An abrupt Client crash can leave a
+detached process running; reconnect reconciliation records uncertainty and can quarantine the
+Profile rather than silently restore authority.
 
-Use a dedicated operating-system user and give it only the resources an Agent should control.
-Prefer typed filesystem Operations and `process.exec`. Grant `host.shell`, filesystem writes,
-removal, or Docker access only when the task requires them.
+## Audit and privacy
 
-**Read only** is the dashboard's structured convenience preset. **Host Shell** is a separate,
-explicit selection and is never bundled into a broad preset. Enrollment, manual Session creation,
-and approval repeat the same-user warning whenever Host Shell is selected or requested. Linux
-systemd user services set `NoNewPrivileges` while sudo is disabled for a Profile. A machine owner
-may locally enable passwordless sudo; the service is regenerated without that restriction and
-approvals add a root-access warning without replacing the Host Shell warning. Foreground Clients
-have no service-level `NoNewPrivileges` boundary and detect effective `sudo -n` so the same warning
-appears when the operating-system user can reach root. Odyshell does not claim an equivalent
-enforcement boundary on macOS or Windows. Cloud, the dashboard, and Agents cannot enable sudo
-remotely. Structured filesystem Operations continue to run as the Client user.
+Durable Task audit binds Organization, Agent, Machine, Human decision, exact command, working
+directory, timeout, status, exit code when known, and timestamps. OAuth credentials, enrollment
+tokens, Machine private keys, stdout, and stderr are excluded. Output is a bounded, transient
+delivery buffer for Agent reconnect and should be treated as potentially secret while available.
 
-## Privacy
-
-Privacy-minimal Session Timeline events contain verified lifecycle metadata, Operation kind and
-exit status, but no commands, paths, stdout or stderr. Operational logging can add those details
-with automatic secret redaction while temporary Operation data remains available. Redaction is
-defense in depth, not a guarantee. Diagnostic logging can expose raw temporary values and contain
-secrets, so enabling it requires explicit confirmation. Environment values and standard input are
-never persisted.
-
-Event Sink detail is independent from Workspace Timeline logging. Signing secrets are encrypted at
-rest and never returned after configuration. Sink delivery resolves and pins a public HTTPS address
-for every attempt, does not follow redirects and signs the exact body. Event Sinks never export
-command text, stdout, stderr, environment values or standard input at any detail level.
-
-Persistable Operation action fields and results pass through the Server and are temporarily stored
-for delivery. Environment values and standard input are excluded. The retained data becomes
-eligible for deletion after one hour by default. Control Events become eligible for deletion after
-30 days by default. Infrastructure logs and backups can have independent retention.
-
-The hosted website uses Vercel Web Analytics for page-view counts and aggregate traffic data.
-Vercel describes the service as cookie-free and based on anonymized data. Odyshell does not send
-credentials, operation payloads, Timeline data, command arguments, file paths, stdout, or stderr
-through custom analytics events.
+Self-hosted deployments keep identity, policy, Task, Command, audit, and transient output data in
+their own PostgreSQL and storage boundary. Production operators must provide TLS, backups,
+retention, secret management, and log redaction.

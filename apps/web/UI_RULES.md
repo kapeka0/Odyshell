@@ -27,9 +27,9 @@ particular component, library or interaction pattern.
 - After CLI activation succeeds, keep terminal completion primary and present
   unreleased follow-up commands as clearly unavailable. Never place activation
   codes, tokens or session data in those commands.
-- Keep Agent registration, Session approval and policy approval as focused
-  standalone routes. Policy approval shows the exact ceiling and requires a
-  workspace administrator.
+- Keep Agent registration focused. Task exceptions are supervised in the
+  authenticated Tasks view with the exact Agent, Machine, operating-system user,
+  purpose, and expiry visible before a decision.
 - Keep quick local preferences, including theme selection, in the account menu.
 - Reserve user settings for changes persisted to the user's backend profile.
 - Keep product branding subordinate to workspace identity and operational work
@@ -162,8 +162,6 @@ particular component, library or interaction pattern.
 - Browser icons follow the active system color scheme.
 - Browser tab titles use a vertical bar to separate the page name from the
   product name or tagline.
-- Canvas background dots remain quiet but visibly distinct from light-mode
-  borders. Dark mode keeps its existing lower-contrast treatment.
 - The selected sidebar link is one restrained tonal step stronger than hover,
   with a subtle inset border rather than a high-contrast block.
 - Prefer a user's identity-provider photo. When none exists, generate a
@@ -173,39 +171,21 @@ particular component, library or interaction pattern.
   identity is shown. Unknown or custom Agents use the neutral Agent fallback.
 - Give every workspace a stable colored identity mark without displaying
   initials.
-- The workspace overview is the operational canvas itself, inspired by
-  Railway rather than a dashboard card grid.
-- The overview makes the relationship between currently interacting agents,
-  active sessions and machines directly inspectable even when the topology is
-  crowded.
-- Persistent Agents remain visible without a machine link. Active Sessions are
-  temporary nodes between Agents and their target machines and link to their
-  Timeline.
-- Active Session nodes show a live, non-negative remaining-time countdown.
-- Agent identity, runtime presence and Session authority are separate states.
-  Never use an active Session as a proxy for whether an Agent is online.
-  Until the product has a dedicated Agent heartbeat, show only identity status
-  and Session activity.
-- The overview updates from live workspace state and shows agent-to-machine
-  connections only while activity is actually in progress.
 - Online machines use a restrained green live indicator. Offline machines use
   a quiet neutral indicator, and both states include text. Keep the active dot
   solid; animate only a restrained halo around it with the ping motion.
 - Operational collections support search, relevant filters, sorting and
   pagination. Row details and secondary actions stay behind a consistent
   actions menu.
-- Session requests appear in the Sessions collection as soon as access is
-  requested, before the Agent claims an approved Session. Claimed requests are
-  replaced by their canonical Session instead of duplicated.
-- Pending Session requests open the same standalone review URL returned to the
-  requesting Agent, whether approval starts from the Agent or the dashboard.
-- Session purposes remain single-line and truncate when necessary. Human
-  requesters use their recognizable name and profile image; internal identity
-  IDs are never presented as names.
+- Task requests appear in the Tasks view immediately. Pending exceptions are
+  visually separated from recent work, and the same durable Task is updated
+  after approval instead of duplicated.
+- Task purposes remain concise and truncate when necessary. Human supervisors
+  use their recognizable name and profile image; internal identity IDs are
+  never presented as names.
 - Activity actors follow the same identity rule: show a member's profile image
   and name when available, and never present an internal user ID as their name.
-- Session collections show the originally requested duration in a concise
-  human-readable form such as `15 min`.
+- Task views show expiry in the viewer's timezone.
 - Important table identifiers are copyable from the value itself. Reveal the
   copy affordance with a restrained horizontal hover or focus animation.
 - Status tags use restrained semantic color to make operational state scannable:
@@ -224,16 +204,15 @@ particular component, library or interaction pattern.
 - Machine rows show a concise, truncated description beneath the name when one
   exists. Machine editing may change Server metadata and reduce effective
   capabilities, but it can never grant beyond the Client Local Policy.
-- Machine details expose whether local process Sessions can use sudo. Session
-  creation and approval warn clearly whenever granted process access can reach
+- Machine details expose whether the bound operating-system user can use sudo.
+  Task supervision warns clearly whenever granted shell authority can reach
   root privileges.
-- Machine and Session collection rows omit internal IDs. Reveal copyable IDs
-  only in their detail views, and show a Session's truncated purpose beneath
-  its title in the collection.
+- Machine rows omit internal IDs. Task audit identifiers remain copyable where
+  they are necessary to correlate Agent and API work.
 - Agent rows show when the identity was created in the viewer's local timezone.
 - Users can permanently delete any Agent from its actions. Deletion closes
-  active sessions, requires confirmation and retains Control Events according
-  to the workspace retention policy.
+  active Tasks, requires confirmation, and retains audit evidence according to
+  the Organization retention policy.
 - Collapsing workspace navigation preserves every icon, animates smoothly and
   does not introduce an unnecessary scrollbar.
 - The dashboard navbar keeps only the sidebar toggle on its left edge. The
@@ -251,38 +230,18 @@ particular component, library or interaction pattern.
 - Notification relative time never counts seconds. Use Just now for the first
   minute, then minute-or-larger units, and expose the exact timestamp in the
   user's timezone on hover. Retain notifications for 30 days.
-- Direct operational notifications go to the member responsible for the
+- Direct control notifications go to the member responsible for the
   initiating action. Keep notification copy privacy-minimal: never include
-  commands, paths, operation output, credentials or Session purpose.
-- Sessions use a concise required title and optional longer purpose. Tables and
-  canvas nodes lead with the title. Session tables include the target machine;
-  multi-machine Sessions show one machine and a compact remaining count.
-- Session detail uses a chronological live Timeline. Show lifecycle and
-  Operation events with their human, Agent or Odyshell actor. Privacy-minimal
-  stays structural; Operational may render automatically redacted commands,
-  paths, stdout and stderr while temporary Operation data remains available;
-  Diagnostic may render raw temporary values, including secrets. Environment
-  and standard input are never persisted. Auto-scroll only while the viewer
-  remains at the bottom.
-- Manual Session creation starts from the Sessions table toolbar and uses a
-  right-side Sheet with title, optional purpose, Agent, machine, duration and
-  capabilities. Do not ask for a filesystem path or Docker container there.
-  Filesystem capabilities apply across the machine subject to its local policy;
-  Docker log access remains outside this manual flow. Offline machines and
-  Agents without an active credential remain visible but disabled. Read only is
-  the sole convenience preset. Host Shell is a separate, explicit `host.shell`
-  selection; no preset bundles it with structured capabilities. Members may
-  select both explicitly when the task requires both. Do not expose exact
-  process programs or arguments in this form. Keep `process.exec` for Agent,
-  MCP and API flows. Whenever Host Shell is selected or requested, warn
-  that commands run as the Client's operating-system user, start in that user's
-  Home by default, and can choose another working directory without narrowing
-  access. State that they have no sandbox or isolation, can reach that user's
-  files, credentials, network and services, and may persist changes after the
-  Session ends. A sudo warning is additive and must not replace this base
-  warning. Host Shell is never autoapproved.
-- Session nodes on the canvas show the requesting Agent first, otherwise the
-  responsible human, in a quiet footer. Use System when no actor exists.
+  commands, paths, Command output, credentials, or Task purpose.
+- Tasks use a concise required title and optional purpose. Tables and canvas
+  nodes lead with the title and show the single target Machine and bound
+  operating-system user.
+- Agents create Tasks and Commands through HTTP or remote MCP. The dashboard
+  observes, approves, denies, and audits; it does not provide a parallel manual
+  execution flow.
+- Task and Command audit is chronological and attributable. Exact command,
+  working directory, timeout, status, and exit code may be shown to authorized
+  members; stdout and stderr remain transient and are never retained in audit.
 - Personal settings and workspace settings have separate destinations.
   Workspace security settings are visible to members and editable only by
   administrators.
@@ -293,15 +252,9 @@ particular component, library or interaction pattern.
   security-sensitive choices link to public documentation. Keep each Card on one
   background and use the default shadcn treatment for Alerts and Dialogs. Their
   skeletons preserve the same section and row structure.
-- Workspace Timeline logging is selected for new Sessions as Privacy-minimal,
-  Operational or Diagnostic. Diagnostic requires an explicit warning. Keep Event
-  Sink configuration independent from this workspace display setting.
-- Timeline exports and Event Sinks may use Privacy-minimal, Operational or
-  Diagnostic detail. Keep Control Events privacy-minimal, automatically redact
-  Operational detail, warn that Diagnostic may contain raw secrets, and make
-  broader Timeline output an explicit workspace choice. Event Sinks never
-  export command text, stdout, stderr, environment values or standard input at
-  any detail level.
+- Task audit always stores the exact command and security-relevant metadata.
+  Credentials, enrollment tokens, OAuth tokens, Machine private keys, stdout,
+  and stderr never belong in durable audit or user-facing error feedback.
 - Keep public documentation outside the authenticated workspace and make it usable
   without an authenticated product session.
 - Documentation starts with the Cloud workflow, uses progressive disclosure and
@@ -309,7 +262,6 @@ particular component, library or interaction pattern.
 - Documentation must serve people and agents from one reviewed source. Keep
   Markdown pages and LLM indexes discoverable without adding provider-specific
   actions.
-- Package installation commands use persistent, synchronized shortcuts for
-  npm, pnpm, Yarn and Bun instead of documenting a single package manager.
+- Public installation uses the canonical npm command for the Linux-only CLI.
 - The landing introduces documentation once, after the product workflow, with one
   clear action.

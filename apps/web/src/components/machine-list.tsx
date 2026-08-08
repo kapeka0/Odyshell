@@ -346,7 +346,7 @@ function MachineActions({
       setRemoveOpen(false);
       toast.add({
         title: "Machine removed",
-        description: `${machine.name} can no longer receive operations.`,
+        description: `${machine.name} can no longer receive Tasks or Commands.`,
         type: "success",
       });
       await refresh();
@@ -546,7 +546,7 @@ function MachineActions({
                 <Alert>
                   <AlertTitle>Root access possible</AlertTitle>
                   <AlertDescription>
-                    This machine allows passwordless sudo during a Session.
+                    This Machine allows passwordless sudo during a Task.
                   </AlertDescription>
                 </Alert>
               ) : null}
@@ -582,7 +582,7 @@ function MachineActions({
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {machine.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              The Client will disconnect and active operations will be
+              The Client will disconnect and active Commands will be
               cancelled. Reconnecting it later requires a new enrollment.
             </AlertDialogDescription>
           </AlertDialogHeader>

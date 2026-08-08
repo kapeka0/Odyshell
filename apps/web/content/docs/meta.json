@@ -6,15 +6,12 @@
     "concepts",
     "machines",
     "agents",
-    "sessions",
+    "tasks",
+    "commands",
     "settings",
     "mcp",
-    "sdk",
-    "operations",
     "cli",
     "security",
-    "migration",
-    "event-sinks",
     "self-hosting",
     "troubleshooting"
   ]

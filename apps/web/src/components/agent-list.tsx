@@ -186,7 +186,7 @@ function AgentActions({
       setOpen(false);
       toast.add({
         title: "Agent removed",
-        description: `${agent.name} can no longer request Sessions.`,
+        description: `${agent.name} can no longer request Tasks.`,
         type: "success",
       });
       await refresh();
@@ -225,7 +225,7 @@ function AgentActions({
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {agent.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              Credentials and active Sessions for this identity will be revoked.
+              Credentials and active Tasks for this identity will be revoked.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {error ? (

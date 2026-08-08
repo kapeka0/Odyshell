@@ -683,6 +683,33 @@ export class PostgresTaskDatabase implements TaskRepository, TaskAudit {
       .execute();
   }
 
+  async listAuditEvents(organizationId: string, limit = 100): Promise<Array<{
+    id: string;
+    agentId: string;
+    taskId: string;
+    commandId: string | null;
+    type: string;
+    metadata: Record<string, unknown>;
+    createdAt: string;
+  }>> {
+    const rows = await this.db
+      .selectFrom("taskAuditEvents")
+      .selectAll()
+      .where("organizationId", "=", organizationId)
+      .orderBy("createdAt", "desc")
+      .limit(Math.min(Math.max(limit, 1), 200))
+      .execute();
+    return rows.map((row) => ({
+      id: String(row.id),
+      agentId: row.agentId,
+      taskId: row.taskId,
+      commandId: row.commandId,
+      type: row.type,
+      metadata: row.metadata,
+      createdAt: row.createdAt.toISOString(),
+    }));
+  }
+
   async markTaskOpened(input: {
     organizationId: string;
     machineId: string;

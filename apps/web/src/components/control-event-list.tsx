@@ -169,9 +169,9 @@ export function ControlEventList({
           <EmptyMedia variant="icon">
             <ActivityIcon aria-hidden="true" />
           </EmptyMedia>
-          <EmptyTitle>No control events yet</EmptyTitle>
+          <EmptyTitle>No activity yet</EmptyTitle>
           <EmptyDescription>
-            Enrollment and access changes will appear here.
+            Task, Command, enrollment, and identity events will appear here.
           </EmptyDescription>
         </EmptyHeader>
       </Empty>
@@ -262,6 +262,27 @@ function ActivityActions({ event, timeZone }: { event: ActivityRow; timeZone: st
             ) : null}
             {event.metadata.reason ? (
               <Detail label="Reason">{event.metadata.reason}</Detail>
+            ) : null}
+            {event.metadata.command ? (
+              <div className="sm:col-span-2">
+                <Detail label="Command">
+                  <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-md border bg-muted/40 p-3 font-mono text-xs">
+                    {event.metadata.command}
+                  </pre>
+                </Detail>
+              </div>
+            ) : null}
+            {event.metadata.cwd ? (
+              <Detail label="Working directory">{event.metadata.cwd}</Detail>
+            ) : null}
+            {event.metadata.timeoutSeconds ? (
+              <Detail label="Timeout">{event.metadata.timeoutSeconds} seconds</Detail>
+            ) : null}
+            {event.metadata.exitCode !== undefined ? (
+              <Detail label="Exit code">{event.metadata.exitCode ?? "Unavailable"}</Detail>
+            ) : null}
+            {event.metadata.outcome ? (
+              <Detail label="Outcome">{event.metadata.outcome}</Detail>
             ) : null}
           </dl>
         </DialogContent>
@@ -370,8 +391,8 @@ function targetLabel(
   if (event.targetType === "agent_token") {
     return accessNames.get(event.targetId) ?? "Removed agent";
   }
-  if (event.targetType === "session") return "Temporary session";
-  if (event.targetType === "operation") return "Machine operation";
+  if (event.targetType === "task") return `Task ${event.targetId}`;
+  if (event.targetType === "command") return `Command ${event.targetId}`;
   return "Workspace";
 }
 
@@ -383,13 +404,14 @@ function actionLabel(action: string): string {
     "machine.revoked": "Machine removed",
     "machine.ping": "Machine reached",
     "machine.ping_denied": "Machine reachability denied",
-    "session.created": "Session opened",
-    "session.denied": "Session denied",
-    "session.close_requested": "Session close requested",
-    "operation.created": "Operation requested",
-    "operation.denied": "Operation denied",
-    "operation.cancel_requested": "Operation cancellation requested",
-    "operation.completed": "Operation completed",
+    "task.requested": "Task requested",
+    "task.opened": "Task opened",
+    "task.open_failed": "Task opening failed",
+    "task.approved": "Task approved",
+    "task.denied": "Task denied",
+    "task.closed": "Task closed",
+    "command.created": "Command requested",
+    "command.completed": "Command completed",
     "enrollment_token.created": "Enrollment command created",
     "cli.login_approved": "CLI login approved",
   };

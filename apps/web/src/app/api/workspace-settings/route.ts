@@ -6,17 +6,11 @@ import {
   requireCloudAdminRouteIdentity,
 } from "@/lib/cloud-route";
 
-const settingsSchema = z.discriminatedUnion("section", [
-  z.object({
-    section: z.literal("details"),
-    name: z.string().trim().min(1).max(96),
-    avatarSeed: z.string().trim().min(1).max(128),
-  }).strict(),
-  z.object({
-    section: z.literal("logging"),
-    loggingLevel: z.enum(["privacy-minimal", "operational", "diagnostic"]),
-  }).strict(),
-]);
+const settingsSchema = z.object({
+  section: z.literal("details"),
+  name: z.string().trim().min(1).max(96),
+  avatarSeed: z.string().trim().min(1).max(128),
+}).strict();
 
 export async function PUT(request: Request) {
   const authorization = await requireCloudAdminRouteIdentity();

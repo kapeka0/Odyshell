@@ -1514,9 +1514,8 @@ app.post(
       connections,
       agents,
       runnableAgentIds,
-      sessions,
-      sessionRequests,
-      policies,
+      tasks,
+      taskControlEvents,
       controlEvents,
       notifications,
       userPreferences,
@@ -1526,9 +1525,8 @@ app.post(
       db.workspaceConnections(context.workspace.id),
       db.listWorkspaceAgents(context.workspace.id),
       db.listRunnableAgentIds(context.workspace.id),
-      db.listWorkspaceAgentSessions(context.workspace.id),
-      db.listWorkspaceAgentSessionRequests(context.workspace.id),
-      db.listAgentPolicies(context.workspace.id),
+      taskDb.listTasks(parsed.data.organization.externalId, 100),
+      taskDb.listAuditEvents(parsed.data.organization.externalId, 100),
       db.listAudit(context.workspace.id, 50),
       db.listNotifications(context.workspace.id, parsed.data.userId),
       db.userPreferences(parsed.data.userId),
@@ -1583,55 +1581,36 @@ app.post(
         credentialActive: runnableAgentIds.includes(agent.id),
         createdAt: isoTimestamp(agent.createdAt),
       })),
-      notifications: notifications.map((notification) => ({
-        ...notification,
-        readAt: isoTimestamp(notification.readAt),
-        createdAt: isoTimestamp(notification.createdAt),
-      })),
-      sessions: sessions.map((session) => ({
-        id: session.id,
-        agentId: session.agentId,
-        agentName: session.agentName,
-        title: session.title,
-        purpose: session.purpose,
-        status: session.status,
-        expiresAt: isoTimestamp(session.expiresAt),
-        readyAt: isoTimestamp(session.readyAt),
-        createdAt: isoTimestamp(session.createdAt),
-        requestedByHumanId: session.requestedByHumanId,
-        requestedByAgentId: session.requestedByAgentId ?? null,
-        runId: session.runId ?? null,
-        loggingLevel: session.loggingLevel,
-        scopes: session.scopes,
-        targets: session.targets,
-      })),
-      sessionRequests: sessionRequests.map((sessionRequest) => ({
-        id: sessionRequest.id,
-        agentId: sessionRequest.agentId,
-        agentName: sessionRequest.agentName,
-        title: sessionRequest.title,
-        purpose: sessionRequest.purpose,
-        durationSeconds: sessionRequest.durationSeconds,
-        status: sessionRequest.status,
-        expiresAt: isoTimestamp(sessionRequest.expiresAt),
-        createdAt: isoTimestamp(sessionRequest.createdAt),
-        requestedByHumanId: sessionRequest.requestedByHumanId,
-        requestedByAgentId: sessionRequest.requestedByAgentId ?? null,
-        runId: sessionRequest.runId ?? null,
-        loggingLevel: sessionRequest.loggingLevel,
-        machines: sessionRequest.machines,
-        ...(sessionRequest.status === "pending" && webUrl
-          ? { approvalUrl: sessionApprovalUrl(webUrl, sessionRequest.id) }
-          : {}),
-      })),
-      policies: policies.map((policy) => ({
-        ...policy,
-        expiresAt: isoTimestamp(policy.expiresAt),
-        approvedAt: isoTimestamp(policy.approvedAt),
-        createdAt: isoTimestamp(policy.createdAt),
-        updatedAt: isoTimestamp(policy.updatedAt),
-      })),
-      controlEvents: controlEvents.map(controlEventView),
+      notifications: notifications
+        .filter((notification) => !notification.kind.startsWith("session."))
+        .map((notification) => ({
+          ...notification,
+          readAt: isoTimestamp(notification.readAt),
+          createdAt: isoTimestamp(notification.createdAt),
+        })),
+      tasks,
+      controlEvents: [
+        ...taskControlEvents.map((event) => ({
+          id: `task:${event.id}`,
+          principalId:
+            typeof event.metadata.humanId === "string"
+              ? event.metadata.humanId
+              : event.agentId,
+          action: event.type,
+          targetType: event.commandId ? "command" : "task",
+          targetId: event.commandId ?? event.taskId,
+          metadata: event.metadata,
+          createdAt: event.createdAt,
+        })),
+        ...controlEvents
+          .filter((event) => {
+            const domain = event.action.split(".")[0];
+            return domain !== "session" && domain !== "operation";
+          })
+          .map(controlEventView),
+      ].sort((left, right) =>
+        String(right.createdAt).localeCompare(String(left.createdAt)),
+      ),
     };
   },
 );

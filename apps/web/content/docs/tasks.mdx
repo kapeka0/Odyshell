@@ -1,0 +1,34 @@
+---
+title: Tasks
+description: Request, supervise, resume, and close temporary Agent authority.
+---
+
+A Task is the only object that grants an Agent Machine authority. It binds exactly one Organization,
+Agent, Machine, Client Profile, and operating-system user for a bounded duration.
+
+## Request authority
+
+An Agent calls `task_request` over MCP or `POST /v1/tasks` over HTTP with a title, optional purpose,
+Machine ID, duration, and UUIDv4 idempotency key. Reusing the key with the same input returns the
+same Task; reusing it with different input fails.
+
+The Server evaluates Local Policy and Autonomy Policy without asking the model to enforce either.
+The Task becomes active automatically when both allow it, or remains `pending_approval` until an
+Owner, Admin, or Supervisor decides in **Tasks**. Approval can never widen Local Policy.
+
+## Lifecycle
+
+Tasks move through pending approval, opening, active, cancellation requested, and terminal states.
+The Agent polls `task_get` after reconnect instead of creating replacement authority. A Machine
+that reconnects reconciles its active Task IDs with the Server and fails closed for stale or
+unknown authority.
+
+Use `task_complete` as soon as the work succeeds. It requires every Command to be terminal. Use
+`task_cancel` to stop active Commands and close authority when work is abandoned. Expiry blocks new
+Commands but cannot undo side effects from Commands that already completed.
+
+## Human supervision
+
+The dashboard keeps pending decisions separate from recent work. Humans see the Agent, Machine,
+operating-system user, purpose, expiry, and policy result before deciding. This is an exception
+path, not the primary control loop: Agents create, inspect, and finish their own Tasks.

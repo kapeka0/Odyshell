@@ -41,12 +41,12 @@ type Decision = { task: CloudTask; action: "approve" | "deny" };
 
 export function TaskList() {
   const { state } = useDashboard();
-  const [tasks, setTasks] = useState<CloudTask[]>([]);
-  const [loading, setLoading] = useState(true);
+  const context = state.status === "ready" ? state.context : null;
+  const [tasks, setTasks] = useState<CloudTask[]>(context?.tasks ?? []);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
   const [decision, setDecision] = useState<Decision>();
   const [deciding, setDeciding] = useState(false);
-  const context = state.status === "ready" ? state.context : null;
   const timeZone = context?.userPreferences.timeZone ?? "System";
   const agents = useMemo(
     () => new Map((context?.agents ?? []).map((agent) => [agent.id, agent.name])),
@@ -73,14 +73,8 @@ export function TaskList() {
   }, []);
 
   useEffect(() => {
-    const initial = window.setTimeout(() => {
-      void load().finally(() => setLoading(false));
-    }, 0);
     const timer = window.setInterval(() => void load(), 10_000);
-    return () => {
-      window.clearTimeout(initial);
-      window.clearInterval(timer);
-    };
+    return () => window.clearInterval(timer);
   }, [load]);
 
   const pending = tasks.filter((task) => task.status === "pending_approval");

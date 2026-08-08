@@ -12,7 +12,7 @@ export function HostShellWarning({
       <AlertTitle>Host Shell grants full user authority</AlertTitle>
       <AlertDescription>
         <p>
-          {"Commands run as the operating-system user running the Client and start in that user's Home by default. A command can choose another working directory, but that does not narrow access. Commands can access that user's files, credentials, network, and services. There is no sandbox or isolation, and changes may persist after the Session ends."}
+          {"Commands run as the operating-system user running the Client and start in that user's Home by default. A command can choose another working directory, but that does not narrow access. Commands can access that user's files, credentials, network, and services. There is no sandbox or isolation, and changes may persist after the Task ends."}
         </p>
         {localPolicy ? (
           <p>

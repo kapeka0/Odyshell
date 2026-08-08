@@ -5,7 +5,7 @@ export default function AgentActivationSuccessPage() {
   return (
     <ActivationShell
       title="Agent registered"
-      description="The runtime can now request temporary Sessions."
+      description="The runtime can now request temporary Tasks."
     >
       <Alert>
         <AlertTitle>Approved</AlertTitle>

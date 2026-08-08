@@ -77,7 +77,7 @@ event is the first useful Task completed on a real customer Machine without SSH 
 - macOS and Windows Client support and their background-service implementations;
 - Workspace switchers, dual Organization/Workspace ownership, and obsolete UI;
 - Event Sinks, rich workspace canvas, and other non-essential management breadth;
-- npm-global distribution and automatic updates.
+- non-Linux CLI distribution and implicit compatibility migration.
 
 ### BUILD NOW
 
@@ -88,7 +88,7 @@ event is the first useful Task completed on a real customer Machine without SSH 
 - Task/Command schema, lifecycle, canonical HTTP module, and remote MCP adapter;
 - exact-command audit with output retention off by default;
 - Linux glibc/systemd process supervision for x86_64 and ARM64;
-- signed standalone `ods` artifacts, explicit updates, and uninstall/recovery;
+- the Linux npm `ods` package, explicit Client updates, and uninstall/recovery;
 - sovereign single-Organization Compose deployment;
 - minimal dashboard, onboarding, example integration, and critical E2E coverage.
 
@@ -195,6 +195,9 @@ authorization.
 - the published Linux CLI is now Machine-side installation and diagnostics only; Human login,
   Agent runtime, Session/Operation, typed filesystem, Docker, sudo configuration, and local MCP
   command paths were removed instead of preserved as compatibility layers.
+- the public Web surface is now Task-native: legacy Session/Operation approval, Timeline, Event
+  Sink, legacy policy, SDK, migration, and rich overview routes were removed; Tasks are the
+  dashboard entrypoint and Activity reads exact-command Task audit without retained output.
 
 ### DOING
 

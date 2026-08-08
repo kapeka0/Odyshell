@@ -1,63 +1,57 @@
 ---
 title: Concepts
-description: The small set of identities and boundaries used by Odyshell.
+description: The identities and authority boundaries in agent-native Odyshell.
 ---
 
-## Workspace
+## Organization
 
-The isolation boundary for machines, Agents, Sessions, Operations, and Control Events.
-Odyshell Cloud currently exposes one workspace for each organization.
+The isolation boundary for Humans, Agents, Machines, policies, Tasks, Commands, and audit evidence.
+OAuth clients and credentials are bound to exactly one Organization. A self-hosted deployment owns
+one Organization; Odyshell Cloud can host many without sharing authority or data.
 
-## Machine
+## Human
 
-A private computer running an Odyshell Client. The Client owns a machine identity, applies a
-local capability policy, and initiates the outbound connection to the Server.
+An Owner, Admin, or Supervisor who establishes trust and optionally intervenes. Humans do not need
+to drive Agent work. Owners and Admins manage the Organization; all three roles can approve or deny
+a Task that policy sends for review.
 
 ## Agent
 
-A persistent identity for a programmatic client. An Independent Agent authenticates with a
-rotatable Agent Credential. A Managed Agent is controlled by its parent and never receives a
-durable credential.
+A persistent programmatic identity authenticated through OAuth. Authentication answers who the
+Agent is; it grants no Machine authority by itself. An Agent controls Tasks and Commands through
+the canonical HTTP API or the remote MCP adapter.
 
-## Agent Credential
+## Machine
 
-An expiring, revocable credential that identifies an Independent Agent. It can request Sessions,
-but it cannot execute Operations or grant itself machine authority. The plaintext credential is
-returned once; the Server stores its hash.
+A customer-controlled Linux host running an outbound Odyshell Client. Each Client Profile owns a
+Machine identity, an operating-system user, and a Local Policy enforced independently of the
+Server.
 
-## Capability
+## Local Policy
 
-A named class of Operation. Both the approved Session scope and the target machine policy must
-allow the required capability.
+The Machine owner's hard ceiling: allowed Agents, Task and Command concurrency, maximum durations,
+output limits, and whether remote human approval is accepted. The Server can grant less but never
+more.
 
-## Session
+## Autonomy Policy
 
-A temporary, immutable authorization for one task. It has independent per-machine scopes and
-cannot outlive 24 hours. A member can approve or deny a pending request; either decision is
-terminal for that request.
+The Organization's ceiling for work that may open without a human decision. Work outside this
+ceiling remains pending. A Human approval still cannot widen Local Policy.
 
-## Autoapproval policy
+## Task
 
-An administrator-approved ceiling for an Independent Agent. It can automatically approve only
-Session requests that are strict subsets of its machines, capabilities, typed restrictions,
-maximum duration, and validity. `host.shell` cannot appear in an Autoapproval or Delegation Policy;
-Host Shell always requires a human decision.
+Temporary authority binding one Agent, one Machine, one Client Profile, and one operating-system
+user. A Task is expiring, revocable, resumable by ID, and contains one or more asynchronous
+Commands up to its concurrency limit.
 
-## Operation
+## Command
 
-A typed request such as `process.exec`, `fs.read`, or `docker.logs`. Structured operations make
-authorization and validation clearer than treating every action as shell text.
+One arbitrary non-interactive shell execution inside an active Task. Input is limited to shell
+text, an optional absolute working directory, and a bounded timeout. There is no PTY, persistent
+shell, caller-provided environment, or standard input.
 
-## Control Event
+## Audit event
 
-A durable, privacy-minimal lifecycle record. It identifies who acted, what kind
-of action occurred, the target, time, and result. It does not contain commands,
-paths, stdout or stderr.
-
-## Session Timeline
-
-The chronological record for one Session. The workspace logging level captured
-by the Session controls its detail: Operational can show automatically redacted
-commands, paths, stdout and stderr, while Diagnostic can show raw values that
-may include secrets. Privacy-minimal remains structural. Environment values and
-standard input are never persisted.
+Durable evidence that binds identities and decisions to Task and Command lifecycle events. Command
+audit includes the exact command, working directory, timeout, status, and timestamps. Credentials,
+stdout, and stderr are excluded; output is a transient delivery buffer.

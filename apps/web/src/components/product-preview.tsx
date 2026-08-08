@@ -29,7 +29,7 @@ const stages = [
   {
     label: "Machine response",
     icon: RadioIcon,
-    title: "Operation completed",
+    title: "Command completed",
     detail: "exit 0 · 1.8 s",
   },
 ] as const;

@@ -1,6 +1,6 @@
 ---
 title: Troubleshooting
-description: Diagnose common CLI, enrollment, connectivity, and operation failures.
+description: Diagnose common CLI, enrollment, connectivity, Task, and Command failures.
 ---
 
 ## `fetch failed`
@@ -85,7 +85,7 @@ should be deleted.
 The Server knows the machine connection but did not receive the end-to-end pong in time. Check
 Client logs, reconnect it, and confirm that Server and Client versions match.
 
-## Operation denied
+## Task or Command denied
 
 Compare the requested Command with the Machine's Local Policy: the Organization and Agent must
 match, the Task and Command concurrency limits must have capacity, and the timeout and output

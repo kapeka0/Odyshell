@@ -42,86 +42,10 @@ export type CloudAgent = {
   createdAt: string;
 };
 
-export type CloudSession = {
-  id: string;
-  agentId: string;
-  agentName?: string;
-  title: string;
-  purpose?: string;
-  status: "active" | "completed" | "cancelled" | "revoked" | "expired";
-  expiresAt: string;
-  readyAt?: string | null;
-  createdAt: string;
-  updatedAt?: string;
-  requestedByHumanId?: string;
-  requestedByAgentId?: string | null;
-  runId?: string | null;
-  loggingLevel: "privacy-minimal" | "operational" | "diagnostic";
-  predecessorSessionId?: string;
-  scopes?: Array<{
-    machineId: string;
-    profile: string;
-    capabilities: Capability[];
-    restrictions: Record<string, unknown>;
-  }>;
-  targets: Array<{
-    machineId: string;
-    machineName: string;
-    status: string;
-  }>;
-};
-
-export type CloudSessionRequest = {
-  id: string;
-  agentId: string;
-  agentName: string;
-  title: string;
-  purpose?: string;
-  durationSeconds: number;
-  status: "pending" | "approved" | "denied" | "expired";
-  expiresAt: string;
-  createdAt: string;
-  requestedByHumanId: string;
-  requestedByAgentId?: string | null;
-  runId?: string | null;
-  loggingLevel: "privacy-minimal" | "operational" | "diagnostic";
-  machines: Array<{ id: string; name: string }>;
-  approvalUrl?: string;
-};
-
 export type CloudMember = {
   id: string;
   name: string;
   imageUrl?: string;
-};
-
-export type CloudAgentPolicy = {
-  id: string;
-  agentId: string;
-  version: number;
-  kind: "autoapproval" | "delegation" | "managed";
-  status: "proposed" | "active" | "paused" | "revoked" | "replaced";
-  scopes: Array<{
-    machineId: string;
-    profile: string;
-    capabilities: Capability[];
-    restrictions: Record<string, unknown>;
-  }>;
-  maxSessionSeconds: number;
-  maxManagedAgents?: number;
-  expiresAt: string;
-  approvedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type SessionTimelineEvent = {
-  id: string;
-  eventType: string;
-  source: "verified" | "agent";
-  operationId?: string;
-  metadata: Record<string, unknown>;
-  createdAt: string;
 };
 
 export type CloudTask = {
@@ -150,33 +74,6 @@ export type CloudTask = {
   finishedAt: string | null;
 };
 
-export type SessionTimelineDetail = {
-  session: CloudSession;
-  timeline: SessionTimelineEvent[];
-  recentHostShellCommands: Record<string, string>;
-};
-
-export type CloudEventSink = {
-  id: string;
-  endpoint: string;
-  detailLevel: "privacy-minimal" | "operational" | "diagnostic";
-  signingSecret: string;
-  status: "active" | "paused";
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type CloudEventSinkState = {
-  data: CloudEventSink | null;
-  deliveries: Array<{
-    id: string;
-    eventId: string;
-    status: "pending" | "retrying" | "delivered" | "failed";
-    attempts: number;
-    lastError?: string;
-  }>;
-};
-
 export type ControlEvent = {
   id: string;
   principalId: string;
@@ -187,6 +84,14 @@ export type ControlEvent = {
     kind?: string;
     reason?: string;
     machineId?: string;
+    humanId?: string;
+    role?: string;
+    command?: string;
+    cwd?: string | null;
+    timeoutSeconds?: number;
+    status?: string;
+    outcome?: string;
+    exitCode?: number | null;
   };
   createdAt: string | null;
 };
@@ -194,11 +99,6 @@ export type ControlEvent = {
 export type CloudNotification = {
   id: string;
   kind:
-    | "session.requested"
-    | "session.ready"
-    | "session.failed"
-    | "session.completed"
-    | "session.revoked"
     | "machine.enrolled"
     | "machine.offline"
     | "agent.revoked";
@@ -223,7 +123,6 @@ export type CloudContext = {
     slug: string;
     name: string;
     avatarSeed: string;
-    loggingLevel: "privacy-minimal" | "operational" | "diagnostic";
   };
   userPreferences: {
     timeZone: string;
@@ -253,10 +152,8 @@ export type CloudContext = {
   };
   machines: CloudMachine[];
   agents: CloudAgent[];
-  sessions: CloudSession[];
-  sessionRequests: CloudSessionRequest[];
+  tasks: CloudTask[];
   members: CloudMember[];
-  policies: CloudAgentPolicy[];
   controlEvents: ControlEvent[];
   notifications: CloudNotification[];
 };

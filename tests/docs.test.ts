@@ -9,13 +9,12 @@ const requiredPages = [
   "concepts.mdx",
   "machines.mdx",
   "agents.mdx",
+  "tasks.mdx",
+  "commands.mdx",
+  "settings.mdx",
   "mcp.mdx",
-  "sdk.mdx",
-  "operations.mdx",
   "cli.mdx",
   "security.mdx",
-  "migration.mdx",
-  "event-sinks.mdx",
   "self-hosting.mdx",
   "troubleshooting.mdx",
 ] as const;
@@ -51,47 +50,25 @@ describe("public documentation corpus", () => {
     expect(corpus).not.toMatch(/\b(?:business model|roadmap)\b/iu);
   });
 
-  it("documents Host Shell as explicit same-user authority", () => {
+  it("documents same-user shell authority and durable audit boundaries", () => {
     const corpus = documentationPages()
       .map((page) => readFileSync(resolve(docsRoot, page), "utf8"))
       .join("\n");
     const security = readFileSync(resolve(docsRoot, "security.mdx"), "utf8");
-    const eventSinks = readFileSync(
-      resolve(docsRoot, "event-sinks.mdx"),
-      "utf8",
-    );
-    const sessions = readFileSync(resolve(docsRoot, "sessions.mdx"), "utf8");
     const agents = readFileSync(resolve(docsRoot, "agents.mdx"), "utf8");
-    const sdk = readFileSync(resolve(docsRoot, "sdk.mdx"), "utf8");
+    const commands = readFileSync(resolve(docsRoot, "commands.mdx"), "utf8");
     const concepts = readFileSync(resolve(docsRoot, "concepts.mdx"), "utf8");
 
-    expect(corpus).toContain("`host.shell`");
-    expect(corpus).not.toContain("`process.shell`");
-    expect(corpus).not.toContain("`sandbox.shell`");
-    expect(security).toContain("operating-system user running the Client");
-    expect(security).toContain("user's Home");
-    expect(security).toContain("files, credentials, network, and services");
-    expect(security).toContain("no sandbox or isolation");
-    expect(security).toContain("persist after the Session ends");
-    expect(security).toContain("standard input");
-    expect(security).toContain("Event Sinks never export");
-    expect(security).toContain("but no commands, paths, stdout or stderr");
-    expect(eventSinks).toContain("Event Sinks never");
-    expect(eventSinks).toContain("command text, stdout, stderr");
-    expect(sessions).toContain(
-      "Transport loss alone does not terminate an already authorized Operation",
-    );
+    expect(security).toContain("same-user shell authority");
+    expect(security).toContain("operating-system user");
+    expect(security).toMatch(/user's files\s+and credentials/u);
+    expect(security).toContain("does not configure sudo");
+    expect(security).toContain("stdout, and stderr are excluded");
     expect(agents).toContain("same-user authority");
     expect(agents).toContain("arbitrary non-interactive shell Commands");
-    expect(sdk).toContain("requestHostShellSession");
-    expect(sdk).toContain("claimedSession(shellClaim)");
-    expect(sdk).toContain("operating-system user running the Client");
-    expect(sdk).toContain("user's Home");
-    expect(sdk).toContain("no sandbox, PTY, persistent shell process");
-    expect(sdk).toContain("missing command can fail without ending the Session");
-    for (const page of [concepts, sdk]) {
-      expect(page).toMatch(/host\.shell[\s\S]{0,160}(?:cannot|never)[\s\S]{0,80}(?:Autoapproval|autoapproved|Delegation|delegated)/u);
-    }
+    expect(commands).toContain("PTYs, and persistent shell state are not");
+    expect(commands).toContain("never stores OAuth credentials or retained stdout/stderr");
+    expect(concepts).toContain("The Server can grant less but never");
     expect(corpus).not.toContain("Full access");
   });
 
@@ -117,16 +94,16 @@ describe("public documentation corpus", () => {
     expect(cli).not.toContain("ods shell");
   });
 
-  it("documents the breaking protocol v3 Profile upgrade", () => {
-    const migration = readFileSync(resolve(docsRoot, "migration.mdx"), "utf8");
-
-    expect(migration).toContain("Protocol v3 intentionally rejects protocol v2");
-    expect(migration).toMatch(/remove each\s+old Profile/u);
-    expect(migration).toMatch(/recreate and re-enroll/iu);
-    expect(migration).toContain("`workspaceRoot`");
-    expect(migration).toMatch(/operating-system\s+user's Home/u);
-    expect(migration).toContain("`mountSource`");
-    expect(migration).toContain("--runner docker --mount-source <absolute-path>");
+  it("does not publish compatibility or legacy runtime guides", () => {
+    for (const page of [
+      "sessions.mdx",
+      "operations.mdx",
+      "sdk.mdx",
+      "migration.mdx",
+      "event-sinks.mdx",
+    ]) {
+      expect(existsSync(resolve(docsRoot, page))).toBe(false);
+    }
   });
 
   it("documents the implemented self-hosted approval flow", () => {

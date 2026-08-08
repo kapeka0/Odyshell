@@ -123,10 +123,10 @@ describe("0.16.0 release contract", () => {
     expect(cliManifest).toContain('"linux"');
     expect(
       readFileSync(
-        resolve(process.cwd(), "apps/web/content/docs/sdk.mdx"),
+        resolve(process.cwd(), "apps/web/content/docs/commands.mdx"),
         "utf8",
       ),
-    ).not.toContain("not published");
+    ).toContain("POST /v1/tasks/:taskId/commands");
 
     const releaseNotes = readFileSync(
       resolve(process.cwd(), `docs/releases/${releaseVersion}.md`),

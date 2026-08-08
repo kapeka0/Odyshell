@@ -134,6 +134,23 @@ suite("PostgreSQL Task/Command vertical", () => {
       created.task.id,
       "complete",
     )).toMatchObject({ status: "completed" });
+    const audit = await database.listAuditEvents(organizationId);
+    expect(audit).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        agentId,
+        taskId: created.task.id,
+        commandId: command.command.id,
+        type: "command.created",
+        metadata: expect.objectContaining({ command: "whoami", timeoutSeconds: 30 }),
+      }),
+      expect.objectContaining({
+        commandId: command.command.id,
+        type: "command.completed",
+        metadata: expect.objectContaining({ outcome: "succeeded", exitCode: 0 }),
+      }),
+    ]));
+    expect(JSON.stringify(audit)).not.toContain(chunk.toString("base64"));
+    expect(await database.listAuditEvents("another-org")).toEqual([]);
   });
 
   it("keeps expired authority pending until the Client confirms local closure", async () => {

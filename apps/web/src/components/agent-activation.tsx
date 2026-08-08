@@ -59,7 +59,7 @@ export function AgentActivation({
         <AlertTitle>{agentName}</AlertTitle>
         <AlertDescription>
           Registers a persistent Agent identity in this workspace. It receives
-          no machine access until a Session is approved.
+          no Machine authority until a Task opens.
         </AlertDescription>
       </Alert>
       {error ? (
