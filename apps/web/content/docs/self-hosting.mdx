@@ -1,115 +1,60 @@
 ---
 title: Self-hosting
-description: Run Odyshell's Server, PostgreSQL, and human approval flow on your infrastructure.
+description: Run the sovereign Odyshell control plane and PostgreSQL on your infrastructure.
 ---
 
-Odyshell needs one Server reachable by agents and Clients, plus PostgreSQL. Private-machine
-Clients still initiate outbound connections and expose no inbound ports.
+Self-hosting uses the same web app, Better Auth identity layer, Server, PostgreSQL schema, remote
+MCP and HTTP protocols, dashboard, and Linux Client as Cloud. Identity, policy, Task, audit, and
+credential data stay in the deployment owner's PostgreSQL database.
 
-Install the CLI wherever you administer or connect machines:
-
-```npm
-npm install --global @odyshell/cli
-```
-
-## Local development
+## Local stack
 
 ```bash
 pnpm install
 cp .env.example .env
 cp apps/web/.env.example apps/web/.env.local
-```
-
-Replace `BETTER_AUTH_SECRET` with a random value of at least 32 characters and set the same random
-`ODYSHELL_WEB_KEY` in both files. Then start the complete stack:
-
-```bash
 docker compose up -d --build
 curl --fail http://127.0.0.1:4100/health
 ```
 
-Keep `ODYSHELL_WEB_URL=http://localhost:3000`, open that address, create the first local account,
-and create the Organization.
-The bundled backend credentials are development-only. They do not let normal CLI commands bypass
-browser-approved Sessions. Do not expose this Compose setup to the internet.
+Set a random `BETTER_AUTH_SECRET` of at least 32 characters and the same random
+`ODYSHELL_WEB_KEY` in both environment files. Keep `BETTER_AUTH_URL=http://localhost:3000`, open
+that address, create the first local account, and bootstrap the single Organization.
 
-## Production configuration
+The bundled example values are for local development only. Do not expose them to the Internet.
 
-Build the Server:
+## Production boundary
 
-```bash
-docker build -f apps/server/Dockerfile -t odyshell-server .
+- Run PostgreSQL with TLS and backups you have restored in a drill.
+- Put web, OAuth/MCP, HTTP, and Client gateway traffic behind TLS.
+- Keep `BETTER_AUTH_SECRET`, `ODYSHELL_WEB_KEY`, database credentials, and optional OIDC secrets in
+  a secret manager.
+- Set `BETTER_AUTH_URL` and every public Server/web URL to their canonical HTTPS origins.
+- Keep development credentials disabled in production.
+- Run one Server replica in the current release because live Client connections are held in memory.
+- Run every Client as a dedicated Linux user with least privilege.
+
+Self-hosted mode is single-Organization. Missing sovereign Organization identity fails enrollment
+before the one-time token is consumed.
+
+## Connect the system
+
+1. Add the Server's `/mcp` resource to the external Agent runtime.
+2. Complete OAuth and approve the Organization-bound Agent installation.
+3. Install `ods` on the target Linux host.
+4. In **Machines**, select **Add Machine**, choose the Agent, and run the generated command.
+5. From the Agent, request a Task and execute Commands through MCP or canonical HTTP.
+
+```npm
+npm install --global @odyshell/cli
+
+ods --server https://api.ods.example.com up \
+  --token <single-use-token> \
+  --name production-api \
+  --agent-id <agent-id>
 ```
 
-Provide configuration through a protected environment file:
+The Machine initiates the connection and needs no inbound port, SSH credential, or VPN route.
 
-```dotenv
-NODE_ENV=production
-HOST=0.0.0.0
-PORT=4100
-DATABASE_URL=postgresql://USER:PASSWORD@DB_HOST:5432/DB_NAME?sslmode=verify-full
-ODYSHELL_ADMIN_KEY=GENERATE_A_STRONG_RANDOM_VALUE
-ODYSHELL_WEB_KEY=SHARED_RANDOM_SECRET_AT_LEAST_32_CHARACTERS
-ODYSHELL_WEB_URL=https://ods.example.com
-ODYSHELL_OPERATION_RETENTION_SECONDS=3600
-ODYSHELL_AUDIT_RETENTION_DAYS=30
-ODYSHELL_EVENT_SINK_ENCRYPTION_KEY=BASE64URL_ENCODED_32_BYTE_KEY
-```
-
-Put the Server behind HTTPS/WSS. Never enable `ODYSHELL_ALLOW_DEV_CREDENTIALS` in production.
-The Event Sink key is required only when using signed Timeline delivery. Keep it stable and in a
-secret manager; changing it makes existing sink secrets unreadable.
-
-Normal Agent execution also requires the repository web app and Odyshell Identity. Configure
-`DATABASE_URL`, `BETTER_AUTH_URL`, `BETTER_AUTH_SECRET`, `NEXT_PUBLIC_ODYSHELL_SERVER_URL`,
-`ODYSHELL_SERVER_URL`, and the same
-`ODYSHELL_WEB_KEY`, then build and start `@odyshell/web`. A Server without that bridge can expose
-health, enrollment, and administrator endpoints, but cannot register Agents or approve Sessions;
-execution fails closed instead of silently using development credentials.
-
-Set both Server URL variables explicitly. `NEXT_PUBLIC_ODYSHELL_SERVER_URL` is the canonical URL
-shown to browsers and included in self-hosted CLI commands. Odyshell never derives it from
-`ODYSHELL_SERVER_URL`, which may remain an internal deployment hostname.
-
-The isolated development Session endpoint rejects `host.shell` and `process.exec`; native
-execution always uses the normal browser-approved flow.
-
-## Connect through the supported flow
-
-After deploying both services, authorize an administrator CLI, enroll a machine, and register the
-Agent runtime:
-
-```bash
-ods login --server https://api.ods.example.com
-ods token create
-# Run ods up with that one-time token on the private machine.
-ods agent login "My Agent" --server https://api.ods.example.com
-ods exec my-machine -- uname -a
-```
-
-Open each URL printed by `ods login`, `ods agent login`, and `ods exec` and approve it in the web
-app. Legacy `ods agent create` and direct Session creation intentionally return migration errors;
-development credentials are not a production substitute for these approvals.
-
-## Protocol v4 upgrade
-
-Odyshell 0.16 rejects protocol v3 peers because recursive `fs.remove` is no longer accepted. Update
-the Server and CLI together, then restart each enrolled Profile. Existing Profile configuration
-remains valid and re-enrollment is not required.
-
-### Legacy protocol v3 Profile migration
-
-Protocol v3 rejects protocol v2 Client Profile configuration. Remove each old Profile and its
-stale machine record, then recreate and re-enroll it. Host Profiles no longer accept
-`workspaceRoot` and start in the operating-system user's Home. Docker Profiles require an explicit
-`mountSource` supplied with `--runner docker --mount-source <absolute-path>`. Do not copy or
-hand-edit old Profile configuration.
-
-## Current scaling boundary
-
-Run one Server replica because live Client connections are held in memory. Back up
-PostgreSQL, require database TLS, and remember that backup and proxy retention are independent
-from Odyshell's application retention.
-
-For the complete checklist and standalone administrator commands, see the
+For the complete deployment variables and operations checklist, see the
 [repository self-hosting guide](https://github.com/kapeka0/odyshell/blob/main/docs/self-hosting.md).

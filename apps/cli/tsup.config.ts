@@ -8,7 +8,6 @@ export default defineConfig({
   noExternal: [
     "@odyshell/client",
     "@odyshell/protocol",
-    "@odyshell/sdk",
     "zod",
   ],
   external: ["node:sqlite"],

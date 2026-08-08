@@ -5,7 +5,6 @@ import {
   developmentCredentialsEnabled,
   serverAdminKey,
 } from "../apps/server/src/access.js";
-import { parseDuration } from "../apps/cli/src/duration.js";
 
 describe("temporary access", () => {
   it("generates distinct 256-bit opaque tokens with ods prefixes", () => {
@@ -105,12 +104,4 @@ describe("temporary access", () => {
     ).toThrow(/ODYSHELL_ADMIN_KEY/);
   });
 
-  it("accepts human durations while keeping bare seconds compatible", () => {
-    expect(parseDuration("90")).toBe(90);
-    expect(parseDuration("30s")).toBe(30);
-    expect(parseDuration("15m")).toBe(900);
-    expect(parseDuration("1h")).toBe(3_600);
-    expect(parseDuration("2d")).toBe(172_800);
-    expect(() => parseDuration("1.5h")).toThrow(/must be a duration/);
-  });
 });

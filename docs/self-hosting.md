@@ -1,28 +1,19 @@
 # Self-hosting Odyshell
 
-Odyshell's self-hosted stack contains the Server, PostgreSQL, and the Odyshell web app. Odyshell
-Identity runs inside the web app for human sessions, Organization membership, OAuth, and approval:
+Self-hosted Odyshell runs the web app, Better Auth identity layer, Server, PostgreSQL, remote MCP
+adapter, dashboard, and Linux Client protocol on infrastructure you control. The deployment owner
+keeps identity, policy, Task, audit, and credential data in its own PostgreSQL database.
 
 ```mermaid
 flowchart LR
-    A["Agents"] -->|"HTTPS"| S["Odyshell Server"]
-    C["Private-machine Clients"] -->|"Outbound WSS"| S
-    H["Humans"] --> W["Odyshell web app"]
-    W -->|"Authenticated control requests"| S
-    W --> P["PostgreSQL + Odyshell Identity"]
-    S --> P
+  A["External Agent"] -->|"OAuth MCP or HTTP"| S["Odyshell Server"]
+  H["Optional Human Supervisor"] -->|"Dashboard"| W["Odyshell web app"]
+  W --> P["PostgreSQL + Odyshell Identity"]
+  S --> P
+  M["Private Linux Machine"] -->|"Authenticated outbound connection"| S
 ```
 
-Clients never need inbound ports. The Server needs an address reachable by Agents, Clients, and
-the web app; people reach the web app through HTTPS.
-
-Install the CLI wherever you administer or connect machines:
-
-```bash
-npm install --global @odyshell/cli
-```
-
-## Try it locally
+## Local evaluation
 
 ```bash
 pnpm install
@@ -30,170 +21,68 @@ cp .env.example .env
 cp apps/web/.env.example apps/web/.env.local
 ```
 
-Replace `BETTER_AUTH_SECRET` with a random value of at least 32 characters in
-`apps/web/.env.local`. Set the same random `ODYSHELL_WEB_KEY` in `.env` and
-`apps/web/.env.local`; keep `ODYSHELL_WEB_URL=http://localhost:3000`. Then start PostgreSQL and the
-Server:
+Set a random `BETTER_AUTH_SECRET` of at least 32 characters and the same random
+`ODYSHELL_WEB_KEY` in both files. Then start the local-only Compose stack:
 
 ```bash
 docker compose up -d --build
 curl --fail http://127.0.0.1:4100/health
 ```
 
-Open `http://localhost:3000`, create the first account, and create the Organization. Compose starts
-the web app, Server, and PostgreSQL. Its named volume keeps state across restarts. The
-included passwords and keys are development defaults; do not expose this setup to the internet.
-The development Agent key only authorizes the isolated `/v1/development/sessions` endpoint. It
-rejects `host.shell` and `process.exec`; it does not make `ods exec` or `ods shell` skip
-the implemented browser-approved Session flow.
+Open `http://localhost:3000`, create the first account, and bootstrap the Organization. The
+Compose file binds ports to loopback by default and enables explicit development credentials on
+the Server; do not expose it to the Internet or treat it as the production manifest.
 
-Before upgrading an existing installation, take a PostgreSQL snapshot. The authority cutover
-keeps Workspaces, machines and retained events, but revokes legacy Agent Access credentials and
-their active Sessions. Register integrations again with `ods agent login`.
+## Production requirements
 
-Protocol v4 is a breaking Server/Client wire upgrade because recursive `fs.remove` is no longer
-accepted. Update the Server and CLI together, then restart each Profile; existing Profile
-configuration remains valid and re-enrollment is not required.
+Deploy the Server and web images with:
 
-The older protocol v3 upgrade changed local Client Profile configuration. Remove each protocol v2
-Profile and its stale machine record, then recreate and re-enroll it with a new command. Host
-Profiles no longer accept `workspaceRoot` and start relative work in the operating-system user's
-Home. Docker Profiles require `--runner docker --mount-source <absolute-path>` so their new
-configuration has an explicit `mountSource`. Do not copy or hand-edit old Profile configuration.
+- PostgreSQL over TLS, protected backups, and a tested restore procedure;
+- `NODE_ENV=production` for both services;
+- `ODYSHELL_ALLOW_DEV_CREDENTIALS` absent;
+- a stable random `BETTER_AUTH_SECRET` of at least 32 characters;
+- one stable random `ODYSHELL_WEB_KEY` shared only between web and Server;
+- canonical HTTPS `BETTER_AUTH_URL`, public Server URL, web URL, and MCP URL;
+- `ODYSHELL_IDENTITY_ISSUER` and `ODYSHELL_IDENTITY_JWKS_URL` matching the web identity service;
+- secrets supplied by the deployment platform rather than committed environment files;
+- one Server replica for the MVP because live Client connections are in memory.
 
-Rollback may restore application or schema compatibility, but it never reactivates revoked
-secrets. Restore a pre-cutover snapshot only before accepting new Sessions.
-
-## Run it on your infrastructure
-
-Provide a PostgreSQL database and build the Server:
-
-```bash
-docker build -f apps/server/Dockerfile -t odyshell-server .
-```
-
-Store production configuration outside the repository:
-
-```dotenv
-NODE_ENV=production
-HOST=0.0.0.0
-PORT=4100
-DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<database>?sslmode=verify-full
-ODYSHELL_ADMIN_KEY=<strong-random-admin-key>
-ODYSHELL_WEB_KEY=<shared-random-secret-at-least-32-characters>
-ODYSHELL_WEB_URL=https://ods.example.com
-ODYSHELL_OPERATION_RETENTION_SECONDS=3600
-ODYSHELL_AUDIT_RETENTION_DAYS=30
-```
-
-Start the Server:
-
-```bash
-docker run -d \
-  --name odyshell-server \
-  --restart unless-stopped \
-  --env-file /etc/odyshell/server.env \
-  -p 127.0.0.1:4100:4100 \
-  odyshell-server
-```
-
-Put the Server behind HTTPS before connecting over the internet. Never enable
-`ODYSHELL_ALLOW_DEV_CREDENTIALS` in production.
-
-## Deploy the human control plane
-
-The current production Session flow requires the Odyshell web app and its PostgreSQL-backed
-Odyshell Identity service. A Server-only deployment can expose health, enrollment, and administrator
-endpoints, but it cannot issue Agent Credentials or approve Agent Sessions; normal execution fails
-closed when `ODYSHELL_WEB_URL` is unavailable.
-
-Configure the web app with:
-
-```dotenv
-DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<database>?sslmode=verify-full
-BETTER_AUTH_URL=https://ods.example.com
-BETTER_AUTH_SECRET=<strong-random-secret-at-least-32-characters>
-ODYSHELL_DEPLOYMENT_MODE=self-hosted
-ODYSHELL_MCP_URL=https://api.ods.example.com/mcp
-NEXT_PUBLIC_ODYSHELL_SERVER_URL=https://api.ods.example.com
-ODYSHELL_SERVER_URL=https://api.ods.example.com
-ODYSHELL_WEB_KEY=<same-value-as-the-server>
-```
-
-Set both Server URL variables explicitly. `NEXT_PUBLIC_ODYSHELL_SERVER_URL` is the canonical URL
-shown to browsers and included in self-hosted CLI commands. Odyshell never derives it from
-`ODYSHELL_SERVER_URL`, which may be an internal deployment hostname that must not be disclosed to
-Clients.
-
-Build and start the implemented web application:
-
-```bash
-pnpm --filter @odyshell/web build
-pnpm --filter @odyshell/web start
-```
-
-Expose it at the exact HTTPS origin configured as the Server's `ODYSHELL_WEB_URL`. The shared web
-key stays between these two services; browsers and Agents never receive it.
-
-## Remote MCP
-
-To let MCP clients connect directly, configure Odyshell Identity as the OAuth authorization
-server. Dynamic client registration and PKCE are exposed by the web app:
-
-```dotenv
-ODYSHELL_MCP_URL=https://mcp.example.com/mcp
-ODYSHELL_MCP_ALLOWED_ORIGINS=https://app.example.com
-ODYSHELL_IDENTITY_ISSUER=https://ods.example.com
-ODYSHELL_IDENTITY_JWKS_URL=https://ods.example.com/api/auth/jwks
-```
-
-Point the MCP hostname at the same Server process. PostgreSQL keeps MCP installation, Task, Command,
-authorization, and transient output state; OAuth access tokens are verified locally against
-Odyshell Identity JWKS and are not stored by the Server. Accounts with one
-Organization use `/mcp`.
-
-Remote MCP is an adapter over the canonical agent-native HTTP authorization path. It exposes
-Machine discovery plus Task and Command lifecycle tools. A Task identifies one Machine, objective,
-and duration. A Command accepts shell text, an optional absolute working directory, and a bounded
-timeout; it never accepts caller-provided environment variables or standard input. Every mutation
-uses an explicit idempotency key, output is bounded and transient, and state can be polled after a
-transport reconnect. Completion is explicit and fails closed while a Command is active.
+Optional Google or generic OIDC sign-in adds identity providers without replacing local
+email/password. Self-hosted mode remains single-Organization.
 
 ## Connect an Agent and Machine
 
-Open the deployed dashboard and register the Agent through the Server's remote MCP resource:
+1. Add `https://api.ods.example.com/mcp` to the external Agent runtime.
+2. Complete OAuth and approve the Organization-bound Agent installation.
+3. Install the Machine CLI as a dedicated least-privilege Linux user:
 
-```text
-https://api.ods.example.com/mcp
-```
+   ```bash
+   npm install --global @odyshell/cli
+   ```
 
-Complete OAuth in the browser and approve the Organization-bound installation. Then open
-**Machines**, select **Add Machine**, enter a name, and select that Agent. The dashboard creates a
-single-use enrollment command shaped like:
+4. In **Machines**, select **Add Machine**, choose the Agent, and run the generated command:
 
-```bash
-ods up \
-  --server https://api.ods.example.com \
-  --token <enrollment-token> \
-  --name my-machine \
-  --agent-id <agent-id>
-```
+   ```bash
+   ods --server https://api.ods.example.com up \
+     --token <single-use-token> \
+     --name production-api \
+     --agent-id <agent-id>
+   ```
 
-The token expires after ten minutes, is consumed once, and is not written to Client configuration.
-Enrollment binds the sovereign Organization ID and selected Agent into Local Policy. The Client
-denies a mismatched identity locally even if the Server requests it.
+5. From the Agent, call `machines_list`, `task_request`, `command_run`, `command_get`,
+   `command_output`, and `task_complete`.
 
-From the Agent runtime, call `machines_list`, request a Task with `task_request`, wait for optional
-human approval, and submit Commands with `command_run`. Poll Task and Command state after transport
-reconnects and explicitly complete the Task when every Command is terminal.
+The Machine needs no inbound port, SSH credential, or VPN route. Enrollment fails before token
+consumption when the Organization lacks its sovereign identity binding. The Client independently
+denies mismatched Organization or Agent identity and any request outside Local Policy.
 
-## Production checklist
+## Operations checklist
 
-- Back up PostgreSQL and require TLS.
-- Set Task, Command, audit, and transient-output retention deliberately; remember that backups have independent
-  retention.
-- Keep the admin key and database credentials outside the repository.
-- Expose the Server through HTTPS/WSS.
-- Run each Client as a dedicated operating-system user with least privilege.
-- Grant only the required Agent identity, operating-system resources, concurrency, and duration.
-- Keep one Server replica for the MVP because live Client connections are held in memory.
+- Run each Client as a dedicated Linux user without root, sudo, or Docker membership.
+- Back up PostgreSQL and account for independent proxy and backup retention.
+- Monitor Server, web, PostgreSQL, and Client service health.
+- Rotate web/OIDC credentials deliberately; never copy Machine private keys or enrollment tokens.
+- Keep the web app and Server on the same release and update Client patch releases with
+  `ods client update`.
+- Verify a real Task and Command after deployment, including optional approval, reconnect, output
+  pagination, cancellation, and explicit completion.

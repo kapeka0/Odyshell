@@ -109,18 +109,18 @@ describe("0.16.0 release contract", () => {
     ).toHaveLength(1);
   });
 
-  it("documents every supported package manager", () => {
-    for (const path of [
-      "README.md",
-      "apps/cli/README.md",
-      "packages/sdk/README.md",
-      "docs/releases/0.16.0.md",
-    ]) {
+  it("documents the Linux Machine CLI installation contract", () => {
+    for (const path of ["README.md", "apps/cli/README.md"]) {
       const documentation = readFileSync(resolve(process.cwd(), path), "utf8");
-      for (const manager of ["pnpm", "npm", "Yarn", "Bun"]) {
-        expect(documentation).toContain(manager);
-      }
+      expect(documentation).toContain("npm install --global @odyshell/cli");
+      expect(documentation).toContain("Linux");
     }
+    const cliManifest = readFileSync(
+      resolve(process.cwd(), "apps/cli/package.json"),
+      "utf8",
+    );
+    expect(cliManifest).toContain('"os": [');
+    expect(cliManifest).toContain('"linux"');
     expect(
       readFileSync(
         resolve(process.cwd(), "apps/web/content/docs/sdk.mdx"),

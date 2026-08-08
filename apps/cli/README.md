@@ -4,140 +4,77 @@
 
 <h1 align="center">Odyshell CLI</h1>
 
-<p align="center"><strong>The agent-facing command line for Odyshell.</strong></p>
+<p align="center"><strong>Install and operate an Odyshell Client on Linux.</strong></p>
 
-The `ods` CLI gives agents a programmatic interface to Odyshell and lets workspace members connect
-machines. People, plans, machine inventory, and approvals are managed in the web app.
+`ods` is the Machine-side administration tool. Agents do not run it: they connect to the
+Odyshell Server through remote OAuth MCP or the canonical HTTP Task/Command protocol.
 
 ## Install
 
-Requires Node.js 24 or newer:
-
-| Package manager | Command |
-| --- | --- |
-| pnpm | `pnpm add --global @odyshell/cli` |
-| npm | `npm install --global @odyshell/cli` |
-| Yarn | `yarn global add @odyshell/cli` |
-| Bun | `bun add --global @odyshell/cli` |
-
-## Basic usage
+Requires Linux and Node.js 24 or newer:
 
 ```bash
-ods login
-ods machines
-ods ping raspberry
-ods exec raspberry -- uname -a
-ods shell --purpose "Inspect the user environment" raspberry "pwd && id"
-ods fs search raspberry package.json
-ods fs read raspberry notes/status.txt
-ods audit
+npm install --global @odyshell/cli
 ```
 
-`ods login` prints an activation link with its short-lived device code already embedded. Open that
-link, choose the workspace, and approve the CLI; there is no code to copy manually.
+## Connect a Machine
 
-`ods login` authorizes the CLI but does not enroll the current machine. Use the **Add machine**
-flow in the web app and run its generated `ods up` command on the target host. The target host does
-not need its own `ods login`; the authenticated member authorizes enrollment by generating that
-single-use command. A host can maintain isolated outbound Clients for multiple Workspaces or
-Servers with named Profiles:
+Register the Agent in the dashboard first. Then open **Machines**, select **Add Machine**, choose
+that Agent, and run the generated command on the target Linux host:
 
 ```bash
-ods --server https://personal.example up --profile personal <enrollment-options>
-ods --server https://company.example up --profile company <enrollment-options>
+ods --server https://api.example.com up \
+  --token <single-use-token> \
+  --name production-api \
+  --agent-id <agent-id>
 ```
 
-Use the same `--profile` with `ods down` and `ods client status`. Profiles keep independent
-machine identities, local policies, state, and background services. Omitting it selects `default`.
+`ods up` creates an Ed25519 Machine identity, saves a conservative Local Policy, verifies the
+Server, and installs a restartable systemd user service. The token expires after ten minutes,
+works once, and is never persisted.
 
-List, inspect, or remove local Profiles:
+The initial Local Policy permits only the selected Agent, one Task and Command at a time, a
+one-hour Task, a ten-minute Command, and 1 MiB of output. It permits remote human approval but
+does not configure sudo or a sandbox.
+
+## Local lifecycle
 
 ```bash
+ods status
 ods profiles ls
-ods profiles status personal
-ods profiles configure personal --allow-sudo
-ods profiles configure personal --deny-sudo
-ods profiles remove personal
+ods profiles status default
+ods client status --profile default
+ods client doctor --profile default
+ods client update --check --profile default
+ods down --profile default
+ods up --profile default
 ```
 
-On Linux, `--deny-sudo` restores `NoNewPrivileges` for the installed systemd service, while
-`--allow-sudo` verifies `sudo -n` and regenerates that service without the restriction. A
-foreground `ods client start` keeps the operating-system user's real authority instead; the Client
-detects effective `sudo -n` so approvals can warn. Odyshell does not claim equivalent
-privilege-escalation enforcement on macOS or Windows.
+Use another Profile name when one host connects to another Server or customer Organization.
+Profiles keep independent Machine keys, policies, state directories, and systemd services.
+`--profile` and `--config` cannot be combined.
 
-Remove one local Profile, or reset every local identity and CLI login:
+Remove one local identity or all of them:
 
 ```bash
-ods profiles remove personal
+ods profiles remove default
 ods reset --yes
 ```
 
-These commands do not delete Cloud machine records; remove those separately in the dashboard.
+Machine records remain in the dashboard for audit. `--json` provides stable output for local
+automation.
 
-`ods` uses Odyshell Cloud by default. Self-hosted installations select their Server with
-`--server <url>` or `ODYSHELL_SERVER_URL`.
+## Security boundary
 
-Commands support `--json` for stable, programmatic output:
+Commands execute as the Linux user running the Client. Use a dedicated user with no root, sudo,
+or Docker membership and grant only the files, credentials, network, and services the Agent needs.
+The Client enforces Organization, Agent, duration, concurrency, timeout, and output limits locally.
 
-```bash
-ods --json exec raspberry -- uname -a
-```
+`ods` deliberately has no login, Agent, Task, Command, shell, filesystem, Docker, Session, or MCP
+runtime commands. Keeping remote authorization in the Server prevents a second policy path from
+appearing on every Machine.
 
-## Main commands
-
-- `ods up`, `ods status`, and `ods down` manage the outbound Client.
-- `ods ping` checks end-to-end access without running a command.
-- `ods exec`, `ods fs`, and `ods docker` request a narrowly scoped Session and perform one typed
-  Operation.
-- `ods shell` requests separate, explicit Host Shell authority and runs a native command after
-  human approval.
-- `ods sessions` lists canonical Agent Sessions.
-- `ods profiles` lists, inspects, configures, and removes local Client Profiles.
-- `ods client` diagnoses and updates the Client running on a private machine.
-- `ods audit` shows actions visible to the current agent.
-
-Relative paths in structured host Operations start from the Home directory of the operating-system
-user running the Client. Those Operations can request an exact absolute path, which remains visible
-in the approval. Host Shell authority is approved broadly before its commands or paths are known.
-The Cloud Workspace selected during `ods login` is the organization boundary; it is not a
-filesystem directory.
-
-Legacy Agent Access commands return migration guidance and do not authorize work. Direct runtime
-Session creation and mutation commands are not part of the CLI; commands request canonical Agent
-Sessions and operate only with the resulting claimed Session Credential.
-
-Check or update the local Client without replacing its identity or configuration:
-
-```bash
-ods client doctor
-ods client update --check
-ods client update
-```
-
-Updates are downloaded from npm over HTTPS, verified against the registry SHA-512 integrity,
-limited to compatible patch releases, and rolled back if the background Client cannot restart.
-
-## Agent integrations
-
-Agents use the Server's remote OAuth MCP or canonical HTTP interface. The CLI does not host a
-separate stdio MCP implementation, which keeps authorization, idempotency, reconnect, and audit
-behavior identical across agent transports.
-
-`ods shell --purpose <purpose> [--title <title>] <machine> <command>` requests `host.shell`, waits
-for human approval, runs one command, and explicitly completes the Session with the command
-outcome. The CLI generates a fresh Task Run identifier for that invocation. `--purpose` is required
-and describes the goal shown to the approver. Its task budget defaults to one hour; `--ttl` may
-shorten it or request a longer justified duration up to 24 hours. The command itself must be passed
-as one quoted argument. It starts in the Client user's Home, can access everything available to
-that user, has no sandbox or isolation, and may persist changes after the Session ends. Prefer
-`ods exec` when an exact program and argument list is sufficient. The shell receives an allowlisted
-base environment rather than every variable in the Client process; explicit environment values
-are limited to one Operation and never persisted, although a POSIX login shell can load user
-startup files. Graceful cancellation stops the process group, but an abrupt Client crash can leave
-a detached POSIX command running; restart reconciliation records an unknown result.
-
-For monorepo development, build and install the local CLI with:
+For monorepo development:
 
 ```bash
 pnpm install:ods

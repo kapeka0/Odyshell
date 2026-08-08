@@ -50,11 +50,6 @@ import {
   windowsTaskLauncherPath,
   windowsTaskNameForConfig,
 } from "../apps/client/src/service.js";
-import {
-  DEFAULT_CLOUD_SERVER_URL,
-  cliConfigPathFor,
-  serverUrlFor,
-} from "../apps/cli/src/config.js";
 
 describe("client platform support", () => {
   it("uses Server time within the skew window and rejects unsafe clocks", () => {
@@ -402,28 +397,6 @@ describe("client platform support", () => {
         XDG_CONFIG_HOME: "/home/ada/.config-custom",
       }),
     ).toBe("/home/ada/.config-custom/odyshell/client.json");
-    expect(cliConfigPathFor("darwin", "/Users/ada", {})).toBe(
-      "/Users/ada/Library/Application Support/Odyshell/config.json",
-    );
-  });
-
-  it("uses Odyshell Cloud by default while preserving explicit self-hosted overrides", () => {
-    expect(DEFAULT_CLOUD_SERVER_URL).toBe("https://server.odyshell.com");
-    expect(serverUrlFor({}, {}, undefined)).toBe(DEFAULT_CLOUD_SERVER_URL);
-    expect(
-      serverUrlFor(
-        { server: "https://self-hosted.example" },
-        { ODYSHELL_SERVER_URL: "https://environment.example" },
-        { serverUrl: "https://stored.example" },
-      ),
-    ).toBe("https://self-hosted.example");
-    expect(
-      serverUrlFor(
-        {},
-        { ODYSHELL_SERVER_URL: "https://environment.example" },
-        { serverUrl: "https://stored.example" },
-      ),
-    ).toBe("https://environment.example");
   });
 
   it("reports additive and incompatible Client protocol versions", () => {

@@ -34,19 +34,16 @@ describe("CLI npm package", () => {
   });
 
   it("bundles private workspace code instead of publishing workspace dependencies", () => {
-    for (const dependency of [
-      "@odyshell/client",
-      "@odyshell/protocol",
-      "@odyshell/sdk",
-    ]) {
+    for (const dependency of ["@odyshell/client", "@odyshell/protocol"]) {
       expect(packageJson.dependencies).not.toHaveProperty(dependency);
       expect(packageJson.devDependencies[dependency]).toBe("workspace:*");
     }
+    expect(packageJson.devDependencies).not.toHaveProperty("@odyshell/sdk");
 
     const tsup = readFileSync(resolve(cliRoot, "tsup.config.ts"), "utf8");
     expect(tsup).toContain('"@odyshell/client"');
     expect(tsup).toContain('"@odyshell/protocol"');
-    expect(tsup).toContain('"@odyshell/sdk"');
+    expect(tsup).not.toContain('"@odyshell/sdk"');
   });
 
   it("keeps the binary version aligned with the package version", () => {
@@ -61,8 +58,8 @@ describe("CLI npm package", () => {
     expect(entry).toContain('.option("--profile <name>"');
     expect(entry).toContain("clientConfigPathForProfile(profileName)");
     expect(entry).toContain("client_profile_config_conflict");
-    expect(up).toContain("client_profile_migration_conflict");
-    expect(up).toContain("constants.COPYFILE_EXCL");
+    expect(up).not.toContain("legacyConfigPath");
+    expect(up).not.toContain("COPYFILE_EXCL");
     expect(up).not.toContain("instanceConfigPath");
   });
 
@@ -76,42 +73,16 @@ describe("CLI npm package", () => {
     expect(entry).not.toContain('.command("remove")\n  .description("stop and delete one local Client Profile")');
   });
 
-  it("separates typed Session requests from command-free Host Shell requests", () => {
+  it("does not act as a second Agent runtime", () => {
     const entry = readFileSync(resolve(cliRoot, "src/index.ts"), "utf8");
-    const temporaryFlow = entry.slice(
-      entry.indexOf("async function runInTemporarySession"),
-      entry.indexOf("program\n  .command(\"login\")"),
-    );
-    const shellFlow = entry.slice(
-      entry.indexOf('  .command("shell <machine>'),
-      entry.indexOf("const fsCommand"),
-    );
-
-    expect(temporaryFlow).toContain("requestOperationSession");
-    expect(temporaryFlow).toContain("requestHostShellSession");
-    expect(temporaryFlow).toContain("session.host.shell");
-    expect(temporaryFlow).toContain("session.execute");
-    expect(temporaryFlow).toContain("await agent.complete(");
-    expect(temporaryFlow).toContain("await agent.cancel(");
-    expect(temporaryFlow).not.toContain("createSession(");
-    expect(temporaryFlow).not.toContain("capability:");
-    expect(temporaryFlow).not.toContain("process.shell");
-    expect(shellFlow).toContain('.command("shell <machine> <command>")');
-    expect(shellFlow).not.toContain('commandParts.join(" ")');
-    expect(shellFlow).toContain(".requiredOption(");
-    expect(shellFlow).toContain('"--purpose <purpose>"');
-    expect(shellFlow).toContain('.option("--ttl <seconds>", "session lifetime", "3600")');
-    expect(temporaryFlow).toContain("purpose: requestMetadata?.purpose");
-  });
-
-  it("exposes only canonical Agent Session commands", () => {
-    const entry = readFileSync(resolve(cliRoot, "src/index.ts"), "utf8");
-
-    expect(entry).toContain('.command("sessions")');
-    expect(entry).not.toContain('.command("session")');
-    expect(entry).not.toContain('api.createOperation(');
-    expect(entry).not.toContain('.session(sessionId)');
-    expect(entry).not.toContain('.closeSession(sessionId)');
+    for (const command of [
+      "login", "logout", "machines", "ping", "sessions", "token",
+      "agent", "audit", "exec", "shell", "fs", "docker", "mcp",
+    ]) {
+      expect(entry).not.toContain(`.command("${command}`);
+    }
+    expect(entry).not.toContain("@odyshell/sdk");
+    expect(packageJson.dependencies).not.toHaveProperty("open");
   });
 
   it("does not expose the superseded local MCP authorization path", () => {
@@ -121,5 +92,11 @@ describe("CLI npm package", () => {
     expect(existsSync(resolve(cliRoot, "src/mcp.ts"))).toBe(false);
     expect(packageJson.dependencies).not.toHaveProperty("@modelcontextprotocol/server");
     expect(packageJson.devDependencies).not.toHaveProperty("@odyshell/mcp");
+  });
+
+  it("publishes the Machine installer for Linux only", () => {
+    expect((packageJson as typeof packageJson & { os?: string[] }).os).toEqual(["linux"]);
+    const entry = readFileSync(resolve(cliRoot, "src/index.ts"), "utf8");
+    expect(entry).toContain("assertLinuxClientHost();");
   });
 });

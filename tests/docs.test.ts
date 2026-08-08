@@ -105,15 +105,16 @@ describe("public documentation corpus", () => {
     expect(mcp).not.toContain("Session Credential");
   });
 
-  it("publishes the exact Host Shell CLI contract", () => {
+  it("publishes a Machine-only Linux CLI contract", () => {
     const cli = readFileSync(resolve(docsRoot, "cli.mdx"), "utf8");
 
-    expect(cli).toContain(
-      "`ods shell --purpose <purpose> [--title <title>] <machine> <command>`",
-    );
-    expect(cli).toContain("`--purpose` is required");
-    expect(cli).toContain("one quoted argument");
-    expect(cli).not.toContain("<command...>");
+    expect(cli).toContain("Linux and Node.js 24");
+    expect(cli).toContain("`ods` is a Machine administration tool");
+    expect(cli).toContain("ods client doctor --profile default");
+    expect(cli).toContain("no Human login, Agent runtime, Task, Command");
+    expect(cli).not.toContain("ods login");
+    expect(cli).not.toContain("ods exec");
+    expect(cli).not.toContain("ods shell");
   });
 
   it("documents the breaking protocol v3 Profile upgrade", () => {
@@ -132,11 +133,11 @@ describe("public documentation corpus", () => {
     const selfHosting = readFileSync(resolve(docsRoot, "self-hosting.mdx"), "utf8");
 
     expect(selfHosting).toContain("BETTER_AUTH_SECRET");
-    expect(selfHosting).toContain("ODYSHELL_WEB_URL");
-    expect(selfHosting).toContain("ods agent login \"My Agent\"");
-    expect(selfHosting).toContain("Legacy `ods agent create`");
-    expect(selfHosting).toContain("intentionally return migration errors");
-    expect(selfHosting).not.toMatch(/^ods agent create\b/mu);
+    expect(selfHosting).toContain("ODYSHELL_WEB_KEY");
+    expect(selfHosting).toContain("Server's `/mcp` resource");
+    expect(selfHosting).toContain("--agent-id <agent-id>");
+    expect(selfHosting).not.toContain("ods agent login");
+    expect(selfHosting).not.toContain("ods exec");
   });
 
   it("records the accepted agent-native Task and Command boundary", () => {

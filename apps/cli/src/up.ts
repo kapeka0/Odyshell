@@ -1,20 +1,21 @@
-import {
-  chmod,
-  copyFile,
-  mkdir,
-  readFile,
-  unlink,
-} from "node:fs/promises";
-import { constants } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { normalizeServerUrl } from "@odyshell/client";
 import { ExpectedError } from "./errors.js";
 
 export type ClientUpConfiguration = {
   configPath: string;
   configExists: boolean;
-  migratedFrom?: string;
 };
+
+export function assertLinuxClientHost(platform = process.platform): void {
+  if (platform !== "linux") {
+    throw new ExpectedError(
+      "The Odyshell MVP Client supports Linux hosts only.",
+      "client_linux_required",
+    );
+  }
+}
 
 export async function assertClientServerReachable(
   serverUrl: string,
@@ -47,7 +48,6 @@ export async function resolveClientUpConfiguration(options: {
   serverUrl: string;
   explicitConfigPath?: string;
   profileName: string;
-  legacyConfigPath: string;
   profileConfigPath: string;
 }): Promise<ClientUpConfiguration> {
   let requestedServerUrl: string;
@@ -80,17 +80,6 @@ export async function resolveClientUpConfiguration(options: {
 
   const profileConfigPath = resolve(options.profileConfigPath);
   const profileIdentity = await identityFromConfig(profileConfigPath);
-  const legacyConfigPath = resolve(options.legacyConfigPath);
-  const legacyIdentity =
-    options.profileName === "default"
-      ? await identityFromConfig(legacyConfigPath)
-      : undefined;
-  if (profileIdentity && legacyIdentity) {
-    throw new ExpectedError(
-      `Both the legacy Client identity and the default Client Profile exist. Refusing to choose or overwrite either file. Remove one after verifying which machine identity is active.`,
-      "client_profile_migration_conflict",
-    );
-  }
   if (profileIdentity) {
     if (
       profileIdentity.profileName &&
@@ -108,36 +97,7 @@ export async function resolveClientUpConfiguration(options: {
     );
     return { configPath: profileConfigPath, configExists: true };
   }
-  if (!legacyIdentity) {
-    return { configPath: profileConfigPath, configExists: false };
-  }
-  assertSameServer(
-    legacyConfigPath,
-    legacyIdentity.serverUrl,
-    requestedServerUrl,
-  );
-  try {
-    await mkdir(dirname(profileConfigPath), { recursive: true, mode: 0o700 });
-    await copyFile(
-      legacyConfigPath,
-      profileConfigPath,
-      constants.COPYFILE_EXCL,
-    );
-    await chmod(profileConfigPath, 0o600);
-    await unlink(legacyConfigPath);
-  } catch (error) {
-    throw new ExpectedError(
-      `Could not import the legacy Client identity into the default Profile: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-      "client_profile_migration_failed",
-    );
-  }
-  return {
-    configPath: profileConfigPath,
-    configExists: true,
-    migratedFrom: legacyConfigPath,
-  };
+  return { configPath: profileConfigPath, configExists: false };
 }
 
 function assertClientProfileName(profileName: string): void {

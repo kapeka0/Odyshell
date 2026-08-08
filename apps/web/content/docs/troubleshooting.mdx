@@ -45,10 +45,6 @@ migration guide for a minor version change.
 More than one package manager may have installed `ods`. Find which executable appears first:
 
 ```bash
-# Windows PowerShell
-Get-Command ods -All
-
-# Linux or macOS
 type -a ods
 ```
 
@@ -70,8 +66,7 @@ To enroll a separate identity, choose a new Client Profile:
 ods up --profile company <enrollment-options>
 ```
 
-Do not overwrite or copy an existing machine identity. If migration reports two default
-identities, verify which machine is active and remove the unused configuration before retrying.
+Do not overwrite or copy an existing Machine identity.
 
 ## `client_config_server_mismatch`
 
@@ -82,8 +77,8 @@ ods up --profile company <enrollment-options>
 ```
 
 List local identities with `ods profiles ls`, then remove a known unused Profile with
-`ods profiles remove <name>`. Use `ods reset --yes` only when every local Profile and the CLI login
-on that host should be deleted.
+`ods profiles remove <name>`. Use `ods reset --yes` only when every local Profile on that host
+should be deleted.
 
 ## `machine_ping_timeout`
 
@@ -97,32 +92,19 @@ match, the Task and Command concurrency limits must have capacity, and the timeo
 limits must not be exceeded. Also check Agent credential expiry, Machine assignment, absolute
 working-directory validity, and operating-system permissions.
 
-## `sudo` cannot gain privileges
+## A Command needs more operating-system authority
 
-Installed Linux Client services set `NoNewPrivileges` unless the machine owner opts in for that
-Profile. First configure a narrow passwordless sudoers rule, then run locally:
-
-```bash
-ods profiles configure default --allow-sudo
-```
-
-The command fails closed when `sudo -n true` does not succeed. Use `--deny-sudo` to restore the
-installed-service restriction. A Profile with sudo enabled makes approved process Sessions
-root-capable; structured filesystem operations remain unprivileged.
-
-`ods client start` runs in the foreground and does not gain the service-level
-`NoNewPrivileges` boundary. The Client probes effective `sudo -n` and reports root capability so
-approval surfaces can warn even if the Profile setting is disabled. Odyshell does not claim an
-equivalent privilege-escalation restriction on macOS or Windows.
+Odyshell does not configure sudo or elevate a Command. Change the dedicated Linux user's resources
+outside Odyshell only after reviewing the resulting authority. Prefer a narrowly owned file,
+service API, or dedicated wrapper over root or broad group membership.
 
 ## A command may still be running after a Client crash
 
-Graceful Session closure and cancellation terminate the active process group. On POSIX, Host Shell
-commands use detached process groups. Without a separate Operation supervisor, an abrupt Client
+Graceful Task closure and cancellation terminate the active process group. Commands use detached
+process groups. Without a separate process supervisor, an abrupt Client
 crash can leave a command running until it exits by itself or is stopped by the machine owner or
 operating system. After restart, Odyshell reports the execution result as unknown instead of
-assuming the command stopped. On Windows, tree termination is best effort when the command leader
-has already exited.
+assuming the command stopped.
 
 If the Client reports `authority_termination_unconfirmed`, it has quarantined the local Profile and
 will refuse to reconnect it after a service restart. Inspect the machine for surviving processes,

@@ -192,6 +192,9 @@ authorization.
 - Machine enrollment now binds a sovereign Organization ID and selected Agent into a conservative
   Task Local Policy before starting the outbound Linux Client; missing identity fails before the
   one-time token is consumed.
+- the published Linux CLI is now Machine-side installation and diagnostics only; Human login,
+  Agent runtime, Session/Operation, typed filesystem, Docker, sudo configuration, and local MCP
+  command paths were removed instead of preserved as compatibility layers.
 
 ### DOING
 
