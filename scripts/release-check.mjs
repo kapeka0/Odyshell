@@ -41,7 +41,7 @@ const client = await readFile(
   "utf8",
 );
 const mcp = await readFile(
-  resolve(repositoryRoot, "packages/mcp/src/index.ts"),
+  resolve(repositoryRoot, "packages/mcp/src/agentic.ts"),
   "utf8",
 );
 if (!cli.includes(`.version("${version}")`)) {

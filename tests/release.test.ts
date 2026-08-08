@@ -89,8 +89,8 @@ describe("0.16.0 release contract", () => {
       resolve(process.cwd(), "apps/cli/src/index.ts"),
       "utf8",
     );
-    const approvedMcp = readFileSync(
-      resolve(process.cwd(), "packages/mcp/src/index.ts"),
+    const mcp = readFileSync(
+      resolve(process.cwd(), "packages/mcp/src/agentic.ts"),
       "utf8",
     );
     const client = readFileSync(
@@ -100,7 +100,7 @@ describe("0.16.0 release contract", () => {
     expect(cli).toContain(`.version("${releaseVersion}")`);
     expect(client).toContain(`CLIENT_VERSION = "${releaseVersion}"`);
     expect(
-      approvedMcp.match(
+      mcp.match(
         new RegExp(`version: "${releaseVersion}"`, "g"),
       ),
     ).toHaveLength(1);

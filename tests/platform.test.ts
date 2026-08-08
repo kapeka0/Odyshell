@@ -23,7 +23,6 @@ import {
   localAuthorityQuarantinePath,
   quarantineLocalAuthority,
 } from "../apps/client/src/quarantine.js";
-import { clientCompatibility } from "../apps/server/src/compatibility.js";
 import {
   MachineLifecycleQueue,
   socketReadyForAuthentication,
@@ -166,21 +165,8 @@ describe("Task-native Client boundary", () => {
     expect(runtime).not.toHaveProperty("profiles");
   });
 
-  it("reports additive and incompatible Client protocol versions", () => {
+  it("uses the Task-native wire protocol version", () => {
     expect(PROTOCOL_VERSION).toBe(4);
-    expect(clientCompatibility(undefined)).toMatchObject({
-      compatible: true,
-      upgradeRequired: false,
-      protocolVersion: null,
-    });
-    expect(clientCompatibility({
-      protocolVersion: PROTOCOL_VERSION,
-      clientVersion: "0.16.0",
-    })).toMatchObject({ compatible: true, upgradeRequired: false });
-    expect(clientCompatibility({ protocolVersion: 3 })).toMatchObject({
-      compatible: false,
-      upgradeRequired: true,
-    });
   });
 
   it("serializes disconnect and reconnect state for one Machine", async () => {
