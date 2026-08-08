@@ -13,6 +13,12 @@ export type AgentPrincipal = {
   agentId: string;
 };
 
+export type TaskSupervisorPrincipal = {
+  organizationId: string;
+  humanId: string;
+  role: "owner" | "admin" | "supervisor";
+};
+
 export type MachineAuthority = {
   organizationId: string;
   machineId: string;
@@ -95,6 +101,14 @@ export interface TaskRepository {
     | { status: "replayed"; command: Command }
     | { status: "idempotency_conflict" }
   >;
+  decideTask(input: {
+    organizationId: string;
+    taskId: string;
+    decision: "approve" | "deny";
+  }): Promise<
+    | { status: "not_found" | "conflict" }
+    | { status: "approved" | "denied"; task: Task; changed: boolean }
+  >;
 }
 
 export interface TaskClient {
@@ -102,6 +116,13 @@ export interface TaskClient {
   startCommand(command: Command): Promise<void>;
   closeTask(task: Task, reason: string): Promise<void>;
   cancelCommand(command: Command): Promise<void>;
+}
+
+export class TaskClientUnavailableError extends Error {
+  constructor() {
+    super("Machine disconnected before Task delivery");
+    this.name = "TaskClientUnavailableError";
+  }
 }
 
 export interface TaskAudit {
@@ -114,6 +135,8 @@ export interface TaskAudit {
       | "task.requested"
       | "task.opened"
       | "task.open_failed"
+      | "task.approved"
+      | "task.denied"
       | "task.closed"
       | "command.created"
       | "command.completed";
@@ -350,6 +373,46 @@ export class TaskService {
     });
     await this.client.startCommand(command);
     return { status: "created", command };
+  }
+
+  async superviseTask(
+    principal: TaskSupervisorPrincipal,
+    taskId: string,
+    decision: "approve" | "deny",
+  ): Promise<
+    | { status: "approved" | "denied"; task: Task; delivery: "sent" | "pending" }
+    | { status: "denied_request"; code: "task_not_found" | "task_already_decided" }
+  > {
+    const result = await this.repository.decideTask({
+      organizationId: principal.organizationId,
+      taskId,
+      decision,
+    });
+    if (!("task" in result)) {
+      return {
+        status: "denied_request",
+        code: result.status === "not_found" ? "task_not_found" : "task_already_decided",
+      };
+    }
+    if (result.changed) {
+      await this.audit.append({
+        organizationId: result.task.organizationId,
+        agentId: result.task.agentId,
+        taskId: result.task.id,
+        type: decision === "approve" ? "task.approved" : "task.denied",
+        metadata: { humanId: principal.humanId, role: principal.role },
+      });
+    }
+    if (result.status === "denied") {
+      return { status: "denied", task: result.task, delivery: "sent" };
+    }
+    try {
+      await this.client.openTask(result.task);
+      return { status: "approved", task: result.task, delivery: "sent" };
+    } catch (error) {
+      if (!(error instanceof TaskClientUnavailableError)) throw error;
+      return { status: "approved", task: result.task, delivery: "pending" };
+    }
   }
 
   async finishTask(

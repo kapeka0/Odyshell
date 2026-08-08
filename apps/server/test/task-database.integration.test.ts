@@ -199,4 +199,95 @@ suite("PostgreSQL Task/Command vertical", () => {
       status: "expired",
     });
   });
+
+  it("atomically binds human approval and denial to one Organization", async () => {
+    const opened: string[] = [];
+    await database.putMachineAuthority({
+      organizationId,
+      machineId,
+      clientProfileId: "profile-a",
+      operatingSystemUser: "odyshell",
+      online: true,
+      localPolicy: {
+        organizationId,
+        agentIds: [agentId],
+        maxTaskDurationSeconds: 600,
+        maxConcurrentTasks: 1,
+        maxConcurrentCommands: 1,
+        maxCommandTimeoutSeconds: 60,
+        maxCommandOutputBytes: 1024 * 1024,
+        allowRemoteApproval: true,
+      },
+    });
+    const service = new TaskService(
+      database,
+      {
+        async openTask(task) { opened.push(task.id); },
+        async startCommand() {},
+        async closeTask() {},
+        async cancelCommand() {},
+      },
+      database,
+      () => Date.parse("2026-08-08T20:10:00.000Z"),
+    );
+    const requested = await service.requestTask(
+      { organizationId, agentId },
+      { machineId, title: "Approve safely", durationSeconds: 60 },
+      "supervision-task-key",
+    );
+    expect(requested).toMatchObject({
+      status: "created",
+      task: { status: "pending_approval" },
+    });
+    if (requested.status !== "created") return;
+    expect(await service.superviseTask(
+      { organizationId: "another-org", humanId: "human-b", role: "owner" },
+      requested.task.id,
+      "approve",
+    )).toEqual({ status: "denied_request", code: "task_not_found" });
+    expect(await service.superviseTask(
+      { organizationId, humanId: "human-a", role: "supervisor" },
+      requested.task.id,
+      "approve",
+    )).toMatchObject({ status: "approved", delivery: "sent", task: { status: "opening" } });
+    expect(opened).toEqual([requested.task.id]);
+    await database.markTaskOpened({
+      organizationId,
+      machineId,
+      taskId: requested.task.id,
+      clientProfileId: "profile-a",
+      operatingSystemUser: "odyshell",
+    });
+    await service.finishTask({ organizationId, agentId }, requested.task.id, "complete");
+
+    const deniedTask = await service.requestTask(
+      { organizationId, agentId },
+      { machineId, title: "Deny safely", durationSeconds: 60 },
+      "denial-task-key",
+    );
+    if (deniedTask.status !== "created") throw new Error("Task was not created");
+    expect(await service.superviseTask(
+      { organizationId, humanId: "human-a", role: "admin" },
+      deniedTask.task.id,
+      "deny",
+    )).toMatchObject({ status: "denied", task: { status: "cancelled" } });
+    expect(await database.listTasks(organizationId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: requested.task.id, status: "completed" }),
+        expect.objectContaining({ id: deniedTask.task.id, status: "cancelled" }),
+      ]),
+    );
+
+    const abandoned = await service.requestTask(
+      { organizationId, agentId },
+      { machineId, title: "Expire pending approval", durationSeconds: 60 },
+      "abandoned-task-key",
+    );
+    if (abandoned.status !== "created") throw new Error("Task was not created");
+    expect(abandoned.task.status).toBe("pending_approval");
+    expect(await database.expireTasks(Date.parse("2026-08-08T20:11:01.000Z"))).toEqual([]);
+    expect(await database.task(organizationId, abandoned.task.id)).toMatchObject({
+      status: "expired",
+    });
+  });
 });

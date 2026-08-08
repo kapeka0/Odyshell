@@ -296,6 +296,8 @@ The canonical OAuth HTTP API and remote MCP now expose the agent-native Task/Com
 Linux Client accepts the corresponding WebSocket messages and executes each asynchronous Command
 through the existing process-tree-controlled host executor. PostgreSQL stores authorization state,
 idempotency records, exact-command audit metadata, and bounded transient output.
+Owner, Admin, and Supervisor identities can list, approve, or deny Organization-bound Tasks through
+the trusted web API; approval remains resumable if the Client disconnects during delivery.
 
 Odyshell currently supports typed process, explicit Host Shell, filesystem, and Docker log
 Operations. Direct host execution is the default. Docker sandboxes remain an optional execution

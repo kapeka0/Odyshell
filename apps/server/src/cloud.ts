@@ -49,6 +49,7 @@ export const planEntitlements: Record<CloudPlanId, PlanEntitlements> = {
 export const cloudIdentitySchema = z.object({
   userId: z.string().min(1).max(256),
   userName: z.string().trim().min(1).max(128).optional(),
+  role: z.enum(["owner", "admin", "supervisor"]),
   organization: z.object({
     externalId: z.string().min(1).max(256),
     slug: z.string().min(1).max(128).regex(/^[a-z0-9][a-z0-9-]*$/),

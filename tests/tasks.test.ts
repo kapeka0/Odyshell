@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Command, LocalPolicy, Task } from "@odyshell/protocol";
 import {
   TaskService,
+  TaskClientUnavailableError,
   type AutonomyPolicy,
   type MachineAuthority,
   type TaskAudit,
@@ -85,6 +86,38 @@ class MemoryRepository implements TaskRepository {
     return command?.organizationId === org ? command : null;
   }
   async commandOutput() { return []; }
+  async decideTask(input: Parameters<TaskRepository["decideTask"]>[0]) {
+    const task = this.tasks.get(input.taskId);
+    if (!task || task.organizationId !== input.organizationId) {
+      return { status: "not_found" as const };
+    }
+    if (
+      input.decision === "approve" &&
+      (task.status === "opening" || task.status === "active")
+    ) {
+      return { status: "approved" as const, task, changed: false };
+    }
+    if (task.status !== "pending_approval") return { status: "conflict" as const };
+    if (Date.parse(task.expiresAt) <= now) {
+      this.tasks.set(task.id, {
+        ...task,
+        status: "expired",
+        finishedAt: new Date(now).toISOString(),
+      });
+      return { status: "conflict" as const };
+    }
+    const updated: Task = {
+      ...task,
+      status: input.decision === "approve" ? "opening" : "cancelled",
+      finishedAt: input.decision === "deny" ? new Date(now).toISOString() : null,
+    };
+    this.tasks.set(task.id, updated);
+    return {
+      status: input.decision === "approve" ? "approved" as const : "denied" as const,
+      task: updated,
+      changed: true,
+    };
+  }
   async finishTask(input: Parameters<TaskRepository["finishTask"]>[0]) {
     const task = this.tasks.get(input.taskId);
     if (!task || task.organizationId !== input.organizationId || task.agentId !== input.agentId) {
@@ -139,14 +172,20 @@ class MemoryRepository implements TaskRepository {
   }
 }
 
-function harness(repository = new MemoryRepository()) {
+function harness(
+  repository = new MemoryRepository(),
+  options: { taskDeliveryUnavailable?: boolean } = {},
+) {
   const opened: Task[] = [];
   const started: Command[] = [];
   const events: Parameters<TaskAudit["append"]>[0][] = [];
   const closed: Task[] = [];
   const cancelled: Command[] = [];
   const client: TaskClient = {
-    async openTask(task) { opened.push(task); },
+    async openTask(task) {
+      if (options.taskDeliveryUnavailable) throw new TaskClientUnavailableError();
+      opened.push(task);
+    },
     async startCommand(command) { started.push(command); },
     async closeTask(task) { closed.push(task); },
     async cancelCommand(command) { cancelled.push(command); },
@@ -196,6 +235,104 @@ describe("TaskService", () => {
     const result = await service.requestTask({ organizationId, agentId }, request, "task-key");
     expect(result.status === "created" && result.task.status).toBe("pending_approval");
     expect(opened).toEqual([]);
+  });
+
+  it("lets a Supervisor approve pending authority and audits the human decision", async () => {
+    const context = harness(new MemoryRepository({ policy: null }));
+    const requested = await context.service.requestTask(
+      { organizationId, agentId },
+      request,
+      "task-key",
+    );
+    if (requested.status !== "created") throw new Error("Task was not created");
+
+    expect(await context.service.superviseTask(
+      { organizationId, humanId: "human-a", role: "supervisor" },
+      requested.task.id,
+      "approve",
+    )).toMatchObject({
+      status: "approved",
+      task: { id: requested.task.id, status: "opening" },
+      delivery: "sent",
+    });
+    expect(context.opened).toEqual([
+      expect.objectContaining({ id: requested.task.id, status: "opening" }),
+    ]);
+    expect(context.events.at(-1)).toMatchObject({
+      type: "task.approved",
+      metadata: { humanId: "human-a", role: "supervisor" },
+    });
+  });
+
+  it("keeps an approved Task resumable when its Client disconnects during delivery", async () => {
+    const context = harness(
+      new MemoryRepository({ policy: null }),
+      { taskDeliveryUnavailable: true },
+    );
+    const requested = await context.service.requestTask(
+      { organizationId, agentId },
+      request,
+      "task-key",
+    );
+    if (requested.status !== "created") throw new Error("Task was not created");
+    expect(await context.service.superviseTask(
+      { organizationId, humanId: "human-a", role: "supervisor" },
+      requested.task.id,
+      "approve",
+    )).toMatchObject({
+      status: "approved",
+      delivery: "pending",
+      task: { status: "opening" },
+    });
+  });
+
+  it("binds supervision to the Organization and denial never contacts the Client", async () => {
+    const context = harness(new MemoryRepository({ policy: null }));
+    const requested = await context.service.requestTask(
+      { organizationId, agentId },
+      request,
+      "task-key",
+    );
+    if (requested.status !== "created") throw new Error("Task was not created");
+
+    expect(await context.service.superviseTask(
+      { organizationId: "org-b", humanId: "human-b", role: "owner" },
+      requested.task.id,
+      "approve",
+    )).toEqual({ status: "denied_request", code: "task_not_found" });
+    expect(await context.service.superviseTask(
+      { organizationId, humanId: "human-a", role: "admin" },
+      requested.task.id,
+      "deny",
+    )).toMatchObject({ status: "denied", task: { status: "cancelled" } });
+    expect(context.opened).toEqual([]);
+    expect(context.events.at(-1)).toMatchObject({
+      type: "task.denied",
+      metadata: { humanId: "human-a", role: "admin" },
+    });
+  });
+
+  it("fails closed when human approval arrives after Task expiry", async () => {
+    const context = harness(new MemoryRepository({ policy: null }));
+    const requested = await context.service.requestTask(
+      { organizationId, agentId },
+      request,
+      "task-key",
+    );
+    if (requested.status !== "created") throw new Error("Task was not created");
+    context.repository.tasks.set(requested.task.id, {
+      ...requested.task,
+      expiresAt: new Date(now - 1).toISOString(),
+    });
+    expect(await context.service.superviseTask(
+      { organizationId, humanId: "human-a", role: "supervisor" },
+      requested.task.id,
+      "approve",
+    )).toEqual({ status: "denied_request", code: "task_already_decided" });
+    expect(context.repository.tasks.get(requested.task.id)).toMatchObject({
+      status: "expired",
+    });
+    expect(context.opened).toEqual([]);
   });
 
   it.each([

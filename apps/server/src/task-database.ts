@@ -451,6 +451,76 @@ export class PostgresTaskDatabase implements TaskRepository, TaskAudit {
     return row ? taskRecord(row) : null;
   }
 
+  async listTasks(
+    organizationId: string,
+    limit = 100,
+  ): Promise<Task[]> {
+    const rows = await this.db
+      .selectFrom("tasks")
+      .selectAll()
+      .where("organizationId", "=", organizationId)
+      .orderBy("createdAt", "desc")
+      .limit(Math.min(Math.max(limit, 1), 200))
+      .execute();
+    return rows.map(taskRecord);
+  }
+
+  async decideTask(input: {
+    organizationId: string;
+    taskId: string;
+    decision: "approve" | "deny";
+  }): Promise<
+    | { status: "not_found" | "conflict" }
+    | { status: "approved" | "denied"; task: Task; changed: boolean }
+  > {
+    return await this.db.transaction().execute(async (transaction) => {
+      const current = await transaction
+        .selectFrom("tasks")
+        .selectAll()
+        .where("organizationId", "=", input.organizationId)
+        .where("id", "=", input.taskId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!current) return { status: "not_found" as const };
+      if (
+        input.decision === "approve" &&
+        (current.status === "opening" || current.status === "active")
+      ) {
+        return { status: "approved" as const, task: taskRecord(current), changed: false };
+      }
+      if (current.status !== "pending_approval") {
+        return { status: "conflict" as const };
+      }
+      const now = new Date();
+      if (current.expiresAt <= now) {
+        await transaction
+          .updateTable("tasks")
+          .set({ status: "expired", finishedAt: now, updatedAt: now })
+          .where("organizationId", "=", input.organizationId)
+          .where("id", "=", input.taskId)
+          .where("status", "=", "pending_approval")
+          .execute();
+        return { status: "conflict" as const };
+      }
+      const row = await transaction
+        .updateTable("tasks")
+        .set(input.decision === "approve"
+          ? { status: "opening", updatedAt: now }
+          : { status: "cancelled", finishedAt: now, updatedAt: now })
+        .where("organizationId", "=", input.organizationId)
+        .where("id", "=", input.taskId)
+        .where("status", "=", "pending_approval")
+        .returningAll()
+        .executeTakeFirst();
+      if (!row) return { status: "conflict" as const };
+      return {
+        status: input.decision === "approve" ? "approved" as const : "denied" as const,
+        task: taskRecord(row),
+        changed: true,
+      };
+    });
+  }
+
   async command(organizationId: string, commandId: string): Promise<Command | null> {
     const row = await this.db
       .selectFrom("commands")
@@ -852,6 +922,12 @@ export class PostgresTaskDatabase implements TaskRepository, TaskAudit {
     Array<{ task: Task; commandIds: string[] }>
   > {
     return await this.db.transaction().execute(async (transaction) => {
+      await transaction
+        .updateTable("tasks")
+        .set({ status: "expired", finishedAt: new Date(now), updatedAt: new Date(now) })
+        .where("status", "=", "pending_approval")
+        .where("expiresAt", "<=", new Date(now))
+        .execute();
       const expired = await transaction
         .updateTable("tasks")
         .set({ status: "cancellation_requested", updatedAt: new Date(now) })

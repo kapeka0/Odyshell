@@ -9,6 +9,7 @@ export { DEFAULT_CLOUD_SERVER_URL };
 const cloudIdentitySchema = z.object({
   userId: z.string().min(1),
   userName: z.string().trim().min(1).max(128).optional(),
+  role: z.enum(["owner", "admin", "supervisor"]),
   organization: z.object({
     externalId: z.string().min(1),
     slug: z.string().min(1),
@@ -121,6 +122,32 @@ export type SessionTimelineEvent = {
   operationId?: string;
   metadata: Record<string, unknown>;
   createdAt: string;
+};
+
+export type CloudTask = {
+  id: string;
+  organizationId: string;
+  agentId: string;
+  machineId: string;
+  clientProfileId: string;
+  operatingSystemUser: string;
+  title: string;
+  purpose: string | null;
+  status:
+    | "pending_approval"
+    | "opening"
+    | "active"
+    | "completed"
+    | "cancellation_requested"
+    | "cancelled"
+    | "revoked"
+    | "expired"
+    | "failed";
+  maxConcurrentCommands: number;
+  createdAt: string;
+  readyAt: string | null;
+  expiresAt: string;
+  finishedAt: string | null;
 };
 
 export type SessionTimelineDetail = {

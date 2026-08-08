@@ -181,6 +181,8 @@ authorization.
 - Client reconnect now reconciles opening and active Tasks, queued or running Commands, pending
   cancellation, and expiry without duplicating journaled execution; expiry remains pending until
   the Client confirms local authority closure.
+- Owner, Admin, and Supervisor identities can list, approve, or deny Organization-bound Tasks
+  through the trusted web boundary; approval delivery survives an offline Client and is audited.
 
 ### DOING
 

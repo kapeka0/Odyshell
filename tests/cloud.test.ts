@@ -34,6 +34,7 @@ describe("cloud identity and device authorization boundaries", () => {
     const identity = {
       userId: "user_123",
       userName: "Karim Ahmed",
+      role: "owner" as const,
       organization: { externalId: "org_123", slug: "acme", name: "Acme" },
     };
     expect(cloudUserSettingsSchema.safeParse({ ...identity, timeZone: "Europe/Madrid" }).success).toBe(true);
@@ -79,6 +80,19 @@ describe("cloud identity and device authorization boundaries", () => {
     expect(
       cloudIdentitySchema.safeParse({
         userId: "user",
+        role: "member",
+        organization: { externalId: "org", slug: "acme", name: "Acme" },
+      }).success,
+    ).toBe(false);
+    expect(
+      cloudIdentitySchema.safeParse({
+        userId: "user",
+        organization: { externalId: "org", slug: "acme", name: "Acme" },
+      }).success,
+    ).toBe(false);
+    expect(
+      cloudIdentitySchema.safeParse({
+        userId: "user",
         organization: { externalId: "org", slug: "../escape", name: "Acme" },
       }).success,
     ).toBe(false);
@@ -100,6 +114,7 @@ describe("cloud identity and device authorization boundaries", () => {
   it("binds cloud mutations to the authenticated identity instead of client workspace input", () => {
     const identity = {
       userId: "user_123",
+      role: "admin" as const,
       organization: {
         externalId: "org_123",
         slug: "acme",
@@ -163,6 +178,7 @@ describe("cloud identity and device authorization boundaries", () => {
   it("allows only intent-level capabilities through manual Session creation", () => {
     const identity = {
       userId: "user_123",
+      role: "supervisor" as const,
       organization: {
         externalId: "org_123",
         slug: "acme",

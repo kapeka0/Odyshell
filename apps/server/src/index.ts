@@ -78,7 +78,8 @@ import { createTaskDatabase } from "./task-database.js";
 import { registerTaskHttp } from "./task-http.js";
 import { decodeCommandOutput } from "./task-output.js";
 import { taskReconnectMessages } from "./task-reconciliation.js";
-import { TaskService } from "./tasks.js";
+import { registerTaskSupervisionHttp } from "./task-supervision-http.js";
+import { TaskClientUnavailableError, TaskService } from "./tasks.js";
 import { createTaskMcpRuntime } from "./task-mcp-runtime.js";
 import {
   decryptEventSinkSecret,
@@ -346,7 +347,7 @@ const taskService = new TaskService(
         maxConcurrentCommands: task.maxConcurrentCommands,
         serverTime: new Date().toISOString(),
       })) {
-        throw new Error("Machine disconnected before Task delivery");
+        throw new TaskClientUnavailableError();
       }
     },
     async startCommand(command) {
@@ -378,6 +379,12 @@ const taskService = new TaskService(
   },
   taskDb,
 );
+
+registerTaskSupervisionHttp(app, {
+  preHandler: requireWeb,
+  database: taskDb,
+  service: taskService,
+});
 
 registerTaskHttp(app, {
   authenticate: createAgentOAuthAuthenticator(process.env),
