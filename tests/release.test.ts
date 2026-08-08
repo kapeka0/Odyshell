@@ -183,6 +183,7 @@ describe("0.16.0 release contract", () => {
         "BETTER_AUTH_SECRET: release-check-identity-secret-00000000",
       );
       expect(workflow).toContain("ODYSHELL_DEPLOYMENT_MODE: cloud");
+      expect(workflow.match(/DATABASE_URL: postgresql:\/\/build:build@127\.0\.0\.1:5432\/build/g)).toHaveLength(2);
       expect(workflow).not.toContain("CLERK_SECRET_KEY");
     expect(workflow.indexOf("Publish verified npm packages")).toBeLessThan(
       workflow.indexOf("Create GitHub Release"),

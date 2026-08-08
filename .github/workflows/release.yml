@@ -26,7 +26,6 @@ jobs:
     env:
       RELEASE_TAG: v${{ inputs.version }}
       RELEASE_VERSION: ${{ inputs.version }}
-      DATABASE_URL: postgresql://build:build@127.0.0.1:5432/build
       BETTER_AUTH_URL: http://localhost:3000
       BETTER_AUTH_SECRET: release-check-identity-secret-00000000
       ODYSHELL_DEPLOYMENT_MODE: cloud
@@ -51,7 +50,11 @@ jobs:
       - run: pnpm test
       - run: pnpm --filter @odyshell/web lint
       - run: pnpm build
+        env:
+          DATABASE_URL: postgresql://build:build@127.0.0.1:5432/build
       - name: Test public documentation
+        env:
+          DATABASE_URL: postgresql://build:build@127.0.0.1:5432/build
         shell: bash
         run: |
           set -euo pipefail
