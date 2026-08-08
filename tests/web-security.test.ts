@@ -1163,7 +1163,7 @@ describe("dashboard navigation performance boundary", () => {
     expect(canvas).toContain("context.agents");
     expect(canvas).toContain('type: "session"');
     expect(canvas).toContain("session.targets.map");
-    expect(sidebar).toContain('href: "/dashboard/sessions"');
+    expect(sidebar).toContain('href: "/dashboard/tasks"');
     expect(sessionList).toContain("request.approvalUrl");
     expect(sessionList).toContain("Review");
     expect(server).toContain(
@@ -1190,6 +1190,21 @@ describe("dashboard navigation performance boundary", () => {
         readFileSync(resolve(webRoot, "app/dashboard", route), "utf8"),
       ).toContain("Skeleton");
     }
+  });
+
+  it("confirms human Task decisions and waits for the trusted server response", () => {
+    const taskList = readFileSync(
+      resolve(process.cwd(), "apps/web/src/components/task-list.tsx"),
+      "utf8",
+    );
+    const confirmedResponse = taskList.indexOf("if (!response.ok || !body.task)");
+    const updateVisibleState = taskList.indexOf("setTasks((current)");
+
+    expect(taskList).toContain("<AlertDialog");
+    expect(taskList).toContain('method: "POST"');
+    expect(taskList).toContain("temporary shell authority");
+    expect(confirmedResponse).toBeGreaterThan(-1);
+    expect(updateVisibleState).toBeGreaterThan(confirmedResponse);
   });
 
   it("requires an organization administrator to approve Agent registration", () => {

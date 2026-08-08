@@ -6,13 +6,14 @@
 
 <p align="center"><strong>Optional human supervision for the agent-native Odyshell control plane.</strong></p>
 
-The web app is where workspace members approve CLI and Agent enrollment, connect or remove
-machines, approve temporary Sessions, manage persistent Agents and their policies, and review
-privacy-minimal Control Events. Organization administrators additionally manage people and
-organization settings.
+The web app is where Organization members approve CLI and Agent enrollment, connect or remove
+Machines, supervise Tasks that fall outside autonomy policy, manage persistent Agents and their
+policies, and review privacy-minimal audit events. Organization administrators additionally manage
+people and Organization settings.
 
-Agents are the primary operators. They use OAuth tokens and claimed Session Credentials through
-the HTTP API, CLI, or MCP server; people use this interface for governance and optional supervision.
+Agents are the primary operators. They use Organization-bound OAuth tokens through the canonical
+HTTP API or its remote MCP adapter to discover Machines and manage resumable Tasks and Commands;
+people use this interface for governance and optional supervision.
 
 Public product documentation lives in `content/docs` and is served at `/docs` with local search.
 The same reviewed source is available to agents through `/llms.txt`, `/llms-full.txt`, and a

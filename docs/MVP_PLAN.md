@@ -183,6 +183,9 @@ authorization.
   the Client confirms local authority closure.
 - Owner, Admin, and Supervisor identities can list, approve, or deny Organization-bound Tasks
   through the trusted web boundary; approval delivery survives an offline Client and is audited.
+- the dashboard exposes the same Task lifecycle as the agent protocols, prioritizes Tasks that
+  require a human decision, confirms authority-changing actions, and keeps recent Task state
+  observable without making human supervision mandatory.
 
 ### DOING
 
