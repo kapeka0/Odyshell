@@ -1,139 +1,86 @@
 # Odyshell
 
-Odyshell is the controlled execution boundary between AI agents and private machines. This
-glossary defines the shipped domain model after the fail-closed Agent Access cutover.
+Odyshell is the controlled execution boundary between external AI agents and real private
+machines. This glossary defines the accepted agent-native domain language.
 
 ## Human governance
 
-**Organization Member**:
-A person who can operate workspace resources, including machines, Agents, Sessions, approvals,
-and Activity.
-_Avoid_: Viewer, read-only member
+**Organization**:
+The isolation boundary that owns people, machines, Agents, policies, Tasks, Commands, credentials,
+and Audit Events. An identity or operational resource belongs to exactly one Organization.
+_Avoid_: Workspace, project, tenant
 
-**Organization Admin**:
-An Organization Member who can additionally govern people, workspace security settings,
-autoapproval policies, and delegation policies.
-_Avoid_: Superuser, execution admin
+**Owner**:
+A person who controls Organization identity, ownership, and irreversible Organization actions.
+_Avoid_: Superuser, root user
 
-**Workspace**:
-The isolation boundary containing people, machines, Agents, credentials, Sessions, policies,
-Timeline data, and Activity. An operational identity belongs to exactly one Workspace.
-_Avoid_: Project, environment, organization
+**Admin**:
+A person who enrolls machines and Agents and configures Organization policies.
+_Avoid_: Organization Member, execution admin
+
+**Supervisor**:
+A person who can approve or revoke Tasks and inspect Audit Events without expanding policy.
+_Avoid_: Viewer, operator, approver
 
 ## Agent identity
 
 **Agent**:
-A persistent programmatic security identity representing a logical integration or function.
-Processes and temporary workers are executions of an Agent, not new Agents.
-_Avoid_: Agent Access, process, model instance
-
-**Independent Agent**:
-An Agent with its own Agent Credential that can authenticate and request Sessions for itself.
-_Avoid_: Service account, permanent access
-
-**Managed Agent**:
-An Agent controlled by one Independent Agent and without its own Agent Credential. Its parent
-requests Sessions in its name.
-_Avoid_: Child process, temporary Agent, nested orchestrator
+A persistent programmatic security identity representing one external integration in one
+Organization. Internal processes and subagents share that identity unless registered separately.
+_Avoid_: Service account, model instance, Managed Agent
 
 **Agent Credential**:
-A durable, expiring, and revocable proof of Agent identity. It can request authority but never
-authorizes machine operations directly.
-_Avoid_: Agent token, API access grant, Session Credential
+A rotatable and revocable proof of Agent identity that can request Tasks but cannot execute a
+Command without Task authority.
+_Avoid_: API key, permanent access, Task Credential
 
-**Agent Presence**:
-The recent live connection state of an Agent integration. Presence does not imply permission to
-use any machine.
-_Avoid_: Agent access, active Session
+## Machine authority
 
-**Task Run**:
-One concrete execution of an Agent task, identified consistently across its retries and explicit
-continuations. Unrelated work is a different Task Run even when it uses the same Agent and machine.
-_Avoid_: Conversation, model turn, process
-
-## Temporary authority
-
-**Session Request**:
-A proposed task containing a purpose, duration, and explicit per-machine Session Scopes. It
-becomes a Session only after approval and one-time claim.
-_Avoid_: Token request, access token
-
-**Session**:
-An immutable, temporary authorization for one Agent task across one or more machines. A Session
-is the only source of machine authority for an Agent.
-_Avoid_: Agent Access, SSH session, permanent grant
-
-**Session Scope**:
-The capabilities and optional typed restrictions granted to one machine within a Session. A
-multi-machine Session contains one independent Session Scope per machine.
-_Avoid_: Global capabilities, workspace role
-
-**Session Credential**:
-A short-lived credential issued when an approved Session is claimed. It can execute only within
-that Session and cannot request or delegate further authority.
-_Avoid_: Agent Credential, refresh token
-
-**Autoapproval Policy**:
-A temporary ceiling under which an Agent can obtain Sessions without a new human approval.
-Possessing the policy is not itself an active grant.
-_Avoid_: Permanent access, default allow
-
-**Delegation Policy**:
-A temporary ceiling that lets an Independent Agent create and govern Managed Agents. Managed
-Agent policies and Sessions must remain subsets of this ceiling.
-_Avoid_: Administrator role, recursive delegation
-
-## Machine execution
+**Machine**:
+One enrolled private host represented by one Client Profile in one Organization.
+_Avoid_: Node, target, device
 
 **Client Profile**:
-One local Client identity bound to exactly one Server and Workspace, with its own machine identity,
-state, and Local Policy. A physical host can run multiple independently configured Client Profiles.
-_Avoid_: Global machine identity, shared client.json
+One local Client identity bound to exactly one Server, Organization, Machine, and operating-system
+user. A physical host can run multiple independently configured Client Profiles.
+_Avoid_: Global machine identity, shared client configuration
 
 **Local Policy**:
-The machine-owner-controlled ceiling applied by a Client Profile. Cloud services can observe and
-reduce it but cannot expand it remotely.
-_Avoid_: Cloud policy, prompt rule
+The machine-owner-controlled absolute ceiling enforced by a Client Profile. Remote systems can
+request or reduce authority but cannot expand this ceiling.
+_Avoid_: Cloud policy, prompt rule, command filter
 
-**Capability**:
-A named class of typed Operation that must be allowed by both the Session Scope and Local Policy.
-_Avoid_: Implicit permission, unrestricted access
+**Autonomy Policy**:
+An Organization-approved ceiling under which an Agent can obtain Tasks without a new human
+approval. It is not itself active machine authority.
+_Avoid_: Autoapproval Policy, permanent access, role
 
-**Operation**:
-A typed action performed on one machine through an active Session. Its required Capability is
-derived from the Operation kind rather than declared by the caller.
-_Avoid_: SSH command, unrestricted tool call
+## Agent work
 
-**Host Shell**:
-An explicitly selected, high-risk Capability that runs independent native shell commands with the
-full authority of the operating-system user running the Client, starting each Operation in that
-user's Home by default.
-_Avoid_: Sandboxed shell, terminal, SSH session
+**Task Request**:
+A proposal from an Agent for temporary authority on one Machine as one operating-system user.
+_Avoid_: Session Request, token request
 
-**Machine Enrollment**:
-The one-time act of admitting a Client Profile into a Workspace and binding its machine identity.
-_Avoid_: Machine login, device login
+**Task**:
+An immutable, temporary authorization for one Agent to perform one bounded job on one Machine as
+one operating-system user. A Task is the only source of Command authority.
+_Avoid_: Session, terminal, SSH session, grant
 
-## Observability
+**Task Credential**:
+A short-lived proof of active Task authority that cannot request or delegate another Task.
+_Avoid_: Session Credential, Agent Credential, refresh token
 
-**Session Timeline**:
-The task-centric history combining verified system events with optional Agent-reported plans and
-outcomes that remain visibly marked as unverified.
-_Avoid_: Roadmap, session recording, Agent testimony
+**Command**:
+One asynchronous, non-interactive native shell execution performed through an active Task.
+_Avoid_: Operation, action, terminal command
 
-**Activity**:
-The workspace-wide history of security and administrative changes across people, Agents,
-credentials, policies, machines, and Sessions.
-_Avoid_: Session Timeline, full audit recording
+## Evidence
 
-**Event Sink**:
-A Workspace-owned HTTPS destination that receives signed Timeline or Activity events according
-to an explicit detail level.
-_Avoid_: Odyshell log storage, untrusted callback
+**Task Timeline**:
+The task-centric history of verified requests, decisions, Commands, cancellation, expiry, and
+results.
+_Avoid_: Session Timeline, session recording, Agent testimony
 
-## Legacy language
-
-**Legacy Agent Access**:
-The pre-migration record that combines Agent identity, credential, machines, capabilities, and
-expiry. Use this term only when describing shipped legacy behavior or its fail-closed migration.
-_Avoid_: Agent, Session
+**Audit Event**:
+An Organization-wide record of a security, administrative, or execution lifecycle change.
+_Avoid_: Activity, application log, Task Timeline

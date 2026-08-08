@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR-0008
 ---
 
 # Make native Host Shell explicit
@@ -42,4 +42,5 @@ replaces the same-user Host Shell warning.
   default shell path only when implemented. Escalating from it to Host Shell will require a new
   linked Session with its own explicit approval.
 
-The implementation and review contract is [Host Shell](../design/host-shell.md).
+The replacement implementation and review contract is the
+[agent-native Task model](../design/agentic-task-model.md).

@@ -146,32 +146,31 @@ describe("public documentation corpus", () => {
     expect(selfHosting).not.toMatch(/^ods agent create\b/mu);
   });
 
-  it("records the accepted Host Shell boundary separately from the future Sandbox Shell", () => {
+  it("records the accepted agent-native Task and Command boundary", () => {
     const repositoryRoot = process.cwd();
     const context = readFileSync(resolve(repositoryRoot, "CONTEXT.md"), "utf8");
     const design = readFileSync(
-      resolve(repositoryRoot, "docs/design/host-shell.md"),
+      resolve(repositoryRoot, "docs/design/agentic-task-model.md"),
       "utf8",
     );
     const adr = readFileSync(
       resolve(
         repositoryRoot,
-        "docs/adr/0006-make-native-host-shell-explicit.md",
+        "docs/adr/0008-adopt-agent-native-task-model.md",
       ),
       "utf8",
     );
 
-    expect(context).toContain("**Host Shell**:");
-    expect(context).not.toContain("process.shell");
-    expect(design).toContain("`host.shell`");
-    expect(design).toContain("`sandbox.shell`");
-    expect(design).toContain("new linked Session");
-    expect(design).toContain("without command text or output");
-    expect(design).toContain(
-      "Transport loss alone does not terminate an already authorized Operation",
-    );
-    expect(adr).toContain("`host.shell`");
-    expect(adr).toContain("`sandbox.shell`");
+    expect(context).toContain("**Task**:");
+    expect(context).toContain("**Command**:");
+    expect(context).not.toContain("**Workspace**:");
+    expect(context).not.toContain("**Session**:");
+    expect(design).toContain("one Agent");
+    expect(design).toContain("one Machine and Client Profile");
+    expect(design).toContain("There is no caller-supplied environment or standard input");
+    expect(design).toContain("The Server is trusted");
+    expect(adr).toContain("Organization, Task, and Command");
+    expect(adr).toContain("No compatibility aliases or migrations");
   });
 
   it("documents the public CLI installation command", () => {
