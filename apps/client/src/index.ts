@@ -20,10 +20,6 @@ import {
   type ServerToClientMessage,
 } from "@odyshell/protocol";
 import WebSocket from "ws";
-import {
-  DockerRunner,
-  inspectDockerRuntime,
-} from "./docker-runner.js";
 import type {
   OperationExecutor,
   RunningOperation,
@@ -203,7 +199,7 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
 }
 
 export async function inspectClientRuntime(
-  runners: Array<"host" | "docker"> = ["host"],
+  runners: Array<"host"> = ["host"],
   profiles?: ClientConfig["profiles"],
   allowPrivilegeEscalation = false,
 ): Promise<ClientRuntimeInfo> {
@@ -235,16 +231,6 @@ export async function inspectClientRuntime(
         }
       : {}),
   };
-  if (uniqueRunners.includes("docker")) {
-    const docker = await inspectDockerRuntime();
-    return {
-      ...runtime,
-      containerEngine: "docker",
-      containerOs: docker.os,
-      containerArchitecture: docker.architecture,
-      containerEngineVersion: docker.version,
-    };
-  }
   return runtime;
 }
 
@@ -256,12 +242,9 @@ export function reportedPrivilegeEscalation(
 }
 
 export function supportedCapabilitiesForRunners(
-  runners: Array<"host" | "docker">,
+  runners: Array<"host">,
 ): Capability[] {
-  if (runners.includes("host")) return [...allCapabilities];
-  return allCapabilities.filter(
-    (capability) => capability !== "docker.logs" && capability !== "host.shell",
-  );
+  return runners.includes("host") ? [...allCapabilities] : [];
 }
 
 type ActiveSession = {
@@ -445,7 +428,7 @@ export class Client {
     16 * 1024 * 1024,
     (operationId) => this.markOperationOutputTruncated(operationId),
   );
-  private readonly executors = new Map<"host" | "docker", OperationExecutor>();
+  private readonly executors = new Map<"host", OperationExecutor>();
   private readonly journal: OperationJournal;
   private messageQueue = Promise.resolve();
   private shutdown: Promise<void> | undefined;
@@ -454,13 +437,7 @@ export class Client {
 
   constructor(private readonly config: ClientConfig) {
     assertLocalAuthorityNotQuarantined(config.stateDirectory);
-    const runners = new Set(
-      Object.values(config.profiles).map((profile) => profile.runner),
-    );
-    if (runners.has("host")) this.executors.set("host", new HostExecutor());
-    if (runners.has("docker")) {
-      this.executors.set("docker", new DockerRunner(config.machineId));
-    }
+    this.executors.set("host", new HostExecutor());
     this.journal = new OperationJournal(resolve(config.stateDirectory, "operations.sqlite"));
   }
 

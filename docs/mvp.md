@@ -25,10 +25,9 @@ private network.
 
 | Area | MVP behavior |
 | --- | --- |
-| Platforms | Linux, macOS, and Windows Clients |
+| Platforms | Linux Client |
 | Processes | Structured executable calls and explicit Host Shell commands |
 | Filesystem | Resource-bounded stat, list, search, read, write, mkdir, and remove |
-| Docker | Container log access and an optional Docker execution profile |
 | Identity | Ed25519 machine identity |
 | Enrollment | Single-use, expiring enrollment tokens |
 | Agents | Persistent identities with expiring, rotatable credentials and no machine authority |

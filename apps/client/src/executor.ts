@@ -9,7 +9,7 @@ import { sessionScopeSubsetDecision } from "@odyshell/protocol";
 
 export type RunningSession = {
   id: string;
-  runner: "host" | "docker";
+  runner: "host";
   runtimeId: string;
   profile: ClientProfile;
   capabilities: Set<Capability>;
@@ -36,7 +36,7 @@ export type OperationExecutionContext = {
 };
 
 export interface OperationExecutor {
-  readonly kind: "host" | "docker";
+  readonly kind: "host";
   cleanupOrphans(): Promise<void>;
   openSession(
     sessionId: string,

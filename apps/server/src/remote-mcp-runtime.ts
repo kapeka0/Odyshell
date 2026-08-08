@@ -729,7 +729,7 @@ async function findReusableMcpHostShellSession(
 function mcpMachineExecutionFacts(runtime: unknown): {
   platform: "linux" | "macos" | "windows" | null;
   architecture: string | null;
-  runner: "host" | "docker" | null;
+  runner: "host" | null;
   capabilities: Capability[] | null;
   clientVersion: string | null;
   defaultShell: string | null;
@@ -758,8 +758,7 @@ function mcpMachineExecutionFacts(runtime: unknown): {
       (profile) => isRecord(profile) && profile.name === "default",
     ) ?? profiles.find((profile) => isRecord(profile));
   const runner =
-    isRecord(workspace) &&
-    (workspace.runner === "host" || workspace.runner === "docker")
+    isRecord(workspace) && workspace.runner === "host"
       ? workspace.runner
       : null;
   const capabilities = isRecord(workspace)

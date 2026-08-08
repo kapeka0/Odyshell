@@ -258,44 +258,6 @@ User developer may run the following commands:
     expect(saved.allowPrivilegeEscalation).toBeUndefined();
   });
 
-  it("refuses sudo for a Profile without a host runner", async () => {
-    const home = await mkdtemp(join(tmpdir(), "odyshell-profile-sudo-docker-"));
-    const configPath = clientConfigPathForProfile("work", "linux", home, {});
-    await writeProfileConfig(configPath, "work", "server");
-    const config = JSON.parse(await readFile(configPath, "utf8"));
-    config.profiles = {
-      container: {
-        runner: "docker",
-        image: "alpine:3.22",
-        network: "none",
-        mountSource: "/workspace",
-        maxConcurrentSessions: 1,
-        maxConcurrentOperations: 4,
-        maxOperationTimeoutSeconds: 3600,
-        maxOutputBytes: 1024,
-        maxSessionTtlSeconds: 300,
-        capabilities: ["process.exec"],
-      },
-    };
-    await writeFile(configPath, JSON.stringify(config), "utf8");
-
-    await expect(
-      configureClientPrivilegeEscalation({
-        profileName: "work",
-        allow: true,
-        platform: "linux",
-        home,
-        environment: {},
-        verifyPasswordlessSudo: async () => {
-          throw new Error("must not verify sudo");
-        },
-        applyService: async () => {
-          throw new Error("must not apply service");
-        },
-      }),
-    ).rejects.toThrow("Sudo access requires a host runner");
-  });
-
   it("restores the secure policy when service regeneration fails", async () => {
     const home = await mkdtemp(join(tmpdir(), "odyshell-profile-sudo-rollback-"));
     const configPath = clientConfigPathForProfile("work", "linux", home, {});

@@ -11,7 +11,6 @@ import {
   hostAccountShell,
   hostPlatform,
 } from "../apps/client/src/platform.js";
-import { parseDockerRuntime } from "../apps/client/src/docker-runner.js";
 import { OperationJournal } from "../apps/client/src/journal.js";
 import {
   adjustedSessionDeadline,
@@ -370,10 +369,7 @@ describe("client platform support", () => {
     expect(JSON.stringify(runtime)).not.toContain("mountSource");
   });
 
-  it("never advertises host shell authority from a Docker-only Client", () => {
-    expect(supportedCapabilitiesForRunners(["docker"])).not.toContain(
-      "host.shell",
-    );
+  it("advertises host shell authority from the host-only Client", () => {
     expect(supportedCapabilitiesForRunners(["host"])).toContain("host.shell");
   });
 
@@ -443,18 +439,6 @@ describe("client platform support", () => {
     expect(containerUser("linux", 1001, 1002)).toBe("1001:1002");
     expect(containerUser("darwin", 501, 20)).toBe("501:20");
     expect(containerUser("win32")).toBe("1000:1000");
-  });
-
-  it("accepts Linux container engines on any host architecture", () => {
-    expect(parseDockerRuntime("linux\tarm64\t28.1.0\tDocker Desktop")).toEqual({
-      os: "linux",
-      architecture: "arm64",
-      version: "28.1.0",
-      operatingSystem: "Docker Desktop",
-    });
-    expect(() => parseDockerRuntime("windows\tx86_64\t28.1.0\tDocker Desktop")).toThrow(
-      "Linux container engine",
-    );
   });
 
   it("serializes disconnect and reconnect state for one machine", async () => {

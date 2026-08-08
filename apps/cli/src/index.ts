@@ -371,7 +371,7 @@ client
       options.config ?? clientConfigPathForProfile(profileName),
     );
     const configFound = await access(configPath).then(() => true, () => false);
-    const runtime = await inspectClientRuntime(["host"]);
+    const runtime = await inspectClientRuntime();
     const service = configFound ? await clientServiceStatus(configPath) : undefined;
     const nodeMajor = Number(process.versions.node.split(".")[0]);
     const compatible = nodeMajor >= 24 && process.platform === "linux";

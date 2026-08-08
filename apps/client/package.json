@@ -16,9 +16,7 @@
     "node": ">=24"
   },
   "os": [
-    "darwin",
-    "linux",
-    "win32"
+    "linux"
   ],
   "cpu": [
     "arm64",

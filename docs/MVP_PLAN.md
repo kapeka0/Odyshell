@@ -200,6 +200,8 @@ authorization.
   dashboard entrypoint and Activity reads exact-command Task audit without retained output.
 - the superseded public TypeScript SDK was removed from the workspace and coordinated release;
   Agents integrate through canonical HTTP or its remote OAuth MCP adapter.
+- Docker execution Profiles and their local runner were removed; the Machine Client now advertises
+  only native Linux host execution.
 
 ### DOING
 

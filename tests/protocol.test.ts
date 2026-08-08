@@ -893,7 +893,7 @@ describe("protocol validation", () => {
     }
   });
 
-  it("fails closed when a client profile enables network access", () => {
+  it("rejects removed Docker execution profiles", () => {
     const config = {
       serverUrl: "http://127.0.0.1:4100",
       machineId: "2dc24de7-ec0e-45b3-88c1-acbb900e51f8",
@@ -923,7 +923,7 @@ describe("protocol validation", () => {
           workspace: { ...config.profiles.workspace, network: "none" },
         },
       }).success,
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("accepts direct host execution as an explicit local profile", () => {

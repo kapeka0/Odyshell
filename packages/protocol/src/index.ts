@@ -845,16 +845,12 @@ export type ClientRuntimeInfo = {
   protocolVersion?: number;
   clientVersion?: string;
   supportedCapabilities?: Capability[];
-  executionRunners?: Array<"host" | "docker">;
+  executionRunners?: Array<"host">;
   profiles?: Array<{
     name: string;
-    runner: "host" | "docker";
+    runner: "host";
     capabilities: Capability[];
   }>;
-  containerEngine?: "docker";
-  containerOs?: "linux";
-  containerArchitecture?: string;
-  containerEngineVersion?: string;
 };
 
 const profilePolicySchema = z
@@ -878,30 +874,9 @@ export const hostClientProfileSchema = profilePolicySchema.extend({
   runner: z.literal("host"),
 });
 
-export const dockerClientProfileSchema = profilePolicySchema
-  .extend({
-    runner: z.literal("docker"),
-    mountSource: z.string().min(1).max(4096),
-    image: z.string().min(1).max(512),
-    network: z.literal("none"),
-  })
-  .superRefine((profile, context) => {
-    for (const capability of ["docker.logs", "host.shell"] as const) {
-      if (profile.capabilities.includes(capability)) {
-        context.addIssue({
-          code: "custom",
-          message: `${capability} is only available through the host runner`,
-          path: ["capabilities"],
-        });
-      }
-    }
-  });
-
-export const clientProfileSchema = z
-  .discriminatedUnion("runner", [hostClientProfileSchema, dockerClientProfileSchema]);
+export const clientProfileSchema = hostClientProfileSchema;
 export type ClientProfile = z.infer<typeof clientProfileSchema>;
 export type HostClientProfile = z.infer<typeof hostClientProfileSchema>;
-export type DockerClientProfile = z.infer<typeof dockerClientProfileSchema>;
 
 export const clientConfigSchema = z.object({
   serverUrl: z.string().url(),
@@ -983,7 +958,7 @@ export type ClientToServerMessage =
   | {
       type: "session.opened";
       sessionId: string;
-      runner: "host" | "docker";
+      runner: "host";
       runtimeId: string;
     }
   | { type: "session.open_failed"; sessionId: string; error: string }
