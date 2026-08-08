@@ -15,7 +15,7 @@ type PackageManifest = {
   exports?: unknown;
 };
 
-const releaseVersion = "0.16.0";
+const releaseVersion = "0.16.1";
 const manifests = [
   "apps/cli/package.json",
   "apps/client/package.json",
@@ -25,7 +25,7 @@ const manifests = [
   "packages/protocol/package.json",
 ].map(readManifest);
 
-describe("0.16.0 release contract", () => {
+describe("0.16.1 release contract", () => {
   it("exposes the built Server as the root production entrypoint", () => {
     const rootPackage = JSON.parse(
       readFileSync(resolve(process.cwd(), "package.json"), "utf8"),

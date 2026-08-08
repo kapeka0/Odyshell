@@ -97,7 +97,9 @@ export function createOdyshellAuth(
         consentPage: "/oauth/consent",
         signup: { page: "/sign-up" },
         scopes: oauthScopes,
-        validAudiences: [configuration.baseUrl, configuration.mcpAudience],
+        // Better Auth 1.6 does not bind resource indicators to the original grant.
+        // Keep one allow-listed resource until the stable 1.7 resource model is adopted.
+        validAudiences: [configuration.mcpAudience],
         accessTokenExpiresIn: 15 * 60,
         m2mAccessTokenExpiresIn: 15 * 60,
         refreshTokenExpiresIn: 30 * 24 * 60 * 60,

@@ -40,7 +40,7 @@ const program = new Command();
 program
   .name("ods")
   .description("Install and operate an Odyshell Machine Client")
-  .version("0.16.0")
+  .version("0.16.1")
   .option("-j, --json", "emit stable JSON output")
   .option("--server <url>", "override the Odyshell Server URL")
   .showSuggestionAfterError()

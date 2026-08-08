@@ -1,6 +1,6 @@
 {
   "name": "@odyshell/cli",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "description": "Install and operate an Odyshell Client on a Linux machine.",
   "keywords": [
     "ai-agents",

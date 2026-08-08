@@ -26,6 +26,10 @@ describe("Odyshell Identity configuration", () => {
     expect(identity).toContain("oauthProvider({");
     expect(identity).toContain('options: "-c search_path=public"');
     expect(identity).toContain("jwt({ jwt: { issuer: configuration.baseUrl } })");
+    expect(identity).toContain("validAudiences: [configuration.mcpAudience]");
+    expect(identity).not.toContain(
+      "validAudiences: [configuration.baseUrl, configuration.mcpAudience]",
+    );
     expect(serverDatabase).not.toMatch(
       /create table public\."user"|create table[^;]*(?:oauthClient|jwks)/isu,
     );
