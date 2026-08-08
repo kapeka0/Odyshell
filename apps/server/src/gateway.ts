@@ -26,6 +26,12 @@ export type ClientGatewayTaskHooks = {
     workspaceId: string;
     taskProfile: NonNullable<Extract<ClientToServerMessage, { type: "authenticate" }>["taskProfile"]>;
   }): Promise<void>;
+  reconnected(input: {
+    machineId: string;
+    organizationId: string;
+  }): Promise<
+    Extract<ServerToClientMessage, { type: `task.${string}` | `command.${string}` }>[]
+  >;
   disconnected(machineId: string, organizationId: string): Promise<void>;
   message(
     message: Extract<ClientToServerMessage, { type: `task.${string}` | `command.${string}` }>,
@@ -275,6 +281,13 @@ export class ClientGateway {
       state.authenticated = true;
       state.lastHeartbeatPersistedAt = Date.now();
       this.sendSocket(socket, { type: "authenticated", machineId: message.machineId });
+      if (state.taskOrganizationId && this.taskHooks) {
+        const taskMessages = await this.taskHooks.reconnected({
+          machineId: message.machineId,
+          organizationId: state.taskOrganizationId,
+        });
+        for (const taskMessage of taskMessages) this.sendSocket(socket, taskMessage);
+      }
       const closeTargets = await this.db.agentSessionTargetsPendingClose(
         message.machineId,
       );

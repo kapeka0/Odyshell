@@ -94,6 +94,14 @@ suite("PostgreSQL Task/Command vertical", () => {
       command.command.id,
       new Date().toISOString(),
     );
+    expect(await database.reconnectState(organizationId, machineId)).toMatchObject({
+      tasks: [{ id: created.task.id, status: "active" }],
+      commands: [{ id: command.command.id, status: "running" }],
+    });
+    expect(await database.reconnectState("another-org", machineId)).toEqual({
+      tasks: [],
+      commands: [],
+    });
     const chunk = Buffer.from("odyshell\n");
     for (let replay = 0; replay < 2; replay += 1) {
       expect(await database.addCommandOutput({
@@ -121,5 +129,74 @@ suite("PostgreSQL Task/Command vertical", () => {
       dataBase64: chunk.toString("base64"),
     }]);
     expect(await database.command("another-org", command.command.id)).toBeNull();
+    expect(await service.finishTask(
+      { organizationId, agentId },
+      created.task.id,
+      "complete",
+    )).toMatchObject({ status: "completed" });
+  });
+
+  it("keeps expired authority pending until the Client confirms local closure", async () => {
+    const service = new TaskService(
+      database,
+      {
+        async openTask() {},
+        async startCommand() {},
+        async closeTask() {},
+        async cancelCommand() {},
+      },
+      database,
+      () => Date.parse("2026-08-08T20:00:00.000Z"),
+    );
+    await database.putAutonomyPolicy({
+      organizationId,
+      agentId,
+      machineId,
+      maxTaskDurationSeconds: 600,
+      maxConcurrentTasks: 1,
+      maxConcurrentCommands: 1,
+      expiresAt: Date.parse("2026-08-08T20:05:00.000Z"),
+    });
+    const created = await service.requestTask(
+      { organizationId, agentId },
+      { machineId, title: "Expire safely", durationSeconds: 60 },
+      "expiry-task-key",
+    );
+    expect(created.status).toBe("created");
+    if (created.status !== "created") return;
+    await database.markTaskOpened({
+      organizationId,
+      machineId,
+      taskId: created.task.id,
+      clientProfileId: "profile-a",
+      operatingSystemUser: "odyshell",
+    });
+    const command = await service.createCommand(
+      { organizationId, agentId },
+      created.task.id,
+      { command: "sleep 30", timeoutSeconds: 30 },
+      "expiry-command-key",
+    );
+    expect(command.status).toBe("created");
+    if (command.status !== "created") return;
+
+    const expired = await database.expireTasks(Date.parse("2026-08-08T20:01:01.000Z"));
+    expect(expired).toMatchObject([{
+      task: { id: created.task.id, status: "cancellation_requested" },
+      commandIds: [command.command.id],
+    }]);
+    expect(await database.reconnectState(organizationId, machineId)).toMatchObject({
+      tasks: [{ id: created.task.id, status: "cancellation_requested" }],
+      commands: [{ id: command.command.id, status: "cancellation_requested" }],
+    });
+    expect(await database.markTaskClosed(
+      organizationId,
+      machineId,
+      created.task.id,
+      "expired",
+    )).toBe(true);
+    expect(await database.task(organizationId, created.task.id)).toMatchObject({
+      status: "expired",
+    });
   });
 });

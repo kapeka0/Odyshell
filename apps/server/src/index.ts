@@ -77,6 +77,7 @@ import { createAgentOAuthAuthenticator } from "./agent-oauth.js";
 import { createTaskDatabase } from "./task-database.js";
 import { registerTaskHttp } from "./task-http.js";
 import { decodeCommandOutput } from "./task-output.js";
+import { taskReconnectMessages } from "./task-reconciliation.js";
 import { TaskService } from "./tasks.js";
 import { createTaskMcpRuntime } from "./task-mcp-runtime.js";
 import {
@@ -256,6 +257,11 @@ gateway = new ClientGateway(db, {
   },
   async disconnected(machineId, organizationId) {
     await taskDb.setMachineOnline(organizationId, machineId, false);
+  },
+  async reconnected({ machineId, organizationId }) {
+    return taskReconnectMessages(
+      await taskDb.reconnectState(organizationId, machineId),
+    );
   },
   async message(message, context) {
     switch (message.type) {

@@ -178,10 +178,12 @@ authorization.
   PostgreSQL integration tests are implemented; the self-hosted Server boots these migrations.
 - remote OAuth MCP now exposes only Machine discovery and the resumable Task/Command lifecycle,
   using the same authorization service and Organization-bound Agent identity as canonical HTTP.
+- Client reconnect now reconciles opening and active Tasks, queued or running Commands, pending
+  cancellation, and expiry without duplicating journaled execution; expiry remains pending until
+  the Client confirms local authority closure.
 
 ### DOING
 
-- complete Task/Command reconnect reconciliation;
 - remove the superseded Session/Operation, Workspace, typed-operation, Docker, SDK, local MCP,
   Managed Agent, delegation, and Event Sink implementations after the replacement vertical works.
 

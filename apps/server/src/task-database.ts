@@ -21,6 +21,7 @@ import type {
   TaskAudit,
   TaskRepository,
 } from "./tasks.js";
+import type { TaskReconnectState } from "./task-reconciliation.js";
 
 const { Pool } = pg;
 const DATABASE_SCHEMA = "odyshell";
@@ -329,6 +330,36 @@ export class PostgresTaskDatabase implements TaskRepository, TaskAudit {
       .returning("machineId")
       .executeTakeFirst();
     return updated !== undefined;
+  }
+
+  async reconnectState(
+    organizationId: string,
+    machineId: string,
+  ): Promise<TaskReconnectState> {
+    const tasks = await this.db
+      .selectFrom("tasks")
+      .selectAll()
+      .where("organizationId", "=", organizationId)
+      .where("machineId", "=", machineId)
+      .where("status", "in", ["opening", "active", "cancellation_requested"])
+      .orderBy("createdAt")
+      .orderBy("id")
+      .execute();
+    if (tasks.length === 0) return { tasks: [], commands: [] };
+    const commands = await this.db
+      .selectFrom("commands")
+      .selectAll()
+      .where("organizationId", "=", organizationId)
+      .where("machineId", "=", machineId)
+      .where("taskId", "in", tasks.map((task) => task.id))
+      .where("status", "in", ACTIVE_COMMAND_STATUSES)
+      .orderBy("createdAt")
+      .orderBy("id")
+      .execute();
+    return {
+      tasks: tasks.map(taskRecord),
+      commands: commands.map(commandRecord),
+    };
   }
 
   async autonomyPolicy(
@@ -823,8 +854,8 @@ export class PostgresTaskDatabase implements TaskRepository, TaskAudit {
     return await this.db.transaction().execute(async (transaction) => {
       const expired = await transaction
         .updateTable("tasks")
-        .set({ status: "expired", finishedAt: new Date(now), updatedAt: new Date(now) })
-        .where("status", "in", ["opening", "active", "cancellation_requested"])
+        .set({ status: "cancellation_requested", updatedAt: new Date(now) })
+        .where("status", "in", ["opening", "active"])
         .where("expiresAt", "<=", new Date(now))
         .returningAll()
         .execute();
