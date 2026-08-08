@@ -29,6 +29,7 @@ jobs:
       DATABASE_URL: postgresql://build:build@127.0.0.1:5432/build
       BETTER_AUTH_URL: http://localhost:3000
       BETTER_AUTH_SECRET: release-check-identity-secret-00000000
+      ODYSHELL_DEPLOYMENT_MODE: cloud
       ODYSHELL_MCP_URL: http://localhost:4100/mcp
 
     steps:

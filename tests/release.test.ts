@@ -182,6 +182,7 @@ describe("0.16.0 release contract", () => {
       expect(workflow).toContain(
         "BETTER_AUTH_SECRET: release-check-identity-secret-00000000",
       );
+      expect(workflow).toContain("ODYSHELL_DEPLOYMENT_MODE: cloud");
       expect(workflow).not.toContain("CLERK_SECRET_KEY");
     expect(workflow.indexOf("Publish verified npm packages")).toBeLessThan(
       workflow.indexOf("Create GitHub Release"),
