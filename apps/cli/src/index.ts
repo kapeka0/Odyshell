@@ -980,10 +980,7 @@ program
   .description("enroll this machine if needed and start its background Client")
   .option("--token <token>", "one-time enrollment token")
   .option("--name <name>", "machine name")
-  .option("--mount-source <path>", "host directory mounted by the Docker runner")
-  .option("--allow <capabilities>", "comma-separated local capabilities")
-  .option("--runner <runner>", "host or docker", "host")
-  .option("--image <image>", "Docker profile image", "alpine:3.22")
+  .option("--agent-id <id>", "Agent allowed by this Machine's Local Policy")
   .option("--profile <name>", "Client Profile name")
   .option("--config <path>", "client configuration")
   .action(
@@ -991,20 +988,13 @@ program
       options: {
         token?: string;
         name?: string;
-        mountSource?: string;
-        allow?: string;
-        runner: string;
-        image: string;
+        agentId?: string;
         profile?: string;
         config?: string;
       },
       command: Command,
     ) => {
       const global = globals(command);
-      const requestedCapabilities = options.allow === undefined
-        ? undefined
-        : parseCapabilities(options.allow);
-      if (requestedCapabilities) warnForHostShell(requestedCapabilities);
       assertProfileSelection(options.profile, options.config);
       const profileName = options.profile ?? "default";
       const {
@@ -1025,11 +1015,7 @@ program
           serverUrl: apiConfig.serverUrl,
           token: requiredValue(options.token, "--token"),
           machineName: requiredValue(options.name, "--name"),
-          ...(options.mountSource ? { mountSource: options.mountSource } : {}),
-          allowedCapabilities: requestedCapabilities ??
-            parseCapabilities(requiredValue(options.allow, "--allow")),
-          runner: parseRunner(options.runner),
-          image: options.image,
+          agentId: requiredValue(options.agentId, "--agent-id"),
           configPath,
           profileName,
           ...(previousMachineId ? { previousMachineId } : {}),
@@ -1088,7 +1074,7 @@ program
         alreadyRunning: previousStatus?.active ?? false,
         enrollmentOptionsIgnored:
           configFound && !enrollment &&
-          [options.token, options.name, options.allow].some(
+          [options.token, options.name, options.agentId].some(
             (value) => value !== undefined,
           ),
         ...(enrollment ?? {}),
@@ -1367,36 +1353,25 @@ client
   .description("enroll this machine with an Odyshell server")
   .requiredOption("--token <token>", "one-time enrollment token")
   .requiredOption("--name <name>", "machine name")
-  .option("--mount-source <path>", "host directory mounted by the Docker runner")
-  .requiredOption("--allow <capabilities>", "comma-separated capabilities allowed by this machine")
-  .option("--runner <runner>", "host or docker", "host")
-  .option("--image <image>", "sandbox image", "alpine:3.22")
+  .requiredOption("--agent-id <id>", "Agent allowed by this Machine's Local Policy")
   .option("--config <path>", "client configuration", defaultClientConfigPath())
   .action(
     async (
       options: {
         token: string;
         name: string;
-        mountSource?: string;
-        allow: string;
-        runner: string;
-        image: string;
+        agentId: string;
         config: string;
       },
       command: Command,
     ) => {
       const global = globals(command);
       const config = await resolveConfig(global);
-      const allowedCapabilities = parseCapabilities(options.allow);
-      warnForHostShell(allowedCapabilities);
       const result = await enrollClient({
         serverUrl: config.serverUrl,
         token: options.token,
         machineName: options.name,
-        ...(options.mountSource ? { mountSource: options.mountSource } : {}),
-        allowedCapabilities,
-        runner: parseRunner(options.runner),
-        image: options.image,
+        agentId: options.agentId,
         configPath: options.config,
       });
       if (global.json) printJson({ enrolled: true, ...result });

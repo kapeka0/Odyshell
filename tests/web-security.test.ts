@@ -233,13 +233,13 @@ describe("web authentication boundaries", () => {
       serverUrl: "https://self-hosted.example/api?mode=one&next=ignored",
       token: "ods_enroll_safe",
       machineName: "rpi5",
-      capabilities: ["fs.read", "docker.logs"],
+      agentId: "agent-primary",
     });
 
     expect(command).toContain(
       "--server 'https://self-hosted.example/api?mode=one&next=ignored'",
     );
-    expect(command).toContain("--allow 'fs.read,docker.logs'");
+    expect(command).toContain("--agent-id agent-primary");
     expect(command).not.toContain("--workspace");
     expect(posixShellArgument("value'with-quote")).toBe(
       "'value'\"'\"'with-quote'",
@@ -258,12 +258,12 @@ describe("web authentication boundaries", () => {
         serverUrl: publicServerUrl(),
         token: "ods_enroll_synthetic",
         machineName: "desktop-pc",
-        capabilities: ["process.exec", "host.shell"],
+        agentId: "agent-primary",
       });
 
       expect(publicServerUrl()).toBe(DEFAULT_CLOUD_SERVER_URL);
       expect(command).toBe(
-        "ods up --token ods_enroll_synthetic --name desktop-pc --allow 'process.exec,host.shell'",
+        "ods up --token ods_enroll_synthetic --name desktop-pc --agent-id agent-primary",
       );
       expect(command).not.toContain("--server");
       expect(command).not.toContain("railway.app");
@@ -593,9 +593,12 @@ describe("dashboard navigation performance boundary", () => {
       expect(surface).not.toContain("process.shell");
       expect(surface).not.toContain("Full access");
     }
-    for (const surface of [sessionForm, enrollment, machineList, approval]) {
+    for (const surface of [sessionForm, machineList, approval]) {
       expect(surface).toContain("HostShellWarning");
     }
+    expect(enrollment).toContain("Conservative Local Policy");
+    expect(enrollment).toContain("machine-agent");
+    expect(enrollment).toContain("Tasks from other Agents are denied locally");
     expect(machineList).toContain("executionWarningState");
     expect(machineList).toContain("Root access possible");
     expect(hostShellWarning).toContain("operating-system user running the Client");
@@ -1023,8 +1026,10 @@ describe("dashboard navigation performance boundary", () => {
     expect(machineList).toContain("machinePlatform(machine.runtime)");
     expect(landing).toContain('href="/docs"');
     expect(landing).toContain("Read the docs");
-    expect(quickstart).toContain("ods login");
-    expect(quickstart).toContain("ods ping my-machine");
+    expect(quickstart).toContain("remote MCP resource");
+    expect(quickstart).toContain("task_request");
+    expect(quickstart).toContain("command_run");
+    expect(quickstart).not.toContain("ods login");
   });
 
   it("uses route-specific skeletons and theme-aware browser icons", () => {
@@ -1281,13 +1286,14 @@ describe("dashboard navigation performance boundary", () => {
       "utf8",
     );
 
-    for (const surface of [enrollment, machineEditor]) {
+    for (const surface of [machineEditor]) {
       expect(surface).toContain("updateMachineCapabilitySelection");
       expect(surface).toContain("data-disabled={disabled}");
       expect(surface).toContain("disabled={disabled}");
       expect(surface).toContain("<HostShellWarning localPolicy />");
     }
-    expect(enrollment).toContain("disabled={hostShellSelected}");
+    expect(enrollment).not.toContain("updateMachineCapabilitySelection");
+    expect(enrollment).not.toContain("HostShellWarning");
     expect(machineEditor).not.toContain(
       "normalizeMachineCapabilitySelection(machine.capabilities)",
     );

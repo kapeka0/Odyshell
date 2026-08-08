@@ -146,14 +146,15 @@ Create a one-time enrollment token:
 ods token create
 ```
 
-On a Linux, macOS, or Windows machine, connect it and start the persistent outbound Client:
+On a Linux machine, connect it for an already registered Agent and start the persistent outbound
+Client:
 
 ```bash
 ods up \
   --server http://127.0.0.1:4100 \
   --token <token> \
   --name my-machine \
-  --allow 'process.exec,fs.stat,fs.list,fs.search,fs.read,fs.write'
+  --agent-id <agent-id>
 ```
 
 `ods up` installs a restartable user service. In another terminal:

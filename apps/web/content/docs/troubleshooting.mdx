@@ -92,9 +92,10 @@ Client logs, reconnect it, and confirm that Server and Client versions match.
 
 ## Operation denied
 
-Compare the capability required by the operation with both the agent credential and the
-machine's local `--allow` policy. Also check credential expiry, machine assignment, any exact path
-restriction, and operating-system permissions.
+Compare the requested Command with the Machine's Local Policy: the Organization and Agent must
+match, the Task and Command concurrency limits must have capacity, and the timeout and output
+limits must not be exceeded. Also check Agent credential expiry, Machine assignment, absolute
+working-directory validity, and operating-system permissions.
 
 ## `sudo` cannot gain privileges
 

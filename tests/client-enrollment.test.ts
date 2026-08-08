@@ -10,13 +10,11 @@ describe("Client enrollment", () => {
   afterEach(async () => {
     vi.unstubAllGlobals();
     await Promise.all(
-      temporaryDirectories.splice(0).map((path) =>
-        rm(path, { recursive: true, force: true }),
-      ),
+      temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })),
     );
   });
 
-  it("replaces a revoked remote identity without persisting the enrollment token", async () => {
+  it("persists a conservative Task Local Policy without the one-time token", async () => {
     const directory = await mkdtemp(join(tmpdir(), "odyshell-enroll-"));
     temporaryDirectories.push(directory);
     const configPath = join(directory, "client.json");
@@ -26,18 +24,19 @@ describe("Client enrollment", () => {
     const requests: unknown[] = [];
     vi.stubGlobal("fetch", async (_url: URL, init?: RequestInit) => {
       requests.push(JSON.parse(String(init?.body)));
-      return Response.json(
-        { machineId: nextMachineId, workspaceId: "workspace-one" },
-        { status: 201 },
-      );
+      return Response.json({
+        machineId: nextMachineId,
+        workspaceId: "workspace-one",
+        organizationId: "organization-one",
+      }, { status: 201 });
     });
 
     const result = await enrollClient({
       serverUrl: "https://server.example",
       token: "ods_enroll_secret",
       machineName: "desktop",
+      agentId: "agent-primary",
       configPath,
-      allowedCapabilities: ["fs.read"],
       previousMachineId,
       replaceConfig: true,
     });
@@ -47,70 +46,64 @@ describe("Client enrollment", () => {
       expect.objectContaining({ previousMachineId, name: "desktop" }),
     ]);
     const source = await readFile(configPath, "utf8");
-    expect(source).toContain(nextMachineId);
-    expect(source).not.toContain(previousMachineId);
     expect(source).not.toContain("ods_enroll_secret");
     const saved = JSON.parse(source) as {
+      taskProfile: unknown;
       profiles: { workspace: Record<string, unknown> };
     };
+    expect(saved.taskProfile).toEqual({
+      id: "default",
+      executorProfile: "workspace",
+      localPolicy: {
+        organizationId: "organization-one",
+        agentIds: ["agent-primary"],
+        maxTaskDurationSeconds: 3_600,
+        maxConcurrentTasks: 1,
+        maxConcurrentCommands: 1,
+        maxCommandTimeoutSeconds: 600,
+        maxCommandOutputBytes: 1024 * 1024,
+        allowRemoteApproval: true,
+      },
+    });
     expect(saved.profiles.workspace).toMatchObject({
       runner: "host",
-      maxConcurrentOperations: 4,
-      maxOperationTimeoutSeconds: 3_600,
+      maxConcurrentSessions: 1,
+      maxConcurrentOperations: 1,
+      capabilities: ["host.shell"],
     });
-    expect(saved.profiles.workspace).not.toHaveProperty("workspaceRoot");
     expect(saved.profiles.workspace).not.toHaveProperty("mountSource");
   });
 
-  it("fails before consuming enrollment when Docker requests host shell authority", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "odyshell-enroll-docker-denied-"));
+  it("rejects an empty Agent identity before consuming enrollment", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "odyshell-enroll-agent-denied-"));
     temporaryDirectories.push(directory);
-    const fetch = vi.fn(async () => {
-      throw new Error("must not consume the enrollment token");
-    });
+    const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
 
-    await expect(
-      enrollClient({
-        serverUrl: "https://server.example",
-        token: "ods_enroll_secret",
-        machineName: "sandbox",
-        mountSource: directory,
-        configPath: join(directory, "client.json"),
-        allowedCapabilities: ["host.shell"],
-        runner: "docker",
-      }),
-    ).rejects.toThrow("host.shell is only available through the host runner");
+    await expect(enrollClient({
+      serverUrl: "https://server.example",
+      token: "ods_enroll_secret",
+      machineName: "desktop",
+      agentId: "   ",
+      configPath: join(directory, "client.json"),
+    })).rejects.toThrow("One valid Agent ID must be explicitly allowed");
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("stores an explicit Docker mount source instead of a common workspace root", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "odyshell-enroll-docker-"));
+  it("fails closed when enrollment has no sovereign Organization identity", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "odyshell-enroll-org-denied-"));
     temporaryDirectories.push(directory);
     const configPath = join(directory, "client.json");
     vi.stubGlobal("fetch", async () =>
-      Response.json(
-        { machineId: crypto.randomUUID(), workspaceId: "workspace-one" },
-        { status: 201 },
-      ));
+      Response.json({ error: "organization_identity_required" }, { status: 409 }));
 
-    await enrollClient({
+    await expect(enrollClient({
       serverUrl: "https://server.example",
       token: "ods_enroll_secret",
-      machineName: "sandbox",
-      mountSource: directory,
+      machineName: "desktop",
+      agentId: "agent-primary",
       configPath,
-      allowedCapabilities: ["process.exec"],
-      runner: "docker",
-    });
-
-    const saved = JSON.parse(await readFile(configPath, "utf8")) as {
-      profiles: { workspace: Record<string, unknown> };
-    };
-    expect(saved.profiles.workspace).toMatchObject({
-      runner: "docker",
-      mountSource: directory,
-    });
-    expect(saved.profiles.workspace).not.toHaveProperty("workspaceRoot");
+    })).rejects.toThrow("organization_identity_required");
+    await expect(readFile(configPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

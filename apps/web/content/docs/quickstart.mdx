@@ -1,62 +1,61 @@
 ---
 title: Quickstart
-description: Connect a private Linux machine and run an approved Agent task.
+description: Connect a private Linux Machine and complete an Agent-controlled Task.
 ---
 
-This is the shortest Cloud workflow. It uses Linux for the persistent Client service.
+This is the shortest agent-native workflow. Humans establish trust and may supervise; the Agent
+drives the Task and Commands.
 
-## 1. Install `ods`
+## 1. Create the Organization
 
-Install the CLI with Node.js 24 or newer:
+Open Odyshell, create the first account, and create an Organization. Self-hosted deployments keep
+identity, policy, Task state, and audit data in their own PostgreSQL database.
+
+## 2. Connect the Agent
+
+Add the Server's remote MCP resource to the Agent runtime:
+
+```text
+https://mcp.example.com/mcp
+```
+
+Complete OAuth in the browser and approve the installation. This creates a durable,
+Organization-bound Agent identity without granting Machine authority.
+
+## 3. Install `ods` on Linux
+
+Install the Machine administration CLI under the dedicated operating-system user that should run
+Commands:
 
 ```npm
 npm install --global @odyshell/cli
 ```
 
-## 2. Authorize the administrator CLI
+## 4. Connect the Machine
 
-```bash
-ods login
-```
+Open **Machines**, select **Add Machine**, enter a name, and choose the Agent. Odyshell shows one
+`ods up` command containing a single-use enrollment token and the selected Agent ID. Run it on the
+target Linux host.
 
-Open the URL printed by the CLI and approve the request. The short-lived device code is already
-embedded in the URL.
+The token expires after ten minutes, works once, and is not persisted. The Client creates an
+Ed25519 Machine identity, installs a restartable systemd user service, and keeps an authenticated
+outbound connection open. No inbound port, SSH credential, or VPN is required.
 
-## 3. Connect a machine
+The generated Local Policy initially allows only that Agent, one Task and one Command at a time, a
+one-hour Task, a ten-minute Command, and 1 MiB of output. Human approval is allowed. The Client
+enforces this policy independently of the Server.
 
-In Odyshell Cloud, open **Machines**, select **Add**, and choose the capabilities the Client may
-expose. Run the generated `ods up` command on the target machine. Relative host paths start from
-the Home directory of the operating-system user running the Client; exact absolute paths can be
-requested and reviewed separately.
+## 5. Run a Task
 
-The enrollment token in that command expires after ten minutes and works once. The Client then
-keeps an outbound connection to Odyshell; the machine does not expose an inbound port. Do not run
-`ods login` on the target: the signed-in Workspace member authorized it by generating the
-single-use enrollment command.
+In the Agent runtime:
 
-## 4. Connect an Agent
+1. call `machines_list` and select the online Machine;
+2. call `task_request` with a title, duration, Machine ID, and UUIDv4 idempotency key;
+3. if policy requires supervision, wait while an Owner, Admin, or Supervisor approves it in
+   **Tasks**;
+4. poll `task_get` until active;
+5. call `command_run`, then poll `command_get` and read `command_output` by cursor;
+6. call `task_complete` after every Command is terminal.
 
-In the Agent environment, register its persistent identity:
-
-```bash
-ods agent login "My Agent"
-```
-
-Open the displayed URL and approve the registration. This returns an expiring Agent Credential
-that can request Sessions, but cannot execute an Operation by itself.
-
-## 5. Run an approved Operation
-
-Request a narrowly scoped Session by running:
-
-```bash
-ods machines
-ods ping my-machine
-ods exec my-machine -- uname -a
-```
-
-Open the Session approval URL printed by `ods exec`, review its machine, capability and typed
-restriction, then approve it. A successful ping returns `Pong! 🏓`.
-
-The CLI claims the approved Session, executes the Operation, and closes the Session. Cancelling
-the Session or revoking its credential immediately prevents reuse.
+Commands are arbitrary non-interactive shell text executed as the Client's operating-system user.
+They are not sandboxed and can access that user's files, credentials, network, and services.

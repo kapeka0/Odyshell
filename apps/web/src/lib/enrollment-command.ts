@@ -1,13 +1,10 @@
-import {
-  DEFAULT_CLOUD_SERVER_URL,
-  type Capability,
-} from "@odyshell/protocol";
+import { DEFAULT_CLOUD_SERVER_URL } from "@odyshell/protocol";
 
 export function machineEnrollmentCommand(options: {
   serverUrl: string;
   token: string;
   machineName: string;
-  capabilities: Capability[];
+  agentId: string;
 }): string {
   const args = ["ods"];
   if (options.serverUrl !== DEFAULT_CLOUD_SERVER_URL) {
@@ -19,8 +16,8 @@ export function machineEnrollmentCommand(options: {
     options.token,
     "--name",
     options.machineName,
-    "--allow",
-    options.capabilities.join(","),
+    "--agent-id",
+    options.agentId,
   );
   return args.map(posixShellArgument).join(" ");
 }

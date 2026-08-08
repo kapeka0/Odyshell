@@ -159,55 +159,41 @@ timeout; it never accepts caller-provided environment variables or standard inpu
 uses an explicit idempotency key, output is bounded and transient, and state can be polled after a
 transport reconnect. Completion is explicit and fails closed while a Command is active.
 
-## Connect a machine
+## Connect an Agent and Machine
 
-Authorize the CLI through the deployed web app:
+Open the deployed dashboard and register the Agent through the Server's remote MCP resource:
 
-```bash
-ods login --server https://api.ods.example.com
+```text
+https://api.ods.example.com/mcp
 ```
 
-Open the printed URL, choose the Odyshell Organization, and approve the CLI. Then create a single-use
-enrollment token:
-
-```bash
-ods token create
-```
-
-The selected Organization owns the Workspace. Organization membership is not managed by the
-CLI. Only the administrator CLI needs `ods login`; the target machine uses the generated
-single-use enrollment token and does not log in separately.
-
-On the private machine:
+Complete OAuth in the browser and approve the Organization-bound installation. Then open
+**Machines**, select **Add Machine**, enter a name, and select that Agent. The dashboard creates a
+single-use enrollment command shaped like:
 
 ```bash
 ods up \
   --server https://api.ods.example.com \
   --token <enrollment-token> \
   --name my-machine \
-  --allow 'process.exec,host.shell,fs.stat,fs.list,fs.search,fs.read'
+  --agent-id <agent-id>
 ```
 
-On the Agent runtime, register a persistent Agent identity and verify the machine:
+The token expires after ten minutes, is consumed once, and is not written to Client configuration.
+Enrollment binds the sovereign Organization ID and selected Agent into Local Policy. The Client
+denies a mismatched identity locally even if the Server requests it.
 
-```bash
-ods agent login "My Agent" --server https://api.ods.example.com
-ods ping my-machine
-ods exec my-machine -- uname -a
-ods shell --purpose "Inspect the user environment" my-machine "pwd && id"
-```
-
-Open and approve the Agent registration URL, then approve each Session URL printed by the
-execution command (or approve a bounded Autoapproval Policy in the web app). `ods agent create` and
-direct Session creation are legacy commands and intentionally return migration errors.
+From the Agent runtime, call `machines_list`, request a Task with `task_request`, wait for optional
+human approval, and submit Commands with `command_run`. Poll Task and Command state after transport
+reconnects and explicitly complete the Task when every Command is terminal.
 
 ## Production checklist
 
 - Back up PostgreSQL and require TLS.
-- Set operation and control-event retention deliberately; remember that backups have independent
+- Set Task, Command, audit, and transient-output retention deliberately; remember that backups have independent
   retention.
 - Keep the admin key and database credentials outside the repository.
 - Expose the Server through HTTPS/WSS.
 - Run each Client as a dedicated operating-system user with least privilege.
-- Grant only the required resources, capabilities, and duration.
+- Grant only the required Agent identity, operating-system resources, concurrency, and duration.
 - Keep one Server replica for the MVP because live Client connections are held in memory.

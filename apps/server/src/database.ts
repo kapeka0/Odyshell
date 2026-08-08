@@ -8016,10 +8016,12 @@ export class PostgresDatabase {
         machineId: string;
         name: string;
         workspaceId: string;
+        organizationId: string;
         createdByHumanId?: string;
       }
     | { status: "previous_machine_active"; workspaceId: string }
     | { status: "machine_limit_reached"; workspaceId: string; machineLimit: number }
+    | { status: "organization_identity_required"; workspaceId: string }
     | null
   > {
     return await this.db.transaction().execute(async (transaction) => {
@@ -8074,6 +8076,12 @@ export class PostgresDatabase {
           machineLimit: entitlement.machineLimit,
         };
       }
+      if (organization.externalId === null) {
+        return {
+          status: "organization_identity_required",
+          workspaceId: enrollment.workspaceId,
+        };
+      }
       await transaction
         .updateTable("enrollmentTokens")
         .set({ usedAt: now })
@@ -8101,6 +8109,7 @@ export class PostgresDatabase {
         machineId: input.machineId,
         name: input.name,
         workspaceId: enrollment.workspaceId,
+        organizationId: organization.externalId,
         ...(enrollment.createdByHumanId
           ? { createdByHumanId: enrollment.createdByHumanId }
           : {}),

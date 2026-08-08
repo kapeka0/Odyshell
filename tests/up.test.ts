@@ -9,16 +9,21 @@ import {
 } from "../apps/cli/src/up.js";
 
 describe("ods up configuration safety", () => {
-  it("uses a Docker-only mount source and has no legacy common cwd option", async () => {
+  it("enrolls a Task-native host profile without legacy runner controls", async () => {
     const source = await readFile(
       resolve(process.cwd(), "apps/cli/src/index.ts"),
       "utf8",
     );
-    expect(source).toContain('.option("--mount-source <path>"');
-    expect(source).not.toContain('.option("--cwd <path>"');
-    expect(source).not.toContain("workspaceRoot:");
-    expect(source).toContain('{ kind: "host.shell"');
-    expect(source).not.toContain('{ kind: "process.shell"');
+    const upCommand = source.slice(
+      source.indexOf('.command("up")'),
+      source.indexOf("async function machineIdFromClientConfig"),
+    );
+    expect(upCommand).toContain('.option("--agent-id <id>"');
+    expect(upCommand).not.toContain('.option("--mount-source <path>"');
+    expect(upCommand).not.toContain('.option("--runner <runner>"');
+    expect(upCommand).not.toContain('.option("--allow <capabilities>"');
+    expect(upCommand).not.toContain('.option("--cwd <path>"');
+    expect(upCommand).not.toContain("workspaceRoot:");
   });
 
   it("fails before claiming the Client is running when its Server is unreachable", async () => {

@@ -114,12 +114,9 @@ export type EnrollClientOptions = {
   serverUrl: string;
   token: string;
   machineName: string;
-  mountSource?: string;
+  agentId: string;
   configPath: string;
   profileName?: string;
-  allowedCapabilities: Capability[];
-  runner?: "host" | "docker";
-  image?: string;
   previousMachineId?: string;
   replaceConfig?: boolean;
 };
@@ -130,22 +127,9 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
 }> {
   const serverUrl = options.serverUrl;
   const configPath = resolve(options.configPath);
-  const parsedCapabilities = capabilitySchema
-    .array()
-    .min(1)
-    .safeParse([...new Set(options.allowedCapabilities)]);
-  if (!parsedCapabilities.success) {
-    throw new Error("At least one valid capability must be explicitly allowed");
-  }
-  const runner = options.runner ?? "host";
-  if (runner === "docker" && parsedCapabilities.data.includes("host.shell")) {
-    throw new Error("host.shell is only available through the host runner");
-  }
-  if (runner === "docker" && !options.mountSource) {
-    throw new Error("Docker enrollment requires an explicit mount source");
-  }
-  if (runner === "host" && options.mountSource !== undefined) {
-    throw new Error("--mount-source is only available with the Docker runner");
+  const agentId = options.agentId.trim();
+  if (agentId.length === 0 || agentId.length > 256) {
+    throw new Error("One valid Agent ID must be explicitly allowed");
   }
   const { publicKey, privateKey } = generateKeyPairSync("ed25519", {
     publicKeyEncoding: { type: "spki", format: "pem" },
@@ -166,33 +150,22 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
   const body = (await response.json()) as {
     machineId?: string;
     workspaceId?: string;
+    organizationId?: string;
     error?: string;
   };
-  if (!response.ok || !body.machineId) throw new Error(body.error ?? `Enrollment failed: ${response.status}`);
+  if (!response.ok || !body.machineId || !body.organizationId) {
+    throw new Error(body.error ?? `Enrollment failed: ${response.status}`);
+  }
 
-  const profile =
-    runner === "docker"
-      ? {
-          runner,
-          mountSource: resolve(options.mountSource!),
-          image: options.image ?? "alpine:3.22",
-          network: "none" as const,
-          maxSessionTtlSeconds: MAX_AGENT_SESSION_SECONDS,
-          maxConcurrentSessions: 2,
-          maxConcurrentOperations: 4,
-          maxOperationTimeoutSeconds: 3_600,
-          maxOutputBytes: 1024 * 1024,
-          capabilities: parsedCapabilities.data,
-        }
-      : {
-          runner,
-          maxSessionTtlSeconds: MAX_AGENT_SESSION_SECONDS,
-          maxConcurrentSessions: 2,
-          maxConcurrentOperations: 4,
-          maxOperationTimeoutSeconds: 3_600,
-          maxOutputBytes: 1024 * 1024,
-          capabilities: parsedCapabilities.data,
-        };
+  const profile = {
+    runner: "host" as const,
+    maxSessionTtlSeconds: MAX_AGENT_SESSION_SECONDS,
+    maxConcurrentSessions: 1,
+    maxConcurrentOperations: 1,
+    maxOperationTimeoutSeconds: 600,
+    maxOutputBytes: 1024 * 1024,
+    capabilities: ["host.shell" as const],
+  };
   const config: ClientConfig = clientConfigSchema.parse({
     serverUrl,
     ...(body.workspaceId ? { workspaceId: body.workspaceId } : {}),
@@ -202,6 +175,20 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
     privateKeyPem: privateKey,
     stateDirectory: resolve(dirname(configPath), "state"),
     allowPrivilegeEscalation: false,
+    taskProfile: {
+      id: options.profileName ?? "default",
+      executorProfile: "workspace",
+      localPolicy: {
+        organizationId: body.organizationId,
+        agentIds: [agentId],
+        maxTaskDurationSeconds: 3_600,
+        maxConcurrentTasks: 1,
+        maxConcurrentCommands: 1,
+        maxCommandTimeoutSeconds: 600,
+        maxCommandOutputBytes: 1024 * 1024,
+        allowRemoteApproval: true,
+      },
+    },
     profiles: {
       workspace: profile,
     },

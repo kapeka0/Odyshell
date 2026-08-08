@@ -1,37 +1,40 @@
 ---
 title: Machines
-description: Enroll a machine, choose its local capabilities, and keep its Client connected.
+description: Connect a private Linux Machine with an owner-controlled Task Local Policy.
 ---
 
-Install the CLI on the target machine with Node.js 24 or newer:
+A Machine runs a lightweight Client under a dedicated Linux operating-system user. The Client
+authenticates outbound with an Ed25519 identity; the Server never opens a connection into the
+private network.
+
+## Enroll a Machine
+
+Install the administration CLI on the target host:
 
 ```npm
 npm install --global @odyshell/cli
 ```
 
-## Enroll from Odyshell Cloud
+Register the Agent first. Then open **Machines**, select **Add Machine**, and choose:
 
-Open **Machines**, select **Add**, and configure:
+- a Machine name;
+- the first Agent allowed by Local Policy.
 
-- a machine name;
-- the capabilities the machine will accept.
+Odyshell generates a command shaped like:
 
-Selecting **Host Shell** clears and disables the narrower structured capabilities in this form.
-Host Shell can already use everything available to the operating-system user running the Client;
-deselect it when you want to configure narrower typed access instead. The yellow warning is about
-that user's full authority, not automatic root or administrator access.
+```bash
+ods --server https://api.example.com up \
+  --token <single-use-token> \
+  --name production-api \
+  --agent-id <agent-id>
+```
 
-Odyshell generates an `ods up` command containing a single-use enrollment token. Run it on the
-target machine. The target does not need `ods login`; the signed-in Workspace member authorizes
-enrollment by generating this command. The token expires after ten minutes and cannot be replayed.
-The member who created the command receives a dashboard notification when that machine enrolls.
+Run it as the Linux user whose authority Commands should receive. The token expires after ten
+minutes, can be consumed once, and is never written to Client configuration. Enrollment fails
+closed if the Organization has no sovereign identity binding.
 
-After it connects, open its actions and select **Edit** to change its name, add a short description,
-or reduce its effective capabilities. Descriptions help agents identify the correct machine through
-`machines_list` and appear beneath the machine name in the dashboard.
-
-`ods up` installs and starts a restartable user service on Linux, macOS, and Windows. After
-enrollment, use:
+`ods up` writes a separate Client Profile, installs a systemd user service, verifies Server
+reachability, and starts the outbound connection. The terminal can then close. Use:
 
 ```bash
 ods client status
@@ -39,70 +42,39 @@ ods down
 ods up
 ```
 
-Linux uses a systemd user service, macOS uses a LaunchAgent, and Windows uses a per-user Task
-Scheduler task with a native no-console launcher. The terminal can be closed after `ods up`; none
-require administrator privileges.
+## Local Policy
 
-If a machine was removed in Cloud but its local Profile still exists, create a new machine command
-and run it with the same `--profile`. Odyshell replaces the revoked identity and restarts the
-background Client. It refuses to replace an identity that is still active, and the new token is not
-consumed by that refusal.
+The generated Profile advertises a Task Local Policy on every authenticated connection:
 
-## Local policy
+- exactly the selected Agent;
+- Tasks up to one hour;
+- one concurrent Task;
+- one concurrent Command;
+- Commands up to ten minutes;
+- up to 1 MiB of transient output;
+- remote human approval allowed.
 
-Relative host paths resolve from the Home directory of the operating-system user running the
-Client. Restricted Sessions may also request an exact absolute host path; that path is shown
-explicitly for approval. Docker Profiles instead use their Docker-specific mount source and cannot
-use absolute host paths.
-Capabilities are default-deny and comma-separated:
+The Server can grant less authority but cannot widen this ceiling. A mismatched Organization,
+Agent, duration, concurrency request, or Command bound is denied by the Client even if the Server
+is compromised.
 
-```bash
---allow 'process.exec,fs.stat,fs.list,fs.search,fs.read'
-```
-
-The capabilities selected during enrollment remain the Client Local Policy and cannot be expanded
-from the web. Machine editing can only choose a Server-side subset of that local maximum. New
-Sessions must pass both boundaries; an existing immutable Session keeps its approved scope until
-it expires or is revoked.
-
-Installed Linux systemd user services set `NoNewPrivileges` while sudo is disabled for a Profile.
-To let approved process Sessions use passwordless sudo through that service, the machine owner
-must opt in locally:
-
-```bash
-ods profiles configure default --allow-sudo
-```
-
-The command verifies `sudo -n`, persists the setting, regenerates the service without that
-restriction, and restarts only that Profile. Restore the installed-service restriction with
-`ods profiles configure default --deny-sudo`. A foreground `ods client start` process has no
-service-level `NoNewPrivileges` boundary, so the Client detects effective `sudo -n` and reports it
-to approval surfaces even when the Profile setting is disabled. Odyshell does not claim equivalent
-privilege-escalation enforcement on macOS or Windows. Typed filesystem operations never gain sudo
-automatically.
+An active Task provides arbitrary non-interactive shell authority as the Client's Linux user. It
+does not configure sudo, isolate the process, filter commands, or claim rollback. Use a dedicated
+user with only the filesystem, credential, network, and service access the Agent needs.
 
 ## Client Profiles
 
-A host can run several named Client Profiles at the same time. Each Profile keeps an independent
-Server, Workspace, machine identity, capabilities, state directory, and background service. Host
-Profiles share the Home directory and operating-system authority of the user that runs them:
+Named Profiles keep separate Machine identities, state directories, Local Policies, and systemd
+services:
 
 ```bash
-ods --server https://personal.example up --profile personal <enrollment-options>
-ods --server https://company.example up --profile company <enrollment-options>
-
-ods --server https://company.example client status --profile company
-ods --server https://company.example down --profile company
+ods --server https://customer-a.example up --profile customer-a <enrollment-options>
+ods --server https://customer-b.example up --profile customer-b <enrollment-options>
 ods profiles ls
 ```
 
-Omitting `--profile` selects `default`. The first use imports the previous single Client
-configuration into that Profile. If both identities already exist, Odyshell stops and asks you to
-resolve the conflict instead of choosing or overwriting one. `--config` remains available for an
-explicit path and cannot be combined with `--profile`.
+`--profile` and `--config` cannot be combined. Never copy a Client configuration between hosts;
+its private Machine key and local policy belong to that Profile.
 
-Do not reuse or copy a Client configuration between machines.
-
-Remove one local identity with `ods profiles remove <name>`. To sign out and remove every
-local Profile from a host, run `ods reset --yes`. These commands leave Cloud machine records
-offline until they are removed from the dashboard.
+Remove one local identity with `ods profiles remove <name>`. `ods reset --yes` removes every local
+Profile. Cloud records remain visible for audit until an administrator removes them.

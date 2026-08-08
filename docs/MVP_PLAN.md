@@ -33,9 +33,10 @@ event is the first useful Task completed on a real customer Machine without SSH 
 ## MVP workflow
 
 1. An Owner bootstraps an Organization.
-2. An Admin installs a Client Profile under a dedicated Linux user.
-3. The Client establishes an authenticated outbound connection.
-4. The Admin registers an external Agent once and sets a Local and Autonomy Policy.
+2. An Admin registers an external Agent once.
+3. The Admin installs a Client Profile under a dedicated Linux user and selects that Agent for its
+   Local Policy.
+4. The Client establishes an authenticated outbound connection and advertises the Local Policy.
 5. The Agent requests one Task for one Machine and operating-system user.
 6. The Task autoapproves inside policy or waits for optional Supervisor approval.
 7. The Agent submits asynchronous non-interactive Commands and reads bounded results.
@@ -188,6 +189,9 @@ authorization.
   observable without making human supervision mandatory.
 - the CLI no longer exposes the superseded local stdio MCP authorization path; Agents use the
   remote OAuth MCP adapter or canonical HTTP interface backed by the same Task/Command module.
+- Machine enrollment now binds a sovereign Organization ID and selected Agent into a conservative
+  Task Local Policy before starting the outbound Linux Client; missing identity fails before the
+  one-time token is consumed.
 
 ### DOING
 

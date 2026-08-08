@@ -9,6 +9,23 @@ import {
 } from "../apps/server/src/database.js";
 
 describe("server storage boundaries", () => {
+  it("binds enrollment to sovereign Organization identity before consuming the token", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "apps/server/src/database.ts"),
+      "utf8",
+    );
+    const enrollment = source.slice(
+      source.indexOf("async enrollMachine("),
+      source.indexOf("async machinePublicKey("),
+    );
+    const identityCheck = enrollment.indexOf("organization.externalId === null");
+    const consumeToken = enrollment.indexOf('.updateTable("enrollmentTokens")');
+
+    expect(identityCheck).toBeGreaterThan(-1);
+    expect(consumeToken).toBeGreaterThan(identityCheck);
+    expect(enrollment).toContain("organizationId: organization.externalId");
+  });
+
   it("names a new Cloud Workspace after its member", () => {
     expect(defaultCloudWorkspaceName("Karim Ahmed")).toBe("Karim's Workspace");
     expect(defaultCloudWorkspaceName("James")).toBe("James' Workspace");

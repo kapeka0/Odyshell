@@ -1,10 +1,11 @@
 "use client";
 
-import type { Capability } from "@odyshell/protocol";
-import { KeyRoundIcon } from "lucide-react";
+import { BotIcon, KeyRoundIcon, ShieldCheckIcon } from "lucide-react";
 import Link from "next/link";
 import { FormEvent, useState } from "react";
 import { z } from "zod";
+import { CopyableValue } from "@/components/copyable-value";
+import { useDashboard } from "@/components/dashboard-provider";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -14,48 +15,35 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
-import { CopyableValue } from "@/components/copyable-value";
-import { useDashboard } from "@/components/dashboard-provider";
-import { HostShellWarning } from "@/components/host-shell-warning";
 import {
   Field,
-  FieldContent,
   FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
-  FieldLegend,
-  FieldSet,
-  FieldTitle,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "@/components/ui/toast";
-import {
-  capabilityGroups,
-  isReadOnlyPreset,
-  toggleReadOnlyPreset,
-} from "@/lib/agent-access-options";
-import { machineEnrollmentCommand } from "@/lib/enrollment-command";
 import { formatDashboardTimestamp } from "@/lib/date-time";
-import { executionWarningState } from "@/lib/host-shell-access";
-import { updateMachineCapabilitySelection } from "@/lib/machine-capability-selection";
+import { machineEnrollmentCommand } from "@/lib/enrollment-command";
 
 const machineNameSchema = z
   .string()
   .trim()
   .min(1, "Enter a machine name")
   .max(64, "Use at most 64 characters")
-  .regex(
-    /^[a-zA-Z0-9._-]+$/,
-    "Use letters, numbers, dots, dashes or underscores",
-  );
+  .regex(/^[a-zA-Z0-9._-]+$/, "Use letters, numbers, dots, dashes or underscores");
 
-type EnrollmentToken = {
-  token: string;
-  expiresAt: string;
-};
+type EnrollmentToken = { token: string; expiresAt: string };
 
 export function EnrollMachine({
   serverUrl,
@@ -65,27 +53,25 @@ export function EnrollMachine({
   atLimit: boolean;
 }) {
   const { state } = useDashboard();
+  const activeAgents = state.status === "ready"
+    ? state.context.agents.filter((agent) => agent.status === "active")
+    : [];
   const [machineName, setMachineName] = useState("my-machine");
-  const [capabilities, setCapabilities] = useState<Capability[]>([]);
+  const [agentId, setAgentId] = useState("");
   const [enrollment, setEnrollment] = useState<EnrollmentToken | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
-  const [capabilitiesError, setCapabilitiesError] = useState<string | null>(
-    null,
-  );
+  const [agentError, setAgentError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const readOnlyEnabled = isReadOnlyPreset(capabilities);
-  const hostShellSelected = executionWarningState(
-    capabilities,
-    "unknown",
-  ).hostShell;
+  const selectedAgentId = agentId || activeAgents[0]?.id || "";
+  const agentOptions = activeAgents.map((agent) => ({ label: agent.name, value: agent.id }));
 
   const command = enrollment
     ? machineEnrollmentCommand({
         serverUrl,
         token: enrollment.token,
         machineName,
-        capabilities,
+        agentId: selectedAgentId,
       })
     : "";
 
@@ -93,32 +79,22 @@ export function EnrollMachine({
     event.preventDefault();
     const parsedName = machineNameSchema.safeParse(machineName);
     if (!parsedName.success) {
-      setNameError(
-        parsedName.error.issues[0]?.message ?? "Invalid machine name",
-      );
+      setNameError(parsedName.error.issues[0]?.message ?? "Invalid machine name");
       return;
     }
-    if (capabilities.length === 0) {
-      setCapabilitiesError("Select at least one local capability");
+    if (!selectedAgentId) {
+      setAgentError("Register an Agent before connecting this Machine");
       return;
     }
 
     setPending(true);
     setError(null);
     setNameError(null);
-    setCapabilitiesError(null);
-
+    setAgentError(null);
     try {
-      const response = await fetch("/api/enrollment-token", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-      });
-      const body = (await response.json()) as EnrollmentToken & {
-        error?: string;
-      };
-      if (!response.ok) {
-        throw new Error(body.error ?? "Could not create enrollment token");
-      }
+      const response = await fetch("/api/enrollment-token", { method: "POST" });
+      const body = (await response.json()) as EnrollmentToken & { error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Could not create enrollment token");
       setEnrollment(body);
       toast.add({
         title: "Enrollment command ready",
@@ -126,16 +102,12 @@ export function EnrollMachine({
         type: "success",
       });
     } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not create enrollment token");
       toast.add({
         title: "Enrollment was not created",
-        description: "No machine token was issued.",
+        description: "No Machine token was issued.",
         type: "error",
       });
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : "Could not create enrollment token",
-      );
     } finally {
       setPending(false);
     }
@@ -147,8 +119,8 @@ export function EnrollMachine({
         <CardHeader>
           <CardTitle>Run this command on {machineName}</CardTitle>
           <CardDescription>
-            `ods up` enrolls a new identity or restarts the existing identity
-            for this Odyshell server.
+            The command installs one outbound Client Profile and binds its Local Policy to the
+            selected Agent.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-5">
@@ -163,15 +135,10 @@ export function EnrollMachine({
               Expires{" "}
               {formatDashboardTimestamp(
                 enrollment.expiresAt,
-                state.status === "ready"
-                  ? state.context.userPreferences.timeZone
-                  : "System",
+                state.status === "ready" ? state.context.userPreferences.timeZone : "System",
               )}
             </span>
-            <Link
-              href="/dashboard/machines"
-              className={buttonVariants({ variant: "outline" })}
-            >
+            <Link href="/dashboard/machines" className={buttonVariants({ variant: "outline" })}>
               Done
             </Link>
           </div>
@@ -179,8 +146,7 @@ export function EnrollMachine({
             <KeyRoundIcon aria-hidden="true" />
             <AlertTitle>Shown once</AlertTitle>
             <AlertDescription>
-              Machine enrollment is different from `ods login`. Login
-              authorizes the CLI; this command connects the machine Client.
+              The enrollment token is consumed once and is never stored in Client configuration.
             </AlertDescription>
           </Alert>
         </CardContent>
@@ -191,10 +157,9 @@ export function EnrollMachine({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Add machine</CardTitle>
+        <CardTitle>Add Machine</CardTitle>
         <CardDescription>
-          Define the Client&apos;s local boundary, then generate its one-time
-          connection command.
+          Choose the first Agent inside this Machine&apos;s owner-controlled Local Policy.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -204,7 +169,6 @@ export function EnrollMachine({
               <FieldLabel htmlFor="machine-name">Machine name</FieldLabel>
               <Input
                 id="machine-name"
-                name="machine-name"
                 autoComplete="off"
                 spellCheck={false}
                 value={machineName}
@@ -217,85 +181,48 @@ export function EnrollMachine({
               <FieldError>{nameError}</FieldError>
             </Field>
 
-            <FieldSet data-invalid={Boolean(capabilitiesError)}>
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <FieldLegend>Local capabilities</FieldLegend>
-                  <FieldDescription>
-                    The Client enforces this maximum policy on the machine.
-                  </FieldDescription>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    variant={readOnlyEnabled ? "default" : "outline"}
-                    size="sm"
-                    aria-pressed={readOnlyEnabled}
-                    disabled={hostShellSelected}
-                    onClick={() => {
-                      setCapabilities((current) =>
-                        toggleReadOnlyPreset(current),
-                      );
-                      setCapabilitiesError(null);
-                    }}
-                  >
-                    Read only
-                  </Button>
-                </div>
-              </div>
-              <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                {capabilityGroups.map((group) => (
-                  <div key={group.name} className="flex flex-col gap-3">
-                    <p className="text-xs font-medium text-muted-foreground">
-                      {group.name}
-                    </p>
-                    {group.capabilities.map((capability) => {
-                      const disabled =
-                        hostShellSelected && capability.value !== "host.shell";
-                      return (
-                        <Field
-                          key={capability.value}
-                          orientation="horizontal"
-                          data-disabled={disabled}
-                        >
-                          <Checkbox
-                            id={`enroll-${capability.value}`}
-                            checked={capabilities.includes(capability.value)}
-                            disabled={disabled}
-                            onCheckedChange={(checked) => {
-                              setCapabilities((current) =>
-                                updateMachineCapabilitySelection(
-                                  current,
-                                  capability.value,
-                                  checked === true,
-                                ),
-                              );
-                              setCapabilitiesError(null);
-                            }}
-                            aria-invalid={Boolean(capabilitiesError)}
-                          />
-                          <FieldContent>
-                            <FieldLabel
-                              htmlFor={`enroll-${capability.value}`}
-                            >
-                              <FieldTitle>{capability.label}</FieldTitle>
-                            </FieldLabel>
-                            <FieldDescription>
-                              {capability.description}
-                            </FieldDescription>
-                          </FieldContent>
-                        </Field>
-                      );
-                    })}
-                  </div>
-                ))}
-              </div>
-              <FieldError>{capabilitiesError}</FieldError>
-            </FieldSet>
+            <Field data-invalid={Boolean(agentError)}>
+              <FieldLabel htmlFor="machine-agent">Allowed Agent</FieldLabel>
+              {activeAgents.length > 0 ? (
+                <Select
+                  items={agentOptions}
+                  value={selectedAgentId}
+                  onValueChange={(value) => {
+                    setAgentId(value ?? "");
+                    setAgentError(null);
+                  }}
+                  required
+                >
+                  <SelectTrigger id="machine-agent" className="w-full">
+                    <SelectValue placeholder="Select Agent" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {activeAgents.map((agent) => (
+                        <SelectItem key={agent.id} value={agent.id}>{agent.name}</SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Link href="/dashboard/agents/add" className={buttonVariants({ variant: "outline" })}>
+                  <BotIcon /> Register Agent
+                </Link>
+              )}
+              <FieldDescription>
+                Tasks from other Agents are denied locally, even if the Server requests them.
+              </FieldDescription>
+              <FieldError>{agentError}</FieldError>
+            </Field>
 
-            {hostShellSelected ? (
-              <HostShellWarning localPolicy />
-            ) : null}
+            <Alert>
+              <ShieldCheckIcon aria-hidden="true" />
+              <AlertTitle>Conservative Local Policy</AlertTitle>
+              <AlertDescription>
+                One Task and one Command at a time, one-hour Task limit, ten-minute Command limit,
+                1 MiB output ceiling, no sudo configuration, and human approval allowed.
+              </AlertDescription>
+            </Alert>
 
             {error ? (
               <Alert variant="destructive">
@@ -305,23 +232,13 @@ export function EnrollMachine({
             ) : null}
 
             <div className="flex flex-wrap items-start justify-end gap-2 border-t pt-6">
-              <Link
-                href="/dashboard/machines"
-                className={buttonVariants({ variant: "outline" })}
-              >
+              <Link href="/dashboard/machines" className={buttonVariants({ variant: "outline" })}>
                 Cancel
               </Link>
-              <div className="flex flex-col items-end gap-1">
-                <Button type="submit" disabled={pending || atLimit}>
-                  {pending ? <Spinner /> : null}
-                  Add
-                </Button>
-                {atLimit ? (
-                  <p className="text-xs text-destructive">
-                    Machine limit reached
-                  </p>
-                ) : null}
-              </div>
+              <Button type="submit" disabled={pending || atLimit || activeAgents.length === 0}>
+                {pending ? <Spinner /> : null}
+                Add
+              </Button>
             </div>
           </FieldGroup>
         </form>
