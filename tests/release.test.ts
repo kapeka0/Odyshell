@@ -64,14 +64,16 @@ describe("0.16.0 release contract", () => {
     }
   });
 
-  it("resolves the workspace protocol source before package build", () => {
-    const webTypescript = readFileSync(
-      resolve(process.cwd(), "apps/web/tsconfig.json"),
+  it("builds the protocol package before Web consumes its public entrypoint", () => {
+    const webManifest = readFileSync(
+      resolve(process.cwd(), "apps/web/package.json"),
       "utf8",
     );
-    expect(webTypescript).toContain(
-      '"@odyshell/protocol": ["../../packages/protocol/src/index.ts"]',
-    );
+    expect(webManifest).toContain('"prebuild": "pnpm --filter @odyshell/protocol build"');
+    expect(webManifest).toContain('"pretypecheck": "pnpm --filter @odyshell/protocol build"');
+    expect(
+      readFileSync(resolve(process.cwd(), "apps/web/tsconfig.json"), "utf8"),
+    ).not.toContain('"@odyshell/protocol"');
     const vitest = readFileSync(
       resolve(process.cwd(), "vitest.config.ts"),
       "utf8",

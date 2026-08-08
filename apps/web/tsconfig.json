@@ -20,7 +20,6 @@
     ],
     "paths": {
       "@/*": ["./src/*"],
-      "@odyshell/protocol": ["../../packages/protocol/src/index.ts"],
       "collections/*": ["./.source/*"]
     }
   },

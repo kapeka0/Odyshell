@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export * from "./task.js";
+
 export const PROTOCOL_VERSION = 4;
 export const DEFAULT_CLOUD_SERVER_URL =
   "https://server.odyshell.com";

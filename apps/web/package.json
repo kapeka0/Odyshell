@@ -3,8 +3,11 @@
   "version": "0.16.0",
   "private": true,
   "scripts": {
+    "predev": "pnpm --filter @odyshell/protocol build",
     "dev": "next dev",
+    "prebuild": "pnpm --filter @odyshell/protocol build",
     "build": "next build",
+    "pretypecheck": "pnpm --filter @odyshell/protocol build",
     "typecheck": "fumadocs-mdx && tsc --noEmit",
     "start": "next start",
     "lint": "eslint"

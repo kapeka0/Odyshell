@@ -168,11 +168,17 @@ authorization.
 - sovereign self-hosting, identity replacement, domain, scope, trust, licensing direction,
   monetization unit, and visual reference resolved through grilling;
 - target Task/Command architecture recorded in `docs/design/agentic-task-model.md`.
+- sovereign Odyshell Identity replaces Clerk with local password auth, Organization roles, OAuth
+  Agent grants, PostgreSQL persistence, and a self-hosted Compose path;
+- the agent-native Task/Command protocol, Local Policy ceiling, centralized authorization service,
+  idempotency semantics, exact-command audit contract, and isolated PostgreSQL repository exist
+  with focused denial tests.
 
 ### DOING
 
-- repository inventory and dependency/seam audit;
-- documentation cutover from the superseded accepted Session design to the Task target.
+- connect the Task/Command repository to OAuth HTTP, remote MCP, and the Client transport;
+- remove the superseded Session/Operation, Workspace, typed-operation, Docker, SDK, local MCP,
+  Managed Agent, delegation, and Event Sink implementations after the replacement vertical works.
 
 ### BLOCKED
 
