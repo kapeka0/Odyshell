@@ -23,7 +23,6 @@ const manifests = [
   "apps/web/package.json",
   "packages/mcp/package.json",
   "packages/protocol/package.json",
-  "packages/sdk/package.json",
 ].map(readManifest);
 
 describe("0.16.0 release contract", () => {
@@ -45,7 +44,6 @@ describe("0.16.0 release contract", () => {
     expect(publicPackages.map((manifest) => manifest.name).sort()).toEqual([
       "@odyshell/cli",
       "@odyshell/protocol",
-      "@odyshell/sdk",
     ]);
     for (const manifest of publicPackages) {
       expect(manifest.publishConfig).toEqual({
@@ -55,13 +53,13 @@ describe("0.16.0 release contract", () => {
     }
   });
 
-  it("ships compiled SDK and protocol exports", () => {
-    for (const name of ["@odyshell/protocol", "@odyshell/sdk"]) {
-      const manifest = manifests.find((candidate) => candidate.name === name);
-      expect(JSON.stringify(manifest?.exports)).toContain("./dist/index.js");
-      expect(JSON.stringify(manifest?.exports)).toContain("./dist/index.d.ts");
-      expect(JSON.stringify(manifest?.exports)).not.toContain("./src/");
-    }
+  it("ships compiled protocol exports", () => {
+    const manifest = manifests.find(
+      (candidate) => candidate.name === "@odyshell/protocol",
+    );
+    expect(JSON.stringify(manifest?.exports)).toContain("./dist/index.js");
+    expect(JSON.stringify(manifest?.exports)).toContain("./dist/index.d.ts");
+    expect(JSON.stringify(manifest?.exports)).not.toContain("./src/");
   });
 
   it("builds the protocol package before Web consumes its public entrypoint", () => {
@@ -81,7 +79,6 @@ describe("0.16.0 release contract", () => {
     for (const workspacePackage of [
       "@odyshell/client",
       "@odyshell/protocol",
-      "@odyshell/sdk",
     ]) {
       expect(vitest).toContain(`"${workspacePackage}"`);
     }
@@ -195,9 +192,6 @@ describe("0.16.0 release contract", () => {
     expect(shared).toContain("already published with different contents");
     expect(shared).toContain("@odyshell/protocol");
     expect(shared.indexOf("@odyshell/protocol")).toBeLessThan(
-      shared.indexOf("@odyshell/sdk"),
-    );
-    expect(shared.indexOf("@odyshell/sdk")).toBeLessThan(
       shared.indexOf("@odyshell/cli"),
     );
 

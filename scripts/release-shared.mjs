@@ -12,12 +12,10 @@ export const coordinatedManifestPaths = [
   "apps/web/package.json",
   "packages/mcp/package.json",
   "packages/protocol/package.json",
-  "packages/sdk/package.json",
 ];
 
 export const publicPackages = [
   { name: "@odyshell/protocol", directory: "packages/protocol" },
-  { name: "@odyshell/sdk", directory: "packages/sdk" },
   { name: "@odyshell/cli", directory: "apps/cli" },
 ];
 

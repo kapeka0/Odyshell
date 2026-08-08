@@ -37,7 +37,7 @@ For the agent vendor, Odyshell removes the need to build:
 - credential distribution and rotation;
 - temporary grants and revocation;
 - execution retries and idempotency;
-- a machine-operation API, SDK, and MCP surface.
+- a canonical machine-operation API and remote MCP surface.
 
 For the owner of the machine, Odyshell avoids:
 
@@ -62,7 +62,7 @@ Odyshell should remain:
 - focused on real, existing hosts;
 - based on structured operations rather than an interactive terminal;
 - enforceable at the Client, outside the model;
-- embeddable through API, SDK, CLI, and MCP.
+- integrable through canonical HTTP and remote OAuth MCP;
 
 Host Shell can remain an explicit high-risk capability, but Odyshell must disclose its same-user,
 unsandboxed boundary and must not claim to infer every side effect of an arbitrary command.
@@ -102,7 +102,7 @@ reliability, and support.
 
 ## Open and managed distribution
 
-The Client, protocol, SDK, MCP integration, and a functional self-hosted path are adoption
+The Client, protocol, MCP integration, and a functional self-hosted path are adoption
 mechanisms. Odyshell Cloud should monetize the managed control plane and operational guarantees.
 
 The long-term license for commercial embedding is a separate decision. It should be made before

@@ -198,6 +198,8 @@ authorization.
 - the public Web surface is now Task-native: legacy Session/Operation approval, Timeline, Event
   Sink, legacy policy, SDK, migration, and rich overview routes were removed; Tasks are the
   dashboard entrypoint and Activity reads exact-command Task audit without retained output.
+- the superseded public TypeScript SDK was removed from the workspace and coordinated release;
+  Agents integrate through canonical HTTP or its remote OAuth MCP adapter.
 
 ### DOING
 

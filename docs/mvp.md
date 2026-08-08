@@ -11,7 +11,7 @@ The MVP serves agents through APIs. Humans are administrators.
 
 ```mermaid
 flowchart LR
-    A["Agent"] -->|"API, SDK, CLI, or MCP"| S["Odyshell Server"]
+    A["Agent"] -->|"Canonical HTTP or remote OAuth MCP"| S["Odyshell Server"]
     C["Client on private machine"] -->|"Outbound authenticated WebSocket"| S
     S --> P["PostgreSQL"]
     S -->|"Temporary operation"| C
@@ -34,7 +34,7 @@ private network.
 | Agents | Persistent identities with expiring, rotatable credentials and no machine authority |
 | Sessions | Temporary, browser-approved authority with per-machine scopes and credentials |
 | Reliability | Reconnection, heartbeat, ping, cancellation, and idempotency |
-| Interfaces | HTTP API, TypeScript SDK, `ods` CLI, and remote OAuth MCP |
+| Interfaces | Canonical HTTP and remote OAuth MCP for Agents; `ods` for Machine installation |
 | Persistence | PostgreSQL through Kysely |
 | Tenancy | Organizations own isolated execution Workspaces |
 

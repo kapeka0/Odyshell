@@ -1,12 +1,12 @@
 # Releasing Odyshell
 
-Odyshell uses one coordinated pre-1.0 version for the Server, Client, web app, CLI, SDK, and
-protocol package.
+Odyshell uses one coordinated pre-1.0 version for the Server, Client, web app, CLI, MCP runtime,
+and protocol package.
 
 - A minor release such as `0.9.0` may contain an explicitly documented incompatible change.
 - A patch release such as `0.9.1` must remain compatible with its minor release.
-- Server, Client, CLI, SDK, and protocol versions must share the same minor version.
-- `@odyshell/cli`, `@odyshell/sdk`, and `@odyshell/protocol` are public npm packages.
+- Server, Client, CLI, MCP, and protocol versions must share the same minor version.
+- `@odyshell/cli` and `@odyshell/protocol` are the only public npm packages.
 - Server, Client, MCP, and web releases are distributed through the repository, containers, CLI,
   and managed deployment rather than separate npm packages.
 
@@ -20,7 +20,7 @@ protocol package.
 4. From the GitHub Actions page, run the `Release` workflow from `main` with the version number
    and approve its protected `Production` environment.
 5. The workflow audits production dependencies, repeats type checking, tests, lint, build,
-   documentation smoke tests and E2E; packs protocol, SDK and CLI; creates the immutable tag;
+   documentation smoke tests and E2E; packs protocol and CLI; creates the immutable tag;
    publishes the packages through npm Trusted Publishing; creates the GitHub Release; and audits
    all public version surfaces.
 6. Validate registration, approval, execution, Timeline, expiry, cancellation, and credential
@@ -45,7 +45,6 @@ to the `Production` GitHub environment:
 
 ```bash
 npm trust github @odyshell/protocol --file release.yml --repo kapeka0/Odyshell --env Production --yes
-npm trust github @odyshell/sdk --file release.yml --repo kapeka0/Odyshell --env Production --yes
 npm trust github @odyshell/cli --file release.yml --repo kapeka0/Odyshell --env Production --yes
 ```
 
