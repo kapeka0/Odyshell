@@ -287,6 +287,21 @@ export class PostgresTaskDatabase implements TaskRepository, TaskAudit {
     return row ? machineAuthorityRecord(row) : null;
   }
 
+  async listMachineAuthorities(
+    organizationId: string,
+    agentId: string,
+  ): Promise<MachineAuthority[]> {
+    const rows = await this.db
+      .selectFrom("machineAuthorities")
+      .selectAll()
+      .where("organizationId", "=", organizationId)
+      .orderBy("machineId")
+      .execute();
+    return rows
+      .map(machineAuthorityRecord)
+      .filter((authority) => authority.localPolicy.agentIds.includes(agentId));
+  }
+
   async putMachineAuthority(authority: MachineAuthority): Promise<void> {
     await this.db
       .insertInto("machineAuthorities")

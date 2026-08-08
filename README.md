@@ -255,11 +255,22 @@ MCP-compatible agents can use the browser-approved flow after `ods login`:
 }
 ```
 
-A Server configured with Odyshell Identity OAuth can expose the same tools as a remote MCP. It creates one
-persistent Agent per approved installation and keeps Session authority inside the Server, so
-hosted clients such as Claude or ChatGPT do not need a local `ods` process.
+A Server configured with Odyshell Identity OAuth exposes the agent-native workflow as a remote MCP.
+It creates one persistent Agent per approved installation, lists only Machines allowed by that
+Agent's local policy, and offers asynchronous `Task` and `Command` tools. Hosted clients such as
+Claude or ChatGPT therefore do not need a local `ods` process.
 
-The Agent keeps a persistent identity but receives no machine authority from login. It requests a
+Each Task grants one Agent temporary authority on exactly one Machine as its configured operating-
+system user. Commands accept only shell text, an optional absolute working directory, and a bounded
+timeout; environment variables and standard input are not accepted. Mutations require idempotency
+keys, output is transient and cursor-readable, and Tasks and Commands remain inspectable after a
+caller reconnects. A Task may start immediately inside its autonomy policy or remain pending for
+optional human supervision.
+
+The local `ods mcp` command still exposes the earlier Session/Operation interface during the client
+cutover and is not the canonical agent-native interface.
+
+In that earlier local flow, the Agent keeps a persistent identity but receives no machine authority from login. It requests a
 temporary Session for either exact typed Operations or explicit broad Host Shell authority, shows
 the approval URL to the user and waits, privately claims the credential once approved, performs the
 task, and completes the Session.
@@ -280,6 +291,11 @@ For unattended work, approve a temporary Autoapproval Policy. The policy is only
 task still receives its own expiring Session.
 
 ## MVP status
+
+The canonical OAuth HTTP API and remote MCP now expose the agent-native Task/Command model. The
+Linux Client accepts the corresponding WebSocket messages and executes each asynchronous Command
+through the existing process-tree-controlled host executor. PostgreSQL stores authorization state,
+idempotency records, exact-command audit metadata, and bounded transient output.
 
 Odyshell currently supports typed process, explicit Host Shell, filesystem, and Docker log
 Operations. Direct host execution is the default. Docker sandboxes remain an optional execution

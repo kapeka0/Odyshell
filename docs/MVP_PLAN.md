@@ -176,10 +176,12 @@ authorization.
 - canonical OAuth HTTP Task/Command routes, Client Profile policy negotiation, outbound Task and
   Command transport, bounded transient output, cancellation, expiry, process-tree reuse, and
   PostgreSQL integration tests are implemented; the self-hosted Server boots these migrations.
+- remote OAuth MCP now exposes only Machine discovery and the resumable Task/Command lifecycle,
+  using the same authorization service and Organization-bound Agent identity as canonical HTTP.
 
 ### DOING
 
-- replace the superseded remote MCP tools with the Task/Command adapter and complete reconnect;
+- complete Task/Command reconnect reconciliation;
 - remove the superseded Session/Operation, Workspace, typed-operation, Docker, SDK, local MCP,
   Managed Agent, delegation, and Event Sink implementations after the replacement vertical works.
 

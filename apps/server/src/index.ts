@@ -73,12 +73,12 @@ import { machinePrivilegeEscalation } from "./machine-policy.js";
 import { dataRetentionPolicy } from "./privacy.js";
 import { deliverOperation } from "./operation-delivery.js";
 import { registerRemoteMcp } from "./remote-mcp.js";
-import { createRemoteMcpRuntime } from "./remote-mcp-runtime.js";
 import { createAgentOAuthAuthenticator } from "./agent-oauth.js";
 import { createTaskDatabase } from "./task-database.js";
 import { registerTaskHttp } from "./task-http.js";
 import { decodeCommandOutput } from "./task-output.js";
 import { TaskService } from "./tasks.js";
+import { createTaskMcpRuntime } from "./task-mcp-runtime.js";
 import {
   decryptEventSinkSecret,
   encryptEventSinkSecret,
@@ -434,13 +434,18 @@ const pingConcurrencyLimiter = new ScopedConcurrencyLimiter(20, 3);
 
 registerRemoteMcp(app, process.env, {
   database: db,
-  runtime: (installation) =>
-    createRemoteMcpRuntime(installation, {
-      database: db,
-      gateway,
-      sessionRequestLimiter,
-      ...(webUrl ? { webUrl } : {}),
-    }),
+  async agenticRuntime(installation) {
+    const workspace = await db.mcpWorkspace(installation.workspaceId);
+    if (!workspace) throw new Error("Agent Organization is unavailable");
+    return createTaskMcpRuntime(
+      {
+        organizationId: workspace.organizationExternalId,
+        agentId: installation.agentId,
+      },
+      taskService,
+      taskDb,
+    );
+  },
 });
 
 function matchesSecret(actual: string | undefined, expected: string | undefined): boolean {

@@ -149,17 +149,17 @@ ODYSHELL_IDENTITY_ISSUER=https://ods.example.com
 ODYSHELL_IDENTITY_JWKS_URL=https://ods.example.com/api/auth/jwks
 ```
 
-Point the MCP hostname at the same Server process. PostgreSQL keeps MCP installation and Session
-bindings; OAuth access tokens are verified locally against Odyshell Identity JWKS and are not stored by the Server. Accounts with one
+Point the MCP hostname at the same Server process. PostgreSQL keeps MCP installation, Task, Command,
+authorization, and transient output state; OAuth access tokens are verified locally against
+Odyshell Identity JWKS and are not stored by the Server. Accounts with one
 Workspace can use `/mcp`; accounts with several use `/mcp/<workspace-id>`.
 
-Remote MCP requests either one or more exact typed Operations or explicit broad Host Shell
-authority for approval. Host Shell requests identify the machine, objective, and duration without
-an advance command list. They also require a stable Task Run `runId`; reuse requires both the same
-MCP installation and `runId`, so unrelated work cannot inherit broad authority. Every execution
-includes a stable Operation ID, so a transport retry returns the original Operation instead of
-running it again. A failed command leaves the Session usable for corrective work. Completion is
-explicit, records the overall Agent-reported task outcome, and fails closed while work is active.
+Remote MCP is an adapter over the canonical agent-native HTTP authorization path. It exposes
+Machine discovery plus Task and Command lifecycle tools. A Task identifies one Machine, objective,
+and duration. A Command accepts shell text, an optional absolute working directory, and a bounded
+timeout; it never accepts caller-provided environment variables or standard input. Every mutation
+uses an explicit idempotency key, output is bounded and transient, and state can be polled after a
+transport reconnect. Completion is explicit and fails closed while a Command is active.
 
 ## Connect a machine
 

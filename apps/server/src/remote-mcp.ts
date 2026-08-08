@@ -4,7 +4,9 @@ import {
   type AuthInfo,
 } from "@modelcontextprotocol/server";
 import {
+  createAgenticMcpServer,
   createApprovedMcpServer,
+  type AgenticMcpRuntime,
   type ApprovedMcpRuntime,
 } from "@odyshell/mcp";
 import type { FastifyInstance, FastifyRequest } from "fastify";
@@ -23,7 +25,8 @@ type RemoteMcpConfiguration = {
 
 export type RemoteMcpDependencies = {
   database: Database;
-  runtime(installation: McpInstallationRecord): ApprovedMcpRuntime;
+  runtime?(installation: McpInstallationRecord): ApprovedMcpRuntime;
+  agenticRuntime?(installation: McpInstallationRecord): Promise<AgenticMcpRuntime>;
   oauth?: RemoteMcpOauth;
 };
 
@@ -164,10 +167,15 @@ export function registerRemoteMcp(
       if (!isMcpInstallation(installation)) {
         throw new Error("MCP installation is unavailable");
       }
-      return createApprovedMcpServer(
-        dependencies.runtime(installation),
-        (error) => app.log.error(error, "Remote MCP tool failed"),
-      );
+      const report = (error: unknown) => app.log.error(error, "Remote MCP tool failed");
+      if (dependencies.agenticRuntime) {
+        return createAgenticMcpServer(
+          await dependencies.agenticRuntime(installation),
+          report,
+        );
+      }
+      if (!dependencies.runtime) throw new Error("Remote MCP runtime is unavailable");
+      return createApprovedMcpServer(dependencies.runtime(installation), report);
     },
     {
       legacy: "stateless",

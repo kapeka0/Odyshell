@@ -9,6 +9,8 @@ import {
 } from "@odyshell/protocol";
 import { z } from "zod";
 
+export { createAgenticMcpServer, type AgenticMcpRuntime } from "./agentic.js";
+
 const machineSchema = z.string().trim().min(1).max(256);
 const timeoutSchema = z
   .number()

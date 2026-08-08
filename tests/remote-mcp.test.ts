@@ -1,7 +1,10 @@
 import { readFile } from "node:fs/promises";
 import Fastify from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ApprovedMcpRuntime } from "../packages/mcp/src/index.js";
+import type {
+  AgenticMcpRuntime,
+  ApprovedMcpRuntime,
+} from "../packages/mcp/src/index.js";
 import type { SessionMachineScope } from "../packages/protocol/src/index.js";
 import type { Database } from "../apps/server/src/database.js";
 import type { ClientGateway } from "../apps/server/src/gateway.js";
@@ -574,6 +577,49 @@ describe("remote MCP security boundary", () => {
 
     expect(response.statusCode).toBe(403);
     expect(response.json()).toEqual({ error: "mcp_installation_revoked" });
+  });
+
+  it("serves only the agent-native Task and Command workflow in production", async () => {
+    const machines = vi.fn(async () => ({ data: [] }));
+    const app = remoteMcpApp({ agenticRuntime: fakeAgenticRuntime({ machines }) });
+    const request = (id: number, method: string, params: Record<string, unknown>) =>
+      app.inject({
+        method: "POST",
+        url: "/mcp/workspace-id",
+        headers: {
+          accept: "application/json, text/event-stream",
+          authorization: "Bearer safe-oauth-token",
+          "mcp-protocol-version": "2025-11-25",
+        },
+        payload: { jsonrpc: "2.0", id, method, params },
+      });
+
+    const toolsResponse = await request(1, "tools/list", {});
+    expect(toolsResponse.statusCode).toBe(200);
+    const payload = toolsResponse.payload;
+    for (const name of [
+      "machines_list",
+      "task_request",
+      "task_get",
+      "task_complete",
+      "task_cancel",
+      "command_run",
+      "command_get",
+      "command_output",
+      "command_cancel",
+    ]) {
+      expect(payload).toContain(`\"name\":\"${name}\"`);
+    }
+    expect(payload).not.toContain("session_request");
+    expect(payload).not.toContain("operation_execute");
+
+    const callResponse = await request(2, "tools/call", {
+      name: "machines_list",
+      arguments: {},
+    });
+    expect(callResponse.statusCode).toBe(200);
+    expect(callResponse.payload).toContain('\\"data\\": []');
+    expect(machines).toHaveBeenCalledOnce();
   });
 
   it("reports the active-Agent entitlement when a new MCP installation is full", async () => {
@@ -1446,6 +1492,7 @@ function remoteMcpApp(
     authenticate?: RemoteMcpOauth["authenticate"];
     database?: Record<string, unknown>;
     runtime?: ApprovedMcpRuntime;
+    agenticRuntime?: AgenticMcpRuntime;
   } = {},
 ) {
   const app = Fastify();
@@ -1490,9 +1537,31 @@ function remoteMcpApp(
       ODYSHELL_MCP_ALLOWED_ORIGINS: "https://odyshell.com",
       ODYSHELL_IDENTITY_ISSUER: "https://identity.test",
     },
-    { database, oauth, runtime: () => overrides.runtime ?? fakeRuntime() },
+    {
+      database,
+      oauth,
+      ...(overrides.agenticRuntime
+        ? { agenticRuntime: async () => overrides.agenticRuntime! }
+        : { runtime: () => overrides.runtime ?? fakeRuntime() }),
+    },
   );
   return app;
+}
+
+function fakeAgenticRuntime(
+  overrides: Partial<AgenticMcpRuntime> = {},
+): AgenticMcpRuntime {
+  return {
+    machines: vi.fn(async () => ({ data: [] })),
+    requestTask: vi.fn(),
+    task: vi.fn(),
+    finishTask: vi.fn(),
+    createCommand: vi.fn(),
+    command: vi.fn(),
+    output: vi.fn(),
+    cancelCommand: vi.fn(),
+    ...overrides,
+  };
 }
 
 function fakeRuntime(
