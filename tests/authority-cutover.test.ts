@@ -26,12 +26,14 @@ describe("Task-native authority cutover", () => {
       resolve(process.cwd(), "apps/server/src/gateway.ts"),
       "utf8",
     );
-    expect(gateway).toContain(
-      'throw new Error("Machine authentication requires a Task Profile")',
+    const protocol = readFileSync(
+      resolve(process.cwd(), "packages/protocol/src/index.ts"),
+      "utf8",
     );
-    expect(gateway).toContain(
-      'throw new Error(`Unsupported Machine message: ${message.type}`)',
-    );
+    expect(protocol).toContain("clientMessageSchema.parse(message)");
+    expect(protocol).toContain("taskProfile: {");
+    expect(protocol).not.toContain('type: "session.open"');
+    expect(protocol).not.toContain('type: "operation.start"');
     expect(gateway).not.toContain('case "session.opened"');
     expect(gateway).not.toContain('case "operation.completed"');
   });

@@ -3,6 +3,7 @@ import {
   clientTaskProfileSchema,
   localPolicySchema,
   taskClientToServerMessageSchema,
+  taskServerToClientMessageSchema,
 } from "./task.js";
 import type {
   TaskClientToServerMessage,
@@ -871,34 +872,7 @@ export type ServerToClientMessage =
       code: "client_upgrade_required";
       message: string;
     }
-  | { type: "ping"; pingId: string }
-  | {
-      type: "session.open";
-      sessionId: string;
-      profile: string;
-      capabilities: Capability[];
-      /** Required for canonical Agent Sessions; omitted only by legacy authority. */
-      restrictions?: SessionRestrictions;
-      expiresAt: string;
-      serverTime?: string;
-    }
-  | {
-      type: "session.expires";
-      sessionId: string;
-      expiresAt: string;
-      serverTime?: string;
-    }
-  | { type: "session.close"; sessionId: string; reason: string }
-  | {
-      type: "operation.start";
-      operationId: string;
-      sessionId: string;
-      action: OperationAction;
-      timeoutSeconds: number;
-      maxOutputBytes: number;
-    }
-  | { type: "operation.acknowledged"; operationId: string }
-  | { type: "operation.cancel"; operationId: string };
+  | { type: "ping"; pingId: string };
 
 export type ClientToServerMessage =
   | TaskClientToServerMessage
@@ -908,42 +882,14 @@ export type ClientToServerMessage =
       protocolVersion: number;
       signature: string;
       runtime?: ClientRuntimeInfo;
-      taskProfile?: {
+      taskProfile: {
         id: string;
         operatingSystemUser: string;
         localPolicy: import("./task.js").LocalPolicy;
       };
     }
   | { type: "heartbeat"; machineId: string; at: string }
-  | { type: "pong"; machineId: string; pingId: string }
-  | {
-      type: "session.opened";
-      sessionId: string;
-      runner: "host";
-      runtimeId: string;
-    }
-  | { type: "session.open_failed"; sessionId: string; error: string }
-  | { type: "session.closed"; sessionId: string; reason: string }
-  | { type: "operation.started"; operationId: string; at: string }
-  | {
-      type: "operation.event";
-      operationId: string;
-      sequence: number;
-      stream: "stdout" | "stderr" | "result";
-      dataBase64: string;
-    }
-  | {
-      type: "operation.completed";
-      operationId: string;
-      status: Exclude<
-        OperationStatus,
-        "queued" | "delivered" | "running" | "cancellation_requested"
-      >;
-      exitCode: number | null;
-      error?: string;
-      outputTruncated: boolean;
-      at: string;
-    };
+  | { type: "pong"; machineId: string; pingId: string };
 
 export function capabilityForAction(action: OperationAction): Capability {
   return action.kind;
@@ -1163,20 +1109,74 @@ function uniqueObjects<T>(values: T[]): T[] {
   });
 }
 
+const clientRuntimeInfoSchema = z.object({
+  hostPlatform: z.enum(["linux", "macos", "windows"]),
+  architecture: z.string().trim().min(1).max(64),
+  defaultShell: z.string().trim().min(1).max(4096),
+  privilegeEscalation: z.enum(["none", "sudo"]).optional(),
+  nodeVersion: z.string().trim().min(1).max(64),
+  protocolVersion: z.number().int().positive().optional(),
+  clientVersion: z.string().trim().min(1).max(64).optional(),
+}).strict();
+
+const clientControlMessageSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("authenticate"),
+    machineId: z.string().uuid(),
+    protocolVersion: z.number().int().positive(),
+    signature: z.string().min(1).max(1024).regex(/^[A-Za-z0-9_-]+$/),
+    runtime: clientRuntimeInfoSchema.optional(),
+    taskProfile: clientTaskProfileSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("heartbeat"),
+    machineId: z.string().uuid(),
+    at: z.string().datetime({ offset: true }),
+  }).strict(),
+  z.object({
+    type: z.literal("pong"),
+    machineId: z.string().uuid(),
+    pingId: z.string().uuid(),
+  }).strict(),
+]);
+
+const serverControlMessageSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("challenge"),
+    connectionId: z.string().uuid(),
+    nonce: z.string().min(32).max(128).regex(/^[A-Za-z0-9_-]+$/),
+  }).strict(),
+  z.object({
+    type: z.literal("authenticated"),
+    machineId: z.string().uuid(),
+  }).strict(),
+  z.object({
+    type: z.literal("error"),
+    code: z.literal("client_upgrade_required"),
+    message: z.string().trim().min(1).max(2048),
+  }).strict(),
+  z.object({
+    type: z.literal("ping"),
+    pingId: z.string().uuid(),
+  }).strict(),
+]);
+
+const clientMessageSchema = z.union([
+  clientControlMessageSchema,
+  taskClientToServerMessageSchema,
+]);
+
+const serverMessageSchema = z.union([
+  serverControlMessageSchema,
+  taskServerToClientMessageSchema,
+]);
+
 export function parseClientMessage(raw: string): ClientToServerMessage {
-  const message = JSON.parse(raw) as { type?: unknown };
-  if (
-    typeof message.type === "string" &&
-    (message.type.startsWith("task.") || message.type.startsWith("command."))
-  ) {
-    return taskClientToServerMessageSchema.parse(message) as TaskClientToServerMessage;
-  }
-  if (message.type === "authenticate" && "taskProfile" in message) {
-    clientTaskProfileSchema.parse(message.taskProfile);
-  }
-  return message as ClientToServerMessage;
+  const message = JSON.parse(raw);
+  return clientMessageSchema.parse(message) as ClientToServerMessage;
 }
 
 export function parseServerMessage(raw: string): ServerToClientMessage {
-  return JSON.parse(raw) as ServerToClientMessage;
+  const message = JSON.parse(raw);
+  return serverMessageSchema.parse(message) as ServerToClientMessage;
 }

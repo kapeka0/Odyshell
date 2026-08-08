@@ -263,6 +263,44 @@ export type TaskServerToClientMessage =
   | { type: "command.cancel"; commandId: string }
   | { type: "command.acknowledged"; commandId: string };
 
+export const taskServerToClientMessageSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("task.open"),
+    taskId: uuidSchema,
+    organizationId: idSchema,
+    agentId: idSchema,
+    clientProfileId: idSchema,
+    expiresAt: z.string().datetime({ offset: true }),
+    maxConcurrentCommands: z.number().int().min(1).max(16),
+    serverTime: z.string().datetime({ offset: true }),
+  }).strict(),
+  z.object({
+    type: z.literal("task.close"),
+    taskId: uuidSchema,
+    reason: z.string().trim().min(1).max(256),
+  }).strict(),
+  z.object({
+    type: z.literal("command.start"),
+    commandId: uuidSchema,
+    taskId: uuidSchema,
+    command: z.string().min(1).max(65_536).refine(
+      (value) => !value.includes("\0"),
+      "Command cannot contain NUL bytes",
+    ),
+    cwd: absoluteLinuxPathSchema.optional(),
+    timeoutSeconds: z.number().int().min(1).max(MAX_COMMAND_TIMEOUT_SECONDS),
+    maxOutputBytes: z.number().int().min(1024).max(MAX_COMMAND_OUTPUT_BYTES),
+  }).strict(),
+  z.object({
+    type: z.literal("command.cancel"),
+    commandId: uuidSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("command.acknowledged"),
+    commandId: uuidSchema,
+  }).strict(),
+]);
+
 export type TaskClientToServerMessage =
   | {
       type: "task.opened";

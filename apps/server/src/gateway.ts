@@ -265,10 +265,6 @@ export class ClientGateway {
       this.notifyWorkspace(machine.workspaceId);
       return;
     }
-    if (!message.taskProfile) {
-      throw new Error("Machine authentication requires a Task Profile");
-    }
-
     state.machineId = message.machineId;
     state.workspaceId = machine.workspaceId;
     state.organizationId = message.taskProfile.localPolicy.organizationId;
@@ -289,7 +285,7 @@ export class ClientGateway {
       await this.taskHooks.authenticated({
         machineId: message.machineId,
         workspaceId: machine.workspaceId,
-        taskProfile: message.taskProfile!,
+        taskProfile: message.taskProfile,
       });
       const previous = this.connections.get(message.machineId);
       if (previous && previous !== socket) {

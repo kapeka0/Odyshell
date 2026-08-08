@@ -629,8 +629,6 @@ export class Client {
       case "command.cancel":
         if (this.authenticated) await this.cancelCommand(message.commandId);
         break;
-      default:
-        throw new Error(`Unsupported Server message: ${message.type}`);
     }
   }
 

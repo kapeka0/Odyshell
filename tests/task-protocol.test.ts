@@ -7,7 +7,10 @@ import {
   taskRequestSchema,
   type Task,
 } from "../packages/protocol/src/task.js";
-import { parseClientMessage } from "../packages/protocol/src/index.js";
+import {
+  parseClientMessage,
+  parseServerMessage,
+} from "../packages/protocol/src/index.js";
 
 const policy = localPolicySchema.parse({
   organizationId: "org-a",
@@ -103,6 +106,30 @@ describe("agent-native Task protocol", () => {
       exitCode: null,
       outputTruncated: false,
       at: new Date().toISOString(),
+    }))).toThrow();
+  });
+
+  it("rejects legacy, incomplete, and widened wire messages", () => {
+    expect(() => parseClientMessage(JSON.stringify({
+      type: "session.opened",
+      sessionId: "7a354999-6a6c-42db-9467-e1416da255f1",
+      runner: "host",
+      runtimeId: "legacy",
+    }))).toThrow();
+    expect(() => parseServerMessage(JSON.stringify({
+      type: "operation.start",
+      operationId: "7a354999-6a6c-42db-9467-e1416da255f1",
+    }))).toThrow();
+    expect(() => parseClientMessage(JSON.stringify({
+      type: "authenticate",
+      machineId: "7a354999-6a6c-42db-9467-e1416da255f1",
+      protocolVersion: 4,
+      signature: "valid_base64url",
+    }))).toThrow();
+    expect(() => parseServerMessage(JSON.stringify({
+      type: "ping",
+      pingId: "7a354999-6a6c-42db-9467-e1416da255f1",
+      unexpectedAuthority: true,
     }))).toThrow();
   });
 });
