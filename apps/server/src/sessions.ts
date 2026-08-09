@@ -93,6 +93,7 @@ export interface SessionRepository {
     organizationId: string;
     sessionId: string;
     decision: "approve" | "deny";
+    decidedAt: string;
   }): Promise<
     | { status: "not_found" | "conflict" }
     | { status: "approved" | "denied"; session: Session; changed: boolean }
@@ -375,6 +376,7 @@ export class SessionService {
       organizationId: principal.organizationId,
       sessionId,
       decision,
+      decidedAt: new Date(this.now()).toISOString(),
     });
     if (!("session" in result)) {
       return {

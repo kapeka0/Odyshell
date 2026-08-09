@@ -467,6 +467,7 @@ export class PostgresSessionDatabase implements SessionRepository, SessionAudit 
     organizationId: string;
     sessionId: string;
     decision: "approve" | "deny";
+    decidedAt: string;
   }): Promise<
     | { status: "not_found" | "conflict" }
     | { status: "approved" | "denied"; session: Session; changed: boolean }
@@ -489,7 +490,7 @@ export class PostgresSessionDatabase implements SessionRepository, SessionAudit 
       if (current.status !== "pending_approval") {
         return { status: "conflict" as const };
       }
-      const now = new Date();
+      const now = new Date(input.decidedAt);
       if (current.expiresAt <= now) {
         await transaction
           .updateTable("sessions")
