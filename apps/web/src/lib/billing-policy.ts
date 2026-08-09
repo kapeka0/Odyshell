@@ -1,5 +1,15 @@
+import { createHash } from "node:crypto";
+
 export function planForStripeSubscriptionStatus(status: string): "free" | "pro" {
   return status === "active" || status === "trialing" ? "pro" : "free";
+}
+
+export function checkoutIntegrationIdentifier(seed: string): string {
+  const digest = createHash("sha256").update(seed).digest();
+  const suffix = Array.from(digest.subarray(0, 8), (value) =>
+    String.fromCharCode(97 + (value % 26))
+  ).join("");
+  return `odyshell_web_${suffix}`;
 }
 
 export function managedBillingEnabled(environment: NodeJS.ProcessEnv): boolean {

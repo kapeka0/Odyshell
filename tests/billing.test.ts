@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   billingAppUrl,
+  checkoutIntegrationIdentifier,
   managedBillingEnabled,
   planForStripeSubscriptionStatus,
 } from "../apps/web/src/lib/billing-policy.js";
@@ -35,5 +36,12 @@ describe("billing security policy", () => {
       ODYSHELL_MANAGED_BILLING_ENABLED: "true",
     })).toBe(false);
     expect(managedBillingEnabled({})).toBe(false);
+  });
+
+  it("uses a stable Stripe integration identifier with eight opaque letters", () => {
+    const identifier = checkoutIntegrationIdentifier("org-a:3:1234");
+    expect(identifier).toMatch(/^odyshell_web_[a-z]{8}$/);
+    expect(checkoutIntegrationIdentifier("org-a:3:1234")).toBe(identifier);
+    expect(checkoutIntegrationIdentifier("org-a:3:1235")).not.toBe(identifier);
   });
 });
