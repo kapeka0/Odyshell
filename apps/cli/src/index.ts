@@ -42,7 +42,7 @@ const program = new Command();
 program
   .name("ods")
   .description("Install Machines and operate the Odyshell control plane")
-  .version("0.18.0")
+  .version("0.19.0")
   .option("-j, --json", "emit stable JSON output")
   .option("--server <url>", "override the Odyshell Server URL")
   .showSuggestionAfterError()
