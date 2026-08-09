@@ -15,7 +15,7 @@ import {
   type Node,
   type NodeProps,
 } from "@xyflow/react";
-import { BotIcon, CableIcon, CpuIcon, PlusIcon, ShieldCheckIcon, TimerIcon } from "lucide-react";
+import { CableIcon, CpuIcon, PlusIcon, ShieldCheckIcon, TimerIcon } from "lucide-react";
 import { useReducedMotion } from "motion/react";
 import Link from "next/link";
 import { useTheme } from "next-themes";

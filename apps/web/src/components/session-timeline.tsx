@@ -1,6 +1,6 @@
 "use client";
 
-import { BotIcon, CheckCircle2Icon, CircleXIcon, Clock3Icon, TerminalIcon } from "lucide-react";
+import { BotIcon, CircleXIcon, Clock3Icon, TerminalIcon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -31,9 +31,12 @@ export function SessionTimeline({ sessionId, timeZone }: { sessionId: string; ti
   }, [sessionId]);
 
   useEffect(() => {
-    void load();
+    const initial = window.setTimeout(() => void load(), 0);
     const timer = window.setInterval(() => void load(), 5_000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(timer);
+    };
   }, [load]);
 
   if (loading) return <div className="flex min-h-64 items-center justify-center"><Spinner className="size-5" /></div>;
