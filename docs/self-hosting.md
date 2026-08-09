@@ -90,21 +90,20 @@ enforced.
    npm install --global @odyshell/cli
    ```
 
-4. In **Machines**, select **Add Machine** and run the generated command. Selecting an initially
-   allowed Agent is optional:
+4. In **Machines**, select **Add Machine** and run the generated command:
 
    ```bash
    ods --server https://api.example.com up \
      --token <single-use-token> \
-     --name production-api \
-     --agent-id <agent-id>
+     --name production-api
    ```
 
 5. From the Agent, call `machines_list`, `task_request`, `command_run`, `command_get`,
    `command_output`, and `task_complete`.
 
-The Machine needs no inbound port, SSH credential, or VPN route. The Client rejects a mismatched
-Organization or Agent, expired authority, replay, and any request outside Local Policy.
+The Machine needs no inbound port, SSH credential, or VPN route. It belongs to the Organization,
+not an Agent. The Client rejects a mismatched Organization, expired authority, replay, and any
+request outside Local Policy; each authorized Task supplies the temporary Agent binding.
 
 ## Lifecycle
 

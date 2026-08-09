@@ -16,7 +16,7 @@ describe("ods up configuration safety", () => {
       source.indexOf('.command("up")'),
       source.indexOf("async function machineIdFromClientConfig"),
     );
-    expect(upCommand).toContain('.option("--agent-id <id>"');
+    expect(upCommand).not.toContain("--agent-id");
     expect(upCommand).not.toContain("--mount-source");
     expect(upCommand).not.toContain("--runner");
     expect(upCommand).not.toContain("--allow");

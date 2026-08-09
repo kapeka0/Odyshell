@@ -23,10 +23,10 @@ export function createAgenticMcpServer(
   runtime: AgenticMcpRuntime,
   reportUnexpectedError: (error: unknown) => void = () => {},
 ): McpServer {
-  const server = new McpServer({ name: "odyshell", version: "0.17.0" });
+  const server = new McpServer({ name: "odyshell", version: "0.18.0" });
   server.registerTool("machines_list", {
     title: "List Machines",
-    description: "List online Linux Machines available to this Agent under their local policy.",
+    description: "List Linux Machines in the Agent's Organization that can receive a Task request.",
     inputSchema: z.object({}).strict(),
     annotations: readOnly,
   }, async () => run(() => runtime.machines(), reportUnexpectedError));

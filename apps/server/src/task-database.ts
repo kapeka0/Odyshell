@@ -290,7 +290,6 @@ export class PostgresTaskDatabase implements TaskRepository, TaskAudit {
 
   async listMachineAuthorities(
     organizationId: string,
-    agentId: string,
   ): Promise<MachineAuthority[]> {
     const rows = await this.db
       .selectFrom("machineAuthorities")
@@ -298,9 +297,7 @@ export class PostgresTaskDatabase implements TaskRepository, TaskAudit {
       .where("organizationId", "=", organizationId)
       .orderBy("machineId")
       .execute();
-    return rows
-      .map(machineAuthorityRecord)
-      .filter((authority) => authority.localPolicy.agentIds.includes(agentId));
+    return rows.map(machineAuthorityRecord);
   }
 
   async putMachineAuthority(authority: MachineAuthority): Promise<void> {

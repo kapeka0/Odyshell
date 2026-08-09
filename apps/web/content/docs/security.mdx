@@ -15,12 +15,15 @@ A Command is accepted only when:
 2. the Task belongs to that Agent and Organization and is active and unexpired;
 3. the Task is bound to the requested Machine, Client Profile, and operating-system user;
 4. the authenticated Machine identity matches that binding;
-5. Local Policy still allows the Agent, duration, concurrency, timeout, and output ceiling;
+5. Local Policy still allows the Organization, duration, concurrency, timeout, and output ceiling;
 6. Autonomy Policy authorized the Task or a permitted Human approved it;
 7. the idempotency key and request fingerprint agree.
 
 These checks run outside the model. Requests fail closed on an unknown identity, stale Task,
 cross-Organization ID, replay conflict, offline Machine, or policy mismatch.
+
+A Machine is never assigned to an Agent. Agent-to-Machine authority is the expiring Task itself,
+created only after Autonomy Policy or a permitted Human decision authorizes the exact pairing.
 
 ## Identity and enrollment
 

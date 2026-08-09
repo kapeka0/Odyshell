@@ -54,19 +54,18 @@ describe("web security boundaries", () => {
       serverUrl: "https://self-hosted.example/api?next=a&mode=b",
       token: "ods_enroll_'_synthetic",
       machineName: "production; touch /tmp/pwned",
-      agentId: "agent-'primary",
     });
     expect(command).toContain("ods --server 'https://self-hosted.example/api?next=a&mode=b' up");
     expect(command).toContain("--token 'ods_enroll_'\"'\"'_synthetic'");
     expect(command).toContain("--name 'production; touch /tmp/pwned'");
-    expect(command).toContain("--agent-id 'agent-'\"'\"'primary'");
+    expect(command).not.toContain("--agent-id");
 
-    const unassignedCommand = machineEnrollmentCommand({
+    const secondCommand = machineEnrollmentCommand({
       serverUrl: "https://server.example",
       token: "ods_enroll_safe",
       machineName: "unassigned",
     });
-    expect(unassignedCommand).not.toContain("--agent-id");
+    expect(secondCommand).not.toContain("--agent-id");
   });
 
   it("keeps documentation public while bounding its search input", () => {

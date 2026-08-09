@@ -152,7 +152,7 @@ export type RequestTaskResult =
         | "machine_not_found"
         | "machine_offline"
         | "organization_denied"
-        | "agent_denied"
+        | "supervision_denied"
         | "duration_denied"
         | "task_concurrency_denied"
         | "command_concurrency_denied"
@@ -213,9 +213,6 @@ export class TaskService {
     if (policy.organizationId !== principal.organizationId) {
       return { status: "denied", code: "organization_denied" };
     }
-    if (!policy.agentIds.includes(principal.agentId)) {
-      return { status: "denied", code: "agent_denied" };
-    }
     if (request.durationSeconds > policy.maxTaskDurationSeconds) {
       return { status: "denied", code: "duration_denied" };
     }
@@ -244,7 +241,7 @@ export class TaskService {
       return { status: "denied", code: "command_concurrency_denied" };
     }
     if (!autonomous && !policy.allowRemoteApproval) {
-      return { status: "denied", code: "agent_denied" };
+      return { status: "denied", code: "supervision_denied" };
     }
 
     const now = this.now();

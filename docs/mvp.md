@@ -51,7 +51,7 @@ A Command is accepted only when all of these remain true:
 
 1. the OAuth credential is valid, unexpired, unrevoked, and bound to the Agent and Organization;
 2. the Task belongs to the same Agent, Organization, Machine, and Client Profile;
-3. Local Policy permits that Agent, duration, concurrency, timeout, and output bound;
+3. Local Policy permits the Organization, duration, concurrency, timeout, and output bound;
 4. Autonomy Policy permits automatic execution, or an Owner, Admin, or Supervisor approved the
    Task without widening Local Policy;
 5. the Task is active and unexpired, the Machine is online, and its Client acknowledges authority;
@@ -78,7 +78,7 @@ an unknown or failed outcome instead of claiming success.
 ## Agent workflow
 
 1. An Admin registers or authorizes one durable Agent identity.
-2. The Machine owner installs a Client with a conservative Local Policy for that Agent.
+2. The Machine owner installs a Client with a conservative Organization-bound Local Policy.
 3. The Agent discovers an available Machine and requests a bounded Task.
 4. The Task starts automatically inside Autonomy Policy or waits for optional Human approval.
 5. The Agent creates Commands, polls their state, and reads bounded transient output with a cursor.

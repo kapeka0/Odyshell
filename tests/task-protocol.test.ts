@@ -15,7 +15,6 @@ import {
 
 const policy = localPolicySchema.parse({
   organizationId: "org-a",
-  agentIds: ["agent-a"],
   maxTaskDurationSeconds: 3_600,
   maxConcurrentTasks: 1,
   maxConcurrentCommands: 2,
@@ -25,15 +24,8 @@ const policy = localPolicySchema.parse({
 });
 
 describe("agent-native Task protocol", () => {
-  it("keeps a Machine with no allowed Agents connected but default-denied", () => {
-    const unassignedPolicy = localPolicySchema.parse({ ...policy, agentIds: [] });
-    expect(localTaskDecision(unassignedPolicy, {
-      organizationId: "org-a",
-      agentId: "agent-a",
-      durationSeconds: 600,
-      activeTasks: 0,
-      maxConcurrentCommands: 1,
-    })).toEqual({ allowed: false, code: "agent_denied" });
+  it("rejects the obsolete Agent allowlist from Machine Local Policy", () => {
+    expect(localPolicySchema.safeParse({ ...policy, agentIds: ["agent-a"] }).success).toBe(false);
   });
 
   it("accepts only one Machine per Task and only shell-native Command input", () => {
@@ -67,14 +59,12 @@ describe("agent-native Task protocol", () => {
 
   it.each([
     [{ organizationId: "org-b" }, "organization_denied"],
-    [{ agentId: "agent-b" }, "agent_denied"],
     [{ durationSeconds: 3_601 }, "duration_denied"],
     [{ activeTasks: 1 }, "task_concurrency_denied"],
     [{ maxConcurrentCommands: 3 }, "command_concurrency_denied"],
   ] as const)("enforces the Local Policy ceiling for %j", (override, code) => {
     expect(localTaskDecision(policy, {
       organizationId: "org-a",
-      agentId: "agent-a",
       durationSeconds: 600,
       activeTasks: 0,
       maxConcurrentCommands: 2,

@@ -24,7 +24,6 @@ suite("PostgreSQL Task/Command vertical", () => {
       online: true,
       localPolicy: {
         organizationId,
-        agentIds: [agentId],
         maxTaskDurationSeconds: 600,
         maxConcurrentTasks: 1,
         maxConcurrentCommands: 1,
@@ -228,7 +227,6 @@ suite("PostgreSQL Task/Command vertical", () => {
       online: true,
       localPolicy: {
         organizationId,
-        agentIds: [agentId],
         maxTaskDurationSeconds: 600,
         maxConcurrentTasks: 1,
         maxConcurrentCommands: 1,

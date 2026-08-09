@@ -27,15 +27,16 @@ recovering the Machine Client.
 
 ## Authority model
 
-An Agent can discover only online Linux Machines whose Local Policy includes that Agent. To work,
-it requests a Task with:
+An Agent can discover the Organization's Linux Machines. Discovery grants no execution authority.
+To work, it requests a Task with:
 
 - one Machine;
 - a title and optional purpose;
 - a bounded duration;
 - an idempotency key that identifies that exact logical request.
 
-The Machine owner controls the Local Policy ceiling. The Organization's Autonomy Policy decides
+The Machine owner controls the resource ceiling through Local Policy, which never names Agents.
+The Organization's Autonomy Policy decides
 whether a Task inside that ceiling opens automatically or waits for an Owner, Admin, or Supervisor.
 A human decision cannot widen Local Policy.
 

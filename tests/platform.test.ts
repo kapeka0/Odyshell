@@ -166,7 +166,7 @@ describe("Task-native Client boundary", () => {
   });
 
   it("uses the Task-native wire protocol version", () => {
-    expect(PROTOCOL_VERSION).toBe(4);
+    expect(PROTOCOL_VERSION).toBe(5);
   });
 
   it("serializes disconnect and reconnect state for one Machine", async () => {

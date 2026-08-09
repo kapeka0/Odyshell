@@ -35,7 +35,6 @@ describe("Client enrollment", () => {
       serverUrl: "https://server.example",
       token: "ods_enroll_secret",
       machineName: "desktop",
-      agentId: "agent-primary",
       configPath,
       previousMachineId,
       replaceConfig: true,
@@ -54,7 +53,6 @@ describe("Client enrollment", () => {
       id: "default",
       localPolicy: {
         organizationId: "organization-one",
-        agentIds: ["agent-primary"],
         maxTaskDurationSeconds: 3_600,
         maxConcurrentTasks: 1,
         maxConcurrentCommands: 1,
@@ -68,23 +66,7 @@ describe("Client enrollment", () => {
     expect(saved).not.toHaveProperty("workspaceId");
   });
 
-  it("rejects an empty Agent identity before consuming enrollment", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "odyshell-enroll-agent-denied-"));
-    temporaryDirectories.push(directory);
-    const fetch = vi.fn();
-    vi.stubGlobal("fetch", fetch);
-
-    await expect(enrollClient({
-      serverUrl: "https://server.example",
-      token: "ods_enroll_secret",
-      machineName: "desktop",
-      agentId: "   ",
-      configPath: join(directory, "client.json"),
-    })).rejects.toThrow("One valid Agent ID must be explicitly allowed");
-    expect(fetch).not.toHaveBeenCalled();
-  });
-
-  it("registers a Machine without an Agent using a default-deny Local Policy", async () => {
+  it("registers a Machine without creating any Agent binding", async () => {
     const directory = await mkdtemp(join(tmpdir(), "odyshell-enroll-no-agent-"));
     temporaryDirectories.push(directory);
     const configPath = join(directory, "client.json");
@@ -101,9 +83,9 @@ describe("Client enrollment", () => {
     });
 
     const saved = JSON.parse(await readFile(configPath, "utf8")) as {
-      taskProfile: { localPolicy: { agentIds: string[] } };
+      taskProfile: { localPolicy: Record<string, unknown> };
     };
-    expect(saved.taskProfile.localPolicy.agentIds).toEqual([]);
+    expect(saved.taskProfile.localPolicy).not.toHaveProperty("agentIds");
   });
 
   it("fails closed when enrollment has no sovereign Organization identity", async () => {
@@ -117,7 +99,6 @@ describe("Client enrollment", () => {
       serverUrl: "https://server.example",
       token: "ods_enroll_secret",
       machineName: "desktop",
-      agentId: "agent-primary",
       configPath,
     })).rejects.toThrow("organization_identity_required");
     await expect(readFile(configPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });

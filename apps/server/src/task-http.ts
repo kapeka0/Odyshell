@@ -22,7 +22,6 @@ export type TaskHttpDependencies = {
   > & {
     listMachineAuthorities(
       organizationId: string,
-      agentId: string,
     ): Promise<Array<{
       machineId: string;
       clientProfileId: string;
@@ -67,7 +66,6 @@ export function registerTaskHttp(
     const principal = principalFor(request);
     const machines = await dependencies.repository.listMachineAuthorities(
       principal.organizationId,
-      principal.agentId,
     );
     return {
       data: machines.map((machine) => ({

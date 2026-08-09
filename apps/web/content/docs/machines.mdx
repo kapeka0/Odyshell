@@ -15,10 +15,7 @@ Install the administration CLI on the target host:
 npm install --global @odyshell/cli
 ```
 
-Open **Machines**, select **Add Machine**, and choose:
-
-- a Machine name;
-- optionally, the first Agent allowed by Local Policy.
+Open **Machines**, select **Add Machine**, and choose a Machine name.
 
 Odyshell generates a command shaped like:
 
@@ -27,8 +24,6 @@ ods --server https://api.example.com up \
   --token <single-use-token> \
   --name production-api
 ```
-
-The generated command adds `--agent-id <agent-id>` only when an Agent was selected.
 
 Run it as the Linux user whose authority Commands should receive. The token expires after ten
 minutes, can be consumed once, and is never written to Client configuration. Enrollment fails
@@ -47,7 +42,6 @@ ods up
 
 The generated Profile advertises a Task Local Policy on every authenticated connection:
 
-- no Agents by default, or exactly the selected Agent;
 - Tasks up to one hour;
 - one concurrent Task;
 - one concurrent Command;
@@ -55,10 +49,10 @@ The generated Profile advertises a Task Local Policy on every authenticated conn
 - up to 1 MiB of transient output;
 - remote human approval allowed.
 
-An empty Agent list keeps the Machine online and visible but denies every Task. The Server can
-grant less authority but cannot widen this ceiling. A mismatched Organization, Agent, duration,
-concurrency request, or Command bound is denied by the Client even if the Server
-is compromised.
+The Machine is an Organization resource and Local Policy never names Agents. The Server can grant
+less authority but cannot widen this ceiling. A mismatched Organization, duration, concurrency
+request, Task identity, or Command bound is denied by the Client even if the Server is
+compromised. The Organization authorizes Agent-to-Machine access only through a temporary Task.
 
 The stored Client configuration is strict and Task-native. It contains one Machine identity and
 one Local Policy; legacy runner profiles, Session/Operation limits, remote sudo flags, and

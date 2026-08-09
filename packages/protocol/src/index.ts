@@ -13,7 +13,7 @@ import type {
 
 export * from "./task.js";
 
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 export const DEFAULT_CLOUD_SERVER_URL = "https://server.odyshell.com";
 export const MAX_CLIENT_CLOCK_SKEW_MILLISECONDS = 30_000;
 

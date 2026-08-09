@@ -46,8 +46,8 @@ user. A physical host can run multiple independently configured Client Profiles.
 _Avoid_: Global machine identity, shared client configuration
 
 **Local Policy**:
-The machine-owner-controlled absolute ceiling enforced by a Client Profile. Remote systems can
-request or reduce authority but cannot expand this ceiling.
+The machine-owner-controlled absolute resource ceiling enforced by a Client Profile. It belongs
+to one Organization and never names an Agent; Agent-to-Machine authority exists only in a Task.
 _Avoid_: Cloud policy, prompt rule, command filter
 
 **Autonomy Policy**:

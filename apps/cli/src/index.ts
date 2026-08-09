@@ -40,7 +40,7 @@ const program = new Command();
 program
   .name("ods")
   .description("Install and operate an Odyshell Machine Client")
-  .version("0.17.0")
+  .version("0.18.0")
   .option("-j, --json", "emit stable JSON output")
   .option("--server <url>", "override the Odyshell Server URL")
   .showSuggestionAfterError()
@@ -126,13 +126,11 @@ program
   .description("enroll this Linux Machine and start its background Client")
   .option("--token <token>", "one-time enrollment token")
   .option("--name <name>", "Machine name")
-  .option("--agent-id <id>", "Agent allowed by this Machine's Local Policy")
   .option("--profile <name>", "Client Profile name")
   .option("--config <path>", "Client configuration")
   .action(async (options: {
     token?: string;
     name?: string;
-    agentId?: string;
     profile?: string;
     config?: string;
   }, command: Command) => {
@@ -155,7 +153,6 @@ program
         serverUrl,
         token: requiredValue(options.token, "--token"),
         machineName: requiredValue(options.name, "--name"),
-        ...(options.agentId ? { agentId: options.agentId } : {}),
         configPath,
         profileName,
         ...(previousMachineId ? { previousMachineId } : {}),
@@ -188,7 +185,7 @@ program
       alreadyRunning: previousStatus?.active ?? false,
       enrollmentOptionsIgnored:
         configExists && !enrollment &&
-        [options.token, options.name, options.agentId].some((value) => value !== undefined),
+        [options.token, options.name].some((value) => value !== undefined),
       ...(enrollment ?? {}),
       servicePath: service.servicePath,
       lingering: service.lingering,

@@ -38,7 +38,6 @@ class MemoryRepository implements TaskRepository {
       online: true,
       localPolicy: {
         organizationId,
-        agentIds: [agentId],
         maxTaskDurationSeconds: 3_600,
         maxConcurrentTasks: 1,
         maxConcurrentCommands: 2,
@@ -237,6 +236,32 @@ describe("TaskService", () => {
     expect(opened).toEqual([]);
   });
 
+  it("binds an Agent to a Machine only in the requested Task", async () => {
+    const { service } = harness(new MemoryRepository({ policy: null }));
+    const result = await service.requestTask(
+      { organizationId, agentId: "agent-b" },
+      request,
+      "agent-b-task-key",
+    );
+
+    expect(result).toMatchObject({
+      status: "created",
+      task: { organizationId, agentId: "agent-b", machineId, status: "pending_approval" },
+    });
+  });
+
+  it("fails closed when neither autonomous nor Human supervision is allowed", async () => {
+    const repository = new MemoryRepository({
+      policy: null,
+      localPolicy: { allowRemoteApproval: false },
+    });
+    expect(await harness(repository).service.requestTask(
+      { organizationId, agentId },
+      request,
+      "task-key",
+    )).toEqual({ status: "denied", code: "supervision_denied" });
+  });
+
   it("lets a Supervisor approve pending authority and audits the human decision", async () => {
     const context = harness(new MemoryRepository({ policy: null }));
     const requested = await context.service.requestTask(
@@ -337,7 +362,6 @@ describe("TaskService", () => {
 
   it.each([
     [new MemoryRepository({ localPolicy: { organizationId: "org-b" } }), "organization_denied"],
-    [new MemoryRepository({ localPolicy: { agentIds: ["agent-b"] } }), "agent_denied"],
     [new MemoryRepository({ localPolicy: { maxTaskDurationSeconds: 300 } }), "duration_denied"],
   ] as const)("fails closed at the Local Policy ceiling", async (repository, code) => {
     const result = await harness(repository).service.requestTask(

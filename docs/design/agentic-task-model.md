@@ -40,9 +40,9 @@ telemetry, a relay, or a license check.
 
 An Organization owns every identity and resource. Workspace is removed.
 
-An Agent is a durable identity in exactly one Organization. Registering it grants no Machine
-authority. Vendor humans do not join the customer's Organization; they operate the Agent from the
-vendor's own system.
+An Agent is a durable identity in exactly one Organization. Registering it or enrolling a Machine
+grants no Machine authority. Vendor humans do not join the customer's Organization; they operate
+the Agent from the vendor's own system.
 
 A Task is immutable temporary authority for exactly:
 
@@ -76,8 +76,8 @@ flowchart TD
 ```
 
 Local Policy is the absolute ceiling and is changed only on the Machine. It selects the Server,
-Organization, Agent identities, operating-system user, maximum Task duration, concurrency, and
-whether remote human approval is permitted. Neither the Server nor Web can expand it.
+Organization, operating-system user, maximum Task duration, concurrency, and whether remote human
+approval is permitted. It never names Agents. Neither the Server nor Web can expand it.
 
 Autonomy Policy is narrower Organization policy. It selects exact Agents and Machines, maximum
 duration, concurrency, and expiry. It never filters shell strings. Shell allowlists and blocklists

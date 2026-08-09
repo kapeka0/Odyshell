@@ -54,8 +54,8 @@ function appHarness(options: { token?: boolean; storedTask?: Task | null } = {})
   const app = Fastify();
   const storedTask = options.storedTask === undefined ? task() : options.storedTask;
   const repository = {
-    async listMachineAuthorities(org: string, agent: string) {
-      return org === organizationId && agent === agentId
+    async listMachineAuthorities(org: string) {
+      return org === organizationId
         ? [{
             organizationId,
             machineId,
@@ -64,7 +64,6 @@ function appHarness(options: { token?: boolean; storedTask?: Task | null } = {})
             online: true,
             localPolicy: {
               organizationId,
-              agentIds: [agentId],
               maxTaskDurationSeconds: 600,
               maxConcurrentTasks: 1,
               maxConcurrentCommands: 1,
@@ -83,7 +82,6 @@ function appHarness(options: { token?: boolean; storedTask?: Task | null } = {})
   } satisfies Pick<TaskRepository, "task" | "command" | "commandOutput"> & {
     listMachineAuthorities: (
       organizationId: string,
-      agentId: string,
     ) => Promise<unknown[]>;
   };
   const calls: Array<{ kind: "task" | "command"; input: unknown }> = [];
@@ -120,6 +118,24 @@ function appHarness(options: { token?: boolean; storedTask?: Task | null } = {})
 }
 
 describe("canonical Task HTTP API", () => {
+  it("lists Organization Machines without requiring an enrollment-time Agent assignment", async () => {
+    const { app } = appHarness();
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/machines",
+      headers: { authorization: "Bearer valid" },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      data: [{
+        id: machineId,
+        clientProfileId: "profile-a",
+        operatingSystemUser: "odyshell",
+        online: true,
+      }],
+    });
+  });
+
   it("requires an OAuth Agent token before parsing a mutation", async () => {
     const { app, calls } = appHarness({ token: false });
     const response = await app.inject({

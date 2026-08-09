@@ -1,6 +1,6 @@
 "use client";
 
-import { BotIcon, KeyRoundIcon, ShieldCheckIcon } from "lucide-react";
+import { KeyRoundIcon, ShieldCheckIcon } from "lucide-react";
 import Link from "next/link";
 import { type FormEvent, useState } from "react";
 import { z } from "zod";
@@ -17,20 +17,11 @@ import {
 } from "@/components/ui/card";
 import {
   Field,
-  FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "@/components/ui/toast";
 import { formatDashboardTimestamp } from "@/lib/date-time";
@@ -53,27 +44,17 @@ export function EnrollMachine({
   atLimit: boolean;
 }) {
   const { state } = useDashboard();
-  const activeAgents = state.status === "ready"
-    ? state.context.agents.filter((agent) => agent.status === "active")
-    : [];
   const [machineName, setMachineName] = useState("my-machine");
-  const [agentId, setAgentId] = useState("");
   const [enrollment, setEnrollment] = useState<EnrollmentToken | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const selectedAgentId = agentId || undefined;
-  const agentOptions = [
-    { label: "No Agent yet", value: "none" },
-    ...activeAgents.map((agent) => ({ label: agent.name, value: agent.id })),
-  ];
 
   const command = enrollment
     ? machineEnrollmentCommand({
         serverUrl,
         token: enrollment.token,
         machineName,
-        ...(selectedAgentId ? { agentId: selectedAgentId } : {}),
       })
     : "";
 
@@ -115,8 +96,7 @@ export function EnrollMachine({
         <CardHeader>
           <CardTitle>Run this command on {machineName}</CardTitle>
           <CardDescription>
-            The command installs one outbound Client Profile. Its Local Policy
-            {selectedAgentId ? " allows the selected Agent." : " starts with no allowed Agents."}
+            The command installs one Organization-bound outbound Client Profile.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-5">
@@ -155,8 +135,8 @@ export function EnrollMachine({
       <CardHeader>
         <CardTitle>Add Machine</CardTitle>
         <CardDescription>
-          Register the Linux host now. Allowing an Agent in its owner-controlled Local Policy is
-          optional.
+          Register the Linux host in this Organization. Agents select it later when requesting a
+          temporary Task.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -176,41 +156,6 @@ export function EnrollMachine({
                 aria-invalid={Boolean(nameError)}
               />
               <FieldError>{nameError}</FieldError>
-            </Field>
-
-            <Field>
-              <FieldLabel htmlFor="machine-agent">Initial allowed Agent (optional)</FieldLabel>
-              {activeAgents.length > 0 ? (
-                <Select
-                  items={agentOptions}
-                  value={agentId || "none"}
-                  onValueChange={(value) => {
-                    setAgentId(value === "none" ? "" : (value ?? ""));
-                  }}
-                >
-                  <SelectTrigger id="machine-agent" className="w-full">
-                    <SelectValue placeholder="No Agent yet" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      <SelectItem value="none">No Agent yet</SelectItem>
-                      {activeAgents.map((agent) => (
-                        <SelectItem key={agent.id} value={agent.id}>{agent.name}</SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              ) : (
-                <div className="flex flex-wrap items-center gap-3">
-                  <span className="text-sm text-muted-foreground">No Agents registered yet.</span>
-                  <Link href="/dashboard/agents/add" className={buttonVariants({ variant: "outline" })}>
-                    <BotIcon /> Register Agent
-                  </Link>
-                </div>
-              )}
-              <FieldDescription>
-                With no Agent selected, the Machine connects but denies every Task locally.
-              </FieldDescription>
             </Field>
 
             <Alert>

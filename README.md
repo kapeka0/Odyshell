@@ -25,8 +25,9 @@ flowchart LR
 ```
 
 The Server owns identity, authorization, idempotency, lifecycle, and audit. The Client independently
-enforces its owner-controlled Local Policy. A Server cannot widen the Organization, Agent,
-duration, concurrency, timeout, or output limits advertised by the Machine.
+enforces its owner-controlled Local Policy. A Server cannot widen the Organization, duration,
+concurrency, timeout, or output limits advertised by the Machine. Agent-to-Machine authority
+exists only inside an authorized Task.
 
 ## Core model
 
@@ -49,8 +50,9 @@ Commands run directly as the Linux user running the Client. There is no sandbox,
 setup, or command filter. Use a dedicated user without root, sudo, or Docker membership and grant
 only the files, credentials, network, and services the Agent needs.
 
-The Client rejects cross-Organization and cross-Agent work, overlong Tasks or Commands, excess
-concurrency and output, replay, expired authority, and malformed protocol messages. Enrollment
+The control plane rejects cross-Organization and cross-Agent work. The Client independently rejects
+cross-Organization work, mismatched Task identity, overlong Tasks or Commands, excess concurrency
+and output, replay, expired authority, and malformed protocol messages. Enrollment
 tokens expire after ten minutes, work once, and are never persisted.
 
 ## Quickstart
@@ -63,8 +65,8 @@ tokens expire after ten minutes, work once, and are never persisted.
    npm install --global @odyshell/cli
    ```
 
-4. In **Machines**, select **Add Machine** and run the generated `ods up` command on the host.
-   Selecting an initially allowed Agent is optional.
+4. In **Machines**, select **Add Machine** and run the generated `ods up` command on the host. The
+   Machine belongs to the Organization; no Agent is selected during enrollment.
 5. From the Agent, call `machines_list`, `task_request`, `command_run`, `command_get`,
    `command_output`, and `task_complete`. A Supervisor approves only when policy requires it.
 

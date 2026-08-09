@@ -135,7 +135,6 @@ export type Command = z.infer<typeof commandSchema>;
 export const localPolicySchema = z
   .object({
     organizationId: idSchema,
-    agentIds: z.array(idSchema).max(256),
     maxTaskDurationSeconds: z
       .number()
       .int()
@@ -172,7 +171,6 @@ export type LocalTaskDecision =
       allowed: false;
       code:
         | "organization_denied"
-        | "agent_denied"
         | "duration_denied"
         | "task_concurrency_denied"
         | "command_concurrency_denied";
@@ -182,7 +180,6 @@ export function localTaskDecision(
   policy: LocalPolicy,
   input: {
     organizationId: string;
-    agentId: string;
     durationSeconds: number;
     activeTasks: number;
     maxConcurrentCommands: number;
@@ -190,9 +187,6 @@ export function localTaskDecision(
 ): LocalTaskDecision {
   if (input.organizationId !== policy.organizationId) {
     return { allowed: false, code: "organization_denied" };
-  }
-  if (!policy.agentIds.includes(input.agentId)) {
-    return { allowed: false, code: "agent_denied" };
   }
   if (input.durationSeconds > policy.maxTaskDurationSeconds) {
     return { allowed: false, code: "duration_denied" };

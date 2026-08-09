@@ -116,8 +116,9 @@ self-hosted mode permits exactly one sovereign Organization. A second Workspace 
 authorization and navigation complexity without serving the MVP.
 
 Human roles belong to the Organization. Agents do not receive Human roles or broad credentials;
-OAuth identifies each Agent and server-side plus Machine-local policy determine whether it may open
-a temporary Task. Commands execute only inside that Task's one-Machine authority.
+OAuth identifies each Agent, and server-side Autonomy Policy or Human supervision determines
+whether it may open a temporary Task. Machine Local Policy enforces the resource ceiling but never
+assigns an Agent. Commands execute only inside that Task's one-Machine authority.
 
 Odyshell Identity manages Organization membership and the current Human roles:
 

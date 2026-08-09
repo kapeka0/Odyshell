@@ -27,15 +27,12 @@ ods --server https://api.example.com up \
   --name production-api
 ```
 
-Pass the optional `--agent-id <agent-id>` when this Profile should immediately allow one Agent.
-
 `ods up` creates an Ed25519 Machine identity, saves a conservative Local Policy, verifies the
 Server, and installs a restartable systemd user service. The token expires after ten minutes,
 works once, and is never persisted.
 
-Without `--agent-id`, the Machine registers and connects with a default-deny Local Policy and
-cannot accept Tasks. When supplied, the initial Local Policy permits only that Agent. It also
-permits one Task and Command at a time, a one-hour Task, a ten-minute Command, and 1 MiB of output.
+The Local Policy permits one Task and Command at a time, a one-hour Task, a ten-minute Command,
+and 1 MiB of output.
 It permits remote human approval but does not configure sudo or a sandbox.
 
 ## Local lifecycle
@@ -69,7 +66,8 @@ automation.
 
 Commands execute as the Linux user running the Client. Use a dedicated user with no root, sudo,
 or Docker membership and grant only the files, credentials, network, and services the Agent needs.
-The Client enforces Organization, Agent, duration, concurrency, timeout, and output limits locally.
+The Client enforces Organization, Task identity, duration, concurrency, timeout, and output limits
+locally. Agents receive temporary Machine authority only through authorized Tasks.
 
 `ods` deliberately has no login, Agent, Task, Command, shell, filesystem, Docker, Session, or MCP
 runtime commands. Keeping remote authorization in the Server prevents a second policy path from

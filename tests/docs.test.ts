@@ -112,7 +112,7 @@ describe("public documentation corpus", () => {
     expect(selfHosting).toContain("BETTER_AUTH_SECRET");
     expect(selfHosting).toContain("ODYSHELL_WEB_KEY");
     expect(selfHosting).toContain("Server's `/mcp` resource");
-    expect(selfHosting).toContain("--agent-id <agent-id>");
+    expect(selfHosting).not.toContain("--agent-id");
     expect(selfHosting).not.toContain("ods agent login");
     expect(selfHosting).not.toContain("ods exec");
   });
@@ -131,6 +131,13 @@ describe("public documentation corpus", () => {
       ),
       "utf8",
     );
+    const machineBindingAdr = readFileSync(
+      resolve(
+        repositoryRoot,
+        "docs/adr/0009-bind-agents-to-machines-only-through-tasks.md",
+      ),
+      "utf8",
+    );
 
     expect(context).toContain("**Task**:");
     expect(context).toContain("**Command**:");
@@ -138,6 +145,7 @@ describe("public documentation corpus", () => {
     expect(context).not.toContain("**Session**:");
     expect(design).toContain("one Agent");
     expect(design).toContain("one Machine and Client Profile");
+    expect(machineBindingAdr).toContain("A Machine belongs to one Organization, never to an Agent");
     expect(design).toContain("There is no caller-supplied environment or standard input");
     expect(design).toContain("The Server is trusted");
     expect(adr).toContain("Organization, Task, and Command");

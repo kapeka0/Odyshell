@@ -11,7 +11,6 @@ export function createTaskMcpRuntime(
     async machines() {
       const machines = await database.listMachineAuthorities(
         principal.organizationId,
-        principal.agentId,
       );
       return { data: machines.map((machine) => ({
         id: machine.machineId,

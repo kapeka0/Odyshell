@@ -34,8 +34,8 @@ event is the first useful Task completed on a real customer Machine without SSH 
 
 1. An Owner creates an account and Odyshell automatically bootstraps its Organization.
 2. An Admin may register an external Agent before or after the Machine.
-3. The Admin installs a Client Profile under a dedicated Linux user. Selecting an initially
-   allowed Agent is optional; no selection produces a default-deny Local Policy.
+3. The Admin installs a Client Profile under a dedicated Linux user. The Machine belongs to the
+   Organization and is never assigned to an Agent.
 4. The Client establishes an authenticated outbound connection and advertises the Local Policy.
 5. The Agent requests one Task for one Machine and operating-system user.
 6. The Task autoapproves inside policy or waits for optional Supervisor approval.
@@ -190,8 +190,8 @@ authorization.
 - the CLI no longer exposes the superseded local stdio MCP authorization path; Agents use the
   remote OAuth MCP adapter or canonical HTTP interface backed by the same Task/Command module.
 - Machine enrollment now binds a sovereign Organization ID into a conservative Task Local Policy
-  before starting the outbound Linux Client. An initially allowed Agent is optional; an empty
-  Agent list keeps the Machine connected while denying every Task.
+  before starting the outbound Linux Client. It never assigns the Machine to an Agent; each
+  authorized Task creates the temporary Agent-to-Machine binding.
 - the published Linux CLI is now Machine-side installation and diagnostics only; Human login,
   Agent runtime, Session/Operation, typed filesystem, Docker, sudo configuration, and local MCP
   command paths were removed instead of preserved as compatibility layers.

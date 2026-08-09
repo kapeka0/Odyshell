@@ -203,7 +203,6 @@ async function writeProfileConfig(
         id: profileName,
         localPolicy: {
           organizationId: "organization-one",
-          agentIds: ["agent-one"],
           maxTaskDurationSeconds: 3600,
           maxConcurrentTasks: 1,
           maxConcurrentCommands: 1,
