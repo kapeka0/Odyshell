@@ -9,7 +9,7 @@
 `@odyshell/protocol` contains the TypeScript types and validation rules used across Odyshell. It
 defines capabilities, Session requests, typed process, filesystem and Docker Operations, and
 messages exchanged between the Server and Client. It also defines the strict Human, Agent, and
-task Session identity contracts used by the current authority model.
+session Session identity contracts used by the current authority model.
 
 The current Client wire protocol is v4. It intentionally rejects protocol v3 peers because
 recursive `fs.remove` is no longer part of the accepted Operation contract. Update the Server and
@@ -26,11 +26,11 @@ per-command environment variables, and up to 1 MiB of base64-encoded standard in
 requests default to a 600-second timeout and 1 MiB of output; the timeout may be requested up to
 24 hours and is reduced by the Server to the Session lifetime remaining.
 
-Programmatic Host Shell Session Requests require a stable Task Run `runId`; manual dashboard
+Programmatic Host Shell Session Requests require a stable Session Run `runId`; manual dashboard
 Sessions are exempt and are never reused implicitly. A non-zero command result does not close the
-Session, so later corrective Operations can continue before explicit task completion. MCP clients
+Session, so later corrective Operations can continue before explicit session completion. MCP clients
 must repeat that `runId` while checking status, executing Operations, completing, and renewing the
-Session so unrelated Task Runs cannot consume its authority.
+Session so unrelated Session Runs cannot consume its authority.
 
 The executor supplies an allowlisted base environment rather than inheriting every Client process
 variable. Explicit environment values apply only to that Operation and are never persisted; a

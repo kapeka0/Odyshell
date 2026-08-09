@@ -15,7 +15,7 @@ type PackageManifest = {
   exports?: unknown;
 };
 
-const releaseVersion = "0.18.0";
+const releaseVersion = "0.19.0";
 const manifests = [
   "apps/cli/package.json",
   "apps/client/package.json",
@@ -25,7 +25,7 @@ const manifests = [
   "packages/protocol/package.json",
 ].map(readManifest);
 
-describe("0.18.0 release contract", () => {
+describe("0.19.0 release contract", () => {
   it("exposes the built Server as the root production entrypoint", () => {
     const rootPackage = JSON.parse(
       readFileSync(resolve(process.cwd(), "package.json"), "utf8"),
@@ -106,24 +106,25 @@ describe("0.18.0 release contract", () => {
     ).toHaveLength(1);
   });
 
-  it("documents the Linux Machine CLI installation contract", () => {
+  it("documents the cross-platform Machine CLI installation contract", () => {
     for (const path of ["README.md", "apps/cli/README.md"]) {
       const documentation = readFileSync(resolve(process.cwd(), path), "utf8");
       expect(documentation).toContain("npm install --global @odyshell/cli");
       expect(documentation).toContain("Linux");
+      expect(documentation).toContain("Windows");
+      expect(documentation).toContain("macOS");
     }
     const cliManifest = readFileSync(
       resolve(process.cwd(), "apps/cli/package.json"),
       "utf8",
     );
-    expect(cliManifest).toContain('"os": [');
-    expect(cliManifest).toContain('"linux"');
+    expect(cliManifest).not.toContain('"os": [');
     expect(
       readFileSync(
         resolve(process.cwd(), "apps/web/content/docs/commands.mdx"),
         "utf8",
       ),
-    ).toContain("POST /v1/tasks/:taskId/commands");
+    ).toContain("POST /v1/sessions/:sessionId/commands");
 
     const releaseNotes = readFileSync(
       resolve(process.cwd(), `docs/releases/${releaseVersion}.md`),

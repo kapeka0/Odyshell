@@ -16,7 +16,7 @@ and protocol package.
    `docs/releases/<version>.md`. Confirm no credentials, enrollment tokens, Client identities,
    local state, or environment files are staged.
 2. Run `pnpm release:check`, push the commit, and wait for the cross-platform CI workflow.
-3. Deploy the Server first. Confirm its control and Task migrations and health before deploying
+3. Deploy the Server first. Confirm its control and Session migrations and health before deploying
    the web app.
 4. Run `pnpm migrate:identity` with the production Web identity environment. The command is
    idempotent and takes a PostgreSQL advisory lock. Cloud Web instances never migrate from a
@@ -27,7 +27,7 @@ and protocol package.
    documentation smoke tests and E2E; packs protocol and CLI; creates the immutable tag;
    publishes the packages through npm Trusted Publishing; creates the GitHub Release; and audits
    all public version surfaces.
-7. Validate enrollment, Task approval, Command execution, audit, expiry, cancellation, and OAuth
+7. Validate enrollment, Session approval, Command execution, audit, expiry, cancellation, and OAuth
    revocation from a desktop and Raspberry Pi.
 8. If any migration fails, stop the rollout and fix forward. A schema rollback must never
    reactivate revoked authority.

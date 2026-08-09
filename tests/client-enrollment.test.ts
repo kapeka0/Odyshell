@@ -14,7 +14,7 @@ describe("Client enrollment", () => {
     );
   });
 
-  it("persists a conservative Task Local Policy without the one-time token", async () => {
+  it("persists a conservative Session Local Policy without the one-time token", async () => {
     const directory = await mkdtemp(join(tmpdir(), "odyshell-enroll-"));
     temporaryDirectories.push(directory);
     const configPath = join(directory, "client.json");
@@ -47,14 +47,14 @@ describe("Client enrollment", () => {
     const source = await readFile(configPath, "utf8");
     expect(source).not.toContain("ods_enroll_secret");
     const saved = JSON.parse(source) as {
-      taskProfile: unknown;
+      sessionProfile: unknown;
     };
-    expect(saved.taskProfile).toEqual({
+    expect(saved.sessionProfile).toEqual({
       id: "default",
       localPolicy: {
         organizationId: "organization-one",
-        maxTaskDurationSeconds: 3_600,
-        maxConcurrentTasks: 1,
+        maxSessionDurationSeconds: 3_600,
+        maxConcurrentSessions: 1,
         maxConcurrentCommands: 1,
         maxCommandTimeoutSeconds: 600,
         maxCommandOutputBytes: 1024 * 1024,
@@ -83,9 +83,9 @@ describe("Client enrollment", () => {
     });
 
     const saved = JSON.parse(await readFile(configPath, "utf8")) as {
-      taskProfile: { localPolicy: Record<string, unknown> };
+      sessionProfile: { localPolicy: Record<string, unknown> };
     };
-    expect(saved.taskProfile.localPolicy).not.toHaveProperty("agentIds");
+    expect(saved.sessionProfile.localPolicy).not.toHaveProperty("agentIds");
   });
 
   it("fails closed when enrollment has no sovereign Organization identity", async () => {

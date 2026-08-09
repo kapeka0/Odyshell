@@ -20,12 +20,12 @@ type AuthState = {
   lastHeartbeatPersistedAt?: number;
 };
 
-export type ClientGatewayTaskHooks = {
+export type ClientGatewaySessionHooks = {
   authenticated(input: {
     machineId: string;
     controlOrganizationId: string;
-    taskProfile: NonNullable<
-      Extract<ClientToServerMessage, { type: "authenticate" }>["taskProfile"]
+    sessionProfile: NonNullable<
+      Extract<ClientToServerMessage, { type: "authenticate" }>["sessionProfile"]
     >;
   }): Promise<void>;
   reconnected(input: {
@@ -34,14 +34,14 @@ export type ClientGatewayTaskHooks = {
   }): Promise<
     Extract<
       ServerToClientMessage,
-      { type: `task.${string}` | `command.${string}` }
+      { type: `session.${string}` | `command.${string}` }
     >[]
   >;
   disconnected(machineId: string, organizationId: string): Promise<void>;
   message(
     message: Extract<
       ClientToServerMessage,
-      { type: `task.${string}` | `command.${string}` }
+      { type: `session.${string}` | `command.${string}` }
     >,
     context: { machineId: string; organizationId: string },
   ): Promise<void>;
@@ -82,7 +82,7 @@ export class ClientGateway {
       | "setMachineOffline"
       | "setMachineOnline"
     >,
-    private readonly taskHooks: ClientGatewayTaskHooks,
+    private readonly sessionHooks: ClientGatewaySessionHooks,
   ) {
     this.events.setMaxListeners(0);
   }
@@ -120,7 +120,7 @@ export class ClientGateway {
           this.connections.delete(state.machineId!);
           await this.db.setMachineOffline(state.machineId!);
           if (state.organizationId) {
-            await this.taskHooks.disconnected(
+            await this.sessionHooks.disconnected(
               state.machineId!,
               state.organizationId,
             );
@@ -206,7 +206,7 @@ export class ClientGateway {
       throw new Error("Machine identity mismatch");
     }
     if (!state.machineId || !state.controlOrganizationId || !state.organizationId) {
-      throw new Error("Authenticated Machine has no Task authority context");
+      throw new Error("Authenticated Machine has no Session authority context");
     }
 
     switch (message.type) {
@@ -222,13 +222,13 @@ export class ClientGateway {
       case "pong":
         this.events.emit(`ping:${message.pingId}`);
         return;
-      case "task.opened":
-      case "task.open_failed":
-      case "task.closed":
+      case "session.opened":
+      case "session.open_failed":
+      case "session.closed":
       case "command.started":
       case "command.output":
       case "command.completed":
-        await this.taskHooks.message(message, {
+        await this.sessionHooks.message(message, {
           machineId: state.machineId,
           organizationId: state.organizationId,
         });
@@ -269,7 +269,7 @@ export class ClientGateway {
     }
     state.machineId = message.machineId;
     state.controlOrganizationId = machine.organizationId;
-    state.organizationId = message.taskProfile.localPolicy.organizationId;
+    state.organizationId = message.sessionProfile.localPolicy.organizationId;
     await this.runMachineLifecycle(message.machineId, async () => {
       if (!socketReadyForAuthentication(socket)) return;
       const current = await this.db.machinePublicKey(message.machineId);
@@ -284,10 +284,10 @@ export class ClientGateway {
         socket.close(4004, "Machine access revoked");
         return;
       }
-      await this.taskHooks.authenticated({
+      await this.sessionHooks.authenticated({
         machineId: message.machineId,
         controlOrganizationId: machine.organizationId,
-        taskProfile: message.taskProfile,
+        sessionProfile: message.sessionProfile,
       });
       const previous = this.connections.get(message.machineId);
       if (previous && previous !== socket) {
@@ -308,11 +308,11 @@ export class ClientGateway {
         type: "authenticated",
         machineId: message.machineId,
       });
-      for (const taskMessage of await this.taskHooks.reconnected({
+      for (const sessionMessage of await this.sessionHooks.reconnected({
         machineId: message.machineId,
         organizationId: state.organizationId!,
       })) {
-        this.sendSocket(socket, taskMessage);
+        this.sendSocket(socket, sessionMessage);
       }
       this.events.emit("machine.online", message.machineId);
       this.notifyOrganization(machine.organizationId);

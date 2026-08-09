@@ -135,8 +135,8 @@ export function EnrollMachine({
       <CardHeader>
         <CardTitle>Add Machine</CardTitle>
         <CardDescription>
-          Register the Linux host in this Organization. Agents select it later when requesting a
-          temporary Task.
+          Register the Windows, Linux, or macOS host in this Organization. Agents select it later when requesting a
+          temporary Session.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -162,7 +162,7 @@ export function EnrollMachine({
               <ShieldCheckIcon aria-hidden="true" />
               <AlertTitle>Conservative Local Policy</AlertTitle>
               <AlertDescription>
-                One Task and one Command at a time, one-hour Task limit, ten-minute Command limit,
+                One Session and one Command at a time, one-hour Session limit, ten-minute Command limit,
                 1 MiB output ceiling, no sudo configuration, and human approval allowed.
               </AlertDescription>
             </Alert>

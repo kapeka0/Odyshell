@@ -1,116 +1,75 @@
-# Design — Odyshell
+# Odyshell visual guide
 
-This document defines the visual foundation shared by Odyshell's public,
-authenticated and task-focused interfaces. It describes the intended qualities
-of the experience without prescribing a particular component or implementation.
+The visual language follows the supplied product references: a quiet gray workspace shell, compact
+controls, thin borders, small radii, precise typography, and generous white content areas. Odyshell
+uses the same system across dashboard, authentication, documentation, and landing without copying
+another product's branding or content.
 
-## Design character
+## Character
 
-Odyshell is modern, minimal and quiet. It is security infrastructure, so the
-interface earns trust through clarity, restraint and legible system state rather
-than decoration.
-
-Every surface should feel:
-
-- Calm, precise and purposeful
-- Dense only where operational work benefits from density
-- Consistent without making unlike tasks look identical
-- Confident without becoming promotional or theatrical
-
-## Visual hierarchy
-
-- Let content, state and task priority determine the hierarchy.
-- Give each view one unmistakable primary purpose.
-- Use whitespace to separate concepts before introducing additional boundaries.
-- Keep headings compact, sentence case and proportional to their importance.
-- Reserve the strongest contrast for primary content and actions.
-- Keep supporting information visibly subordinate without making it illegible.
+- Calm, precise, light, and operational.
+- Content and live state create hierarchy; decoration does not.
+- Dense tables and timelines remain readable through alignment and whitespace.
+- Security-sensitive actions are explicit and visually restrained.
 
 ## Color
 
-Use the neutral Odyshell palette defined in `tokens.css`.
+- Page canvas: cool neutral gray.
+- Sidebar and main surfaces: near-white with a subtle one-step contrast.
+- Borders: low-contrast neutral, always visible.
+- Text: near-black primary, medium-gray secondary, quiet metadata.
+- Green: connected, active, succeeded.
+- Amber: pending approval or attention.
+- Red: destructive, denied, revoked, or failed.
+- Blue: selected informational state.
 
-- Light paper: `oklch(0.99 0 0)`
-- Light ink: `oklch(0 0 0)`
-- Dark paper: `oklch(0 0 0)`
-- Dark ink: `oklch(1 0 0)`
-- Focus: the current foreground with a visible offset
-
-Neutral paper, ink and grayscale surfaces form the default visual language.
-Semantic colors communicate meaningful status only; they are not decoration.
-Color must never be the sole carrier of meaning.
+Semantic color always appears with text or an icon. Large saturated backgrounds are avoided.
 
 ## Typography
 
-- Use Manrope for public landing display and body copy at weights 400–600.
-- Use Geist for authenticated, authentication and documentation display and body copy at weights
-  400–650.
-- Use Geist Mono for data, identifiers and commands at weights 400–550.
-- Keep body copy direct, compact and easy to scan.
-- Use tight display tracking only for the public landing headline.
-- Keep application headings restrained and sentence case.
-- Preserve tabular clarity where values need to be compared.
+- Geist for application, authentication, and docs.
+- Manrope for landing display copy.
+- Geist Mono for commands, output, IDs, timestamps, and code.
+- Application headings are compact and sentence case; landing headlines may be large and tightly
+  tracked.
 
-## Spacing, geometry and density
+## Geometry and spacing
 
-- Use the shared four-point spacing scale defined in `tokens.css`.
-- Build rhythm from named spacing values rather than isolated measurements.
-- Keep radii and border treatments consistent across surfaces.
-- Prefer alignment and spacing over nested containers.
-- Public surfaces may use wider measures and more whitespace.
-- Operational surfaces may be denser, but never cramped.
-- Task-focused surfaces should remove anything unrelated to task completion.
+- Four-point spacing system.
+- Controls: 32–36 px high; compact controls: 28 px.
+- Buttons and inputs: 6–8 px radius.
+- Cards, tables, and large content blocks: 12–16 px radius.
+- Borders: 1 px neutral; shadows are rare and shallow.
+- Dashboard sidebar: approximately 232 px expanded, with compact icon-first rows and a tonal active
+  selection.
+- Main content uses a readable max width, large desktop gutters, and full-width operational tables
+  only where comparison benefits.
+
+## Components
+
+- Buttons use concise labels, medium weight, and no decorative icons in final form actions.
+- Status badges are compact rounded rectangles, not oversized pills.
+- Tables use quiet row separators and reserve menus for secondary actions.
+- Timeline entries lead with actor/action, then exact command or output in a bordered mono surface.
+- Canvas nodes share the table vocabulary: thin border, compact radius, clear state, and one primary
+  relationship label.
+- Dialogs keep actions bottom-right, Cancel before the primary action.
 
 ## Motion
 
-- Use motion only to explain entry, continuity or a meaningful state change.
-- Animate opacity and transform rather than layout-affecting properties.
-- Keep feedback immediate and transitions brief.
-- Respect reduced-motion preferences.
-- Under reduced motion, use opacity-only transitions no longer than 150ms.
-- Avoid celebratory, ambient or decorative animation in operational flows.
+Motion explains topology, continuity, optimistic mutations, and live state. Animate opacity and
+transform, keep transitions brief, and honor reduced motion. The Overview canvas may animate active
+Agent→Session→Machine edges; inactive topology remains still.
 
-## Interaction tone
+## Landing
 
-- Prefer silent, legible success over celebratory feedback.
-- Make focus immediate, visible and consistent.
-- Keep labels and actions concise, active and sentence case.
-- Use filled high-contrast treatment for the primary action.
-- Use quieter treatment for secondary actions.
-- Add visual cues only when they clarify meaning or direction.
+The landing follows the structural rhythm of the provided T3 reference: centered oversized hero,
+credible product demonstration, alternating feature narratives, a dark technical section, direct
+pricing, and a final CTA. Odyshell's copy and visual assets remain original and demonstrate the real
+Session control plane.
 
-## Surface character
+## Accessibility
 
-### Public
-
-Public pages may use broader typography and more whitespace. They should explain
-the product through a compact value proposition, a credible product example,
-clear trust boundaries and one direct next step. The real product is the primary
-source of visual interest. Public geometry uses compact radii and a wide layout with deliberate
-24-pixel gutters at desktop scale; avoid pill-shaped page containers and oversized cards.
-
-### Authenticated
-
-Authenticated pages are operational workspaces. They should prioritize current
-state, available work and clear navigation while avoiding promotional content
-and decorative enrichment. Branding remains subordinate to the user's workspace
-and task.
-
-### Authentication and activation
-
-Authentication and activation are narrow, task-focused journeys. They should
-provide enough product context to establish trust, then remove distractions and
-make progress, success and failure unmistakable.
-
-## Shared identity
-
-All surfaces share:
-
-- The neutral palette and semantic status colors
-- Geist and Geist Mono
-- The spacing scale, radii, borders and focus treatment
-- Concise, sentence-case language
-- Restrained motion and a clear hierarchy
-
-Surface differences should come from task, density and context—not from
-unrelated visual systems.
+All interactive elements need accessible names, visible keyboard focus, and a minimum practical
+target size. Information cannot depend on color alone. Dialog focus is trapped and restored. Tables,
+canvas fallbacks, timeline output, and reduced-motion states remain usable without pointer motion.

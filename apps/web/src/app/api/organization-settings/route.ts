@@ -6,7 +6,7 @@ import {
   cloudRouteError,
   requireCloudAdminRouteIdentity,
 } from "@/lib/cloud-route";
-import { auth } from "@/lib/auth";
+import { getAuth } from "@/lib/auth";
 
 const settingsSchema = z
   .object({
@@ -31,7 +31,7 @@ export async function PUT(request: Request) {
       authorization.identity,
       { extraBody: parsed.data },
     );
-    await auth.api.updateOrganization({
+    await getAuth().api.updateOrganization({
       headers: await headers(),
       body: {
         organizationId: authorization.identity.organization.externalId,

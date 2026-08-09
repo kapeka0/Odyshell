@@ -37,8 +37,8 @@ function ConsentDecision() {
 
   return (
     <AuthShell
-      title="Authorize Agent access"
-      description="Allow this MCP client to act through your active organization. Odyshell policies remain authoritative."
+      title="Authorize Odyshell access"
+      description="Allow this Agent or CLI to act through your active organization. Odyshell policies remain authoritative."
     >
       <div className="flex flex-col gap-4">
         {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}

@@ -12,7 +12,7 @@ import {
   identityRoles,
 } from "./identity-permissions";
 
-const oauthScopes = ["openid", "profile", "email", "offline_access", "odyshell:agent"];
+const oauthScopes = ["openid", "profile", "email", "offline_access", "odyshell:agent", "odyshell:cli"];
 
 export function createOdyshellAuth(
   environment: NodeJS.ProcessEnv,
@@ -142,7 +142,7 @@ export function createOdyshellAuth(
         refreshTokenExpiresIn: 30 * 24 * 60 * 60,
         allowDynamicClientRegistration: true,
         allowUnauthenticatedClientRegistration: true,
-        clientRegistrationDefaultScopes: ["openid", "profile", "email", "odyshell:agent"],
+        clientRegistrationDefaultScopes: ["openid", "profile", "email", "odyshell:agent", "odyshell:cli"],
         clientRegistrationAllowedScopes: oauthScopes,
         clientCredentialGrantDefaultScopes: ["odyshell:agent"],
         postLogin: {
@@ -172,8 +172,14 @@ export function createOdyshellAuth(
           );
           return role ? canAdministerOrganization(role) : false;
         },
-        customAccessTokenClaims: ({ referenceId }) =>
-          referenceId ? { organization_id: referenceId } : {},
+        customAccessTokenClaims: async ({ referenceId, user }) => {
+          if (!referenceId) return {};
+          const role = user ? identityRole((await organizationRoleFor(user.id, referenceId)) ?? "") : null;
+          return {
+            organization_id: referenceId,
+            ...(role ? { organization_role: role } : {}),
+          };
+        },
       }),
       nextCookies(),
     ],

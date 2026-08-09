@@ -102,19 +102,19 @@ describe("cloud control boundaries", () => {
 
   it("exposes only allowlisted scalar control metadata", () => {
     expect(privacySafeControlMetadata({
-      revokedTasks: 3,
+      revokedSessions: 3,
       deletedAgents: 2,
       disconnected: true,
       command: "cat /etc/shadow",
       stdout: "secret",
       kind: "process.exec",
     })).toEqual({
-      revokedTasks: "3",
+      revokedSessions: "3",
       deletedAgents: "2",
       disconnected: "true",
     });
     expect(privacySafeControlMetadata({
-      revokedTasks: -1,
+      revokedSessions: -1,
       deletedAgents: "2",
       disconnected: "yes",
     })).toEqual({});
@@ -150,8 +150,16 @@ describe("cloud control boundaries", () => {
     expect(cloudWebKey({ NODE_ENV: "production" })).toBeUndefined();
     expect(cloudWebUrl({ NODE_ENV: "production" }, false)).toBeUndefined();
     expect(entitlementsFor("unknown")).toEqual({
+      memberLimit: 1,
       machineLimit: 2,
-      activeAgentLimit: 3,
+      activeAgentLimit: 2,
+      monthlyPricePerMemberCents: 0,
+    });
+    expect(entitlementsFor("pro")).toEqual({
+      memberLimit: 20,
+      machineLimit: 20,
+      activeAgentLimit: null,
+      monthlyPricePerMemberCents: 3_000,
     });
   });
 

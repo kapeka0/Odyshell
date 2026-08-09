@@ -1,7 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { EllipsisIcon, Trash2Icon } from "lucide-react";
+import { EllipsisIcon, ShieldCheckIcon, ShieldOffIcon, Trash2Icon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { CopyableValue } from "@/components/copyable-value";
 import {
@@ -22,10 +22,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/spinner";
@@ -35,10 +38,10 @@ import { formatDashboardTimestamp } from "@/lib/date-time";
 
 export function AgentList({
   agents,
-  canDelete,
+  canManage,
 }: {
   agents: CloudAgent[];
-  canDelete: boolean;
+  canManage: boolean;
 }) {
   const { refresh, state } = useDashboard();
   const timeZone = state.status === "ready" ? state.context.userPreferences.timeZone : "System";
@@ -46,7 +49,7 @@ export function AgentList({
     () => [
       {
         id: "search",
-        accessorFn: (agent) => `${agent.name} ${agent.id} ${agent.kind}`,
+        accessorFn: (agent) => `${agent.name} ${agent.id} ${agent.role}`,
       },
       {
         accessorKey: "name",
@@ -71,12 +74,14 @@ export function AgentList({
         ),
       },
       {
-        accessorKey: "kind",
+        accessorKey: "role",
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Type" />
+          <DataTableColumnHeader column={column} title="Role" />
         ),
         cell: ({ row }) => (
-          <span className="capitalize">{row.original.kind}</span>
+          <Badge variant={row.original.role === "operator" ? "secondary" : "outline"}>
+            {row.original.role === "operator" ? "Operator" : "Standard"}
+          </Badge>
         ),
         filterFn: "equals",
       },
@@ -87,22 +92,6 @@ export function AgentList({
         ),
         cell: ({ row }) => <StatusBadge status={row.original.status} />,
         filterFn: "equals",
-      },
-      {
-        accessorKey: "parentAgentId",
-        header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Parent" />
-        ),
-        cell: ({ row }) =>
-          row.original.parentAgentId ? (
-            <CopyableValue
-              value={row.original.parentAgentId}
-              label="Parent ID"
-              className="font-mono text-xs text-muted-foreground"
-            />
-          ) : (
-            <span className="text-muted-foreground">—</span>
-          ),
       },
       {
         accessorKey: "createdAt",
@@ -118,7 +107,7 @@ export function AgentList({
           </time>
         ),
       },
-      ...(canDelete
+      ...(canManage
         ? [{
             id: "actions",
             enableSorting: false,
@@ -129,7 +118,7 @@ export function AgentList({
           } satisfies ColumnDef<CloudAgent>]
         : []),
     ],
-    [canDelete, refresh, timeZone],
+    [canManage, refresh, timeZone],
   );
 
   return (
@@ -141,11 +130,11 @@ export function AgentList({
       emptyMessage="No Agents match these filters."
       filters={[
         {
-          columnId: "kind",
-          label: "Types",
+          columnId: "role",
+          label: "Roles",
           options: [
-            { label: "Independent", value: "independent" },
-            { label: "Managed", value: "managed" },
+            { label: "Standard", value: "standard" },
+            { label: "Operator", value: "operator" },
           ],
         },
         {
@@ -169,6 +158,7 @@ function AgentActions({
   refresh: () => Promise<unknown>;
 }) {
   const [open, setOpen] = useState(false);
+  const [roleOpen, setRoleOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -186,12 +176,40 @@ function AgentActions({
       setOpen(false);
       toast.add({
         title: "Agent removed",
-        description: `${agent.name} can no longer request Tasks.`,
+        description: `${agent.name} can no longer request Sessions.`,
         type: "success",
       });
       await refresh();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not remove Agent");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function changeRole() {
+    const nextRole = agent.role === "operator" ? "standard" : "operator";
+    setPending(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/agents/${agent.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ role: nextRole }),
+      });
+      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Could not change Agent role");
+      setRoleOpen(false);
+      toast.add({
+        title: nextRole === "operator" ? "Operator access granted" : "Approval required",
+        description: nextRole === "operator"
+          ? `${agent.name} can now open Sessions without Human approval.`
+          : `${agent.name} now needs Human approval for every Session.`,
+        type: "success",
+      });
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not change Agent role");
     } finally {
       setPending(false);
     }
@@ -213,10 +231,23 @@ function AgentActions({
           <EllipsisIcon aria-hidden="true" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem variant="destructive" onClick={() => setOpen(true)}>
-            <Trash2Icon aria-hidden="true" />
-            Remove
-          </DropdownMenuItem>
+          <DropdownMenuGroup>
+            <DropdownMenuItem onClick={() => setRoleOpen(true)}>
+              {agent.role === "operator" ? (
+                <ShieldOffIcon aria-hidden="true" />
+              ) : (
+                <ShieldCheckIcon aria-hidden="true" />
+              )}
+              {agent.role === "operator" ? "Require approval" : "Make Operator"}
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            <DropdownMenuItem variant="destructive" onClick={() => setOpen(true)}>
+              <Trash2Icon aria-hidden="true" />
+              Remove
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -225,7 +256,7 @@ function AgentActions({
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {agent.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              Credentials and active Tasks for this identity will be revoked.
+              Credentials and active Sessions for this identity will be revoked.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {error ? (
@@ -240,6 +271,29 @@ function AgentActions({
             >
               {pending ? <Spinner /> : null}
               {pending ? "Removing…" : "Remove"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={roleOpen} onOpenChange={setRoleOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {agent.role === "operator" ? "Require approval?" : `Make ${agent.name} an Operator?`}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {agent.role === "operator"
+                ? "Active Sessions will be revoked. Future Sessions require explicit Human approval."
+                : "This Agent will be able to open temporary shell Sessions on Organization Machines without explicit Human approval."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction disabled={pending} onClick={() => void changeRole()}>
+              {pending ? <Spinner /> : null}
+              {agent.role === "operator" ? "Require approval" : "Grant Operator"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

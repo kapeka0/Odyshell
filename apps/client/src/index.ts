@@ -7,7 +7,7 @@ import {
   MAX_CLIENT_CLOCK_SKEW_MILLISECONDS,
   PROTOCOL_VERSION,
   clientConfigSchema,
-  localTaskDecision,
+  localSessionDecision,
   parseServerMessage,
   type ClientConfig,
   type ClientRuntimeInfo,
@@ -30,7 +30,7 @@ import {
   normalizeServerUrl,
 } from "./platform.js";
 
-export const CLIENT_VERSION = "0.18.0";
+export const CLIENT_VERSION = "0.19.0";
 
 export {
   clientConfigPathForProfile,
@@ -45,12 +45,18 @@ export {
   installLinuxUserService,
   linuxServiceNameForConfig,
   linuxUserServicePath,
+  macosServiceNameForConfig,
+  macosUserServicePath,
+  renderMacosUserService,
+  renderWindowsLauncher,
   removeLinuxUserService,
   removeClientService,
   renderLinuxUserService,
   restartClientService,
   stopClientService,
   stopLinuxUserService,
+  windowsLauncherPath,
+  windowsTaskNameForConfig,
 } from "./service.js";
 export {
   listClientProfiles,
@@ -110,12 +116,12 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
     machineName: options.machineName,
     privateKeyPem: privateKey,
     stateDirectory: resolve(dirname(configPath), "state"),
-    taskProfile: {
+    sessionProfile: {
       id: options.profileName ?? "default",
       localPolicy: {
         organizationId: body.organizationId,
-        maxTaskDurationSeconds: 3_600,
-        maxConcurrentTasks: 1,
+        maxSessionDurationSeconds: 3_600,
+        maxConcurrentSessions: 1,
         maxConcurrentCommands: 1,
         maxCommandTimeoutSeconds: 600,
         maxCommandOutputBytes: 1024 * 1024,
@@ -144,7 +150,7 @@ export async function inspectClientRuntime(): Promise<ClientRuntimeInfo> {
   };
 }
 
-export function adjustedTaskDeadline(
+export function adjustedSessionDeadline(
   expiresAt: string,
   serverTime: string | undefined,
   localNow = Date.now(),
@@ -152,13 +158,13 @@ export function adjustedTaskDeadline(
   const serverNow = serverTime === undefined ? localNow : Date.parse(serverTime);
   const absoluteExpiry = Date.parse(expiresAt);
   if (!Number.isFinite(serverNow) || !Number.isFinite(absoluteExpiry)) {
-    throw new Error("Task deadline is invalid");
+    throw new Error("Session deadline is invalid");
   }
   if (
     serverTime !== undefined &&
     Math.abs(localNow - serverNow) > MAX_CLIENT_CLOCK_SKEW_MILLISECONDS
   ) {
-    throw new Error("Client clock is outside the allowed Task skew");
+    throw new Error("Client clock is outside the allowed Session skew");
   }
   return new Date(localNow + (absoluteExpiry - serverNow));
 }
@@ -166,7 +172,7 @@ export function adjustedTaskDeadline(
 export function commandTimeoutMilliseconds(
   requestedSeconds: number,
   localMaximumSeconds: number,
-  taskExpiresAt: Date,
+  sessionExpiresAt: Date,
   now = Date.now(),
 ): number {
   if (
@@ -180,17 +186,17 @@ export function commandTimeoutMilliseconds(
   }
   return Math.max(
     0,
-    Math.min(requestedSeconds * 1_000, taskExpiresAt.getTime() - now),
+    Math.min(requestedSeconds * 1_000, sessionExpiresAt.getTime() - now),
   );
 }
 
 export async function terminateLocalAuthority(
   cancelCommands: Array<() => Promise<void>>,
-  closeTasks: Array<() => Promise<void>>,
+  closeSessions: Array<() => Promise<void>>,
 ): Promise<void> {
   const results = [
     ...await Promise.allSettled(cancelCommands.map(async (cancel) => cancel())),
-    ...await Promise.allSettled(closeTasks.map(async (close) => close())),
+    ...await Promise.allSettled(closeSessions.map(async (close) => close())),
   ];
   const failures = results.filter(
     (result): result is PromiseRejectedResult => result.status === "rejected",
@@ -207,7 +213,7 @@ export function terminalMachineClose(code: number): boolean {
   return code === 4004;
 }
 
-type ActiveTask = {
+type ActiveSession = {
   organizationId: string;
   agentId: string;
   clientProfileId: string;
@@ -323,9 +329,9 @@ export class Client {
   private reconnectTimer: NodeJS.Timeout | undefined;
   private reconnectDelay = 1_000;
   private stopped = false;
-  private readonly tasks = new Map<string, ActiveTask>();
-  private readonly closedTasks = new Set<string>();
-  private readonly closingTasks = new Map<string, Promise<void>>();
+  private readonly sessions = new Map<string, ActiveSession>();
+  private readonly closedSessions = new Set<string>();
+  private readonly closingSessions = new Map<string, Promise<void>>();
   private readonly commands = new Map<string, PendingCommand>();
   private readonly outputTruncatedCommands = new Set<string>();
   private readonly unconfirmedOutputCommands = new Set<string>();
@@ -342,8 +348,8 @@ export class Client {
   private failClosedKeepalive: NodeJS.Timeout | undefined;
 
   constructor(private readonly config: ClientConfig) {
-    if (!config.taskProfile) {
-      throw new Error("Client configuration requires one Task Profile");
+    if (!config.sessionProfile) {
+      throw new Error("Client configuration requires one Session Profile");
     }
     assertLocalAuthorityNotQuarantined(config.stateDirectory);
     this.journal = new CommandJournal(resolve(config.stateDirectory, "commands.sqlite"));
@@ -533,14 +539,14 @@ export class Client {
 
   private async dropLocalAuthority(): Promise<void> {
     const commands = [...this.commands.values()];
-    const tasks = [...this.tasks.values()];
-    for (const task of tasks) task.closing = true;
-    this.tasks.clear();
+    const sessions = [...this.sessions.values()];
+    for (const session of sessions) session.closing = true;
+    this.sessions.clear();
     let terminationError: unknown;
     try {
       await terminateLocalAuthority(
         commands.map((command) => async () => command.cancel()),
-        tasks.map((task) => async () => clearTimeout(task.expiryTimer)),
+        sessions.map((session) => async () => clearTimeout(session.expiryTimer)),
       );
     } catch (error) {
       terminationError = error;
@@ -565,10 +571,10 @@ export class Client {
           protocolVersion: PROTOCOL_VERSION,
           signature,
           ...(this.runtime ? { runtime: this.runtime } : {}),
-          taskProfile: {
-            id: this.config.taskProfile!.id,
+          sessionProfile: {
+            id: this.config.sessionProfile!.id,
             operatingSystemUser: userInfo().username,
-            localPolicy: this.config.taskProfile!.localPolicy,
+            localPolicy: this.config.sessionProfile!.localPolicy,
           },
         });
         break;
@@ -601,11 +607,11 @@ export class Client {
           pingId: message.pingId,
         });
         break;
-      case "task.open":
-        if (this.authenticated) await this.openTask(message);
+      case "session.open":
+        if (this.authenticated) await this.openSession(message);
         break;
-      case "task.close":
-        if (this.authenticated) await this.closeTask(message.taskId, message.reason);
+      case "session.close":
+        if (this.authenticated) await this.closeSession(message.sessionId, message.reason);
         break;
       case "command.start":
         if (this.authenticated) {
@@ -626,19 +632,19 @@ export class Client {
     }
   }
 
-  private async openTask(
-    message: Extract<ServerToClientMessage, { type: "task.open" }>,
+  private async openSession(
+    message: Extract<ServerToClientMessage, { type: "session.open" }>,
   ): Promise<void> {
-    const taskProfile = this.config.taskProfile!;
+    const sessionProfile = this.config.sessionProfile!;
     try {
-      if (taskProfile.id !== message.clientProfileId) {
-        throw new Error("Task Client Profile is not configured locally");
+      if (sessionProfile.id !== message.clientProfileId) {
+        throw new Error("Session Client Profile is not configured locally");
       }
-      if (this.closedTasks.has(message.taskId)) {
-        this.deliver({ type: "task.closed", taskId: message.taskId, reason: "already_closed" });
+      if (this.closedSessions.has(message.sessionId)) {
+        this.deliver({ type: "session.closed", sessionId: message.sessionId, reason: "already_closed" });
         return;
       }
-      const existing = this.tasks.get(message.taskId);
+      const existing = this.sessions.get(message.sessionId);
       if (existing) {
         if (
           existing.closing ||
@@ -648,24 +654,24 @@ export class Client {
           existing.contractExpiresAt !== message.expiresAt ||
           existing.maxConcurrentCommands !== message.maxConcurrentCommands
         ) {
-          throw new Error("Task retry does not match active local authority");
+          throw new Error("Session retry does not match active local authority");
         }
-        this.sendTaskOpened(message.taskId);
+        this.sendSessionOpened(message.sessionId);
         return;
       }
-      const deadline = adjustedTaskDeadline(message.expiresAt, message.serverTime);
+      const deadline = adjustedSessionDeadline(message.expiresAt, message.serverTime);
       const durationSeconds = Math.ceil((deadline.getTime() - Date.now()) / 1_000);
-      const decision = localTaskDecision(taskProfile.localPolicy, {
+      const decision = localSessionDecision(sessionProfile.localPolicy, {
         organizationId: message.organizationId,
         durationSeconds,
-        activeTasks: this.tasks.size,
+        activeSessions: this.sessions.size,
         maxConcurrentCommands: message.maxConcurrentCommands,
       });
       if (!decision.allowed) {
-        throw new Error(`Task violates Local Policy: ${decision.code}`);
+        throw new Error(`Session violates Local Policy: ${decision.code}`);
       }
-      if (durationSeconds <= 0) throw new Error("Task expired before local authority opened");
-      const task: ActiveTask = {
+      if (durationSeconds <= 0) throw new Error("Session expired before local authority opened");
+      const session: ActiveSession = {
         organizationId: message.organizationId,
         agentId: message.agentId,
         clientProfileId: message.clientProfileId,
@@ -674,70 +680,70 @@ export class Client {
         maxConcurrentCommands: message.maxConcurrentCommands,
         closing: false,
         expiryTimer: setTimeout(
-          () => this.closeTaskSafely(message.taskId, "expired"),
+          () => this.closeSessionSafely(message.sessionId, "expired"),
           deadline.getTime() - Date.now(),
         ),
       };
-      this.tasks.set(message.taskId, task);
-      if (this.closedTasks.has(message.taskId)) {
-        await this.closeTask(message.taskId, "closed_while_opening");
+      this.sessions.set(message.sessionId, session);
+      if (this.closedSessions.has(message.sessionId)) {
+        await this.closeSession(message.sessionId, "closed_while_opening");
         return;
       }
-      this.sendTaskOpened(message.taskId);
+      this.sendSessionOpened(message.sessionId);
     } catch (error) {
       this.deliver({
-        type: "task.open_failed",
-        taskId: message.taskId,
+        type: "session.open_failed",
+        sessionId: message.sessionId,
         error: error instanceof Error ? error.message : String(error),
       });
     }
   }
 
-  private sendTaskOpened(taskId: string): void {
+  private sendSessionOpened(sessionId: string): void {
     this.deliver({
-      type: "task.opened",
-      taskId,
-      clientProfileId: this.config.taskProfile!.id,
+      type: "session.opened",
+      sessionId,
+      clientProfileId: this.config.sessionProfile!.id,
       operatingSystemUser: userInfo().username,
     });
   }
 
-  private closeTaskSafely(taskId: string, reason: string): void {
-    void this.closeTask(taskId, reason).catch((error: unknown) => {
+  private closeSessionSafely(sessionId: string, reason: string): void {
+    void this.closeSession(sessionId, reason).catch((error: unknown) => {
       this.beginTerminalFailure(
-        `Task ${reason} cleanup could not prove local authority termination`,
+        `Session ${reason} cleanup could not prove local authority termination`,
         error,
       );
     });
   }
 
-  private async closeTask(taskId: string, reason: string): Promise<void> {
-    const pending = this.closingTasks.get(taskId);
+  private async closeSession(sessionId: string, reason: string): Promise<void> {
+    const pending = this.closingSessions.get(sessionId);
     if (pending) return await pending;
-    this.closedTasks.add(taskId);
-    if (this.closedTasks.size > 1_000) {
-      const oldest = this.closedTasks.values().next().value;
-      if (oldest !== undefined) this.closedTasks.delete(oldest);
+    this.closedSessions.add(sessionId);
+    if (this.closedSessions.size > 1_000) {
+      const oldest = this.closedSessions.values().next().value;
+      if (oldest !== undefined) this.closedSessions.delete(oldest);
     }
-    const task = this.tasks.get(taskId);
-    if (task) task.closing = true;
+    const session = this.sessions.get(sessionId);
+    if (session) session.closing = true;
     const commands = [...this.commands.values()].filter(
-      (command) => command.taskId === taskId,
+      (command) => command.sessionId === sessionId,
     );
     const closing = (async (): Promise<void> => {
       await terminateLocalAuthority(
         commands.map((command) => async () => command.cancel()),
-        task ? [async () => clearTimeout(task.expiryTimer)] : [],
+        session ? [async () => clearTimeout(session.expiryTimer)] : [],
       );
       await Promise.all(commands.map((command) => command.waitUntilFinished()));
-      this.deliver({ type: "task.closed", taskId, reason });
+      this.deliver({ type: "session.closed", sessionId, reason });
     })();
-    this.closingTasks.set(taskId, closing);
+    this.closingSessions.set(sessionId, closing);
     try {
       await closing;
     } finally {
-      if (task && this.tasks.get(taskId) === task) this.tasks.delete(taskId);
-      if (this.closingTasks.get(taskId) === closing) this.closingTasks.delete(taskId);
+      if (session && this.sessions.get(sessionId) === session) this.sessions.delete(sessionId);
+      if (this.closingSessions.get(sessionId) === closing) this.closingSessions.delete(sessionId);
     }
   }
 
@@ -752,18 +758,18 @@ export class Client {
     }
     if (receipt !== "new") return;
 
-    const task = this.tasks.get(message.taskId);
-    if (!task || task.closing || task.expiresAt.getTime() <= Date.now()) {
-      return this.failCommand(message.commandId, "Task is not active on this Client");
+    const session = this.sessions.get(message.sessionId);
+    if (!session || session.closing || session.expiresAt.getTime() <= Date.now()) {
+      return this.failCommand(message.commandId, "Session is not active on this Client");
     }
-    const commandsForTask = [...this.commands.values()].filter(
-      (command) => command.taskId === message.taskId,
+    const commandsForSession = [...this.commands.values()].filter(
+      (command) => command.sessionId === message.sessionId,
     ).length;
-    if (commandsForTask >= task.maxConcurrentCommands) {
+    if (commandsForSession >= session.maxConcurrentCommands) {
       return this.failCommand(message.commandId, "Local concurrent Command limit reached");
     }
 
-    const policy = this.config.taskProfile!.localPolicy;
+    const policy = this.config.sessionProfile!.localPolicy;
     const maximumOutputBytes = Math.min(
       message.maxOutputBytes,
       policy.maxCommandOutputBytes,
@@ -771,13 +777,13 @@ export class Client {
     const timeoutMilliseconds = commandTimeoutMilliseconds(
       message.timeoutSeconds,
       policy.maxCommandTimeoutSeconds,
-      task.expiresAt,
+      session.expiresAt,
     );
     if (maximumOutputBytes < 1 || timeoutMilliseconds <= 0) {
-      return this.failCommand(message.commandId, "Command exceeds Local Policy or Task expiry");
+      return this.failCommand(message.commandId, "Command exceeds Local Policy or Session expiry");
     }
 
-    const control = new PendingCommand(message.taskId);
+    const control = new PendingCommand(message.sessionId);
     this.commands.set(message.commandId, control);
     let sequence = 0;
     let outputBytes = 0;
@@ -840,11 +846,11 @@ export class Client {
 
     try {
       if (
-        task.closing ||
-        this.tasks.get(message.taskId) !== task ||
-        task.expiresAt.getTime() <= Date.now()
+        session.closing ||
+        this.sessions.get(message.sessionId) !== session ||
+        session.expiresAt.getTime() <= Date.now()
       ) {
-        throw new Error("Task closed before the Command could start");
+        throw new Error("Session closed before the Command could start");
       }
       this.journal.markRunning(message.commandId);
       this.deliver({

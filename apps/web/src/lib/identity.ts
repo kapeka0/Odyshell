@@ -3,7 +3,7 @@ import "server-only";
 import { cache } from "react";
 import { headers } from "next/headers";
 import type { CloudIdentity, CloudMember } from "@/lib/cloud-api";
-import { auth } from "@/lib/auth";
+import { getAuth } from "@/lib/auth";
 import {
   identityRole,
   type IdentityRole,
@@ -26,6 +26,7 @@ export type HumanIdentity = {
 
 export const currentHumanSession = cache(async () => {
   const requestHeaders = await headers();
+  const auth = getAuth();
   return auth.api.getSession({ headers: requestHeaders });
 });
 
@@ -34,6 +35,7 @@ export const currentHumanIdentity = cache(
     const requestHeaders = await headers();
     const session = await currentHumanSession();
     if (!session?.session.activeOrganizationId) return null;
+    const auth = getAuth();
 
     const [organization, member] = await Promise.all([
       auth.api.getFullOrganization({
@@ -80,6 +82,7 @@ export async function organizationMembers(): Promise<CloudMember[]> {
   const requestHeaders = await headers();
   const identity = await currentHumanIdentity();
   if (!identity) return [];
+  const auth = getAuth();
   const organization = await auth.api.getFullOrganization({
     headers: requestHeaders,
     query: { organizationId: identity.organization.id, membersLimit: 100 },

@@ -3,7 +3,7 @@ import { ArrowRightIcon, BotIcon, CpuIcon, ServerIcon } from "lucide-react";
 const nodes = [
   { label: "Agent", detail: "OAuth identity", icon: BotIcon },
   { label: "Odyshell", detail: "authorize + audit", icon: ServerIcon },
-  { label: "Linux Machine", detail: "Local Policy", icon: CpuIcon },
+  { label: "Machine", detail: "Windows · Linux · macOS", icon: CpuIcon },
 ] as const;
 
 export function ConnectionRoute() {

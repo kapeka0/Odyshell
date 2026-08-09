@@ -31,9 +31,8 @@ export type CloudMachine = {
 export type CloudAgent = {
   id: string;
   name: string;
-  kind: "independent" | "managed";
+  role: "standard" | "operator";
   status: "active" | "disabled";
-  parentAgentId: string | null;
   credentialActive: boolean;
   createdAt: string;
 };
@@ -44,7 +43,7 @@ export type CloudMember = {
   imageUrl?: string;
 };
 
-export type CloudTask = {
+export type CloudSession = {
   id: string;
   organizationId: string;
   agentId: string;
@@ -70,6 +69,41 @@ export type CloudTask = {
   finishedAt: string | null;
 };
 
+export type CloudCommand = {
+  id: string;
+  sessionId: string;
+  organizationId: string;
+  agentId: string;
+  machineId: string;
+  command: string;
+  cwd: string | null;
+  timeoutSeconds: number;
+  status: "queued" | "delivered" | "running" | "cancellation_requested" | "succeeded" | "failed" | "cancelled" | "timed_out" | "execution_unknown";
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  exitCode: number | null;
+  outputTruncated: boolean;
+  stdoutBytes: number;
+  stderrBytes: number;
+  error: string | null;
+  output: Array<{ sequence: number; stream: "stdout" | "stderr"; dataBase64: string }>;
+};
+
+export type CloudSessionTimeline = {
+  session: CloudSession;
+  commands: CloudCommand[];
+  events: Array<{
+    id: string;
+    agentId: string;
+    sessionId: string;
+    commandId: string | null;
+    type: string;
+    metadata: Record<string, unknown>;
+    createdAt: string;
+  }>;
+};
+
 export type ControlEvent = {
   id: string;
   principalId: string;
@@ -88,6 +122,8 @@ export type ControlEvent = {
     status?: string;
     outcome?: string;
     exitCode?: number | null;
+    from?: string;
+    to?: string;
   };
   createdAt: string | null;
 };
@@ -111,16 +147,21 @@ export type CloudContext = {
     id: string;
     slug: string;
     name: string;
-    plan: "free" | "team" | "scale";
+    plan: "free" | "pro" | "enterprise";
     avatarSeed: string;
+    stripeCustomerId?: string;
+    stripeSubscriptionId?: string;
   };
   userPreferences: {
     timeZone: string;
   };
   plan: {
-    id: "free" | "team" | "scale";
+    id: "free" | "pro" | "enterprise";
+    billingManaged: boolean;
+    memberLimit: number | null;
     machineLimit: number;
-    activeAgentLimit: number;
+    activeAgentLimit: number | null;
+    monthlyPricePerMemberCents: number | null;
     controlEventRetentionDays: number;
   };
   usage: {
@@ -140,7 +181,7 @@ export type CloudContext = {
   };
   machines: CloudMachine[];
   agents: CloudAgent[];
-  tasks: CloudTask[];
+  sessions: CloudSession[];
   members: CloudMember[];
   controlEvents: ControlEvent[];
   notifications: CloudNotification[];

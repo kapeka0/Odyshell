@@ -1,5 +1,5 @@
 ---
-status: superseded by ADR-0008
+status: superseded by ADR-0010
 ---
 
 # Bind Host Shell reuse to Task Runs

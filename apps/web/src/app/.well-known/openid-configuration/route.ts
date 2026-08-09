@@ -1,6 +1,8 @@
 import { oauthProviderOpenIdConfigMetadata } from "@better-auth/oauth-provider";
-import { auth } from "@/lib/auth";
+import { getAuth } from "@/lib/auth";
 
-export const GET = oauthProviderOpenIdConfigMetadata(auth, {
-  headers: { "cache-control": "public, max-age=300" },
-});
+export async function GET(request: Request) {
+  return oauthProviderOpenIdConfigMetadata(getAuth(), {
+    headers: { "cache-control": "public, max-age=300" },
+  })(request);
+}

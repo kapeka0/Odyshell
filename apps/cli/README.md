@@ -7,7 +7,7 @@
 <p align="center"><strong>Install and operate an Odyshell Client on Linux.</strong></p>
 
 `ods` is the Machine-side administration tool. Agents do not run it: they connect to the
-Odyshell Server through remote OAuth MCP or the canonical HTTP Task/Command protocol.
+Odyshell Server through remote OAuth MCP or the canonical HTTP Session/Command protocol.
 
 ## Install
 
@@ -19,7 +19,7 @@ npm install --global @odyshell/cli
 
 ## Connect a Machine
 
-Open **Machines**, select **Add Machine**, and run the generated command on the target Linux host:
+Open **Machines**, select **Add Machine**, and run the generated command on the target Windows, Linux, or macOS host:
 
 ```bash
 ods --server https://api.example.com up \
@@ -31,7 +31,7 @@ ods --server https://api.example.com up \
 Server, and installs a restartable systemd user service. The token expires after ten minutes,
 works once, and is never persisted.
 
-The Local Policy permits one Task and Command at a time, a one-hour Task, a ten-minute Command,
+The Local Policy permits one Session and Command at a time, a one-hour Session, a ten-minute Command,
 and 1 MiB of output.
 It permits remote human approval but does not configure sudo or a sandbox.
 
@@ -66,10 +66,10 @@ automation.
 
 Commands execute as the Linux user running the Client. Use a dedicated user with no root, sudo,
 or Docker membership and grant only the files, credentials, network, and services the Agent needs.
-The Client enforces Organization, Task identity, duration, concurrency, timeout, and output limits
-locally. Agents receive temporary Machine authority only through authorized Tasks.
+The Client enforces Organization, Session identity, duration, concurrency, timeout, and output limits
+locally. Agents receive temporary Machine authority only through authorized Sessions.
 
-`ods` deliberately has no login, Agent, Task, Command, shell, filesystem, Docker, Session, or MCP
+`ods` deliberately has no login, Agent, Session, Command, shell, filesystem, Docker, Session, or MCP
 runtime commands. Keeping remote authorization in the Server prevents a second policy path from
 appearing on every Machine.
 

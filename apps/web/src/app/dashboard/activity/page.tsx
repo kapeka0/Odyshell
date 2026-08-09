@@ -36,6 +36,6 @@ export default function ActivityPage() {
   );
 }
 
-function planLabel(planId: "free" | "team" | "scale"): string {
+function planLabel(planId: "free" | "pro" | "enterprise"): string {
   return `${planId[0]!.toUpperCase()}${planId.slice(1)} plan`;
 }

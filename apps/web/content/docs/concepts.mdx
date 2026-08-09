@@ -5,7 +5,7 @@ description: The identities and authority boundaries in agent-native Odyshell.
 
 ## Organization
 
-The isolation boundary for Humans, Agents, Machines, policies, Tasks, Commands, and audit evidence.
+The isolation boundary for Humans, Agents, Machines, policies, Sessions, Commands, and audit evidence.
 OAuth clients and credentials are bound to exactly one Organization. A self-hosted deployment owns
 one Organization; Odyshell Cloud can host many without sharing authority or data.
 
@@ -13,17 +13,17 @@ one Organization; Odyshell Cloud can host many without sharing authority or data
 
 An Owner, Admin, or Supervisor who establishes trust and optionally intervenes. Humans do not need
 to drive Agent work. Owners and Admins manage the Organization; all three roles can approve or deny
-a Task that policy sends for review.
+a Session that policy sends for review.
 
 ## Agent
 
 A persistent programmatic identity authenticated through OAuth. Authentication answers who the
-Agent is; it grants no Machine authority by itself. An Agent controls Tasks and Commands through
+Agent is; it grants no Machine authority by itself. An Agent controls Sessions and Commands through
 the canonical HTTP API or the remote MCP adapter.
 
 ## Machine
 
-A customer-controlled Linux host running an outbound Odyshell Client. Each Client Profile owns a
+A customer-controlled Windows, Linux, or macOS host running an outbound Odyshell Client. Each Client Profile owns a
 Machine identity, an operating-system user, and a Local Policy enforced independently of the
 Server.
 
@@ -32,25 +32,25 @@ Server.
 The Machine owner's hard ceiling covers Organization, concurrency, durations, output limits, and
 remote human approval. It never names Agents. The Server can grant less but never more.
 
-## Autonomy Policy
+## Agent role
 
-The Organization's ceiling for work that may open without a human decision. Work outside this
-ceiling remains pending. A Human approval still cannot widen Local Policy.
+`Standard` requires a Human decision for every Session. `Operator` bypasses explicit approval and
+must be treated like granting the Agent SSH. Neither role can widen Local Policy.
 
-## Task
+## Session
 
 Temporary authority binding one Agent, one Machine, one Client Profile, and one operating-system
-user. A Task is expiring, revocable, resumable by ID, and contains one or more asynchronous
+user. A Session is expiring, revocable, resumable by ID, and contains one or more asynchronous
 Commands up to its concurrency limit.
 
 ## Command
 
-One arbitrary non-interactive shell execution inside an active Task. Input is limited to shell
+One arbitrary non-interactive shell execution inside an active Session. Input is limited to shell
 text, an optional absolute working directory, and a bounded timeout. There is no PTY, persistent
 shell, caller-provided environment, or standard input.
 
 ## Audit event
 
-Durable evidence that binds identities and decisions to Task and Command lifecycle events. Command
-audit includes the exact command, working directory, timeout, status, and timestamps. Credentials,
-stdout, and stderr are excluded; output is a transient delivery buffer.
+Durable evidence that binds identities and decisions to Session and Command lifecycle events. Command
+audit includes the exact command, working directory, timeout, status, timestamps, and bounded
+stdout/stderr. Credentials follow separate redaction rules and are never intended audit content.

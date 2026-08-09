@@ -17,24 +17,33 @@ describe("web security boundaries", () => {
   it("keeps Human authentication and Organization authorization in server seams", () => {
     const identity = source("lib/identity.ts");
     const identityAuth = source("lib/identity-auth.ts");
+    const auth = source("lib/auth.ts");
     const authRoute = source("app/api/auth/[...all]/route.ts");
+    const authorizationMetadata = source(
+      "app/.well-known/oauth-authorization-server/route.ts",
+    );
+    const openIdMetadata = source("app/.well-known/openid-configuration/route.ts");
     const organizationRoute = source("app/api/organization-settings/route.ts");
-    const taskRoute = source("app/api/tasks/[taskId]/approve/route.ts");
+    const sessionRoute = source("app/api/sessions/[sessionId]/approve/route.ts");
 
     expect(identity).toContain("auth.api.getSession");
     expect(identity).toContain("auth.api.getActiveMember");
     expect(identityAuth).toContain("jwt: { issuer: configuration.baseUrl }");
-    expect(authRoute).toContain("toNextJsHandler(auth)");
+    expect(auth).toContain("auth ??= createOdyshellAuth(process.env)");
+    expect(auth).not.toContain("export const auth = createOdyshellAuth");
+    expect(authRoute).toContain("toNextJsHandler(getAuth())");
+    expect(authorizationMetadata).toContain("oauthProviderAuthServerMetadata(getAuth()");
+    expect(openIdMetadata).toContain("oauthProviderOpenIdConfigMetadata(getAuth()");
     expect(organizationRoute).toContain("requireCloudAdminRouteIdentity");
-    expect(organizationRoute).toContain("auth.api.updateOrganization");
+    expect(organizationRoute).toContain("getAuth().api.updateOrganization");
     expect(organizationRoute).not.toContain('z.literal("logging")');
-    expect(taskRoute).toContain("requireCloudRouteIdentity");
-    expect(taskRoute).not.toContain("role:");
+    expect(sessionRoute).toContain("requireCloudRouteIdentity");
+    expect(sessionRoute).not.toContain("role:");
   });
 
   it("allows only local post-authentication redirects", () => {
-    expect(safeAuthRedirect("/dashboard/tasks", "/dashboard")).toBe(
-      "/dashboard/tasks",
+    expect(safeAuthRedirect("/dashboard/sessions", "/dashboard")).toBe(
+      "/dashboard/sessions",
     );
     for (const redirect of [
       "https://attacker.example/steal",
@@ -78,78 +87,88 @@ describe("web security boundaries", () => {
     expect(validDocumentationSearchQuery("a".repeat(201))).toBe(false);
   });
 
-  it("publishes only Task and Command operational documentation", () => {
+  it("publishes only Session and Command operational documentation", () => {
     const meta = readFileSync(resolve(webRoot, "content/docs/meta.json"), "utf8");
-    expect(meta).toContain('"tasks"');
+    expect(meta).toContain('"sessions"');
     expect(meta).toContain('"commands"');
-    for (const page of ["sessions", "operations", "sdk", "migration", "event-sinks"]) {
+    for (const page of ["tasks", "operations", "sdk", "migration", "event-sinks"]) {
       expect(meta).not.toContain(`"${page}"`);
       expect(existsSync(resolve(webRoot, `content/docs/${page}.mdx`))).toBe(false);
     }
   });
 
-  it("removes legacy Session, Operation, Event Sink, and policy product routes", () => {
+  it("removes legacy Task, Operation, Event Sink, and policy product routes", () => {
     for (const path of [
-      "app/dashboard/sessions/page.tsx",
-      "app/api/sessions/route.ts",
+      "app/dashboard/tasks/page.tsx",
+      "app/api/tasks/route.ts",
       "app/sessions/approve/page.tsx",
       "app/api/event-sink/route.ts",
       "app/dashboard/policies/page.tsx",
       "app/policies/approve/page.tsx",
-      "components/session-list.tsx",
-      "components/session-detail.tsx",
+      "components/task-list.tsx",
       "components/event-sink-settings.tsx",
     ]) {
       expect(existsSync(resolve(webSource, path))).toBe(false);
     }
   });
 
-  it("loads Task state and Task audit into the shared dashboard context", () => {
+  it("loads Session state and Session audit into the shared dashboard context", () => {
     const server = readFileSync(resolve(root, "apps/server/src/control-http.ts"), "utf8");
     const database = readFileSync(
-      resolve(root, "apps/server/src/task-database.ts"),
+      resolve(root, "apps/server/src/session-database.ts"),
       "utf8",
     );
     const cloudApi = source("lib/cloud-api.ts");
 
-    expect(server).toContain("taskDatabase.listTasks(parsed.data.organization.externalId, 100)");
-    expect(server).toContain("taskDatabase.listAuditEvents(parsed.data.organization.externalId, 100)");
+    expect(server).toContain("sessionDatabase.listSessions(parsed.data.organization.externalId, 100)");
+    expect(server).toContain("sessionDatabase.listAuditEvents(parsed.data.organization.externalId, 100)");
     expect(server).toContain("...controlEvents.map(controlEventView)");
     expect(server).not.toContain('notification.kind.startsWith("session.")');
-    expect(database).toContain('selectFrom("taskAuditEvents")');
+    expect(database).toContain('selectFrom("sessionAuditEvents")');
     expect(database).toContain('orderBy("createdAt", "desc")');
-    expect(cloudApi).toContain("tasks: CloudTask[]");
-    expect(cloudApi).not.toContain("CloudSession");
+    expect(cloudApi).toContain("sessions: CloudSession[]");
+    expect(cloudApi).not.toContain("CloudTask");
   });
 
-  it("keeps Task approval role checks and Local Policy enforcement server-side", () => {
+  it("keeps Session approval role checks and Local Policy enforcement server-side", () => {
     const supervision = readFileSync(
-      resolve(root, "apps/server/src/task-supervision-http.ts"),
+      resolve(root, "apps/server/src/session-supervision-http.ts"),
       "utf8",
     );
-    const tasks = readFileSync(resolve(root, "apps/server/src/tasks.ts"), "utf8");
+    const sessions = readFileSync(resolve(root, "apps/server/src/sessions.ts"), "utf8");
     expect(supervision).toContain("cloudIdentitySchema");
     expect(supervision).toContain("humanId: identity.data.userId");
     expect(supervision).toContain("role: identity.data.role");
-    expect(tasks).toContain("commandDecision");
-    expect(tasks).toContain("localPolicy");
-    expect(tasks).toContain('type: decision === "approve" ? "task.approved" : "task.denied"');
+    expect(sessions).toContain("commandDecision");
+    expect(sessions).toContain("localPolicy");
+    expect(sessions).toContain('type: decision === "approve" ? "session.approved" : "session.denied"');
   });
 
-  it("makes Tasks the minimal dashboard entrypoint without a parallel manual runtime", () => {
+  it("restores the live canvas and canonical Session supervision runtime", () => {
     const dashboard = source("app/dashboard/page.tsx");
-    const taskList = source("components/task-list.tsx");
+    const sessionList = source("components/session-list.tsx");
     const settings = source("app/dashboard/settings/page.tsx");
     const activity = source("components/control-event-list.tsx");
 
-    expect(dashboard).toContain('redirect("/dashboard/tasks")');
-    expect(existsSync(resolve(webSource, "components/workspace-canvas.tsx"))).toBe(false);
-    expect(taskList).toContain("Only Tasks outside the current autonomy policy appear here.");
-    expect(taskList).toContain("Approve this Task?");
+    expect(dashboard).toContain("<WorkspaceCanvas");
+    expect(existsSync(resolve(webSource, "components/workspace-canvas.tsx"))).toBe(true);
+    expect(sessionList).toContain("Standard Agents require a Human decision");
+    expect(sessionList).toContain("Approve this Session?");
     expect(settings).not.toContain("Logging");
     expect(settings).not.toContain("EventSinkSettings");
     expect(activity).toContain('label="Command"');
     expect(activity).toContain("event.metadata.command");
+  });
+
+  it("keeps Operator and billing elevation behind confirmed server authorization", () => {
+    const agentRoute = source("app/api/agents/[agentId]/route.ts");
+    const billingRoute = source("app/api/billing/checkout/route.ts");
+    const webhook = source("app/api/billing/webhook/route.ts");
+    expect(agentRoute).toContain("requireCloudAdminRouteIdentity");
+    expect(agentRoute).toContain("export async function PATCH");
+    expect(billingRoute).toContain("requireCloudOwnerRouteIdentity");
+    expect(webhook).toContain("constructEvent");
+    expect(webhook).toContain("stripe-signature");
   });
 });
 

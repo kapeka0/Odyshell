@@ -73,12 +73,12 @@ describe("CLI npm package", () => {
     expect(entry).not.toContain('.command("remove")\n  .description("stop and delete one local Client Profile")');
   });
 
-  it("does not act as a second Agent runtime", () => {
+  it("supports Human OAuth and control-plane operations without local MCP", () => {
     const entry = readFileSync(resolve(cliRoot, "src/index.ts"), "utf8");
-    for (const command of [
-      "login", "logout", "machines", "ping", "sessions", "token",
-      "agent", "audit", "exec", "shell", "fs", "docker", "mcp",
-    ]) {
+    for (const command of ["login", "logout", "machines", "agents", "sessions", "commands"]) {
+      expect(entry).toContain(`.command("${command}`);
+    }
+    for (const command of ["token", "audit", "exec", "shell", "fs", "docker", "mcp"]) {
       expect(entry).not.toContain(`.command("${command}`);
     }
     expect(entry).not.toContain("@odyshell/sdk");
@@ -94,9 +94,9 @@ describe("CLI npm package", () => {
     expect(packageJson.devDependencies).not.toHaveProperty("@odyshell/mcp");
   });
 
-  it("publishes the Machine installer for Linux only", () => {
-    expect((packageJson as typeof packageJson & { os?: string[] }).os).toEqual(["linux"]);
+  it("publishes the Machine installer for Linux, macOS, and Windows", () => {
+    expect((packageJson as typeof packageJson & { os?: string[] }).os).toBeUndefined();
     const entry = readFileSync(resolve(cliRoot, "src/index.ts"), "utf8");
-    expect(entry).toContain("assertLinuxClientHost();");
+    expect(entry).toContain("assertSupportedClientHost();");
   });
 });

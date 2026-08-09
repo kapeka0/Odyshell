@@ -4,11 +4,11 @@ These documents describe accepted target architecture and are not necessarily im
 Shipped behavior remains documented in the root and package READMEs and in the public Fumadocs
 site.
 
-- [Agent-native Task model](./agentic-task-model.md) defines the target product, domain, trust
-  boundaries, protocol, and migration sequence.
+- [Session control plane](./session-control-plane.md) defines the product, domain, trust boundaries,
+  protocol, roles, retention, and plans.
 
 Relevant architecture decisions:
 
-- [Adopt an agent-native Task and Command model](../adr/0008-adopt-agent-native-task-model.md)
+- [Adopt Session authority and Agent roles](../adr/0010-adopt-session-authority-and-agent-roles.md)
 - [Separate Agent identity from temporary authority](../adr/0003-separate-agent-identity-from-session-authority.md)
 - [Keep Client policy locally authoritative](../adr/0005-keep-client-policy-locally-authoritative.md)

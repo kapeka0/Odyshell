@@ -20,7 +20,7 @@ wait for the user's decision before checking the request status.
 If the MCP client loses a tool response or opens a new chat, `sessions_list` recovers pending
 requests and lists active Sessions. Typed authority remains reusable only while the same local MCP
 process holds its claim or the same remote installation retains its persistent grant. Host Shell
-additionally requires an explicit continuation carrying the same Task Run `runId`; unrelated work
+additionally requires an explicit continuation carrying the same Session Run `runId`; unrelated work
 never inherits it.
 Request and status results include an explicit `nextAction`, so an agent can resume after human
 approval without asking for a duplicate Session.
@@ -31,7 +31,7 @@ against active Server state before reuse. Restarting the process can recover pen
 requests, but authority claimed by the previous process requires a new Session request and
 approval. Remote MCP instead stores an installation-bound grant in PostgreSQL, so compatible typed
 authority remains reusable by that installation across stateless requests and Server restarts.
-Compatible Host Shell authority also requires the same stable Task Run `runId`.
+Compatible Host Shell authority also requires the same stable Session Run `runId`.
 
 The same pending request and review link are available from the Odyshell Sessions dashboard.
 
@@ -51,7 +51,7 @@ profiles reject absolute host paths. Prefer `process.exec` for fully known one-s
 Shell for exploratory, iterative, or multi-command work whose next command depends on results.
 `session_request` accepts exactly one authority mode: `operations` retains the exact typed actions
 being requested, while `hostShell: { machine }` requests temporary broad Host Shell authority
-without guessing future commands and requires a stable Task Run `runId`. A linked escalation can
+without guessing future commands and requires a stable Session Run `runId`. A linked escalation can
 carry `predecessorSessionId`.
 The MCP caller may omit `title`; Odyshell then uses `purpose` as the short approval title or derives
 one from the requested authority. The stored Session Request still always has a non-empty title.

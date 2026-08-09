@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { dataRetentionPolicy } from "../apps/server/src/privacy.js";
 
 describe("server privacy defaults", () => {
-  it("uses short-lived transient data and bounded audit retention", () => {
+  it("retains timeline output and audit for 30 days by default", () => {
     expect(dataRetentionPolicy({})).toEqual({
-      transientDataMilliseconds: 60 * 60 * 1_000,
+      commandOutputMilliseconds: 30 * 24 * 60 * 60 * 1_000,
       auditMilliseconds: 30 * 24 * 60 * 60 * 1_000,
     });
   });
@@ -12,19 +12,19 @@ describe("server privacy defaults", () => {
   it("accepts bounded customer-controlled retention", () => {
     expect(
       dataRetentionPolicy({
-        ODYSHELL_TRANSIENT_RETENTION_SECONDS: "60",
+        ODYSHELL_COMMAND_OUTPUT_RETENTION_DAYS: "1",
         ODYSHELL_AUDIT_RETENTION_DAYS: "1",
       }),
     ).toEqual({
-      transientDataMilliseconds: 60 * 1_000,
+      commandOutputMilliseconds: 24 * 60 * 60 * 1_000,
       auditMilliseconds: 24 * 60 * 60 * 1_000,
     });
   });
 
   it.each([
-    ["ODYSHELL_TRANSIENT_RETENTION_SECONDS", "0"],
-    ["ODYSHELL_TRANSIENT_RETENTION_SECONDS", "-1"],
-    ["ODYSHELL_TRANSIENT_RETENTION_SECONDS", "not-a-number"],
+    ["ODYSHELL_COMMAND_OUTPUT_RETENTION_DAYS", "0"],
+    ["ODYSHELL_COMMAND_OUTPUT_RETENTION_DAYS", "366"],
+    ["ODYSHELL_COMMAND_OUTPUT_RETENTION_DAYS", "not-a-number"],
     ["ODYSHELL_AUDIT_RETENTION_DAYS", "0"],
     ["ODYSHELL_AUDIT_RETENTION_DAYS", "3651"],
   ])("fails closed for invalid %s values", (name, value) => {

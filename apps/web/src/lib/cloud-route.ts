@@ -54,6 +54,18 @@ export async function requireCloudAdminRouteIdentity(): Promise<CloudRouteIdenti
   return authorization;
 }
 
+export async function requireCloudOwnerRouteIdentity(): Promise<CloudRouteIdentity> {
+  const authorization = await requireCloudRouteIdentity();
+  if (authorization.response) return authorization;
+  const humanIdentity = await currentHumanIdentity();
+  if (!humanIdentity || humanIdentity.role !== "owner") {
+    return {
+      response: NextResponse.json({ error: "organization_owner_required" }, { status: 403 }),
+    };
+  }
+  return authorization;
+}
+
 export function cloudRouteError(error: unknown): NextResponse {
   if (error instanceof CloudApiError) {
     return NextResponse.json(

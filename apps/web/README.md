@@ -4,16 +4,16 @@
 
 <h1 align="center">Odyshell Web</h1>
 
-<p align="center"><strong>Optional human supervision for the agent-native Odyshell control plane.</strong></p>
+<p align="center"><strong>Human supervision and traceability for the agent-native Odyshell control plane.</strong></p>
 
 The web app is where Organization members approve CLI and Agent enrollment, connect or remove
-Machines, supervise Tasks that fall outside autonomy policy, manage persistent Agents and their
+Machines, supervise Standard-Agent Sessions, manage persistent Agents and their roles,
 policies, and review privacy-minimal audit events. Organization administrators additionally manage
-people and Organization settings.
+Organization settings and billing. Member invitations are not enabled yet.
 
 Agents are the primary operators. They use Organization-bound OAuth tokens through the canonical
-HTTP API or its remote MCP adapter to discover Machines and manage resumable Tasks and Commands;
-people use this interface for governance and optional supervision.
+HTTP API or its remote MCP adapter to discover Machines and manage resumable Sessions and Commands;
+people use this interface for governance, Standard-Agent approval, and traceability.
 
 Public product documentation lives in `content/docs` and is served at `/docs` with local search.
 The same reviewed source is available to agents through `/llms.txt`, `/llms-full.txt`, and a
@@ -46,10 +46,15 @@ ods login --server http://localhost:4100
 ```
 
 The CLI completes OAuth against Odyshell Identity. The dashboard can then issue single-use Machine
-enrollment commands, create persistent Agent identities, supervise Tasks, and inspect their
-Commands. An Agent identity grants no Machine authority by itself: every Task is Organization- and
-Machine-bound, evaluated against Autonomy Policy outside the Agent, and either starts immediately
+enrollment commands, manage persistent Agent identities, supervise Sessions, and inspect their
+Commands. An Agent identity grants no Machine authority by itself: every Session is Organization- and
+Machine-bound, evaluated against the Agent role outside the Agent, and either starts immediately for an Operator
 or waits for optional Human approval.
+
+Managed Stripe billing is fail-closed. A Cloud deployment must set
+`ODYSHELL_MANAGED_BILLING_ENABLED=true` together with `STRIPE_SECRET_KEY`,
+`STRIPE_PRO_PRICE_ID`, and `STRIPE_WEBHOOK_SECRET`; self-hosted deployments leave
+the flag unset and do not expose subscription controls.
 
 ## Trust boundary
 

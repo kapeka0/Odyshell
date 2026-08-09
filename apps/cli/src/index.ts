@@ -1,6 +1,7 @@
 import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import process from "node:process";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -22,12 +23,13 @@ import {
   stopClientService,
 } from "@odyshell/client";
 import { ExpectedError, printCliError } from "./errors.js";
+import { authenticatedFetch, login, logout } from "./auth.js";
 import { printClientProfiles, printJson } from "./output.js";
 import { resetLocalOdyshell } from "./reset.js";
 import { updateClientPackage } from "./update.js";
 import {
   assertClientServerReachable,
-  assertLinuxClientHost,
+  assertSupportedClientHost,
   resolveClientUpConfiguration,
 } from "./up.js";
 
@@ -39,8 +41,8 @@ type GlobalOptions = {
 const program = new Command();
 program
   .name("ods")
-  .description("Install and operate an Odyshell Machine Client")
-  .version("0.18.0")
+  .description("Install Machines and operate the Odyshell control plane")
+  .version("0.19.0")
   .option("-j, --json", "emit stable JSON output")
   .option("--server <url>", "override the Odyshell Server URL")
   .showSuggestionAfterError()
@@ -84,6 +86,169 @@ function selectedServerUrl(options: GlobalOptions): string {
     DEFAULT_CLOUD_SERVER_URL;
 }
 
+function selectedServerOverride(options: GlobalOptions): string | undefined {
+  return options.server ?? process.env.ODYSHELL_SERVER_URL ?? process.env.ODYSHELL_URL;
+}
+
+async function cliJson(
+  global: GlobalOptions,
+  path: string,
+  init: RequestInit = {},
+): Promise<any> {
+  const response = await authenticatedFetch(path, init, selectedServerOverride(global));
+  const body = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok) {
+    const code = typeof body.error === "string" ? body.error : "cli_request_failed";
+    throw new ExpectedError(`Odyshell rejected the request (${code}).`, code);
+  }
+  return body;
+}
+
+function show(global: GlobalOptions, value: unknown): void {
+  if (global.json) printJson(value);
+  else console.dir(value, { depth: 6, colors: process.stdout.isTTY });
+}
+
+const sessionDurations: Record<string, number> = {
+  "15m": 15 * 60,
+  "1h": 60 * 60,
+  "2h": 2 * 60 * 60,
+  "6h": 6 * 60 * 60,
+  "8h": 8 * 60 * 60,
+  "24h": 24 * 60 * 60,
+};
+
+program
+  .command("login")
+  .description("sign in through the browser for human control-plane access")
+  .action(async (_options, command: Command) => {
+    const global = globals(command);
+    const result = await login(selectedServerUrl(global));
+    if (global.json) printJson(result);
+    else console.log(`${pc.green("OK")} Signed in to ${result.serverUrl}`);
+  });
+
+program
+  .command("logout")
+  .description("remove the local human OAuth session")
+  .action(async (_options, command: Command) => {
+    const result = { loggedOut: await logout() };
+    if (globals(command).json) printJson(result);
+    else console.log(`${pc.green("OK")} Signed out`);
+  });
+
+const machines = program.command("machines").description("inspect Organization Machines");
+machines.command("list").alias("ls").action(async (_options, command: Command) => {
+  const global = globals(command);
+  const context = await cliJson(global, "/v1/cli/context");
+  show(global, { data: context.machines });
+});
+machines.command("ping <machine-id>").action(async (machineId: string, _options, command: Command) => {
+  const global = globals(command);
+  show(global, await cliJson(global, `/v1/cli/machines/${encodeURIComponent(machineId)}/ping`, { method: "POST" }));
+});
+
+const agents = program.command("agents").description("inspect and administer Agents");
+agents.command("list").alias("ls").action(async (_options, command: Command) => {
+  const global = globals(command);
+  const context = await cliJson(global, "/v1/cli/context");
+  show(global, { data: context.agents });
+});
+agents.command("role <agent-id> <role>")
+  .description("set an Agent role to standard or operator")
+  .action(async (agentId: string, role: string, _options, command: Command) => {
+    if (!['standard', 'operator'].includes(role)) {
+      throw new ExpectedError("Role must be standard or operator.", "invalid_agent_role");
+    }
+    const global = globals(command);
+    show(global, await cliJson(global, `/v1/cli/agents/${encodeURIComponent(agentId)}/role`, {
+      method: "PATCH",
+      body: JSON.stringify({ role }),
+    }));
+  });
+agents.command("remove <agent-id>")
+  .requiredOption("--yes", "confirm Agent and active Session revocation")
+  .action(async (agentId: string, _options, command: Command) => {
+    const global = globals(command);
+    show(global, await cliJson(global, `/v1/cli/agents/${encodeURIComponent(agentId)}`, { method: "DELETE" }));
+  });
+
+const sessions = program.command("sessions").description("request, supervise, and inspect Sessions");
+sessions.command("list").alias("ls").action(async (_options, command: Command) => {
+  const global = globals(command);
+  const context = await cliJson(global, "/v1/cli/context");
+  show(global, { data: context.sessions });
+});
+sessions.command("request")
+  .requiredOption("--machine <id>", "target Machine UUID")
+  .requiredOption("--duration <duration>", "15m, 1h, 2h, 6h, 8h, or 24h")
+  .requiredOption("--title <title>", "Session title")
+  .option("--purpose <purpose>", "Session purpose")
+  .action(async (options: { machine: string; duration: string; title: string; purpose?: string }, command: Command) => {
+    const durationSeconds = sessionDurations[options.duration];
+    if (!durationSeconds) throw new ExpectedError("Duration must be 15m, 1h, 2h, 6h, 8h, or 24h.", "invalid_session_duration");
+    const global = globals(command);
+    show(global, await cliJson(global, "/v1/sessions", {
+      method: "POST",
+      headers: { "idempotency-key": randomUUID() },
+      body: JSON.stringify({ machineId: options.machine, durationSeconds, title: options.title, ...(options.purpose ? { purpose: options.purpose } : {}) }),
+    }));
+  });
+for (const decision of ["approve", "deny"] as const) {
+  sessions.command(`${decision} <session-id>`).action(async (sessionId: string, _options, command: Command) => {
+    const global = globals(command);
+    show(global, await cliJson(global, `/v1/cli/sessions/${encodeURIComponent(sessionId)}/${decision}`, { method: "POST" }));
+  });
+}
+sessions.command("timeline <session-id>").action(async (sessionId: string, _options, command: Command) => {
+  const global = globals(command);
+  show(global, await cliJson(global, `/v1/cli/sessions/${encodeURIComponent(sessionId)}/timeline`));
+});
+sessions.command("get <session-id>").action(async (sessionId: string, _options, command: Command) => {
+  const global = globals(command);
+  show(global, await cliJson(global, `/v1/sessions/${encodeURIComponent(sessionId)}`));
+});
+for (const outcome of ["complete", "cancel"] as const) {
+  sessions.command(`${outcome} <session-id>`).action(async (sessionId: string, _options, command: Command) => {
+    const global = globals(command);
+    show(global, await cliJson(global, `/v1/sessions/${encodeURIComponent(sessionId)}/${outcome}`, {
+      method: "POST", headers: { "idempotency-key": randomUUID() },
+    }));
+  });
+}
+
+const commands = program.command("commands").description("run and inspect commands inside Sessions");
+commands.command("run <session-id>")
+  .requiredOption("--command <command>", "shell command")
+  .option("--cwd <path>", "absolute working directory")
+  .option("--timeout <seconds>", "timeout in seconds", "600")
+  .action(async (sessionId: string, options: { command: string; cwd?: string; timeout: string }, command: Command) => {
+    const global = globals(command);
+    show(global, await cliJson(global, `/v1/sessions/${encodeURIComponent(sessionId)}/commands`, {
+      method: "POST",
+      headers: { "idempotency-key": randomUUID() },
+      body: JSON.stringify({ command: options.command, timeoutSeconds: Number(options.timeout), ...(options.cwd ? { cwd: options.cwd } : {}) }),
+    }));
+  });
+commands.command("get <command-id>").action(async (commandId: string, _options, command: Command) => {
+  const global = globals(command);
+  show(global, await cliJson(global, `/v1/commands/${encodeURIComponent(commandId)}`));
+});
+commands.command("output <command-id>")
+  .option("--after <sequence>", "output cursor", "-1")
+  .action(async (commandId: string, options: { after: string }, command: Command) => {
+    const global = globals(command);
+    const output = await cliJson(global, `/v1/commands/${encodeURIComponent(commandId)}/output?after=${encodeURIComponent(options.after)}`);
+    if (global.json) printJson(output);
+    else for (const chunk of output.data ?? []) process.stdout.write(Buffer.from(chunk.dataBase64, "base64"));
+  });
+commands.command("cancel <command-id>").action(async (commandId: string, _options, command: Command) => {
+  const global = globals(command);
+  show(global, await cliJson(global, `/v1/commands/${encodeURIComponent(commandId)}/cancel`, {
+    method: "POST", headers: { "idempotency-key": randomUUID() },
+  }));
+});
+
 function assertProfileSelection(
   profileName: string | undefined,
   configPath: string | undefined,
@@ -123,7 +288,7 @@ async function clientConfigurationFor(
 
 program
   .command("up")
-  .description("enroll this Linux Machine and start its background Client")
+  .description("enroll this Machine and start its background Client")
   .option("--token <token>", "one-time enrollment token")
   .option("--name <name>", "Machine name")
   .option("--profile <name>", "Client Profile name")
@@ -134,7 +299,7 @@ program
     profile?: string;
     config?: string;
   }, command: Command) => {
-    assertLinuxClientHost();
+    assertSupportedClientHost();
     const global = globals(command);
     assertProfileSelection(options.profile, options.config);
     const profileName = options.profile ?? "default";
@@ -357,7 +522,7 @@ const client = program
 
 client
   .command("doctor")
-  .description("check this Linux host for Client compatibility")
+  .description("check this host for Client compatibility")
   .option("--profile <name>", "Client Profile name")
   .option("--config <path>", "Client configuration")
   .action(async (options: { profile?: string; config?: string }, command: Command) => {
@@ -371,7 +536,7 @@ client
     const runtime = await inspectClientRuntime();
     const service = configFound ? await clientServiceStatus(configPath) : undefined;
     const nodeMajor = Number(process.versions.node.split(".")[0]);
-    const compatible = nodeMajor >= 24 && process.platform === "linux";
+    const compatible = nodeMajor >= 24 && ["linux", "darwin", "win32"].includes(process.platform);
     const report = {
       compatible,
       version: CLIENT_VERSION,
@@ -440,7 +605,12 @@ client
     const configFound = await access(configPath).then(() => true, () => false);
     const status = configFound
       ? await clientServiceStatus(configPath)
-      : { supported: process.platform === "linux", installed: false, active: false, enabled: false };
+      : {
+          supported: ["linux", "darwin", "win32"].includes(process.platform),
+          installed: false,
+          active: false,
+          enabled: false,
+        };
     if (global.json) printJson({ profile: profileName, ...status });
     else {
       console.log(
@@ -458,7 +628,7 @@ client
   .description("start the outbound Client in the foreground")
   .requiredOption("--config <path>", "Client configuration")
   .action(async (options: { config: string }) => {
-    assertLinuxClientHost();
+    assertSupportedClientHost();
     await runClient(options.config);
   });
 

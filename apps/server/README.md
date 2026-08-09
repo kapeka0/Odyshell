@@ -4,11 +4,11 @@
 
 <h1 align="center">Odyshell Server</h1>
 
-<p align="center"><strong>The agent-native control plane for private Linux Machines.</strong></p>
+<p align="center"><strong>The agent-native control plane for private Machines.</strong></p>
 
-The Server exposes canonical Task and Command HTTP endpoints, the remote OAuth MCP adapter, and an
+The Server exposes canonical Session and Command HTTP endpoints, the remote OAuth MCP adapter, and an
 authenticated outbound Client gateway. It owns Agent authorization, idempotency, lifecycle and
-audit, while each Linux Client independently enforces the Machine owner's Local Policy.
+audit, while each Windows, Linux, or macOS Client independently enforces the Machine owner's Local Policy.
 
 The Server never opens a connection into a private network. A Machine connects outbound, and a
 Command runs as the operating-system user that runs the Client. Odyshell does not add a sandbox,
@@ -29,7 +29,7 @@ Auth identity, dashboard, and public documentation. It uses production mode and 
 `POSTGRES_PASSWORD`, `ODYSHELL_WEB_KEY`, or `BETTER_AUTH_SECRET` is absent.
 
 Open `http://localhost:3000` and create the one Organization allowed by self-hosted mode. Agent
-runtimes connect to `http://localhost:4100/mcp`; Linux Machines enroll through the dashboard and
+runtimes connect to `http://localhost:4100/mcp`; Machines enroll through the dashboard and
 initiate their own authenticated outbound connection.
 
 ## Production boundary
@@ -42,8 +42,8 @@ initiate their own authenticated outbound connection.
 - Supply secrets through the deployment platform. Never commit `.env`, Machine private keys,
   OAuth secrets, or enrollment tokens.
 - Keep one Server replica for this release because live Client connections are process-local.
-- Run each Client as a dedicated least-privilege Linux user without root, sudo, or Docker group
-  membership.
+- Run each Client as a dedicated least-privilege operating-system user without administrative,
+  sudo, or Docker-group membership.
 - Deploy the Web and Server from the same release. Both use the same PostgreSQL database and
   `ODYSHELL_WEB_KEY`.
 

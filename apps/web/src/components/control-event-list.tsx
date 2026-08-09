@@ -171,7 +171,7 @@ export function ControlEventList({
           </EmptyMedia>
           <EmptyTitle>No activity yet</EmptyTitle>
           <EmptyDescription>
-            Task, Command, enrollment, and identity events will appear here.
+            Session, Command, enrollment, and identity events will appear here.
           </EmptyDescription>
         </EmptyHeader>
       </Empty>
@@ -388,7 +388,7 @@ function targetLabel(
   if (event.targetType === "agent") {
     return agentNames.get(event.targetId) ?? "Removed Agent";
   }
-  if (event.targetType === "task") return `Task ${event.targetId}`;
+  if (event.targetType === "session") return `Session ${event.targetId}`;
   if (event.targetType === "command") return `Command ${event.targetId}`;
   return "Organization";
 }
@@ -400,12 +400,12 @@ function actionLabel(action: string): string {
     "machine.revoked": "Machine removed",
     "machine.ping": "Machine reached",
     "machine.ping_denied": "Machine reachability denied",
-    "task.requested": "Task requested",
-    "task.opened": "Task opened",
-    "task.open_failed": "Task opening failed",
-    "task.approved": "Task approved",
-    "task.denied": "Task denied",
-    "task.closed": "Task closed",
+    "session.requested": "Session requested",
+    "session.opened": "Session opened",
+    "session.open_failed": "Session opening failed",
+    "session.approved": "Session approved",
+    "session.denied": "Session denied",
+    "session.closed": "Session closed",
     "command.created": "Command requested",
     "command.completed": "Command completed",
     "enrollment_token.created": "Enrollment command created",

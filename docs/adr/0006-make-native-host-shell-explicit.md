@@ -1,5 +1,5 @@
 ---
-status: superseded by ADR-0008
+status: superseded by ADR-0010
 ---
 
 # Make native Host Shell explicit
@@ -43,4 +43,4 @@ replaces the same-user Host Shell warning.
   linked Session with its own explicit approval.
 
 The replacement implementation and review contract is the
-[agent-native Task model](../design/agentic-task-model.md).
+[Session control plane](../design/session-control-plane.md).

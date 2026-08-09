@@ -1,11 +1,11 @@
 ---
-status: accepted
+status: superseded by ADR-0010
 ---
 
-# Adopt an agent-native Task and Command model
+# Adopt an agent-native Session and Command model
 
 Odyshell will replace Workspace, Session, typed Operation, Managed Agent, and command-capability
-language with Organization, Task, and Command. Each Task grants one Agent temporary authority on
+language with Organization, Session, and Command. Each Session grants one Agent temporary authority on
 one Machine as one operating-system user, and each Command is asynchronous non-interactive shell.
 This deliberately trades the breadth of typed filesystem, process, Docker, delegation, and
 multi-machine interfaces for a smaller agent-native contract whose real security boundary is the

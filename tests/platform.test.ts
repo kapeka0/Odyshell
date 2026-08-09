@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { PROTOCOL_VERSION } from "@odyshell/protocol";
 import { PendingCommand } from "../apps/client/src/command-control.js";
 import {
-  adjustedTaskDeadline,
+  adjustedSessionDeadline,
   ClientMessageBuffer,
   commandTimeoutMilliseconds,
   inspectClientRuntime,
@@ -31,25 +31,30 @@ import {
   activateLinuxUserService,
   linuxServiceNameForConfig,
   linuxUserServicePath,
+  macosServiceNameForConfig,
+  macosUserServicePath,
+  renderMacosUserService,
   renderLinuxUserService,
+  renderWindowsLauncher,
+  windowsTaskNameForConfig,
 } from "../apps/client/src/service.js";
 
-describe("Task-native Client boundary", () => {
+describe("Session-native Client boundary", () => {
   it("uses Server time within the skew window and rejects unsafe clocks", () => {
     const localNow = Date.parse("2026-07-31T10:00:20.000Z");
-    expect(adjustedTaskDeadline(
+    expect(adjustedSessionDeadline(
       "2026-07-31T10:05:00.000Z",
       "2026-07-31T10:00:00.000Z",
       localNow,
     ).toISOString()).toBe("2026-07-31T10:05:20.000Z");
-    expect(() => adjustedTaskDeadline(
+    expect(() => adjustedSessionDeadline(
       "2026-07-31T10:05:00.000Z",
       "2026-07-31T09:59:00.000Z",
       localNow,
-    )).toThrow("outside the allowed Task skew");
+    )).toThrow("outside the allowed Session skew");
   });
 
-  it("bounds Commands by Local Policy and remaining Task authority", () => {
+  it("bounds Commands by Local Policy and remaining Session authority", () => {
     const now = Date.parse("2026-08-04T10:00:00.000Z");
     expect(commandTimeoutMilliseconds(5, 30, new Date(now + 10_000), now)).toBe(5_000);
     expect(commandTimeoutMilliseconds(120, 30, new Date(now + 60_000), now)).toBe(0);
@@ -123,7 +128,7 @@ describe("Task-native Client boundary", () => {
   });
 
   it("remembers cancellation that arrives before process registration", async () => {
-    const pending = new PendingCommand("task-a");
+    const pending = new PendingCommand("session-a");
     let cancelled = false;
     const cancellation = pending.cancel();
     pending.attach({
@@ -138,7 +143,7 @@ describe("Task-native Client boundary", () => {
   it("propagates cancellation failure and quarantines future restarts", async () => {
     const directory = await mkdtemp(join(tmpdir(), "odyshell-quarantine-"));
     try {
-      const pending = new PendingCommand("task-a");
+      const pending = new PendingCommand("session-a");
       pending.attach({
         cancel: async () => { throw new Error("sensitive process detail"); },
         done: new Promise(() => {}),
@@ -165,7 +170,7 @@ describe("Task-native Client boundary", () => {
     expect(runtime).not.toHaveProperty("profiles");
   });
 
-  it("uses the Task-native wire protocol version", () => {
+  it("uses the Session-native wire protocol version", () => {
     expect(PROTOCOL_VERSION).toBe(5);
   });
 
@@ -218,14 +223,14 @@ describe("Task-native Client boundary", () => {
     expect(terminalMachineClose(4003)).toBe(false);
   });
 
-  it("keeps bounded Task authority across ordinary transport reconnects", () => {
+  it("keeps bounded Session authority across ordinary transport reconnects", () => {
     const client = readFileSync(resolve(process.cwd(), "apps/client/src/index.ts"), "utf8");
-    expect(client).toContain("const existing = this.tasks.get(message.taskId)");
-    expect(client).toContain("Task retry does not match active local authority");
+    expect(client).toContain("const existing = this.sessions.get(message.sessionId)");
+    expect(client).toContain("Session retry does not match active local authority");
     expect(client).toContain("this.bufferedMessages.enqueue(message)");
     expect(client).toContain("this.reconcileJournalResults()");
     expect(client).toContain("await this.dropLocalAuthority()");
-    expect(client).not.toContain("session.open");
+    expect(client).not.toContain("task.open");
     expect(client).not.toContain("operation.start");
     expect(client).not.toContain("filesystem");
   });
@@ -242,13 +247,13 @@ describe("Task-native Client boundary", () => {
     expect(client).toContain("process.exit(1)");
   });
 
-  it("terminates Commands before releasing Task state", async () => {
+  it("terminates Commands before releasing Session state", async () => {
     const events: string[] = [];
     await terminateLocalAuthority(
       [async () => { events.push("command:cancelled"); }],
-      [async () => { events.push("task:closed"); }],
+      [async () => { events.push("session:closed"); }],
     );
-    expect(events).toEqual(["command:cancelled", "task:closed"]);
+    expect(events).toEqual(["command:cancelled", "session:closed"]);
   });
 
   it("recovers interrupted Commands as execution_unknown", async () => {
@@ -329,6 +334,41 @@ describe("Task-native Client boundary", () => {
       calls.push(args);
     });
     expect(calls.at(-1)).toEqual(["is-active", "--quiet", "odyshell-client-test.service"]);
+  });
+
+  it("renders isolated macOS launchd services without shell interpolation", () => {
+    const configPath = "/Users/ada/Library/Application Support/Odyshell/client.json";
+    expect(macosServiceNameForConfig(configPath)).toMatch(/^com\.odyshell\.client\.[a-f0-9]{12}$/u);
+    expect(macosUserServicePath(configPath, "/Users/ada")).toContain("/Library/LaunchAgents/");
+    const plist = renderMacosUserService({
+      nodePath: "/opt/node & tools/node",
+      cliPath: "/Applications/Odyshell/ods.js",
+      configPath,
+    });
+    expect(plist).toContain("/opt/node &amp; tools/node");
+    expect(plist).toContain("<key>KeepAlive</key><true/>");
+    expect(() => renderMacosUserService({
+      nodePath: "/opt/node\nmalicious",
+      cliPath: "/tmp/ods.js",
+      configPath,
+    })).toThrow("control characters");
+  });
+
+  it("renders isolated Windows Task Scheduler launchers and rejects injection", () => {
+    const configPath = String.raw`C:\Users\Ada\AppData\Roaming\Odyshell\client.json`;
+    expect(windowsTaskNameForConfig(configPath)).toMatch(/^Odyshell\\Client-[a-f0-9]{12}$/u);
+    const launcher = renderWindowsLauncher({
+      nodePath: String.raw`C:\Program Files\nodejs\node.exe`,
+      cliPath: String.raw`C:\Program Files\Odyshell\ods.js`,
+      configPath,
+    });
+    expect(launcher).toContain('"C:\\Program Files\\nodejs\\node.exe"');
+    expect(launcher).toContain("client start --config");
+    expect(() => renderWindowsLauncher({
+      nodePath: 'C:\\bad" & whoami',
+      cliPath: "C:\\ods.js",
+      configPath,
+    })).toThrow("invalid characters");
   });
 
   it("uses a deterministic path for each named Client Profile", () => {

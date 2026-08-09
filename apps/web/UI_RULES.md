@@ -4,12 +4,12 @@ These rules are the source of truth for product interface decisions. They
 describe the behavior and qualities users should experience without requiring a
 particular component, library or interaction pattern.
 
-## Task and hierarchy
+## Session and hierarchy
 
 - Give every view one clear purpose and one clearly prioritized next action.
-- Show only information and actions useful to the current task.
+- Show only information and actions useful to the current session.
 - Prefer progressive disclosure when secondary detail would compete with the
-  primary task.
+  primary session.
 - Keep operational screens quiet, content-first and free of decorative
   enrichment.
 - Preserve the user's context when configuration or creation work does not
@@ -27,8 +27,8 @@ particular component, library or interaction pattern.
 - After CLI activation succeeds, keep terminal completion primary and present
   unreleased follow-up commands as clearly unavailable. Never place activation
   codes, tokens or session data in those commands.
-- Keep Agent registration focused. Task exceptions are supervised in the
-  authenticated Tasks view with the exact Agent, Machine, operating-system user,
+- Keep Agent registration focused. Session exceptions are supervised in the
+  authenticated Sessions view with the exact Agent, Machine, operating-system user,
   purpose, and expiry visible before a decision.
 - Keep quick local preferences, including theme selection, in the account menu.
 - Reserve user settings for changes persisted to the user's backend profile.
@@ -38,7 +38,7 @@ particular component, library or interaction pattern.
 ## Actions and forms
 
 - Use concise, active labels that describe the outcome.
-- Establish one primary action per task and give secondary actions quieter
+- Establish one primary action per session and give secondary actions quieter
   emphasis.
 - Make forms understandable in reading order, with persistent labels, useful
   guidance and errors connected to the relevant input.
@@ -85,15 +85,15 @@ particular component, library or interaction pattern.
 - Keep focus visible and move it predictably after navigation, submission and
   state changes.
 - Provide accessible names for every interactive element.
-- Ensure all essential tasks work with a keyboard and assistive technology.
+- Ensure all essential sessions work with a keyboard and assistive technology.
 - Maintain readable contrast in every state and theme.
 - Do not rely on color, position, motion or hover alone to communicate meaning.
-- Keep task flows usable at narrow widths and high zoom levels.
+- Keep session flows usable at narrow widths and high zoom levels.
 - Respect reduced-motion and other user preferences.
 
 ## Responsive behavior
 
-- Preserve task priority as space decreases; remove decoration before useful
+- Preserve session priority as space decreases; remove decoration before useful
   information or actions.
 - Reflow content in a logical reading order rather than shrinking it beyond
   legibility.
@@ -120,14 +120,14 @@ particular component, library or interaction pattern.
 
 ## Current product decisions
 
-- The public landing leads with Odyshell as agent-native infrastructure. Agents are the primary
-  operators; Human supervision is presented as an optional policy exception and audit surface.
+- The public landing leads with temporary, attributable shell authority. Standard Agents require a
+  Human decision; Operator Agents bypass it and are presented with an SSH-equivalent warning.
 - The public landing uses restrained neutral surfaces, medium-weight typography, compact radii and
-  generous page gutters. Its signature product visual is a real Task and Command crossing Server
+  generous page gutters. Its signature product visual is a real Session and Command crossing Server
   and Local Policy, not decorative illustration.
-- Do not publish unvalidated pricing or make the dashboard look like the primary runtime. Public
-  copy names only the Linux, Task, Command, MCP, HTTP, Cloud and self-hosted behavior available in
-  the current release.
+- Publish the current Free and $30/member/month Pro limits exactly. Enterprise and invitations are
+  labeled future work. Public copy covers Windows, Linux, macOS, Session, Command, MCP, HTTP, Cloud,
+  and self-hosted behavior available in the current release.
 - Machine enrollment gets a dedicated, uncluttered view. The one-time command
   must remain fully visible and must not be clipped by an overlay.
 - Short creation flows preserve context and remain comfortable at narrow
@@ -157,7 +157,7 @@ particular component, library or interaction pattern.
   Workspace.
 - Tables place the filtered result count above the table, show optional context
   on the right and center pagination below. Activity uses that context for the
-  workspace plan retention. Table skeletons preserve this same order.
+  Organization plan retention. Table skeletons preserve this same order.
 - Collection creation actions live in the table toolbar, never in the page
   header. Search and filters form the left group; the concise Add or New action
   forms the right group. Table skeletons preserve both groups.
@@ -177,7 +177,7 @@ particular component, library or interaction pattern.
   sending an email address to an external service.
 - Recognized Agent providers use their bundled local brand mark wherever Agent
   identity is shown. Unknown or custom Agents use the neutral Agent fallback.
-- Give every workspace a stable colored identity mark without displaying
+- Give every Organization a stable colored identity mark without displaying
   initials.
 - Online machines use a restrained green live indicator. Offline machines use
   a quiet neutral indicator, and both states include text. Keep the active dot
@@ -185,15 +185,15 @@ particular component, library or interaction pattern.
 - Operational collections support search, relevant filters, sorting and
   pagination. Row details and secondary actions stay behind a consistent
   actions menu.
-- Task requests appear in the Tasks view immediately. Pending exceptions are
-  visually separated from recent work, and the same durable Task is updated
+- Session requests appear in the Sessions view immediately. Pending exceptions are
+  visually separated from recent work, and the same durable Session is updated
   after approval instead of duplicated.
-- Task purposes remain concise and truncate when necessary. Human supervisors
+- Session purposes remain concise and truncate when necessary. Human supervisors
   use their recognizable name and profile image; internal identity IDs are
   never presented as names.
 - Activity actors follow the same identity rule: show a member's profile image
   and name when available, and never present an internal user ID as their name.
-- Task views show expiry in the viewer's timezone.
+- Session views show expiry in the viewer's timezone.
 - Important table identifiers are copyable from the value itself. Reveal the
   copy affordance with a restrained horizontal hover or focus animation.
 - Status tags use restrained semantic color to make operational state scannable:
@@ -213,24 +213,24 @@ particular component, library or interaction pattern.
   exists. Machine editing may change Server metadata and reduce effective
   capabilities, but it can never grant beyond the Client Local Policy.
 - Machine details expose whether the bound operating-system user can use sudo.
-  Task supervision warns clearly whenever granted shell authority can reach
+  Session supervision warns clearly whenever granted shell authority can reach
   root privileges.
-- Machine rows omit internal IDs. Task audit identifiers remain copyable where
+- Machine rows omit internal IDs. Session audit identifiers remain copyable where
   they are necessary to correlate Agent and API work.
 - Agent rows show when the identity was created in the viewer's local timezone.
 - Users can permanently delete any Agent from its actions. Deletion closes
-  active Tasks, requires confirmation, and retains audit evidence according to
+  active Sessions, requires confirmation, and retains audit evidence according to
   the Organization retention policy.
-- Collapsing workspace navigation preserves every icon, animates smoothly and
+- Collapsing Organization navigation preserves every icon, animates smoothly and
   does not introduce an unnecessary scrollbar.
 - The dashboard navbar keeps only the sidebar toggle on its left edge. The
   sidebar retains a visible right border using the same token as the navbar.
-- Keep workspace administration in a separate group directly after primary
+- Keep Organization administration in a separate group directly after primary
   navigation inside `SidebarContent`, ready for Settings, Members and future
   management routes.
 - Platform-wide degraded states use a compact warning bar above navigation,
   not a floating toast.
-- Workspace notifications use a compact Sheet beside Quick actions. Show a
+- Organization notifications use a compact Sheet beside Quick actions. Show a
   restrained red indicator only while unread items exist, and let members mark
   one item as read or unread and all items as read. Opening the Sheet alone does
   not change read state. Each item has a concise title and description; clicking
@@ -240,18 +240,18 @@ particular component, library or interaction pattern.
   user's timezone on hover. Retain notifications for 30 days.
 - Direct control notifications go to the member responsible for the
   initiating action. Keep notification copy privacy-minimal: never include
-  commands, paths, Command output, credentials, or Task purpose.
-- Tasks use a concise required title and optional purpose. Tables and canvas
+  commands, paths, Command output, credentials, or Session purpose.
+- Sessions use a concise required title and optional purpose. Tables and canvas
   nodes lead with the title and show the single target Machine and bound
   operating-system user.
-- Agents create Tasks and Commands through HTTP or remote MCP. The dashboard
+- Agents create Sessions and Commands through HTTP or remote MCP. The dashboard
   observes, approves, denies, and audits; it does not provide a parallel manual
   execution flow.
-- Task and Command audit is chronological and attributable. Exact command,
+- Session and Command audit is chronological and attributable. Exact command,
   working directory, timeout, status, and exit code may be shown to authorized
-  members; stdout and stderr remain transient and are never retained in audit.
-- Personal settings and workspace settings have separate destinations.
-  Workspace security settings are visible to members and editable only by
+  members; bounded stdout and stderr are retained in the Session timeline according to policy.
+- Personal settings and Organization settings have separate destinations.
+  Organization security settings are visible to members and editable only by
   administrators.
 - Settings pages group related fields into named sections. Inside each contained
   surface, use responsive horizontal rows with the label and concise guidance on
@@ -260,9 +260,9 @@ particular component, library or interaction pattern.
   security-sensitive choices link to public documentation. Keep each Card on one
   background and use the default shadcn treatment for Alerts and Dialogs. Their
   skeletons preserve the same section and row structure.
-- Task audit always stores the exact command and security-relevant metadata.
-  Credentials, enrollment tokens, OAuth tokens, Machine private keys, stdout,
-  and stderr never belong in durable audit or user-facing error feedback.
+- Session audit always stores the exact command and security-relevant metadata.
+  Credentials, enrollment tokens, OAuth tokens, and Machine private keys never belong in durable
+  audit or user-facing error feedback. Bounded stdout/stderr belong only to the retained timeline.
 - Keep public documentation outside the authenticated workspace and make it usable
   without an authenticated product session.
 - Documentation starts with the Cloud workflow, uses progressive disclosure and
@@ -270,6 +270,6 @@ particular component, library or interaction pattern.
 - Documentation must serve people and agents from one reviewed source. Keep
   Markdown pages and LLM indexes discoverable without adding provider-specific
   actions.
-- Public installation uses the canonical npm command for the Linux-only CLI.
+- Public installation uses the canonical npm command for the cross-platform CLI.
 - The landing introduces documentation once, after the product workflow, with one
   clear action.

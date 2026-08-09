@@ -4,7 +4,7 @@ description: Run the sovereign Odyshell control plane and PostgreSQL on your inf
 ---
 
 Self-hosting uses the same Better Auth identity layer, Server, PostgreSQL schema, remote MCP and
-HTTP protocols, dashboard, and Linux Client as Cloud. Identity, policy, Task, Command, audit, and
+HTTP protocols, dashboard, and Linux Client as Cloud. Identity, policy, Session, Command, audit, and
 credential data stay in the deployment owner's PostgreSQL database. Clerk and hosted analytics
 are not required.
 
@@ -53,9 +53,9 @@ Generic OIDC is also optional: configure `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`,
 
 1. Add the Server's `/mcp` resource to the external Agent runtime.
 2. Complete OAuth and approve the Organization-bound Agent installation.
-3. Install `ods` on the target Linux host.
+3. Install `ods` on the target Windows, Linux, or macOS host.
 4. In **Machines**, select **Add Machine** and run the generated command.
-5. From the Agent, request a Task and execute Commands through MCP or canonical HTTP.
+5. From the Agent, request a Session and execute Commands through MCP or canonical HTTP.
 
 ```npm
 npm install --global @odyshell/cli
@@ -67,7 +67,7 @@ ods --server https://api.example.com up \
 
 The Machine initiates the connection and needs no inbound port, SSH credential, or VPN route. Run
 the Client as a dedicated Linux user without root, sudo, or Docker membership. Machine enrollment
-never binds an Agent; an authorized Task creates that temporary relationship.
+never binds an Agent; an authorized Session creates that temporary relationship.
 
 For the complete production and lifecycle checklist, see the
 [repository self-hosting guide](https://github.com/kapeka0/odyshell/blob/main/docs/self-hosting.md).

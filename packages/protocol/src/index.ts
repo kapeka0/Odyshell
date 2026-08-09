@@ -1,17 +1,17 @@
 import { z } from "zod";
 import {
-  clientTaskProfileSchema,
+  clientSessionProfileSchema,
   localPolicySchema,
-  taskClientToServerMessageSchema,
-  taskServerToClientMessageSchema,
-} from "./task.js";
+  sessionClientToServerMessageSchema,
+  sessionServerToClientMessageSchema,
+} from "./session.js";
 import type {
   LocalPolicy,
-  TaskClientToServerMessage,
-  TaskServerToClientMessage,
-} from "./task.js";
+  SessionClientToServerMessage,
+  SessionServerToClientMessage,
+} from "./session.js";
 
-export * from "./task.js";
+export * from "./session.js";
 
 export const PROTOCOL_VERSION = 5;
 export const DEFAULT_CLOUD_SERVER_URL = "https://server.odyshell.com";
@@ -37,7 +37,7 @@ export const clientConfigSchema = z
     machineName: z.string().min(1).max(128),
     privateKeyPem: z.string().min(1),
     stateDirectory: z.string().min(1).max(4096),
-    taskProfile: z
+    sessionProfile: z
       .object({
         id: z.string().trim().min(1).max(256),
         localPolicy: localPolicySchema,
@@ -48,7 +48,7 @@ export const clientConfigSchema = z
 export type ClientConfig = z.infer<typeof clientConfigSchema>;
 
 export type ServerToClientMessage =
-  | TaskServerToClientMessage
+  | SessionServerToClientMessage
   | { type: "challenge"; connectionId: string; nonce: string }
   | { type: "authenticated"; machineId: string }
   | {
@@ -59,14 +59,14 @@ export type ServerToClientMessage =
   | { type: "ping"; pingId: string };
 
 export type ClientToServerMessage =
-  | TaskClientToServerMessage
+  | SessionClientToServerMessage
   | {
       type: "authenticate";
       machineId: string;
       protocolVersion: number;
       signature: string;
       runtime?: ClientRuntimeInfo;
-      taskProfile: {
+      sessionProfile: {
         id: string;
         operatingSystemUser: string;
         localPolicy: LocalPolicy;
@@ -95,7 +95,7 @@ const clientControlMessageSchema = z.discriminatedUnion("type", [
       protocolVersion: z.number().int().positive(),
       signature: z.string().min(1).max(1024).regex(/^[A-Za-z0-9_-]+$/),
       runtime: clientRuntimeInfoSchema.optional(),
-      taskProfile: clientTaskProfileSchema,
+      sessionProfile: clientSessionProfileSchema,
     })
     .strict(),
   z
@@ -145,11 +145,11 @@ const serverControlMessageSchema = z.discriminatedUnion("type", [
 
 const clientMessageSchema = z.union([
   clientControlMessageSchema,
-  taskClientToServerMessageSchema,
+  sessionClientToServerMessageSchema,
 ]);
 const serverMessageSchema = z.union([
   serverControlMessageSchema,
-  taskServerToClientMessageSchema,
+  sessionServerToClientMessageSchema,
 ]);
 
 export function parseClientMessage(raw: string): ClientToServerMessage {

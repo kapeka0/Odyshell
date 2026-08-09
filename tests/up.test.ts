@@ -5,12 +5,12 @@ import { mkdtemp } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
   assertClientServerReachable,
-  assertLinuxClientHost,
+  assertSupportedClientHost,
   resolveClientUpConfiguration,
 } from "../apps/cli/src/up.js";
 
 describe("ods up configuration safety", () => {
-  it("enrolls a Task-native host Profile without legacy runtime controls", async () => {
+  it("enrolls a Session-native host Profile without legacy runtime controls", async () => {
     const source = await readFile(resolve(process.cwd(), "apps/cli/src/index.ts"), "utf8");
     const upCommand = source.slice(
       source.indexOf('.command("up")'),
@@ -24,9 +24,10 @@ describe("ods up configuration safety", () => {
   });
 
   it("rejects non-Linux hosts before enrollment", () => {
-    expect(() => assertLinuxClientHost("darwin")).toThrow("Linux hosts only");
-    expect(() => assertLinuxClientHost("win32")).toThrow("Linux hosts only");
-    expect(() => assertLinuxClientHost("linux")).not.toThrow();
+    expect(() => assertSupportedClientHost("darwin")).not.toThrow();
+    expect(() => assertSupportedClientHost("win32")).not.toThrow();
+    expect(() => assertSupportedClientHost("linux")).not.toThrow();
+    expect(() => assertSupportedClientHost("aix")).toThrow("supports Linux, macOS, and Windows");
   });
 
   it("fails when its Server is unreachable", async () => {

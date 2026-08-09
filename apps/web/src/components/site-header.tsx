@@ -18,8 +18,8 @@ export function SiteHeader() {
             <Link className="text-muted-foreground transition-colors hover:text-foreground" href="/#security">
               Security
             </Link>
-            <Link className="text-muted-foreground transition-colors hover:text-foreground" href="/docs/self-hosting">
-              Self-hosting
+            <Link className="text-muted-foreground transition-colors hover:text-foreground" href="/#pricing">
+              Pricing
             </Link>
           </nav>
           <div className="ml-auto flex items-center gap-2">

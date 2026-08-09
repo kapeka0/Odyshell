@@ -3,11 +3,33 @@
 @import "shadcn/tailwind.css";
 @import "fumadocs-ui/css/shadcn.css";
 @import "fumadocs-ui/css/preset.css";
+@import "@xyflow/react/dist/style.css" layer(base);
 @import "../../tokens.css";
 
 @layer theme, base, components, utilities;
 
 @custom-variant dark (&:is(.dark *));
+
+@layer components {
+  .odyshell-flow .react-flow__controls {
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--background);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .odyshell-flow .react-flow__controls-button {
+    border-color: var(--border);
+    background: var(--background);
+    color: var(--foreground);
+    fill: currentColor;
+  }
+
+  .odyshell-flow .react-flow__controls-button:hover {
+    background: var(--muted);
+  }
+}
 
 @theme inline {
   --color-background: var(--background);
