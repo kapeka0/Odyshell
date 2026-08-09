@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -26,7 +26,7 @@ describe("ShellExecutor", () => {
         { stdout: (data) => stdout.push(data), stderr: () => {} },
       );
       await expect(running.done).resolves.toEqual({ exitCode: 0 });
-      expect(Buffer.concat(stdout).toString()).toBe(home);
+      expect(await realpath(Buffer.concat(stdout).toString())).toBe(await realpath(home));
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -45,7 +45,7 @@ describe("ShellExecutor", () => {
         { stdout: (data) => stdout.push(data), stderr: () => {} },
       );
       await running.done;
-      expect(Buffer.concat(stdout).toString()).toBe(cwd);
+      expect(await realpath(Buffer.concat(stdout).toString())).toBe(await realpath(cwd));
       await expect(executor.execute(
         "process.exit(0)",
         join(home, "missing"),

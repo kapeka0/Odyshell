@@ -12,7 +12,7 @@ describe("self-hosted distribution", () => {
 
   it("runs application services in production and fails closed on secrets", () => {
     const compose = source("docker-compose.yml");
-    const example = source(".env.example");
+    const example = source(".env.example").replace(/\r\n/gu, "\n");
 
     expect(compose.match(/NODE_ENV: production/g)).toHaveLength(2);
     expect(compose.match(/ODYSHELL_DEPLOYMENT_MODE: self-hosted/g)).toHaveLength(2);
