@@ -4,6 +4,7 @@ import {
   ActivityIcon,
   BotIcon,
   CpuIcon,
+  LayoutDashboardIcon,
   SettingsIcon,
   ListTodoIcon,
 } from "lucide-react";
@@ -18,9 +19,10 @@ import {
 } from "@/components/ui/sidebar";
 
 const organizationItems = [
+  { label: "Overview", href: "/dashboard", icon: LayoutDashboardIcon },
   { label: "Machines", href: "/dashboard/machines", icon: CpuIcon },
   { label: "Agents", href: "/dashboard/agents", icon: BotIcon },
-  { label: "Tasks", href: "/dashboard/tasks", icon: ListTodoIcon },
+  { label: "Sessions", href: "/dashboard/sessions", icon: ListTodoIcon },
   { label: "Activity", href: "/dashboard/activity", icon: ActivityIcon },
 ] as const;
 

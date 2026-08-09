@@ -7,14 +7,13 @@ const web = resolve(root, "apps/web");
 const source = (path: string) => readFileSync(resolve(web, path), "utf8");
 
 describe("agent-native landing", () => {
-  it("leads with Agents, real Machines, and optional Human supervision", () => {
+  it("leads with temporary Agent access, traceability, and Human supervision", () => {
     const page = source("src/app/page.tsx");
 
-    expect(page).toContain("The control plane for agents on real machines.");
-    expect(page).toContain("remote MCP or canonical HTTP");
-    expect(page).toContain("Optional supervision");
-    expect(page).toContain("Humans observe, approve exceptions and audit work");
-    expect(page).toContain("Cloud and self-hosted deployments use the same Server");
+    expect(page).toContain("Let agents work.");
+    expect(page).toContain("Temporary, approved shell Sessions");
+    expect(page).toContain("A Human approves in the browser");
+    expect(page).toContain("See exactly what happened.");
   });
 
   it("does not advertise removed or unvalidated product surfaces", () => {
@@ -22,13 +21,9 @@ describe("agent-native landing", () => {
 
     for (const obsolete of [
       "Create a workspace",
-      "macOS",
-      "Windows",
       "TypeScript SDK",
       "structured operation",
       "All operation capabilities",
-      "Pricing",
-      "Plans",
       "MVP",
     ]) {
       expect(page).not.toContain(obsolete);
@@ -54,9 +49,9 @@ describe("agent-native landing", () => {
     const rules = source("UI_RULES.md");
     const design = source("design.md");
 
-    expect(rules).toContain("Agents are the primary");
-    expect(rules).toContain("Do not publish unvalidated pricing");
-    expect(design).toContain("Use Manrope for public landing");
-    expect(design).toContain("24-pixel gutters");
+    expect(rules).toContain("Standard Agents require");
+    expect(rules).toContain("$30/member/month Pro");
+    expect(design).toContain("Manrope for landing");
+    expect(design).toContain("supplied product references");
   });
 });

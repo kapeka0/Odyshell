@@ -7,7 +7,7 @@ import {
 import { performance } from "node:perf_hooks";
 import { z } from "zod";
 
-export const cloudPlanIds = ["free", "team", "scale"] as const;
+export const cloudPlanIds = ["free", "pro", "enterprise"] as const;
 export const organizationLoggingLevels = [
   "privacy-minimal",
   "operational",
@@ -17,22 +17,30 @@ export type OrganizationLoggingLevel = (typeof organizationLoggingLevels)[number
 export type CloudPlanId = (typeof cloudPlanIds)[number];
 
 export type PlanEntitlements = {
+  memberLimit: number | null;
   machineLimit: number;
-  activeAgentLimit: number;
+  activeAgentLimit: number | null;
+  monthlyPricePerMemberCents: number | null;
 };
 
 export const planEntitlements: Record<CloudPlanId, PlanEntitlements> = {
   free: {
+    memberLimit: 1,
     machineLimit: 2,
-    activeAgentLimit: 3,
+    activeAgentLimit: 2,
+    monthlyPricePerMemberCents: 0,
   },
-  team: {
-    machineLimit: 10,
-    activeAgentLimit: 25,
+  pro: {
+    memberLimit: 20,
+    machineLimit: 20,
+    activeAgentLimit: null,
+    monthlyPricePerMemberCents: 3_000,
   },
-  scale: {
-    machineLimit: 50,
-    activeAgentLimit: 100,
+  enterprise: {
+    memberLimit: null,
+    machineLimit: 1_000,
+    activeAgentLimit: null,
+    monthlyPricePerMemberCents: null,
   },
 };
 
@@ -88,6 +96,19 @@ export const updateCloudMachineSchema = cloudIdentitySchema
 export const deleteCloudAgentSchema = cloudIdentitySchema.extend({
   agentId: z.string().uuid(),
 });
+
+export const updateCloudAgentRoleSchema = cloudIdentitySchema.extend({
+  agentId: z.string().uuid(),
+  agentRole: z.enum(["standard", "operator"]),
+});
+
+export const cloudBillingPlanUpdateSchema = z.object({
+  eventId: z.string().trim().min(1).max(256),
+  externalOrganizationId: z.string().trim().min(1).max(256),
+  plan: z.enum(["free", "pro"]),
+  stripeCustomerId: z.string().regex(/^cus_[A-Za-z0-9]+$/u),
+  stripeSubscriptionId: z.string().regex(/^sub_[A-Za-z0-9]+$/u).nullable(),
+}).strict();
 
 const cloudLiveClaimsSchema = z.object({
   organizationId: z.string().min(1).max(128),
@@ -230,7 +251,7 @@ export function privacySafeControlMetadata(
   metadata: Record<string, unknown>,
 ): Record<string, string> {
   const safe: Record<string, string> = {};
-  for (const key of ["revokedTasks", "deletedAgents"] as const) {
+  for (const key of ["revokedSessions", "deletedAgents"] as const) {
     const value = z.number().int().nonnegative().safeParse(metadata[key]);
     if (value.success) safe[key] = String(value.data);
   }

@@ -17,6 +17,8 @@ export type OrganizationRecord = {
   plan: CloudPlanId;
   avatarSeed: string;
   loggingLevel: OrganizationLoggingLevel;
+  stripeCustomerId?: string;
+  stripeSubscriptionId?: string;
   createdAt: number;
 };
 
@@ -52,8 +54,7 @@ export type AgentIdentityRecord = {
   organizationId: string;
   id: string;
   name: string;
-  kind: "independent" | "managed";
-  parentAgentId?: string;
+  role: "standard" | "operator";
   createdByHumanId?: string;
   status: "active" | "disabled";
   deletedAt?: number;
@@ -74,6 +75,7 @@ export type McpInstallationRecord = {
   oauthClientId: string;
   agentId: string;
   agentName: string;
+  agentRole: "standard" | "operator";
   status: "active" | "revoked";
   createdAt: number;
   updatedAt: number;
@@ -103,6 +105,8 @@ type OrganizationRow = QueryResultRow & {
   plan: CloudPlanId;
   avatar_seed: string;
   logging_level: OrganizationLoggingLevel;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
   created_at: Date;
 };
 
@@ -122,8 +126,7 @@ type AgentRow = QueryResultRow & {
   organization_id: string;
   id: string;
   name: string;
-  kind: "independent" | "managed";
-  parent_agent_id: string | null;
+  role: "standard" | "operator";
   created_by_human_id: string | null;
   status: "active" | "disabled";
   deleted_at: Date | null;
@@ -223,6 +226,44 @@ export class PostgresControlDatabase {
     } : null;
   }
 
+  async applyStripePlan(input: {
+    eventId: string;
+    externalOrganizationId: string;
+    plan: "free" | "pro";
+    stripeCustomerId: string;
+    stripeSubscriptionId: string | null;
+  }): Promise<"applied" | "replayed" | "organization_not_found"> {
+    return await this.transaction(async (client) => {
+      const event = await client.query(`
+        insert into odyshell.stripe_events (event_id) values ($1)
+        on conflict (event_id) do nothing returning event_id
+      `, [input.eventId]);
+      if ((event.rowCount ?? 0) === 0) return "replayed";
+      const updated = await client.query(`
+        update odyshell.organizations set
+          plan = $2,
+          stripe_customer_id = $3,
+          stripe_subscription_id = $4
+        where external_id = $1
+        returning id
+      `, [
+        input.externalOrganizationId,
+        input.plan,
+        input.stripeCustomerId,
+        input.stripeSubscriptionId,
+      ]);
+      if ((updated.rowCount ?? 0) === 0) {
+        throw new Error("Stripe event references an unknown Organization");
+      }
+      return "applied";
+    }).catch((error: unknown) => {
+      if (error instanceof Error && error.message.includes("unknown Organization")) {
+        return "organization_not_found" as const;
+      }
+      throw error;
+    });
+  }
+
   async mcpOrganization(organizationId: string): Promise<McpOrganizationRecord | null> {
     const result = await this.pool.query<{
       organization_id: string;
@@ -235,6 +276,14 @@ export class PostgresControlDatabase {
       where id = $1
     `, [organizationId]);
     return result.rows[0] ? mcpOrganizationRecord(result.rows[0]) : null;
+  }
+
+  async organizationByExternalId(externalId: string): Promise<OrganizationRecord | null> {
+    const result = await this.pool.query<OrganizationRow>(
+      "select * from odyshell.organizations where external_id = $1",
+      [externalId],
+    );
+    return result.rows[0] ? organizationRecord(result.rows[0]) : null;
   }
 
   async mcpOrganizations(externalIds: string[]): Promise<McpOrganizationRecord[]> {
@@ -387,15 +436,19 @@ export class PostgresControlDatabase {
       const entitlement = usage.rows[0];
       if (!entitlement) return null;
       const limit = entitlementsFor(entitlement.plan).activeAgentLimit;
-      if (this.deploymentMode === "cloud" && Number(entitlement.active_agents) >= limit) {
+      if (
+        this.deploymentMode === "cloud" &&
+        limit !== null &&
+        Number(entitlement.active_agents) >= limit
+      ) {
         return { status: "agent_limit_reached", plan: entitlement.plan, activeAgentLimit: limit };
       }
       const now = new Date();
       const agentId = randomUUID();
       await client.query(`
         insert into odyshell.agents
-          (organization_id, id, name, kind, created_by_human_id, status, created_at, updated_at)
-        values ($1, $2, $3, 'independent', $4, 'active', $5, $5)
+          (organization_id, id, name, role, created_by_human_id, status, created_at, updated_at)
+        values ($1, $2, $3, 'standard', $4, 'active', $5, $5)
       `, [input.organizationId, agentId, input.agentName, input.userId, now]);
       const result = await client.query<{
         organization_id: string; id: string; user_id: string; oauth_client_id: string;
@@ -436,17 +489,9 @@ export class PostgresControlDatabase {
     return await this.transaction(async (client) => {
       await client.query("select pg_advisory_xact_lock(hashtext($1))", [organizationId]);
       const result = await client.query<{ id: string }>(`
-        with recursive descendants as (
-          select id from odyshell.agents
-          where organization_id = $1 and id = $2 and deleted_at is null
-          union all
-          select child.id from odyshell.agents child
-          join descendants parent on child.parent_agent_id = parent.id
-          where child.organization_id = $1 and child.deleted_at is null
-        )
-        update odyshell.agents agent set status = 'disabled', deleted_at = now(), updated_at = now()
-        where agent.organization_id = $1 and agent.id in (select id from descendants)
-        returning agent.id
+        update odyshell.agents set status = 'disabled', deleted_at = now(), updated_at = now()
+        where organization_id = $1 and id = $2 and deleted_at is null
+        returning id
       `, [organizationId, agentId]);
       const agentIds = result.rows.map((row) => row.id);
       if (agentIds.length === 0) return null;
@@ -456,6 +501,19 @@ export class PostgresControlDatabase {
       `, [organizationId, agentIds]);
       return { agentIds };
     });
+  }
+
+  async updateOrganizationAgentRole(
+    organizationId: string,
+    agentId: string,
+    role: "standard" | "operator",
+  ): Promise<AgentIdentityRecord | null> {
+    const result = await this.pool.query<AgentRow>(`
+      update odyshell.agents set role = $3, updated_at = now()
+      where organization_id = $1 and id = $2 and status = 'active' and deleted_at is null
+      returning *
+    `, [organizationId, agentId, role]);
+    return result.rows[0] ? agentRecord(result.rows[0]) : null;
   }
 
   async createEnrollmentToken(
@@ -707,8 +765,9 @@ async function activeInstallation(
   const result = await client.query<{
     organization_id: string; id: string; user_id: string; oauth_client_id: string;
     agent_id: string; status: "active"; created_at: Date; updated_at: Date; agent_name: string;
+    agent_role: "standard" | "operator";
   }>(`
-    select installation.*, agent.name as agent_name
+    select installation.*, agent.name as agent_name, agent.role as agent_role
     from odyshell.mcp_installations installation
     join odyshell.agents agent
       on agent.organization_id = installation.organization_id and agent.id = installation.agent_id
@@ -726,13 +785,15 @@ async function activeInstallation(
       where organization_id = $1 and id = $2
     `, [input.organizationId, row.agent_id, agentName]);
   }
-  return installationRecord(row, agentName);
+  return installationRecord(row, agentName, row.agent_role);
 }
 
 function organizationRecord(row: OrganizationRow): OrganizationRecord {
   return {
     id: row.id, slug: row.slug, name: row.name, externalId: row.external_id,
     plan: row.plan, avatarSeed: row.avatar_seed, loggingLevel: row.logging_level,
+    ...(row.stripe_customer_id ? { stripeCustomerId: row.stripe_customer_id } : {}),
+    ...(row.stripe_subscription_id ? { stripeSubscriptionId: row.stripe_subscription_id } : {}),
     createdAt: timestamp(row.created_at),
   };
 }
@@ -749,8 +810,7 @@ function mcpOrganizationRecord(row: {
 
 function agentRecord(row: AgentRow): AgentIdentityRecord {
   return {
-    organizationId: row.organization_id, id: row.id, name: row.name, kind: row.kind,
-    ...(row.parent_agent_id ? { parentAgentId: row.parent_agent_id } : {}),
+    organizationId: row.organization_id, id: row.id, name: row.name, role: row.role,
     ...(row.created_by_human_id ? { createdByHumanId: row.created_by_human_id } : {}),
     status: row.status,
     ...(row.deleted_at ? { deletedAt: timestamp(row.deleted_at) } : {}),
@@ -761,10 +821,10 @@ function agentRecord(row: AgentRow): AgentIdentityRecord {
 function installationRecord(row: {
   organization_id: string; id: string; user_id: string; oauth_client_id: string;
   agent_id: string; status: "active" | "revoked"; created_at: Date; updated_at: Date;
-}, agentName: string): McpInstallationRecord {
+}, agentName: string, agentRole: "standard" | "operator" = "standard"): McpInstallationRecord {
   return {
     organizationId: row.organization_id, id: row.id, userId: row.user_id,
-    oauthClientId: row.oauth_client_id, agentId: row.agent_id, agentName,
+    oauthClientId: row.oauth_client_id, agentId: row.agent_id, agentName, agentRole,
     status: row.status, createdAt: timestamp(row.created_at), updatedAt: timestamp(row.updated_at),
   };
 }
@@ -792,11 +852,27 @@ const controlSchemaSql = `
     slug text not null,
     name text not null,
     external_id text not null unique,
-    plan text not null default 'free' check (plan in ('free', 'team', 'scale')),
+    plan text not null default 'free' check (plan in ('free', 'pro', 'enterprise')),
     avatar_seed text not null default 'default',
     logging_level text not null default 'privacy-minimal'
       check (logging_level in ('privacy-minimal', 'operational', 'diagnostic')),
+    stripe_customer_id text unique,
+    stripe_subscription_id text unique,
     created_at timestamptz not null default now()
+  );
+  alter table odyshell.organizations drop constraint if exists organizations_plan_check;
+  alter table odyshell.organizations add constraint organizations_plan_check
+    check (plan in ('free', 'pro', 'enterprise'));
+  alter table odyshell.organizations add column if not exists stripe_customer_id text;
+  alter table odyshell.organizations add column if not exists stripe_subscription_id text;
+  create unique index if not exists organizations_stripe_customer_idx
+    on odyshell.organizations (stripe_customer_id) where stripe_customer_id is not null;
+  create unique index if not exists organizations_stripe_subscription_idx
+    on odyshell.organizations (stripe_subscription_id) where stripe_subscription_id is not null;
+
+  create table if not exists odyshell.stripe_events (
+    event_id text primary key,
+    processed_at timestamptz not null default now()
   );
 
   create table if not exists odyshell.user_preferences (
@@ -849,17 +925,20 @@ const controlSchemaSql = `
     organization_id text not null references odyshell.organizations(id) on delete cascade,
     id text not null,
     name text not null,
-    kind text not null check (kind in ('independent', 'managed')),
-    parent_agent_id text,
+    role text not null default 'standard' check (role in ('standard', 'operator')),
     created_by_human_id text,
     status text not null check (status in ('active', 'disabled')),
     deleted_at timestamptz,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
-    primary key (organization_id, id),
-    foreign key (organization_id, parent_agent_id)
-      references odyshell.agents(organization_id, id)
+    primary key (organization_id, id)
   );
+  alter table odyshell.agents add column if not exists role text not null default 'standard';
+  alter table odyshell.agents drop constraint if exists agents_role_check;
+  alter table odyshell.agents add constraint agents_role_check
+    check (role in ('standard', 'operator'));
+  alter table odyshell.agents drop column if exists parent_agent_id cascade;
+  alter table odyshell.agents drop column if exists kind;
 
   create table if not exists odyshell.mcp_installations (
     organization_id text not null references odyshell.organizations(id) on delete cascade,

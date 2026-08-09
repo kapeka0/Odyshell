@@ -35,7 +35,7 @@ export function AuthShell({
             Govern agents acting on real machines.
           </h1>
           <p className="mt-6 max-w-lg text-lg leading-8 text-muted-foreground">
-            Manage outbound Machine Clients, temporary Tasks, optional human
+            Manage outbound Machine Clients, temporary Sessions, optional human
             supervision, and exact-command audit from one Organization.
           </p>
         </section>

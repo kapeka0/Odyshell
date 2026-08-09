@@ -9,7 +9,7 @@ const requiredPages = [
   "concepts.mdx",
   "machines.mdx",
   "agents.mdx",
-  "tasks.mdx",
+  "sessions.mdx",
   "commands.mdx",
   "settings.mdx",
   "mcp.mdx",
@@ -63,40 +63,39 @@ describe("public documentation corpus", () => {
     expect(security).toContain("operating-system user");
     expect(security).toMatch(/user's files\s+and credentials/u);
     expect(security).toContain("does not configure sudo");
-    expect(security).toContain("stdout, and stderr are excluded");
+    expect(security).toContain("bounded stdout/stderr");
     expect(agents).toContain("same-user authority");
     expect(agents).toContain("arbitrary non-interactive shell Commands");
     expect(commands).toContain("PTYs, and persistent shell state are not");
-    expect(commands).toContain("never stores OAuth credentials or retained stdout/stderr");
+    expect(commands).toContain("never stores OAuth credentials");
     expect(concepts).toContain("The Server can grant less but never");
     expect(corpus).not.toContain("Full access");
   });
 
-  it("documents only the canonical remote Task and Command MCP", () => {
+  it("documents only the canonical remote Session and Command MCP", () => {
     const mcp = readFileSync(resolve(docsRoot, "mcp.mdx"), "utf8");
 
-    expect(mcp).toContain("`task_request`");
+    expect(mcp).toContain("`session_request`");
     expect(mcp).toContain("`command_run`");
     expect(mcp).toContain("OAuth");
     expect(mcp).not.toContain("`ods mcp`");
     expect(mcp).not.toContain("Session Credential");
   });
 
-  it("publishes a Machine-only Linux CLI contract", () => {
+  it("publishes the cross-platform Human and Machine CLI contract", () => {
     const cli = readFileSync(resolve(docsRoot, "cli.mdx"), "utf8");
 
-    expect(cli).toContain("Linux and Node.js 24");
-    expect(cli).toContain("`ods` is a Machine administration tool");
-    expect(cli).toContain("ods client doctor --profile default");
-    expect(cli).toContain("no Human login, Agent runtime, Task, Command");
-    expect(cli).not.toContain("ods login");
+    expect(cli).toContain("Windows, Linux, and macOS");
+    expect(cli).toContain("ods client doctor");
+    expect(cli).toContain("ods login");
+    expect(cli).toContain("ods sessions approve");
     expect(cli).not.toContain("ods exec");
     expect(cli).not.toContain("ods shell");
   });
 
   it("does not publish compatibility or legacy runtime guides", () => {
     for (const page of [
-      "sessions.mdx",
+      "tasks.mdx",
       "operations.mdx",
       "sdk.mdx",
       "migration.mdx",
@@ -117,39 +116,30 @@ describe("public documentation corpus", () => {
     expect(selfHosting).not.toContain("ods exec");
   });
 
-  it("records the accepted agent-native Task and Command boundary", () => {
+  it("records the accepted agent-native Session and Command boundary", () => {
     const repositoryRoot = process.cwd();
     const context = readFileSync(resolve(repositoryRoot, "CONTEXT.md"), "utf8");
     const design = readFileSync(
-      resolve(repositoryRoot, "docs/design/agentic-task-model.md"),
+      resolve(repositoryRoot, "docs/design/session-control-plane.md"),
       "utf8",
     );
     const adr = readFileSync(
       resolve(
         repositoryRoot,
-        "docs/adr/0008-adopt-agent-native-task-model.md",
+        "docs/adr/0010-adopt-session-authority-and-agent-roles.md",
       ),
       "utf8",
     );
-    const machineBindingAdr = readFileSync(
-      resolve(
-        repositoryRoot,
-        "docs/adr/0009-bind-agents-to-machines-only-through-tasks.md",
-      ),
-      "utf8",
-    );
-
-    expect(context).toContain("**Task**:");
+    expect(context).toContain("**Session**:");
     expect(context).toContain("**Command**:");
     expect(context).not.toContain("**Workspace**:");
-    expect(context).not.toContain("**Session**:");
+    expect(context).not.toContain("**Task**:");
     expect(design).toContain("one Agent");
     expect(design).toContain("one Machine and Client Profile");
-    expect(machineBindingAdr).toContain("A Machine belongs to one Organization, never to an Agent");
-    expect(design).toContain("There is no caller-supplied environment or standard input");
+    expect(design).toContain("There is no caller-provided");
     expect(design).toContain("The Server is trusted");
-    expect(adr).toContain("Organization, Task, and Command");
-    expect(adr).toContain("No compatibility aliases or migrations");
+    expect(adr).toContain("exactly one Agent and one Machine");
+    expect(adr).toContain("without compatibility aliases");
   });
 
   it("documents the public CLI installation command", () => {

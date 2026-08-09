@@ -1,6 +1,6 @@
 ---
 title: Machines
-description: Connect a private Linux Machine with an owner-controlled Task Local Policy.
+description: Connect a private Windows, Linux, or macOS Machine with an owner-controlled Local Policy.
 ---
 
 A Machine runs a lightweight Client under a dedicated Linux operating-system user. The Client
@@ -40,25 +40,25 @@ ods up
 
 ## Local Policy
 
-The generated Profile advertises a Task Local Policy on every authenticated connection:
+The generated Profile advertises a Session Local Policy on every authenticated connection:
 
-- Tasks up to one hour;
-- one concurrent Task;
+- Sessions up to 24 hours, with selectable 15m/1h/2h/6h/8h/24h durations;
+- one concurrent Session;
 - one concurrent Command;
 - Commands up to ten minutes;
-- up to 1 MiB of transient output;
+- up to 1 MiB of output retained in the Organization timeline;
 - remote human approval allowed.
 
 The Machine is an Organization resource and Local Policy never names Agents. The Server can grant
 less authority but cannot widen this ceiling. A mismatched Organization, duration, concurrency
-request, Task identity, or Command bound is denied by the Client even if the Server is
-compromised. The Organization authorizes Agent-to-Machine access only through a temporary Task.
+request, Session identity, or Command bound is denied by the Client even if the Server is
+compromised. The Organization authorizes Agent-to-Machine access only through a temporary Session.
 
-The stored Client configuration is strict and Task-native. It contains one Machine identity and
+The stored Client configuration is strict and Session-native. It contains one Machine identity and
 one Local Policy; legacy runner profiles, Session/Operation limits, remote sudo flags, and
 Removed tenant identifiers are rejected rather than interpreted.
 
-An active Task provides arbitrary non-interactive shell authority as the Client's Linux user. It
+An active Session provides arbitrary non-interactive shell authority as the Client's Linux user. It
 does not configure sudo, isolate the process, filter commands, or claim rollback. Use a dedicated
 user with only the filesystem, credential, network, and service access the Agent needs.
 

@@ -195,7 +195,7 @@ export function registerRemoteMcp(
     resource_name: "Odyshell",
     authorization_servers: [configuration.issuer.origin],
     bearer_methods_supported: ["header"],
-    scopes_supported: ["odyshell:agent"],
+    scopes_supported: ["odyshell:agent", "odyshell:cli"],
   };
   app.get("/.well-known/oauth-protected-resource", async () => metadata);
   app.get("/.well-known/oauth-protected-resource/mcp", async () => metadata);
@@ -308,6 +308,9 @@ function isMcpInstallation(value: unknown): value is McpInstallationRecord {
     value !== null &&
     typeof (value as { id?: unknown }).id === "string" &&
     typeof (value as { organizationId?: unknown }).organizationId === "string" &&
-    typeof (value as { agentId?: unknown }).agentId === "string"
+    typeof (value as { agentId?: unknown }).agentId === "string" &&
+    ["standard", "operator"].includes(
+      String((value as { agentRole?: unknown }).agentRole),
+    )
   );
 }

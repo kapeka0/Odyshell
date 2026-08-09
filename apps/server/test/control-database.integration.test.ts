@@ -149,7 +149,7 @@ suite("PostgreSQL Organization control boundary", () => {
     })).resolves.toMatchObject({
       status: "agent_limit_reached",
       plan: "free",
-      activeAgentLimit: 3,
+      activeAgentLimit: 2,
     });
     const first = installations[0];
     if (!first || first.status === "agent_limit_reached") {

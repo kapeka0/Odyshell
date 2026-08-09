@@ -1,7 +1,7 @@
 {
   "name": "@odyshell/cli",
   "version": "0.18.0",
-  "description": "Install and operate an Odyshell Client on a Linux machine.",
+  "description": "Install and operate an Odyshell Client on Linux, macOS, or Windows.",
   "keywords": [
     "ai-agents",
     "cli",
@@ -28,9 +28,6 @@
   "engines": {
     "node": ">=24"
   },
-  "os": [
-    "linux"
-  ],
   "cpu": [
     "arm64",
     "x64"

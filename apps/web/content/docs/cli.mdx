@@ -1,56 +1,62 @@
 ---
 title: CLI reference
-description: Install and operate the Linux Machine Client with `ods`.
+description: Install Machines and operate the Human control plane with ods.
 ---
 
-`ods` is a Machine administration tool. Agents use remote OAuth MCP or canonical HTTP; they do
-not execute the CLI.
-
-## Install
-
-Requires Linux and Node.js 24 or newer:
+`ods` works on Windows, Linux, and macOS with Node.js 24 or newer.
 
 ```npm
 npm install --global @odyshell/cli
 ```
 
-## Connect
+## Sign in and inspect
+
+`ods login` opens the system browser and completes Authorization Code OAuth with PKCE. Access and
+refresh tokens are stored with user-only filesystem permissions and are never printed.
+
+```bash
+ods login
+ods machines list
+ods agents list
+ods sessions list
+ods sessions timeline <session-id>
+```
+
+Owners and Admins can manage Agent roles and removal. Every Organization role can supervise a
+pending Standard-Agent Session.
+
+```bash
+ods agents role <agent-id> operator
+ods agents role <agent-id> standard
+ods agents remove <agent-id> --yes
+ods sessions approve <session-id>
+ods sessions deny <session-id>
+```
+
+The same OAuth session can act as an Agent through the canonical API:
+
+```bash
+ods sessions request --machine <id> --duration 1h --title "Deploy release"
+ods commands run <session-id> --command "git status"
+ods commands get <command-id>
+ods commands output <command-id>
+ods sessions complete <session-id>
+```
+
+Durations are `15m`, `1h`, `2h`, `6h`, `8h`, or `24h`. Use `--json` for stable automation and
+`--server` or `ODYSHELL_SERVER_URL` for self-hosting.
+
+## Connect a Machine
 
 In **Machines**, select **Add Machine** and run the generated command on the target host:
 
 ```bash
-ods --server https://api.example.com up \
-  --token <single-use-token> \
-  --name production-api
+ods --server https://api.example.com up --token <single-use-token> --name production-api
 ```
 
-The token expires after ten minutes, is consumed once, and is never saved. `ods up` writes the
-Machine identity and Local Policy, verifies Server health, and installs a restartable systemd user
-service.
+`ods up` verifies Server health, writes the Machine identity and Local Policy, and installs a
+restartable systemd, launchd, or Windows Task Scheduler user service. The token expires after ten
+minutes, works once, and is never saved.
 
-## Commands
-
-```bash
-ods status
-ods profiles ls
-ods profiles status default
-ods client status --profile default
-ods client doctor --profile default
-ods client update --check --profile default
-ods down --profile default
-ods up --profile default
-ods profiles remove default
-ods reset --yes
-```
-
-Use `--json` for stable local automation. Use `--server` or `ODYSHELL_SERVER_URL` for a self-hosted
-Server. Named Profiles keep independent Machine identities and systemd services; `--profile` and
-`--config` cannot be combined.
-
-`ods client start --config <path>` is the foreground process invoked by the generated service.
-
-## Deliberate exclusions
-
-The CLI has no Human login, Agent runtime, Task, Command, shell, filesystem, Docker, Session, or
-local MCP commands. Remote OAuth and the canonical Server protocol own authorization,
-idempotency, reconnect, and audit behavior.
+Local Client commands include `ods status`, `ods profiles ls`, `ods client doctor`, `ods client
+update --check`, `ods down`, and `ods reset --yes`.

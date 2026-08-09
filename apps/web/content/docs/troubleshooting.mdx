@@ -1,6 +1,6 @@
 ---
 title: Troubleshooting
-description: Diagnose common CLI, enrollment, connectivity, Task, and Command failures.
+description: Diagnose common CLI, enrollment, connectivity, Session, and Command failures.
 ---
 
 ## `fetch failed`
@@ -85,11 +85,11 @@ should be deleted.
 The Server knows the machine connection but did not receive the end-to-end pong in time. Check
 Client logs, reconnect it, and confirm that Server and Client versions match.
 
-## Task or Command denied
+## Session or Command denied
 
 Compare the requested Command with the Machine's Local Policy: the Organization must match, the
-Task and Command concurrency limits must have capacity, and the timeout and output limits must not
-be exceeded. Also check Agent credential expiry, Task authorization, absolute working-directory
+Session and Command concurrency limits must have capacity, and the timeout and output limits must not
+be exceeded. Also check Agent credential expiry, Session authorization, absolute working-directory
 validity, and operating-system permissions.
 
 ## A Command needs more operating-system authority
@@ -100,7 +100,7 @@ service API, or dedicated wrapper over root or broad group membership.
 
 ## A command may still be running after a Client crash
 
-Graceful Task closure and cancellation terminate the active process group. Commands use detached
+Graceful Session closure and cancellation terminate the active process group. Commands use detached
 process groups. Without a separate process supervisor, an abrupt Client
 crash can leave a command running until it exits by itself or is stopped by the machine owner or
 operating system. After restart, Odyshell reports the execution result as unknown instead of

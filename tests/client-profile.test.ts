@@ -199,12 +199,12 @@ async function writeProfileConfig(
       machineName,
       privateKeyPem: "private-key",
       stateDirectory: join(path, "..", "state"),
-      taskProfile: {
+      sessionProfile: {
         id: profileName,
         localPolicy: {
           organizationId: "organization-one",
-          maxTaskDurationSeconds: 3600,
-          maxConcurrentTasks: 1,
+          maxSessionDurationSeconds: 3600,
+          maxConcurrentSessions: 1,
           maxConcurrentCommands: 1,
           maxCommandTimeoutSeconds: 600,
           maxCommandOutputBytes: 1024 * 1024,

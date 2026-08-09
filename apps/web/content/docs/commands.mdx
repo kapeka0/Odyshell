@@ -1,19 +1,19 @@
 ---
 title: Commands
-description: Run bounded asynchronous shell work inside an active Task.
+description: Run bounded asynchronous shell work inside an active Session.
 ---
 
-Each Command is an independent non-interactive shell process inside one active Task. It executes as
+Each Command is an independent non-interactive shell process inside one active Session. It executes as
 the operating-system user bound during Machine enrollment. Odyshell does not sandbox, elevate, or
 roll back that user.
 
 ## Input
 
-`command_run` and `POST /v1/tasks/:taskId/commands` accept:
+`command_run` and `POST /v1/sessions/:sessionId/commands` accept:
 
 - the complete shell command as text;
 - an optional absolute working directory;
-- an optional timeout inside the Task and Local Policy limits;
+- an optional timeout inside the Session and Local Policy limits;
 - a UUIDv4 idempotency key for that logical Command.
 
 Caller-provided environment variables, standard input, PTYs, and persistent shell state are not
@@ -22,9 +22,9 @@ earlier one.
 
 ## Asynchronous execution
 
-Creation returns a durable Command ID. Poll `command_get` until terminal and read transient
+Creation returns a durable Command ID. Poll `command_get` until terminal and read retained
 stdout/stderr chunks with `command_output`, passing the last sequence cursor as `after`. Output is
-bounded by Local Policy, can be truncated, and expires from the delivery buffer.
+bounded by Local Policy, can be truncated, and expires according to the Organization retention policy.
 
 `command_cancel` requests process-tree termination. Cancellation is not reported as complete until
 the Client confirms a terminal result. After an abrupt Client crash, reconciliation reports an
@@ -32,5 +32,6 @@ unknown or failed outcome instead of claiming the detached process stopped.
 
 ## Evidence
 
-Durable audit records the exact command, working directory, timeout, Agent, Machine, Task, status,
-exit code when known, and timestamps. It never stores OAuth credentials or retained stdout/stderr.
+Durable audit records the exact command, working directory, timeout, Agent, Machine, Session, status,
+exit code when known, timestamps, and bounded stdout/stderr. It never stores OAuth credentials in
+the timeline.

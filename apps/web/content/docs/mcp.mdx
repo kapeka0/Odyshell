@@ -1,10 +1,10 @@
 ---
 title: MCP
-description: Let agents control temporary Tasks and asynchronous Commands through remote OAuth MCP.
+description: Let agents control temporary Sessions and asynchronous Commands through remote OAuth MCP.
 ---
 
 Odyshell exposes a remote MCP adapter over its canonical Agent HTTP interface. The adapter does not
-own authorization logic: OAuth identity, Organization isolation, policy, Task expiry, idempotency,
+own authorization logic: OAuth identity, Organization isolation, policy, Session expiry, idempotency,
 Command bounds, and audit are enforced by the same Server modules used by HTTP.
 
 There is no local stdio MCP transport in the CLI.
@@ -26,17 +26,17 @@ does not cross that isolation boundary.
 
 The remote adapter exposes only the agent-native workflow:
 
-1. `machines_list` lists online Linux Machines available to the authenticated Agent under Local
+1. `machines_list` lists online Windows, Linux, and macOS Machines available to the authenticated Agent under Local
    Policy.
-2. `task_request` asks for temporary shell authority on exactly one Machine. It returns a Task that
+2. `session_request` asks for temporary shell authority on exactly one Machine. It returns a Session that
    is opening, pending human approval, or denied.
-3. `task_get` reads the durable Task state after approval, reconnect, cancellation, or expiry.
-4. `command_run` starts one asynchronous non-interactive shell Command inside an active Task.
+3. `session_get` reads the durable Session state after approval, reconnect, cancellation, or expiry.
+4. `command_run` starts one asynchronous non-interactive shell Command inside an active Session.
 5. `command_get` reads Command state and bounded output byte counts.
 6. `command_output` reads transient base64 stdout/stderr chunks after a sequence cursor.
 7. `command_cancel` requests process-tree termination for an active Command.
-8. `task_complete` closes authority after every Command is terminal.
-9. `task_cancel` cancels active Commands and closes Task authority.
+8. `session_complete` closes authority after every Command is terminal.
+9. `session_cancel` cancels active Commands and closes Session authority.
 
 Read-only tools are annotated as read-only. Mutations declare their destructive and idempotent
 behavior so MCP hosts can apply their own supervision without changing Server authorization.
@@ -44,12 +44,12 @@ behavior so MCP hosts can apply their own supervision without changing Server au
 ## Request and run work
 
 Call `machines_list` before selecting a target. Generate a UUIDv4 idempotency key for each logical
-`task_request`; reuse it only to retry the exact same input. If the Task is pending approval, poll
-`task_get` instead of creating another Task.
+`session_request`; reuse it only to retry the exact same input. If the Session is pending approval, poll
+`session_get` instead of creating another Session.
 
-Once the Task is active, call `command_run` with:
+Once the Session is active, call `command_run` with:
 
-- the Task ID;
+- the Session ID;
 - the complete shell command as text;
 - an optional absolute working directory;
 - an optional bounded timeout;
@@ -63,17 +63,17 @@ Poll `command_get` until the Command is terminal. Read output incrementally with
 passing the last sequence cursor as `after`. Output is transient and may be truncated at the Local
 Policy byte ceiling; durable audit stores the exact command and metadata, not stdout or stderr.
 
-After all work is terminal, call `task_complete`. Use `command_cancel` for one active process or
-`task_cancel` to close the whole authority window. Calls are safe to repeat with the documented
-resource identity, and reconnecting clients resume by reading existing Task and Command IDs.
+After all work is terminal, call `session_complete`. Use `command_cancel` for one active process or
+`session_cancel` to close the whole authority window. Calls are safe to repeat with the documented
+resource identity, and reconnecting clients resume by reading existing Session and Command IDs.
 
 ## Human supervision
 
-A Task inside Local and Autonomy Policy can open without a person. A Task outside Autonomy Policy
+A Session requested by an Operator Agent can open without a person. A Session requested by a Standard Agent
 waits in the dashboard until an Owner, Admin, or Supervisor approves or denies it. Approval never
 widens the Machine's Local Policy. If the Machine is offline after approval, authority delivery
 remains pending and resumes only when the authenticated Client reconnects.
 
 MCP host safety controls run before a tool call reaches Odyshell. If a host blocks a call and no
-Task or Command appears in Odyshell, change the host policy; Odyshell does not weaken tool
+Session or Command appears in Odyshell, change the host policy; Odyshell does not weaken tool
 annotations to bypass it.

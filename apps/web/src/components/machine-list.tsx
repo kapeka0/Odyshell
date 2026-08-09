@@ -318,7 +318,7 @@ function MachineActions({
       setRemoveOpen(false);
       toast.add({
         title: "Machine removed",
-        description: `${machine.name} can no longer receive Tasks or Commands.`,
+        description: `${machine.name} can no longer receive Sessions or Commands.`,
         type: "success",
       });
       await refresh();
@@ -435,7 +435,7 @@ function MachineActions({
             <DialogTitle>Edit machine</DialogTitle>
             <DialogDescription>
               Metadata helps Agents choose the right Machine. Execution limits
-              remain controlled by its local Task Policy.
+              remain controlled by its local Session Policy.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={saveMachine}>

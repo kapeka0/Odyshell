@@ -1,6 +1,6 @@
 # Odyshell business model
 
-This is a working public thesis, not a pricing commitment.
+This document records the current packaging and commercial direction.
 
 ## Product thesis
 
@@ -60,23 +60,23 @@ Odyshell should remain:
 - agent-first and programmatic;
 - neutral across agent vendors and machine providers;
 - focused on real, existing hosts;
-- based on bounded Tasks and asynchronous shell Commands rather than an interactive terminal;
+- based on bounded Sessions and asynchronous shell Commands rather than an interactive terminal;
 - enforceable at the Client, outside the model;
 - integrable through canonical HTTP and remote OAuth MCP;
 
 Shell execution is an explicit high-risk boundary. Odyshell must disclose that Commands run as the
 Client's operating-system user, are not sandboxed, and may have persistent side effects after the
-Task ends.
+Session ends.
 
 ## Commercial model
 
-The pricing anchor should be managed capacity, not human seats.
+The Pro pricing anchor is Organization membership, with explicit Machine limits and unlimited Agents.
 
 A managed subscription should include:
 
 - a number of active machines;
 - a number of active OAuth Agents;
-- a generous Task and Command allowance;
+- a generous Session and Command allowance;
 - a defined control-event retention period;
 - a support level.
 
@@ -84,18 +84,17 @@ Commands are useful as a fair-use and overage metric, but they should not be the
 language. Customers should primarily understand the bill as governed capacity over a predictable
 number of Machines and Agents.
 
-### Packaging hypothesis
+### Current packaging
 
-| Package | Intended customer | Commercial boundary |
+| Package | Price | Limits |
 | --- | --- | --- |
-| Developer | Evaluation and personal prototypes | Few machines, short retention, community support |
-| Team | Agent startups and small platform teams | More Machines and Agents, team roles, webhooks |
-| Business | Production agent products | Approvals, longer retention, event integrations, priority support |
-| Enterprise | Regulated or large deployments | SSO/SCIM, SIEM, private deployment, SLA, data residency |
+| Free | $0 | One member, two Machines, two Agents |
+| Pro | $30 USD per member/month | Up to 20 members, 20 Machines, unlimited Agents |
+| Enterprise | Future | Not currently sold |
 
-Exact prices and allowances should be set only after design-partner usage is measured.
+Member invitations are deferred until transactional email delivery is configured.
 
-Core safety must not be paywalled. Temporary Tasks, Local Policy, revocation, Machine identity,
+Core safety must not be paywalled. Temporary Sessions, Local Policy, revocation, Machine identity,
 Organization isolation, and useful audit events belong in every edition.
 Monetization comes from managed scale, collaboration, retention, integrations, deployment options,
 reliability, and support.
@@ -110,21 +109,21 @@ offering white-label or OEM distribution, but it is not required to validate the
 
 ## Organization model
 
-Organization is the sole tenant boundary: it owns Humans, Agents, Machines, Local Policies, Tasks,
+Organization is the sole tenant boundary: it owns Humans, Agents, Machines, Local Policies, Sessions,
 Commands, audit, plan, and billing relationship. Cloud may host many isolated Organizations;
 self-hosted mode permits exactly one sovereign Organization. A second Workspace tenant would add
 authorization and navigation complexity without serving the MVP.
 
 Human roles belong to the Organization. Agents do not receive Human roles or broad credentials;
-OAuth identifies each Agent, and server-side Autonomy Policy or Human supervision determines
-whether it may open a temporary Task. Machine Local Policy enforces the resource ceiling but never
-assigns an Agent. Commands execute only inside that Task's one-Machine authority.
+OAuth identifies each Agent. A Standard Agent requires Human supervision; an Operator bypasses that
+decision and must be treated like an Agent with SSH. Machine Local Policy enforces the resource ceiling but never
+assigns an Agent. Commands execute only inside that Session's one-Machine authority.
 
 Odyshell Identity manages Organization membership and the current Human roles:
 
 | Role | MVP responsibility |
 | --- | --- |
-| Organization Member | Govern Machines, optionally supervise Tasks, and review audit events |
+| Organization Member | Govern Machines, optionally supervise Sessions, and review audit events |
 | Organization Admin | Member capabilities plus people and organization governance |
 
 More specialized roles are a later governance feature:
@@ -133,7 +132,7 @@ More specialized roles are a later governance feature:
 | --- | --- |
 | Owner | Ownership, billing, administrators, and organization deletion |
 | Admin | Members, Machine policy, Agents, and integrations |
-| Operator | Machine enrollment and optional Task supervision |
+| Operator | Machine enrollment and optional Session supervision |
 | Auditor | Read and export content-minimal control events |
 | Billing admin | Plan and invoice management only |
 
@@ -141,20 +140,20 @@ More specialized roles are a later governance feature:
 
 The first motion should be design partnerships, not enterprise feature breadth.
 
-1. Recruit five teams running Agent or MSP workflows on customer-owned Linux Machines.
+1. Recruit five teams running Agent or MSP workflows on customer-owned Windows, Linux, or macOS Machines.
 2. Integrate one repeatable workflow for each, such as updating a dependency or changing a
    configuration file.
-3. Measure installation time, successful task completion, repeat use, denied operations, and
+3. Measure installation time, successful session completion, repeat use, denied operations, and
    support burden.
 4. Convert customers when Odyshell becomes part of a recurring production workflow.
 5. Expand by connected customer Organizations and active Machines.
 
 The primary activation metric is:
 
-> A new customer connects a private Machine and completes the first Agent Task in
+> A new customer connects a private Machine and completes the first Agent Session in
 > less than ten minutes.
 
-Retention should be measured through Organizations with successful weekly Tasks, not logins to an
+Retention should be measured through Organizations with successful weekly Sessions, not logins to an
 administrator dashboard.
 
 ## Main risks

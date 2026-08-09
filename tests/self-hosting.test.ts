@@ -65,7 +65,7 @@ describe("self-hosted distribution", () => {
     const auth = source("apps/web/src/lib/identity-auth.ts");
 
     expect(webPackage).not.toContain("@vercel/analytics");
-    expect(webPackage).not.toContain("@xyflow/react");
+    expect(webPackage).toContain("@xyflow/react");
     expect(layout).not.toContain("<Analytics");
     expect(avatars).toContain("facehashAvatarPath(identity)");
     expect(avatars).not.toContain("avatar.vercel.sh");

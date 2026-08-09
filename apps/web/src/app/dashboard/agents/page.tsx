@@ -18,7 +18,7 @@ export default function AgentsPage() {
       ) : (
         <AgentList
           agents={state.context.agents}
-          canDelete={state.context.currentMemberRole === "admin"}
+          canManage={["owner", "admin"].includes(state.context.currentMemberRole)}
         />
       )}
     </DashboardPage>

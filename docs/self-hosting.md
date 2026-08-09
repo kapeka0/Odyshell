@@ -2,7 +2,7 @@
 
 Self-hosted Odyshell runs the same agent-facing protocols, Server, Better Auth identity, dashboard,
 PostgreSQL schema, and Linux Client as Cloud. The deployment owner controls identity, policy,
-Task, Command, audit, and credential data. Clerk and third-party analytics are not runtime
+Session, Command, audit, and credential data. Clerk and third-party analytics are not runtime
 dependencies.
 
 ```mermaid
@@ -11,7 +11,7 @@ flowchart LR
   H["Optional Human Supervisor"] -->|"Dashboard"| W["Odyshell web app"]
   W --> P["PostgreSQL + Better Auth"]
   S --> P
-  M["Private Linux Machine"] -->|"Authenticated outbound connection"| S
+  M["Private Machine"] -->|"Authenticated outbound connection"| S
 ```
 
 ## Start a loopback deployment
@@ -98,12 +98,12 @@ enforced.
      --name production-api
    ```
 
-5. From the Agent, call `machines_list`, `task_request`, `command_run`, `command_get`,
-   `command_output`, and `task_complete`.
+5. From the Agent, call `machines_list`, `session_request`, `command_run`, `command_get`,
+   `command_output`, and `session_complete`.
 
 The Machine needs no inbound port, SSH credential, or VPN route. It belongs to the Organization,
 not an Agent. The Client rejects a mismatched Organization, expired authority, replay, and any
-request outside Local Policy; each authorized Task supplies the temporary Agent binding.
+request outside Local Policy; each authorized Session supplies the temporary Agent binding.
 
 ## Lifecycle
 
@@ -114,5 +114,5 @@ docker compose logs --tail 200 server web
 ```
 
 Before upgrades, back up PostgreSQL. Never copy Machine private keys or one-time enrollment tokens.
-After upgrades, verify one real Task and Command, including approval when required, reconnect,
+After upgrades, verify one real Session and Command, including approval when required, reconnect,
 bounded output, cancellation, and explicit completion.

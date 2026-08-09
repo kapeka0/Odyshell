@@ -1,20 +1,20 @@
 ---
 title: Odyshell documentation
-description: Agent-native Tasks and Commands on customer-controlled Linux Machines.
+description: Agent-native Sessions and Commands on customer-controlled private Machines.
 ---
 
 Odyshell is infrastructure for external AI Agents that need temporary shell authority on private
-Linux Machines. Agents connect through remote OAuth MCP or canonical HTTP. Humans configure trust
-and policy in the dashboard and may supervise Tasks, but are not required in the execution loop.
+Windows, Linux, and macOS Machines. Agents connect through remote OAuth MCP or canonical HTTP. Humans configure trust
+and policy in the dashboard and may supervise Sessions, but are not required in the execution loop.
 
 ## The path to a Command
 
-1. An Organization owns the Agent, Machine, policies, Task, and audit trail.
-2. A registered Agent requests one temporary Task for one Machine.
+1. An Organization owns the Agent, Machine, policies, Session, and audit trail.
+2. A registered Agent requests one temporary Session for one Machine.
 3. Local Policy sets the Machine owner's non-bypassable ceiling.
-4. Autonomy Policy autoapproves a matching Task or routes it to an Owner, Admin, or Supervisor.
+4. Operator Agents open a matching Session immediately; Standard Agents wait for an Owner, Admin, or Supervisor.
 5. The Agent submits asynchronous Commands and polls bounded output by cursor.
-6. The Agent explicitly completes the Task after every Command is terminal.
+6. The Agent explicitly completes the Session after every Command is terminal.
 
 The Linux Client connects outbound. It exposes no inbound port and shares no SSH credential or
 private-network route. Commands run as the Client's operating-system user with no sandbox or sudo

@@ -4,7 +4,7 @@
 
 <h1 align="center">Odyshell Client</h1>
 
-<p align="center"><strong>The owner-controlled connection from a Linux Machine to Odyshell.</strong></p>
+<p align="center"><strong>The owner-controlled connection from a Windows, Linux, or macOS Machine to Odyshell.</strong></p>
 
 The Client maintains an authenticated outbound connection to the Odyshell Server. It exposes no
 inbound port and gives Agents no SSH credential, VPN route, or direct private-network access.
@@ -25,23 +25,23 @@ ods --server https://api.example.com up \
   --name production-api
 ```
 
-Enrollment creates an Ed25519 Machine identity and a Task Local Policy bound to the sovereign
+Enrollment creates an Ed25519 Machine identity and a Session Local Policy bound to the sovereign
 Organization ID. It never binds the Machine to an Agent. Missing Organization identity, a
-non-Linux host, malformed existing configuration, or a mismatched Server fails closed. The
+unsupported host, malformed existing configuration, or a mismatched Server fails closed. The
 one-time token is never stored.
 
 ## Local Policy
 
 The initial Profile allows:
 
-- one concurrent Task and one concurrent Command;
-- Tasks up to one hour;
+- one concurrent Session and one concurrent Command;
+- Sessions up to 24 hours, with selectable 15m/1h/2h/6h/8h/24h durations;
 - Commands up to ten minutes;
-- up to 1 MiB of transient output;
+- up to 1 MiB of output retained in the Organization timeline;
 - optional remote human approval.
 
-Agent authorization is evaluated per Task by Organization Autonomy Policy or an optional Human
-decision. The resulting Task binds exactly one Agent to exactly one Machine until expiry.
+Agent authorization is evaluated per Session by Agent role and, for Standard Agents, an explicit Human
+decision. The resulting Session binds exactly one Agent to exactly one Machine until expiry.
 
 The Server may grant less authority but cannot widen these limits. Commands are arbitrary,
 non-interactive shell text. They may specify an absolute working directory, but never caller
@@ -65,7 +65,7 @@ ods up --profile default
 ods profiles remove default
 ```
 
-The Client keeps output bounded, journals Task/Command lifecycle for reconnect reconciliation,
+The Client keeps output bounded, journals Session/Command lifecycle for reconnect reconciliation,
 rejects replay and identity mismatches, and stops accepting new work while disconnected. A
 connected Client receives cancellation and revocation immediately; a partition is still bounded
 by the already-authorized local timeout.

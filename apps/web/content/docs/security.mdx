@@ -3,7 +3,7 @@ title: Security
 description: Understand Odyshell trust boundaries, least privilege, and audit evidence.
 ---
 
-Odyshell grants remote Agents same-user shell authority on customer-controlled Linux Machines. The
+Odyshell grants remote Agents same-user shell authority on customer-controlled Windows, Linux, and macOS Machines. The
 Server and Client enforce identity, Organization isolation, policy, expiry, and resource bounds;
 an allowed Command can still change anything available to the Client's operating-system user.
 
@@ -12,18 +12,18 @@ an allowed Command can still change anything available to the Client's operating
 A Command is accepted only when:
 
 1. the OAuth access token is valid and bound to the Agent's Organization;
-2. the Task belongs to that Agent and Organization and is active and unexpired;
-3. the Task is bound to the requested Machine, Client Profile, and operating-system user;
+2. the Session belongs to that Agent and Organization and is active and unexpired;
+3. the Session is bound to the requested Machine, Client Profile, and operating-system user;
 4. the authenticated Machine identity matches that binding;
 5. Local Policy still allows the Organization, duration, concurrency, timeout, and output ceiling;
-6. Autonomy Policy authorized the Task or a permitted Human approved it;
+6. the Agent is an Operator or a permitted Human approved the Standard Agent's request;
 7. the idempotency key and request fingerprint agree.
 
-These checks run outside the model. Requests fail closed on an unknown identity, stale Task,
+These checks run outside the model. Requests fail closed on an unknown identity, stale Session,
 cross-Organization ID, replay conflict, offline Machine, or policy mismatch.
 
-A Machine is never assigned to an Agent. Agent-to-Machine authority is the expiring Task itself,
-created only after Autonomy Policy or a permitted Human decision authorizes the exact pairing.
+A Machine is never assigned to an Agent. Agent-to-Machine authority is the expiring Session itself,
+created only after an Operator role or a permitted Human decision authorizes the exact pairing.
 
 ## Identity and enrollment
 
@@ -38,7 +38,7 @@ never fall back to another Server or identity.
 ## Host authority
 
 Commands run without a PTY as the Linux user running the Client. They can read that user's files
-and credentials, use its network and services, and make changes that outlive the Task. Odyshell
+and credentials, use its network and services, and make changes that outlive the Session. Odyshell
 does not configure sudo. Use a dedicated user with only the resources the Agent needs.
 
 Graceful cancellation targets the Command process group. An abrupt Client crash can leave a
@@ -47,11 +47,11 @@ Profile rather than silently restore authority.
 
 ## Audit and privacy
 
-Durable Task audit binds Organization, Agent, Machine, Human decision, exact command, working
-directory, timeout, status, exit code when known, and timestamps. OAuth credentials, enrollment
-tokens, Machine private keys, stdout, and stderr are excluded. Output is a bounded, transient
+Durable Session audit binds Organization, Agent, Machine, Human decision, exact command, working
+directory, timeout, status, exit code when known, timestamps, and bounded stdout/stderr. OAuth credentials, enrollment
+tokens, and Machine private keys are excluded. Output is a bounded, retained
 delivery buffer for Agent reconnect and should be treated as potentially secret while available.
 
-Self-hosted deployments keep identity, policy, Task, Command, audit, and transient output data in
+Self-hosted deployments keep identity, policy, Session, Command, audit, and retained output data in
 their own PostgreSQL and storage boundary. Production operators must provide TLS, backups,
 retention, secret management, and log redaction.

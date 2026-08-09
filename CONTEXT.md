@@ -6,7 +6,7 @@ machines. This glossary defines the accepted agent-native domain language.
 ## Human governance
 
 **Organization**:
-The isolation boundary that owns people, machines, Agents, policies, Tasks, Commands, credentials,
+The isolation boundary that owns people, machines, Agents, policies, Sessions, Commands, credentials,
 and Audit Events. An identity or operational resource belongs to exactly one Organization.
 _Avoid_: Workspace, project, tenant
 
@@ -19,7 +19,7 @@ A person who enrolls machines and Agents and configures Organization policies.
 _Avoid_: Organization Member, execution admin
 
 **Supervisor**:
-A person who can approve or revoke Tasks and inspect Audit Events without expanding policy.
+A person who can approve or revoke Sessions and inspect Audit Events without expanding policy.
 _Avoid_: Viewer, operator, approver
 
 ## Agent identity
@@ -29,10 +29,20 @@ A persistent programmatic security identity representing one external integratio
 Organization. Internal processes and subagents share that identity unless registered separately.
 _Avoid_: Service account, model instance, Managed Agent
 
+**Agent Role**:
+The Organization-assigned authority class of an Agent. A Standard Agent needs a Human decision for
+every Session; an Operator Agent may obtain Sessions without a new Human decision.
+_Avoid_: Human role, Autonomy Policy
+
+**Operator**:
+An Agent Role that permits an Agent to obtain temporary Sessions without explicit Human approval.
+It does not create permanent Machine authority or widen a Machine's Local Policy.
+_Avoid_: Human operator, superuser, unrestricted Agent
+
 **Agent Credential**:
-A rotatable and revocable proof of Agent identity that can request Tasks but cannot execute a
-Command without Task authority.
-_Avoid_: API key, permanent access, Task Credential
+A rotatable and revocable proof of Agent identity that can request Sessions but cannot execute a
+Command without active Session authority.
+_Avoid_: API key, permanent access, Session Credential
 
 ## Machine authority
 
@@ -47,40 +57,31 @@ _Avoid_: Global machine identity, shared client configuration
 
 **Local Policy**:
 The machine-owner-controlled absolute resource ceiling enforced by a Client Profile. It belongs
-to one Organization and never names an Agent; Agent-to-Machine authority exists only in a Task.
+to one Organization and never names an Agent; Agent-to-Machine authority exists only in a Session.
 _Avoid_: Cloud policy, prompt rule, command filter
-
-**Autonomy Policy**:
-An Organization-approved ceiling under which an Agent can obtain Tasks without a new human
-approval. It is not itself active machine authority.
-_Avoid_: Autoapproval Policy, permanent access, role
 
 ## Agent work
 
-**Task Request**:
+**Session Request**:
 A proposal from an Agent for temporary authority on one Machine as one operating-system user.
 _Avoid_: Session Request, token request
 
-**Task**:
-An immutable, temporary authorization for one Agent to perform one bounded job on one Machine as
-one operating-system user. A Task is the only source of Command authority.
-_Avoid_: Session, terminal, SSH session, grant
-
-**Task Credential**:
-A short-lived proof of active Task authority that cannot request or delegate another Task.
-_Avoid_: Session Credential, Agent Credential, refresh token
+**Session**:
+An immutable, temporary authorization for one Agent to use a shell on one Machine as one
+operating-system user. A Session is the only source of Command authority.
+_Avoid_: Session, terminal, SSH connection, grant
 
 **Command**:
-One asynchronous, non-interactive native shell execution performed through an active Task.
+One asynchronous, non-interactive native shell execution performed through an active Session.
 _Avoid_: Operation, action, terminal command
 
 ## Evidence
 
-**Task Timeline**:
-The task-centric history of verified requests, decisions, Commands, cancellation, expiry, and
+**Session Timeline**:
+The Session-centric history of verified requests, decisions, Commands, output, cancellation, expiry, and
 results.
-_Avoid_: Session Timeline, session recording, Agent testimony
+_Avoid_: Session Timeline, Agent testimony
 
 **Audit Event**:
 An Organization-wide record of a security, administrative, or execution lifecycle change.
-_Avoid_: Activity, application log, Task Timeline
+_Avoid_: Activity, application log, Session Timeline

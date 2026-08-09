@@ -15,9 +15,6 @@
   "engines": {
     "node": ">=24"
   },
-  "os": [
-    "linux"
-  ],
   "cpu": [
     "arm64",
     "x64"

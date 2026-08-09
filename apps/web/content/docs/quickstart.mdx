@@ -1,16 +1,16 @@
 ---
 title: Quickstart
-description: Connect a private Linux Machine and complete an Agent-controlled Task.
+description: Connect a private Machine and complete an Agent-controlled Session.
 ---
 
 This is the shortest agent-native workflow. Humans establish trust and may supervise; the Agent
-drives the Task and Commands.
+drives the Session and Commands.
 
 ## 1. Create the Organization
 
 Open Odyshell and create the first account. Odyshell automatically creates and activates an
 Organization with the account name. Self-hosted deployments keep
-identity, policy, Task state, and audit data in their own PostgreSQL database.
+identity, policy, Session state, and audit data in their own PostgreSQL database.
 
 ## 2. Connect the Agent
 
@@ -35,29 +35,29 @@ npm install --global @odyshell/cli
 ## 4. Connect the Machine
 
 Open **Machines**, select **Add Machine**, and enter a name. Odyshell shows one `ods up` command
-containing a single-use enrollment token. Run it on the target Linux host.
+containing a single-use enrollment token. Run it on the target Windows, Linux, or macOS host.
 
 The token expires after ten minutes, works once, and is not persisted. The Client creates an
 Ed25519 Machine identity, installs a restartable systemd user service, and keeps an authenticated
 outbound connection open. No inbound port, SSH credential, or VPN is required.
 
-The Machine belongs to the Organization, never to an Agent. Its Local Policy allows one Task and
-one Command at a time, a one-hour Task, a ten-minute Command, and 1 MiB of output. Human approval
+The Machine belongs to the Organization, never to an Agent. Its Local Policy allows one Session and
+one Command at a time, a one-hour Session, a ten-minute Command, and 1 MiB of output. Human approval
 is allowed. The Client enforces this resource ceiling independently of the Server. An Agent gains
-temporary authority only when an Autonomy Policy or Human decision authorizes a Task for that
+temporary authority only when an Operator role or Human decision authorizes a Session for that
 Machine.
 
-## 5. Run a Task
+## 5. Run a Session
 
 In the Agent runtime:
 
 1. call `machines_list` and select the online Machine;
-2. call `task_request` with a title, duration, Machine ID, and UUIDv4 idempotency key;
+2. call `session_request` with a title, duration, Machine ID, and UUIDv4 idempotency key;
 3. if policy requires supervision, wait while an Owner, Admin, or Supervisor approves it in
-   **Tasks**;
-4. poll `task_get` until active;
+   **Sessions**;
+4. poll `session_get` until active;
 5. call `command_run`, then poll `command_get` and read `command_output` by cursor;
-6. call `task_complete` after every Command is terminal.
+6. call `session_complete` after every Command is terminal.
 
 Commands are arbitrary non-interactive shell text executed as the Client's operating-system user.
 They are not sandboxed and can access that user's files, credentials, network, and services.

@@ -21,7 +21,7 @@ export function AgentCommandTrace() {
     >
       <figcaption className="flex items-center justify-between gap-4 border-b border-white/12 pb-4">
         <div>
-          <p className="font-mono text-xs text-white/48">TASK / DEPLOY-142</p>
+          <p className="font-mono text-xs text-white/48">SESSION / DEPLOY-142</p>
           <p className="mt-1 text-sm font-medium text-white/88">Deploy customer API</p>
         </div>
         <StatusBadge status="active">Active</StatusBadge>

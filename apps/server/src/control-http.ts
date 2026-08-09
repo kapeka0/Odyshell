@@ -4,6 +4,7 @@ import { z } from "zod";
 import { createEnrollmentToken } from "./access.js";
 import {
   CloudLiveTokenReplayGuard,
+  cloudBillingPlanUpdateSchema,
   cloudIdentitySchema,
   cloudLiveOriginDecision,
   cloudUserSettingsSchema,
@@ -16,11 +17,12 @@ import {
   ScopedConcurrencyLimiter,
   ScopedRateLimiter,
   updateCloudMachineSchema,
+  updateCloudAgentRoleSchema,
   verifyCloudLiveToken,
 } from "./cloud.js";
 import { audit, type AuditRecord, type Database } from "./control-database.js";
 import type { ClientGateway } from "./gateway.js";
-import type { PostgresTaskDatabase } from "./task-database.js";
+import type { PostgresSessionDatabase } from "./session-database.js";
 
 type WebPreHandler = (
   request: FastifyRequest,
@@ -36,7 +38,7 @@ export function registerControlHttp(
   app: FastifyInstance,
   dependencies: {
     database: Database;
-    taskDatabase: PostgresTaskDatabase;
+    sessionDatabase: PostgresSessionDatabase;
     gateway: ClientGateway;
     preHandler: WebPreHandler;
     webKey: string | undefined;
@@ -46,7 +48,7 @@ export function registerControlHttp(
 ): void {
   const {
     database,
-    taskDatabase,
+    sessionDatabase,
     gateway,
     preHandler,
     webKey,
@@ -80,8 +82,8 @@ export function registerControlHttp(
         usage,
         agents,
         runnableAgentIds,
-        tasks,
-        taskEvents,
+        sessions,
+        sessionEvents,
         controlEvents,
         notifications,
         userPreferences,
@@ -90,8 +92,8 @@ export function registerControlHttp(
         database.organizationPlan(context.organization.id),
         database.listOrganizationAgents(context.organization.id),
         database.listRunnableAgentIds(context.organization.id),
-        taskDatabase.listTasks(parsed.data.organization.externalId, 100),
-        taskDatabase.listAuditEvents(parsed.data.organization.externalId, 100),
+        sessionDatabase.listSessions(parsed.data.organization.externalId, 100),
+        sessionDatabase.listAuditEvents(parsed.data.organization.externalId, 100),
         database.listAudit(context.organization.id, 50),
         database.listNotifications(context.organization.id, parsed.data.userId),
         database.userPreferences(parsed.data.userId),
@@ -106,6 +108,7 @@ export function registerControlHttp(
         plan: {
           id: context.organization.plan,
           ...plan,
+          billingManaged: usage?.cloudManaged ?? false,
           controlEventRetentionDays: Math.round(
             dependencies.auditRetentionMilliseconds / (24 * 60 * 60 * 1_000),
           ),
@@ -117,9 +120,9 @@ export function registerControlHttp(
         connections: {
           activeConnections: onlineMachines.length,
           connectedAgents: new Set(
-            tasks
-              .filter((task) => task.status === "active")
-              .map((task) => task.agentId),
+            sessions
+              .filter((session) => session.status === "active")
+              .map((session) => session.agentId),
           ).size,
           connections: [],
         },
@@ -136,28 +139,27 @@ export function registerControlHttp(
         agents: agents.map((agent) => ({
           id: agent.id,
           name: agent.name,
-          kind: agent.kind,
+          role: agent.role,
           status: agent.status,
-          parentAgentId: agent.parentAgentId ?? null,
           credentialActive: runnableAgentIds.includes(agent.id),
           createdAt: isoTimestamp(agent.createdAt),
         })),
-        tasks,
+        sessions,
         notifications: notifications.map((notification) => ({
           ...notification,
           readAt: isoTimestamp(notification.readAt),
           createdAt: isoTimestamp(notification.createdAt),
         })),
         controlEvents: [
-          ...taskEvents.map((event) => ({
-            id: `task:${event.id}`,
+          ...sessionEvents.map((event) => ({
+            id: `session:${event.id}`,
             principalId:
               typeof event.metadata.humanId === "string"
                 ? event.metadata.humanId
                 : event.agentId,
             action: event.type,
-            targetType: event.commandId ? "command" : "task",
-            targetId: event.commandId ?? event.taskId,
+            targetType: event.commandId ? "command" : "session",
+            targetId: event.commandId ?? event.sessionId,
             metadata: event.metadata,
             createdAt: event.createdAt,
           })),
@@ -166,6 +168,20 @@ export function registerControlHttp(
           String(right.createdAt).localeCompare(String(left.createdAt))
         ),
       };
+    },
+  );
+
+  app.post(
+    "/v1/internal/cloud/billing/plan",
+    { preHandler },
+    async (request, reply) => {
+      const parsed = cloudBillingPlanUpdateSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(400).send({ error: "invalid_billing_update" });
+      const status = await database.applyStripePlan(parsed.data);
+      if (status === "organization_not_found") {
+        return reply.code(404).send({ error: "organization_not_found" });
+      }
+      return { status };
     },
   );
 
@@ -366,11 +382,11 @@ export function registerControlHttp(
       if (!machine) {
         return reply.code(404).send({ error: "active_machine_not_found" });
       }
-      const tasks = await taskDatabase.revokeTasks({
+      const sessions = await sessionDatabase.revokeSessions({
         organizationId: parsed.data.organization.externalId,
         machineId: parsed.data.machineId,
       });
-      closeRevokedTasks(gateway, tasks, "machine_revoked");
+      closeRevokedSessions(gateway, sessions, "machine_revoked");
       const disconnected = gateway.disconnect(parsed.data.machineId);
       const revoked = await database.revokeMachine(
         context.organization.id,
@@ -386,7 +402,7 @@ export function registerControlHttp(
         "machine.revoked",
         "machine",
         parsed.data.machineId,
-        { revokedTasks: tasks.length, disconnected },
+        { revokedSessions: sessions.length, disconnected },
       );
       gateway.notifyOrganization(context.organization.id);
       return {
@@ -394,9 +410,54 @@ export function registerControlHttp(
         name: revoked.name,
         status: "revoked",
         revokedAt: isoTimestamp(revoked.revokedAt),
-        revokedTasks: tasks.length,
+        revokedSessions: sessions.length,
         disconnected,
       };
+    },
+  );
+
+  app.post(
+    "/v1/internal/cloud/agents/role",
+    { preHandler },
+    async (request, reply) => {
+      const parsed = updateCloudAgentRoleSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "invalid_request" });
+      }
+      const context = await ensureContext(database, parsed.data);
+      const existing = (await database.listOrganizationAgents(context.organization.id))
+        .find((agent) => agent.id === parsed.data.agentId);
+      if (!existing) {
+        return reply.code(404).send({ error: "agent_not_found" });
+      }
+      const updated = await database.updateOrganizationAgentRole(
+        context.organization.id,
+        parsed.data.agentId,
+        parsed.data.agentRole,
+      );
+      if (!updated) {
+        return reply.code(404).send({ error: "agent_not_found" });
+      }
+      let revokedSessions = 0;
+      if (existing.role === "operator" && updated.role === "standard") {
+        const sessions = await sessionDatabase.revokeSessions({
+          organizationId: parsed.data.organization.externalId,
+          agentId: parsed.data.agentId,
+        });
+        revokedSessions = sessions.length;
+        closeRevokedSessions(gateway, sessions, "operator_role_revoked");
+      }
+      await audit(
+        database,
+        context.organization.id,
+        parsed.data.userId,
+        "agent.role_changed",
+        "agent",
+        parsed.data.agentId,
+        { from: existing.role, to: updated.role, revokedSessions },
+      );
+      gateway.notifyOrganization(context.organization.id);
+      return { agent: updated, revokedSessions };
     },
   );
 
@@ -413,15 +474,15 @@ export function registerControlHttp(
       if (!agents.some((agent) => agent.id === parsed.data.agentId)) {
         return reply.code(404).send({ error: "agent_not_found" });
       }
-      const agentIds = descendantAgentIds(agents, parsed.data.agentId);
-      let revokedTasks = 0;
+      const agentIds = [parsed.data.agentId];
+      let revokedSessions = 0;
       for (const agentId of agentIds) {
-        const tasks = await taskDatabase.revokeTasks({
+        const sessions = await sessionDatabase.revokeSessions({
           organizationId: parsed.data.organization.externalId,
           agentId,
         });
-        revokedTasks += tasks.length;
-        closeRevokedTasks(gateway, tasks, "agent_revoked");
+        revokedSessions += sessions.length;
+        closeRevokedSessions(gateway, sessions, "agent_revoked");
       }
       const deleted = await database.deleteOrganizationAgent(
         context.organization.id,
@@ -437,14 +498,14 @@ export function registerControlHttp(
         "agent.deleted",
         "agent",
         parsed.data.agentId,
-        { deletedAgents: deleted.agentIds.length, revokedTasks },
+        { deletedAgents: deleted.agentIds.length, revokedSessions },
       );
       await database.createNotification({
         organizationId: context.organization.id,
         userId: parsed.data.userId,
         kind: "agent.revoked",
         title: "Agent removed",
-        description: "Its OAuth installation and active Tasks were revoked",
+        description: "Its OAuth installation and active Sessions were revoked",
         href: "/dashboard/agents",
         resourceId: parsed.data.agentId,
       });
@@ -452,7 +513,7 @@ export function registerControlHttp(
       return {
         deleted: true,
         deletedAgents: deleted.agentIds.length,
-        revokedTasks,
+        revokedSessions,
       };
     },
   );
@@ -588,28 +649,6 @@ export function registerControlHttp(
   });
 }
 
-function descendantAgentIds(
-  agents: Array<{ id: string; parentAgentId?: string | null }>,
-  rootAgentId: string,
-): string[] {
-  const selected = new Set([rootAgentId]);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const agent of agents) {
-      if (
-        agent.parentAgentId &&
-        selected.has(agent.parentAgentId) &&
-        !selected.has(agent.id)
-      ) {
-        selected.add(agent.id);
-        changed = true;
-      }
-    }
-  }
-  return [...selected];
-}
-
 async function ensureContext(
   database: Database,
   identity: z.infer<typeof cloudIdentitySchema>,
@@ -621,16 +660,16 @@ async function ensureContext(
   });
 }
 
-function closeRevokedTasks(
+function closeRevokedSessions(
   gateway: ClientGateway,
-  revoked: Array<{ task: { id: string; machineId: string }; commandIds: string[] }>,
+  revoked: Array<{ session: { id: string; machineId: string }; commandIds: string[] }>,
   reason: string,
 ): void {
-  for (const { task, commandIds } of revoked) {
+  for (const { session, commandIds } of revoked) {
     for (const commandId of commandIds) {
-      gateway.send(task.machineId, { type: "command.cancel", commandId });
+      gateway.send(session.machineId, { type: "command.cancel", commandId });
     }
-    gateway.send(task.machineId, { type: "task.close", taskId: task.id, reason });
+    gateway.send(session.machineId, { type: "session.close", sessionId: session.id, reason });
   }
 }
 

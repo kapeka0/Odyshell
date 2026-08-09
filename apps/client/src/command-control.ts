@@ -1,7 +1,7 @@
 import type { RunningCommand } from "./shell-executor.js";
 
 export class PendingCommand {
-  readonly taskId: string;
+  readonly sessionId: string;
   cancelRequested = false;
 
   private running: RunningCommand | undefined;
@@ -16,8 +16,8 @@ export class PendingCommand {
   private readonly finished: Promise<void>;
   private resolveFinished!: () => void;
 
-  constructor(taskId: string) {
-    this.taskId = taskId;
+  constructor(sessionId: string) {
+    this.sessionId = sessionId;
     this.ready = new Promise((resolveReady) => {
       this.resolveReady = resolveReady;
     });

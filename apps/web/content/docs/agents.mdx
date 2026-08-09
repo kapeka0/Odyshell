@@ -1,11 +1,11 @@
 ---
 title: Agents
-description: Give a durable Agent temporary shell authority on private Linux Machines.
+description: Give a durable Agent temporary shell authority on private Machines.
 ---
 
 An Agent is a persistent programmatic identity inside one Organization. Authentication proves who
 the Agent is; it does not grant access to any Machine. Machine authority exists only inside an
-expiring Task.
+expiring Session.
 
 Agents are the primary Odyshell operators. Humans establish trust, define policy, optionally decide
 exceptions, and inspect evidence through the dashboard.
@@ -20,15 +20,15 @@ https://mcp.example.com/mcp
 
 Odyshell uses Authorization Code with PKCE for interactive MCP installations. Unattended Agent
 runtimes use Organization-bound OAuth Client Credentials against the canonical HTTP interface.
-Both transports call the same authorization module and expose the same Task and Command state.
+Both transports call the same authorization module and expose the same Session and Command state.
 
 The CLI does not host a separate stdio MCP server. It is reserved for installing, diagnosing, and
 recovering the Machine Client.
 
 ## Authority model
 
-An Agent can discover the Organization's Linux Machines. Discovery grants no execution authority.
-To work, it requests a Task with:
+An Agent can discover the Organization's Windows, Linux, and macOS Machines. Discovery grants no execution authority.
+To work, it requests a Session with:
 
 - one Machine;
 - a title and optional purpose;
@@ -36,35 +36,35 @@ To work, it requests a Task with:
 - an idempotency key that identifies that exact logical request.
 
 The Machine owner controls the resource ceiling through Local Policy, which never names Agents.
-The Organization's Autonomy Policy decides
-whether a Task inside that ceiling opens automatically or waits for an Owner, Admin, or Supervisor.
+The Agent role decides
+whether a Session inside that ceiling opens automatically or waits for an Owner, Admin, or Supervisor.
 A human decision cannot widen Local Policy.
 
-An active Task authorizes arbitrary non-interactive shell Commands as the operating-system user
+An active Session authorizes arbitrary non-interactive shell Commands as the operating-system user
 running that Client Profile. This is same-user authority, not a sandbox or a safe-command claim.
 Commands can access files, credentials, network, and services available to that user, and their
-side effects may persist after the Task ends.
+side effects may persist after the Session ends.
 
-## Task lifecycle
+## Session lifecycle
 
-The Agent polls Task state after requesting authority. A Task may be pending approval, opening,
+The Agent polls Session state after requesting authority. A Session may be pending approval, opening,
 active, cancelling, completed, cancelled, expired, or failed. Transport loss does not create a new
-Task: the Agent reads the existing resource again using its ID.
+Session: the Agent reads the existing resource again using its ID.
 
 Each Command is asynchronous. It accepts shell text, an optional absolute working directory, and a
 bounded timeout. Caller-provided environment variables and standard input are not accepted. The
 Agent polls Command state and reads transient stdout/stderr chunks with a sequence cursor, then
-explicitly completes the Task after every Command reaches a terminal state.
+explicitly completes the Session after every Command reaches a terminal state.
 
-Reusing an idempotency key with different Task or Command input is rejected. Cancellation stops the
+Reusing an idempotency key with different Session or Command input is rejected. Cancellation stops the
 Client process tree when it is reachable; expiry and reconnect reconciliation fail closed instead
 of silently restoring stale authority.
 
 ## Evidence and privacy
 
-Audit evidence binds the Organization, Agent, Machine, Task, human decision, exact command, working
+Audit evidence binds the Organization, Agent, Machine, Session, human decision, exact command, working
 directory, timeout, status, and timestamps. Credentials and retained command output are excluded.
 Output is a short-lived delivery buffer for reconnect, not a session recording.
 
-The dashboard's **Tasks** view shows pending decisions first and recent Agent work separately.
+The dashboard's **Sessions** view shows pending decisions first and recent Agent work separately.
 Human supervision is optional when policy allows autonomous execution.

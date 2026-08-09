@@ -1,0 +1,34 @@
+---
+title: Sessions
+description: Request, supervise, resume, and close temporary Agent authority.
+---
+
+A Session is the only object that grants an Agent Machine authority. It binds exactly one Organization,
+Agent, Machine, Client Profile, and operating-system user for a bounded duration.
+
+## Request authority
+
+An Agent calls `session_request` over MCP or `POST /v1/sessions` over HTTP with a title, optional purpose,
+Machine ID, duration, and UUIDv4 idempotency key. Reusing the key with the same input returns the
+same Session; reusing it with different input fails.
+
+The Server evaluates Local Policy and Agent role without asking the model to enforce either.
+The Session becomes active automatically when both allow it, or remains `pending_approval` until an
+Owner, Admin, or Supervisor decides in **Sessions**. Approval can never widen Local Policy.
+
+## Lifecycle
+
+Sessions move through pending approval, opening, active, cancellation requested, and terminal states.
+The Agent polls `session_get` after reconnect instead of creating replacement authority. A Machine
+that reconnects reconciles its active Session IDs with the Server and fails closed for stale or
+unknown authority.
+
+Use `session_complete` as soon as the work succeeds. It requires every Command to be terminal. Use
+`session_cancel` to stop active Commands and close authority when work is abandoned. Expiry blocks new
+Commands but cannot undo side effects from Commands that already completed.
+
+## Human supervision
+
+The dashboard keeps pending decisions separate from recent work. Humans see the Agent, Machine,
+operating-system user, purpose, expiry, and policy result before deciding. This is an exception
+path, not the primary control loop: Agents create, inspect, and finish their own Sessions.

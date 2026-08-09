@@ -82,12 +82,12 @@ describe("remote MCP security boundary", () => {
     }, "verified-token")).toBeNull();
   });
 
-  it("shares Task and Command policy between HTTP and MCP", async () => {
-    const http = await readFile("apps/server/src/task-http.ts", "utf8");
-    const runtime = await readFile("apps/server/src/task-mcp-runtime.ts", "utf8");
-    expect(http).toContain("dependencies.service.requestTask(");
+  it("shares Session and Command policy between HTTP and MCP", async () => {
+    const http = await readFile("apps/server/src/session-http.ts", "utf8");
+    const runtime = await readFile("apps/server/src/session-mcp-runtime.ts", "utf8");
+    expect(http).toContain("dependencies.service.requestSession(");
     expect(http).toContain("dependencies.service.createCommand(");
-    expect(runtime).toContain("service.requestTask(principal");
+    expect(runtime).toContain("service.requestSession(principal");
     expect(runtime).toContain("service.createCommand(principal");
     expect(runtime).not.toContain("deliverOperation(");
   });
@@ -119,7 +119,7 @@ describe("remote MCP security boundary", () => {
     );
   });
 
-  it("serves only the agent-native Task and Command tools", async () => {
+  it("serves only the agent-native Session and Command tools", async () => {
     const machines = vi.fn(async () => ({ data: [] }));
     const app = remoteMcpApp({ runtime: fakeAgenticRuntime({ machines }) });
     const request = (id: number, method: string, params: Record<string, unknown>) =>
@@ -145,10 +145,10 @@ describe("remote MCP security boundary", () => {
     expect(tools.statusCode).toBe(200);
     for (const name of [
       "machines_list",
-      "task_request",
-      "task_get",
-      "task_complete",
-      "task_cancel",
+      "session_request",
+      "session_get",
+      "session_complete",
+      "session_cancel",
       "command_run",
       "command_get",
       "command_output",
@@ -156,7 +156,7 @@ describe("remote MCP security boundary", () => {
     ]) {
       expect(tools.payload).toContain(`\"name\":\"${name}\"`);
     }
-    expect(tools.payload).not.toContain("session_request");
+    expect(tools.payload).not.toContain("task_request");
     expect(tools.payload).not.toContain("operation_execute");
 
     const call = await request(3, "tools/call", {
@@ -205,7 +205,7 @@ describe("remote MCP security boundary", () => {
         ensureMcpInstallation: vi.fn(async () => ({
           status: "agent_limit_reached" as const,
           plan: "free" as const,
-          activeAgentLimit: 3,
+          activeAgentLimit: 2,
         })),
       },
     });
@@ -218,7 +218,7 @@ describe("remote MCP security boundary", () => {
     expect(fullResponse.statusCode).toBe(409);
     expect(fullResponse.json()).toEqual({
       error: "agent_limit_reached",
-      details: { activeAgentLimit: 3, plan: "free" },
+      details: { activeAgentLimit: 2, plan: "free" },
     });
   });
 });
@@ -243,6 +243,7 @@ function remoteMcpApp(overrides: {
       oauthClientId: "client-id",
       agentId: "7e5e118e-07ce-430a-a20a-b89562acae61",
       agentName: "Test MCP",
+      agentRole: "standard" as const,
       status: "active" as const,
       createdAt: 0,
       updatedAt: 0,
@@ -277,9 +278,9 @@ function fakeAgenticRuntime(
 ): AgenticMcpRuntime {
   return {
     machines: vi.fn(async () => ({ data: [] })),
-    requestTask: vi.fn(),
-    task: vi.fn(),
-    finishTask: vi.fn(),
+    requestSession: vi.fn(),
+    session: vi.fn(),
+    finishSession: vi.fn(),
     createCommand: vi.fn(),
     command: vi.fn(),
     output: vi.fn(),

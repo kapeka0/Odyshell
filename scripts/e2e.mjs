@@ -55,11 +55,11 @@ try {
       "vitest",
       "run",
       "apps/server/test/control-database.integration.test.ts",
-      "apps/server/test/task-database.integration.test.ts",
-      "tests/task-http.test.ts",
-      "tests/task-supervision-http.test.ts",
-      "tests/task-mcp.test.ts",
-      "tests/task-protocol.test.ts",
+      "apps/server/test/session-database.integration.test.ts",
+      "tests/session-http.test.ts",
+      "tests/session-supervision-http.test.ts",
+      "tests/session-mcp.test.ts",
+      "tests/session-protocol.test.ts",
       "tests/platform.test.ts",
     ],
     {
@@ -69,7 +69,7 @@ try {
   process.stdout.write(verification.stdout);
 
   process.stdout.write(
-    "Task-native E2E gate passed: Organization isolation, HTTP/MCP authority, " +
+    "Session-native E2E gate passed: Organization isolation, HTTP/MCP authority, " +
       "PostgreSQL lifecycle, and Client Local Policy.\n",
   );
 } finally {

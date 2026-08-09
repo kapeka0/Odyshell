@@ -11,20 +11,22 @@ import {
   cloudWebRequestDecision,
   cloudWebUrl,
 } from "./cloud.js";
+import { registerCliHttp } from "./cli-http.js";
 import { registerControlHttp } from "./control-http.js";
 import { audit, createDatabase } from "./control-database.js";
 import { ClientGateway } from "./gateway.js";
+import { createHumanOAuthAuthenticator } from "./human-oauth.js";
 import { SERVER_HTTP_BODY_LIMIT_BYTES } from "./http-limits.js";
 import { dataRetentionPolicy } from "./privacy.js";
 import { createAgentOAuthAuthenticator } from "./agent-oauth.js";
 import { registerRemoteMcp } from "./remote-mcp.js";
-import { createTaskDatabase } from "./task-database.js";
-import { registerTaskHttp } from "./task-http.js";
-import { createTaskMcpRuntime } from "./task-mcp-runtime.js";
-import { decodeCommandOutput } from "./task-output.js";
-import { taskReconnectMessages } from "./task-reconciliation.js";
-import { registerTaskSupervisionHttp } from "./task-supervision-http.js";
-import { TaskClientUnavailableError, TaskService } from "./tasks.js";
+import { createSessionDatabase } from "./session-database.js";
+import { registerSessionHttp } from "./session-http.js";
+import { createSessionMcpRuntime } from "./session-mcp-runtime.js";
+import { decodeCommandOutput } from "./session-output.js";
+import { sessionReconnectMessages } from "./session-reconciliation.js";
+import { registerSessionSupervisionHttp } from "./session-supervision-http.js";
+import { SessionClientUnavailableError, SessionService } from "./sessions.js";
 
 const port = Number(process.env.PORT ?? 4100);
 const host = process.env.HOST ?? "127.0.0.1";
@@ -47,8 +49,8 @@ await app.register(websocket, { options: { maxPayload: 2 * 1024 * 1024 } });
 
 const database = createDatabase(process.env);
 await database.initialize();
-const taskDatabase = createTaskDatabase(process.env);
-await taskDatabase.initialize();
+const sessionDatabase = createSessionDatabase(process.env);
+await sessionDatabase.initialize();
 
 async function requireWeb(
   request: FastifyRequest,
@@ -69,60 +71,60 @@ async function requireWeb(
 
 let gateway: ClientGateway;
 gateway = new ClientGateway(database, {
-  async authenticated({ machineId, controlOrganizationId, taskProfile }) {
+  async authenticated({ machineId, controlOrganizationId, sessionProfile }) {
     const organization = await database.mcpOrganization(controlOrganizationId);
     if (
       !organization ||
       organization.organizationExternalId !==
-        taskProfile.localPolicy.organizationId
+        sessionProfile.localPolicy.organizationId
     ) {
-      throw new Error("Task Profile Organization does not own this Machine");
+      throw new Error("Session Profile Organization does not own this Machine");
     }
-    await taskDatabase.putMachineAuthority({
-      organizationId: taskProfile.localPolicy.organizationId,
+    await sessionDatabase.putMachineAuthority({
+      organizationId: sessionProfile.localPolicy.organizationId,
       machineId,
-      clientProfileId: taskProfile.id,
-      operatingSystemUser: taskProfile.operatingSystemUser,
+      clientProfileId: sessionProfile.id,
+      operatingSystemUser: sessionProfile.operatingSystemUser,
       online: true,
-      localPolicy: taskProfile.localPolicy,
+      localPolicy: sessionProfile.localPolicy,
     });
   },
   async disconnected(machineId, organizationId) {
-    await taskDatabase.setMachineOnline(organizationId, machineId, false);
+    await sessionDatabase.setMachineOnline(organizationId, machineId, false);
   },
   async reconnected({ machineId, organizationId }) {
-    return taskReconnectMessages(
-      await taskDatabase.reconnectState(organizationId, machineId),
+    return sessionReconnectMessages(
+      await sessionDatabase.reconnectState(organizationId, machineId),
     );
   },
   async message(message, context) {
     switch (message.type) {
-      case "task.opened":
-        await taskDatabase.markTaskOpened({
+      case "session.opened":
+        await sessionDatabase.markSessionOpened({
           ...context,
-          taskId: message.taskId,
+          sessionId: message.sessionId,
           clientProfileId: message.clientProfileId,
           operatingSystemUser: message.operatingSystemUser,
         });
         break;
-      case "task.open_failed":
-        await taskDatabase.markTaskFailed(
+      case "session.open_failed":
+        await sessionDatabase.markSessionFailed(
           context.organizationId,
           context.machineId,
-          message.taskId,
+          message.sessionId,
           message.error,
         );
         break;
-      case "task.closed":
-        await taskDatabase.markTaskClosed(
+      case "session.closed":
+        await sessionDatabase.markSessionClosed(
           context.organizationId,
           context.machineId,
-          message.taskId,
+          message.sessionId,
           message.reason,
         );
         break;
       case "command.started":
-        await taskDatabase.markCommandStarted(
+        await sessionDatabase.markCommandStarted(
           context.organizationId,
           context.machineId,
           message.commandId,
@@ -130,7 +132,7 @@ gateway = new ClientGateway(database, {
         );
         break;
       case "command.output":
-        if (!await taskDatabase.addCommandOutput({
+        if (!await sessionDatabase.addCommandOutput({
           ...context,
           commandId: message.commandId,
           stream: message.stream,
@@ -141,7 +143,7 @@ gateway = new ClientGateway(database, {
         }
         break;
       case "command.completed": {
-        const command = await taskDatabase.markCommandCompleted({
+        const command = await sessionDatabase.markCommandCompleted({
           ...context,
           commandId: message.commandId,
           status: message.status,
@@ -163,28 +165,28 @@ gateway = new ClientGateway(database, {
 });
 gateway.register(app);
 
-const taskService = new TaskService(
-  taskDatabase,
+const sessionService = new SessionService(
+  sessionDatabase,
   {
-    async openTask(task) {
-      if (!gateway.send(task.machineId, {
-        type: "task.open",
-        taskId: task.id,
-        organizationId: task.organizationId,
-        agentId: task.agentId,
-        clientProfileId: task.clientProfileId,
-        expiresAt: task.expiresAt,
-        maxConcurrentCommands: task.maxConcurrentCommands,
+    async openSession(session) {
+      if (!gateway.send(session.machineId, {
+        type: "session.open",
+        sessionId: session.id,
+        organizationId: session.organizationId,
+        agentId: session.agentId,
+        clientProfileId: session.clientProfileId,
+        expiresAt: session.expiresAt,
+        maxConcurrentCommands: session.maxConcurrentCommands,
         serverTime: new Date().toISOString(),
       })) {
-        throw new TaskClientUnavailableError();
+        throw new SessionClientUnavailableError();
       }
     },
     async startCommand(command) {
       if (!gateway.send(command.machineId, {
         type: "command.start",
         commandId: command.id,
-        taskId: command.taskId,
+        sessionId: command.sessionId,
         command: command.command,
         ...(command.cwd ? { cwd: command.cwd } : {}),
         timeoutSeconds: command.timeoutSeconds,
@@ -193,10 +195,10 @@ const taskService = new TaskService(
         throw new Error("Machine disconnected before Command delivery");
       }
     },
-    async closeTask(task, reason) {
-      gateway.send(task.machineId, {
-        type: "task.close",
-        taskId: task.id,
+    async closeSession(session, reason) {
+      gateway.send(session.machineId, {
+        type: "session.close",
+        sessionId: session.id,
         reason,
       });
     },
@@ -207,19 +209,19 @@ const taskService = new TaskService(
       });
     },
   },
-  taskDatabase,
+  sessionDatabase,
 );
 
-registerTaskSupervisionHttp(app, {
+registerSessionSupervisionHttp(app, {
   preHandler: requireWeb,
-  database: taskDatabase,
-  service: taskService,
+  database: sessionDatabase,
+  service: sessionService,
 });
 
-registerTaskHttp(app, {
+registerSessionHttp(app, {
   authenticate: createAgentOAuthAuthenticator(process.env),
-  repository: taskDatabase,
-  service: taskService,
+  repository: sessionDatabase,
+  service: sessionService,
   async principal(identity) {
     const organizations = await database.mcpOrganizations([
       identity.organizationId,
@@ -237,6 +239,7 @@ registerTaskHttp(app, {
     return {
       organizationId: identity.organizationId,
       agentId: installation.agentId,
+      agentRole: installation.agentRole,
     };
   },
 });
@@ -248,25 +251,34 @@ registerRemoteMcp(app, process.env, {
       installation.organizationId,
     );
     if (!organization) throw new Error("Agent Organization is unavailable");
-    return createTaskMcpRuntime(
+    return createSessionMcpRuntime(
       {
         organizationId: organization.organizationExternalId,
         agentId: installation.agentId,
+        agentRole: installation.agentRole,
       },
-      taskService,
-      taskDatabase,
+      sessionService,
+      sessionDatabase,
     );
   },
 });
 
 registerControlHttp(app, {
   database,
-  taskDatabase,
+  sessionDatabase,
   gateway,
   preHandler: requireWeb,
   webKey,
   webUrl,
   auditRetentionMilliseconds: retention.auditMilliseconds,
+});
+
+registerCliHttp(app, {
+  authenticate: createHumanOAuthAuthenticator(process.env),
+  database,
+  sessionDatabase,
+  gateway,
+  service: sessionService,
 });
 
 app.get("/health", async () => {
@@ -342,45 +354,45 @@ app.post("/v1/clients/enroll", async (request, reply) => {
   });
 });
 
-let sweepingTasks = false;
+let sweepingSessions = false;
 const expiryTimer = setInterval(() => {
-  if (sweepingTasks) return;
-  sweepingTasks = true;
+  if (sweepingSessions) return;
+  sweepingSessions = true;
   void (async () => {
-    for (const expired of await taskDatabase.expireTasks()) {
+    for (const expired of await sessionDatabase.expireSessions()) {
       for (const commandId of expired.commandIds) {
-        gateway.send(expired.task.machineId, {
+        gateway.send(expired.session.machineId, {
           type: "command.cancel",
           commandId,
         });
       }
-      gateway.send(expired.task.machineId, {
-        type: "task.close",
-        taskId: expired.task.id,
+      gateway.send(expired.session.machineId, {
+        type: "session.close",
+        sessionId: expired.session.id,
         reason: "expired",
       });
     }
   })()
-    .catch((error: unknown) => app.log.error(error, "Task expiry sweep failed"))
+    .catch((error: unknown) => app.log.error(error, "Session expiry sweep failed"))
     .finally(() => {
-      sweepingTasks = false;
+      sweepingSessions = false;
     });
 }, 10_000);
 
 const retentionTimer = setInterval(() => {
   void Promise.all([
     database.purgeExpiredData({
-      transientDataBefore: Date.now() - retention.transientDataMilliseconds,
+      transientDataBefore: Date.now() - retention.commandOutputMilliseconds,
       auditBefore: Date.now() - retention.auditMilliseconds,
     }),
-    taskDatabase.purgeExpiredCommandOutput(),
+    sessionDatabase.purgeExpiredCommandOutput(),
   ]).catch((error: unknown) => app.log.error(error, "Retention sweep failed"));
 }, 15 * 60_000);
 
 app.addHook("onClose", async () => {
   clearInterval(expiryTimer);
   clearInterval(retentionTimer);
-  await Promise.all([taskDatabase.close(), database.close()]);
+  await Promise.all([sessionDatabase.close(), database.close()]);
 });
 
 await app.listen({ port, host });

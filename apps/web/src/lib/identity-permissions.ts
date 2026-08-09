@@ -11,7 +11,7 @@ const statements = {
   machine: ["create", "read", "update", "delete"],
   agent: ["create", "read", "update", "delete"],
   policy: ["create", "read", "update", "delete"],
-  task: ["read", "approve", "revoke"],
+  session: ["read", "approve", "revoke"],
   audit: ["read"],
 } as const;
 
@@ -22,7 +22,7 @@ export const ownerRole = identityAccessControl.newRole({
   machine: ["create", "read", "update", "delete"],
   agent: ["create", "read", "update", "delete"],
   policy: ["create", "read", "update", "delete"],
-  task: ["read", "approve", "revoke"],
+  session: ["read", "approve", "revoke"],
   audit: ["read"],
 });
 
@@ -31,7 +31,7 @@ export const adminRole = identityAccessControl.newRole({
   machine: ["create", "read", "update", "delete"],
   agent: ["create", "read", "update", "delete"],
   policy: ["create", "read", "update", "delete"],
-  task: ["read", "approve", "revoke"],
+  session: ["read", "approve", "revoke"],
   audit: ["read"],
 });
 
@@ -40,7 +40,7 @@ export const supervisorRole = identityAccessControl.newRole({
   machine: ["read"],
   agent: ["read"],
   policy: ["read"],
-  task: ["read", "approve", "revoke"],
+  session: ["read", "approve", "revoke"],
   audit: ["read"],
 });
 

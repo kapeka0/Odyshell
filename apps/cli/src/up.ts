@@ -8,11 +8,11 @@ export type ClientUpConfiguration = {
   configExists: boolean;
 };
 
-export function assertLinuxClientHost(platform = process.platform): void {
-  if (platform !== "linux") {
+export function assertSupportedClientHost(platform = process.platform): void {
+  if (!["linux", "darwin", "win32"].includes(platform)) {
     throw new ExpectedError(
-      "The Odyshell MVP Client supports Linux hosts only.",
-      "client_linux_required",
+      "The Odyshell Client supports Linux, macOS, and Windows hosts.",
+      "client_platform_unsupported",
     );
   }
 }
