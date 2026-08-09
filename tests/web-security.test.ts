@@ -17,16 +17,25 @@ describe("web security boundaries", () => {
   it("keeps Human authentication and Organization authorization in server seams", () => {
     const identity = source("lib/identity.ts");
     const identityAuth = source("lib/identity-auth.ts");
+    const auth = source("lib/auth.ts");
     const authRoute = source("app/api/auth/[...all]/route.ts");
+    const authorizationMetadata = source(
+      "app/.well-known/oauth-authorization-server/route.ts",
+    );
+    const openIdMetadata = source("app/.well-known/openid-configuration/route.ts");
     const organizationRoute = source("app/api/organization-settings/route.ts");
     const sessionRoute = source("app/api/sessions/[sessionId]/approve/route.ts");
 
     expect(identity).toContain("auth.api.getSession");
     expect(identity).toContain("auth.api.getActiveMember");
     expect(identityAuth).toContain("jwt: { issuer: configuration.baseUrl }");
-    expect(authRoute).toContain("toNextJsHandler(auth)");
+    expect(auth).toContain("auth ??= createOdyshellAuth(process.env)");
+    expect(auth).not.toContain("export const auth = createOdyshellAuth");
+    expect(authRoute).toContain("toNextJsHandler(getAuth())");
+    expect(authorizationMetadata).toContain("oauthProviderAuthServerMetadata(getAuth()");
+    expect(openIdMetadata).toContain("oauthProviderOpenIdConfigMetadata(getAuth()");
     expect(organizationRoute).toContain("requireCloudAdminRouteIdentity");
-    expect(organizationRoute).toContain("auth.api.updateOrganization");
+    expect(organizationRoute).toContain("getAuth().api.updateOrganization");
     expect(organizationRoute).not.toContain('z.literal("logging")');
     expect(sessionRoute).toContain("requireCloudRouteIdentity");
     expect(sessionRoute).not.toContain("role:");
