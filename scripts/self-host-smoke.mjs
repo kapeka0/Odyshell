@@ -36,25 +36,14 @@ await authPost("/api/auth/sign-up/email", {
   password: `Odyshell-smoke-${runId}!`,
 }, "Local account signup");
 
-const organization = await authPost("/api/auth/organization/create", {
-  name: "Self-host smoke",
-  slug: `self-host-smoke-${runId}`,
-}, "First Organization creation");
-const organizationId = organization.body?.id ?? organization.body?.data?.id;
-if (typeof organizationId !== "string") {
-  throw new Error("First Organization creation did not return an Organization id");
-}
-
-await authPost(
-  "/api/auth/organization/set-active",
-  { organizationId },
-  "Organization activation",
-);
-await request(new URL("/api/dashboard/context", webUrl), {
+const context = await request(new URL("/api/dashboard/context", webUrl), {
   expectedStatus: 200,
   label: "Authenticated dashboard context",
   headers: cookieHeaders(),
 });
+if (context.body?.context?.organization?.name !== "Self-host smoke") {
+  throw new Error("Signup did not create and activate the named default Organization");
+}
 
 const secondOrganization = await request(
   new URL("/api/auth/organization/create", webUrl),
@@ -78,7 +67,7 @@ if (secondOrganization.status < 400 || secondOrganization.status >= 500) {
   );
 }
 
-process.stdout.write("Self-host smoke passed: identity, single-Organization, dashboard, and MCP boundaries.\n");
+process.stdout.write("Self-host smoke passed: automatic Organization, dashboard, and MCP boundaries.\n");
 
 async function authPost(path, body, label) {
   return request(new URL(path, webUrl), {

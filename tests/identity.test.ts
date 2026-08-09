@@ -6,6 +6,7 @@ import {
   identityRole,
 } from "../apps/web/src/lib/identity-permissions.js";
 import { identityMigrationsEnabled } from "../apps/web/src/lib/identity-migrations.js";
+import { defaultOrganizationSlug } from "../apps/web/src/lib/default-organization.js";
 
 const validEnvironment = {
   DATABASE_URL: "postgresql://odyshell:odyshell@127.0.0.1:55432/odyshell",
@@ -15,6 +16,15 @@ const validEnvironment = {
 };
 
 describe("Odyshell Identity configuration", () => {
+  it("derives a safe unique slug for the account's default Organization", () => {
+    expect(defaultOrganizationSlug("  Karim Núñez  ", "12345678-rest")).toBe(
+      "karim-nunez-12345678",
+    );
+    expect(defaultOrganizationSlug("!!!", "abcdef12-rest")).toBe(
+      "organization-abcdef12",
+    );
+  });
+
   it("owns identity through Better Auth instead of the execution database", () => {
     const identity = readFileSync("apps/web/src/lib/identity-auth.ts", "utf8");
     const serverDatabase = readFileSync(
@@ -27,6 +37,7 @@ describe("Odyshell Identity configuration", () => {
     expect(identity).toContain('options: "-c search_path=public"');
     expect(identity).toContain("jwt({ jwt: { issuer: configuration.baseUrl } })");
     expect(identity).toContain("validAudiences: [configuration.mcpAudience]");
+    expect(identity).toContain("defaultOrganizationForUser");
     expect(identity).not.toContain(
       "validAudiences: [configuration.baseUrl, configuration.mcpAudience]",
     );

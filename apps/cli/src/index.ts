@@ -40,7 +40,7 @@ const program = new Command();
 program
   .name("ods")
   .description("Install and operate an Odyshell Machine Client")
-  .version("0.16.1")
+  .version("0.17.0")
   .option("-j, --json", "emit stable JSON output")
   .option("--server <url>", "override the Odyshell Server URL")
   .showSuggestionAfterError()
@@ -155,7 +155,7 @@ program
         serverUrl,
         token: requiredValue(options.token, "--token"),
         machineName: requiredValue(options.name, "--name"),
-        agentId: requiredValue(options.agentId, "--agent-id"),
+        ...(options.agentId ? { agentId: options.agentId } : {}),
         configPath,
         profileName,
         ...(previousMachineId ? { previousMachineId } : {}),

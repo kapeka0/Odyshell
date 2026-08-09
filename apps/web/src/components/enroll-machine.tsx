@@ -2,7 +2,7 @@
 
 import { BotIcon, KeyRoundIcon, ShieldCheckIcon } from "lucide-react";
 import Link from "next/link";
-import { FormEvent, useState } from "react";
+import { type FormEvent, useState } from "react";
 import { z } from "zod";
 import { CopyableValue } from "@/components/copyable-value";
 import { useDashboard } from "@/components/dashboard-provider";
@@ -61,17 +61,19 @@ export function EnrollMachine({
   const [enrollment, setEnrollment] = useState<EnrollmentToken | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
-  const [agentError, setAgentError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const selectedAgentId = agentId || activeAgents[0]?.id || "";
-  const agentOptions = activeAgents.map((agent) => ({ label: agent.name, value: agent.id }));
+  const selectedAgentId = agentId || undefined;
+  const agentOptions = [
+    { label: "No Agent yet", value: "none" },
+    ...activeAgents.map((agent) => ({ label: agent.name, value: agent.id })),
+  ];
 
   const command = enrollment
     ? machineEnrollmentCommand({
         serverUrl,
         token: enrollment.token,
         machineName,
-        agentId: selectedAgentId,
+        ...(selectedAgentId ? { agentId: selectedAgentId } : {}),
       })
     : "";
 
@@ -82,15 +84,9 @@ export function EnrollMachine({
       setNameError(parsedName.error.issues[0]?.message ?? "Invalid machine name");
       return;
     }
-    if (!selectedAgentId) {
-      setAgentError("Register an Agent before connecting this Machine");
-      return;
-    }
-
     setPending(true);
     setError(null);
     setNameError(null);
-    setAgentError(null);
     try {
       const response = await fetch("/api/enrollment-token", { method: "POST" });
       const body = (await response.json()) as EnrollmentToken & { error?: string };
@@ -119,8 +115,8 @@ export function EnrollMachine({
         <CardHeader>
           <CardTitle>Run this command on {machineName}</CardTitle>
           <CardDescription>
-            The command installs one outbound Client Profile and binds its Local Policy to the
-            selected Agent.
+            The command installs one outbound Client Profile. Its Local Policy
+            {selectedAgentId ? " allows the selected Agent." : " starts with no allowed Agents."}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-5">
@@ -159,7 +155,8 @@ export function EnrollMachine({
       <CardHeader>
         <CardTitle>Add Machine</CardTitle>
         <CardDescription>
-          Choose the first Agent inside this Machine&apos;s owner-controlled Local Policy.
+          Register the Linux host now. Allowing an Agent in its owner-controlled Local Policy is
+          optional.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -181,23 +178,22 @@ export function EnrollMachine({
               <FieldError>{nameError}</FieldError>
             </Field>
 
-            <Field data-invalid={Boolean(agentError)}>
-              <FieldLabel htmlFor="machine-agent">Allowed Agent</FieldLabel>
+            <Field>
+              <FieldLabel htmlFor="machine-agent">Initial allowed Agent (optional)</FieldLabel>
               {activeAgents.length > 0 ? (
                 <Select
                   items={agentOptions}
-                  value={selectedAgentId}
+                  value={agentId || "none"}
                   onValueChange={(value) => {
-                    setAgentId(value ?? "");
-                    setAgentError(null);
+                    setAgentId(value === "none" ? "" : (value ?? ""));
                   }}
-                  required
                 >
                   <SelectTrigger id="machine-agent" className="w-full">
-                    <SelectValue placeholder="Select Agent" />
+                    <SelectValue placeholder="No Agent yet" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectGroup>
+                      <SelectItem value="none">No Agent yet</SelectItem>
                       {activeAgents.map((agent) => (
                         <SelectItem key={agent.id} value={agent.id}>{agent.name}</SelectItem>
                       ))}
@@ -205,14 +201,16 @@ export function EnrollMachine({
                   </SelectContent>
                 </Select>
               ) : (
-                <Link href="/dashboard/agents/add" className={buttonVariants({ variant: "outline" })}>
-                  <BotIcon /> Register Agent
-                </Link>
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="text-sm text-muted-foreground">No Agents registered yet.</span>
+                  <Link href="/dashboard/agents/add" className={buttonVariants({ variant: "outline" })}>
+                    <BotIcon /> Register Agent
+                  </Link>
+                </div>
               )}
               <FieldDescription>
-                Tasks from other Agents are denied locally, even if the Server requests them.
+                With no Agent selected, the Machine connects but denies every Task locally.
               </FieldDescription>
-              <FieldError>{agentError}</FieldError>
             </Field>
 
             <Alert>
@@ -235,7 +233,7 @@ export function EnrollMachine({
               <Link href="/dashboard/machines" className={buttonVariants({ variant: "outline" })}>
                 Cancel
               </Link>
-              <Button type="submit" disabled={pending || atLimit || activeAgents.length === 0}>
+              <Button type="submit" disabled={pending || atLimit}>
                 {pending ? <Spinner /> : null}
                 Add
               </Button>

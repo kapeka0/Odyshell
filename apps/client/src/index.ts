@@ -30,7 +30,7 @@ import {
   normalizeServerUrl,
 } from "./platform.js";
 
-export const CLIENT_VERSION = "0.16.1";
+export const CLIENT_VERSION = "0.17.0";
 
 export {
   clientConfigPathForProfile,
@@ -66,7 +66,7 @@ export type EnrollClientOptions = {
   serverUrl: string;
   token: string;
   machineName: string;
-  agentId: string;
+  agentId?: string;
   configPath: string;
   profileName?: string;
   previousMachineId?: string;
@@ -79,8 +79,8 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
 }> {
   const serverUrl = normalizeServerUrl(options.serverUrl);
   const configPath = resolve(options.configPath);
-  const agentId = options.agentId.trim();
-  if (agentId.length === 0 || agentId.length > 256) {
+  const agentId = options.agentId?.trim();
+  if (options.agentId !== undefined && (!agentId || agentId.length > 256)) {
     throw new Error("One valid Agent ID must be explicitly allowed");
   }
   const { publicKey, privateKey } = generateKeyPairSync("ed25519", {
@@ -119,7 +119,7 @@ export async function enrollClient(options: EnrollClientOptions): Promise<{
       id: options.profileName ?? "default",
       localPolicy: {
         organizationId: body.organizationId,
-        agentIds: [agentId],
+        agentIds: agentId ? [agentId] : [],
         maxTaskDurationSeconds: 3_600,
         maxConcurrentTasks: 1,
         maxConcurrentCommands: 1,

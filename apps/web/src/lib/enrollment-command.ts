@@ -4,21 +4,14 @@ export function machineEnrollmentCommand(options: {
   serverUrl: string;
   token: string;
   machineName: string;
-  agentId: string;
+  agentId?: string;
 }): string {
   const args = ["ods"];
   if (options.serverUrl !== DEFAULT_CLOUD_SERVER_URL) {
     args.push("--server", options.serverUrl);
   }
-  args.push(
-    "up",
-    "--token",
-    options.token,
-    "--name",
-    options.machineName,
-    "--agent-id",
-    options.agentId,
-  );
+  args.push("up", "--token", options.token, "--name", options.machineName);
+  if (options.agentId) args.push("--agent-id", options.agentId);
   return args.map(posixShellArgument).join(" ");
 }
 

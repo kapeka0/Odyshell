@@ -19,23 +19,24 @@ npm install --global @odyshell/cli
 
 ## Connect a Machine
 
-Register the Agent in the dashboard first. Then open **Machines**, select **Add Machine**, choose
-that Agent, and run the generated command on the target Linux host:
+Open **Machines**, select **Add Machine**, and run the generated command on the target Linux host:
 
 ```bash
 ods --server https://api.example.com up \
   --token <single-use-token> \
-  --name production-api \
-  --agent-id <agent-id>
+  --name production-api
 ```
+
+Pass the optional `--agent-id <agent-id>` when this Profile should immediately allow one Agent.
 
 `ods up` creates an Ed25519 Machine identity, saves a conservative Local Policy, verifies the
 Server, and installs a restartable systemd user service. The token expires after ten minutes,
 works once, and is never persisted.
 
-The initial Local Policy permits only the selected Agent, one Task and Command at a time, a
-one-hour Task, a ten-minute Command, and 1 MiB of output. It permits remote human approval but
-does not configure sudo or a sandbox.
+Without `--agent-id`, the Machine registers and connects with a default-deny Local Policy and
+cannot accept Tasks. When supplied, the initial Local Policy permits only that Agent. It also
+permits one Task and Command at a time, a one-hour Task, a ten-minute Command, and 1 MiB of output.
+It permits remote human approval but does not configure sudo or a sandbox.
 
 ## Local lifecycle
 

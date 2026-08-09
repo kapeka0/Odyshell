@@ -84,6 +84,28 @@ describe("Client enrollment", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("registers a Machine without an Agent using a default-deny Local Policy", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "odyshell-enroll-no-agent-"));
+    temporaryDirectories.push(directory);
+    const configPath = join(directory, "client.json");
+    vi.stubGlobal("fetch", async () => Response.json({
+      machineId: crypto.randomUUID(),
+      organizationId: "organization-one",
+    }, { status: 201 }));
+
+    await enrollClient({
+      serverUrl: "https://server.example",
+      token: "ods_enroll_secret",
+      machineName: "unassigned-host",
+      configPath,
+    });
+
+    const saved = JSON.parse(await readFile(configPath, "utf8")) as {
+      taskProfile: { localPolicy: { agentIds: string[] } };
+    };
+    expect(saved.taskProfile.localPolicy.agentIds).toEqual([]);
+  });
+
   it("fails closed when enrollment has no sovereign Organization identity", async () => {
     const directory = await mkdtemp(join(tmpdir(), "odyshell-enroll-org-denied-"));
     temporaryDirectories.push(directory);

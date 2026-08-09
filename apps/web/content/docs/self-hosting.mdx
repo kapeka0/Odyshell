@@ -22,7 +22,7 @@ Fill every blank secret in the root `.env` first. `BETTER_AUTH_SECRET` and
 random value. Compose runs Web and Server in production mode, binds every published port to
 loopback by default, and fails when a required secret is absent.
 
-The smoke test creates the first local account and Organization, verifies authenticated dashboard
+The smoke test creates the first local account and verifies its automatic Organization and authenticated dashboard
 access, proves the single-Organization boundary, and checks anonymous MCP denial. Use a fresh
 PostgreSQL volume if you want to perform first-user onboarding manually instead.
 
@@ -54,7 +54,8 @@ Generic OIDC is also optional: configure `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`,
 1. Add the Server's `/mcp` resource to the external Agent runtime.
 2. Complete OAuth and approve the Organization-bound Agent installation.
 3. Install `ods` on the target Linux host.
-4. In **Machines**, select **Add Machine**, choose the Agent, and run the generated command.
+4. In **Machines**, select **Add Machine** and run the generated command. Selecting an initially
+   allowed Agent is optional.
 5. From the Agent, request a Task and execute Commands through MCP or canonical HTTP.
 
 ```npm

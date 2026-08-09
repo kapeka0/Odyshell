@@ -35,7 +35,7 @@ pnpm test:self-host
 
 The manifest binds Web, Server, and PostgreSQL to `127.0.0.1` by default, runs application services
 with `NODE_ENV=production`, and refuses to render when required secrets are absent. The smoke test
-uses a clean database: it creates a local account and the first Organization, verifies the
+uses a clean database: it creates a local account whose Organization is provisioned automatically, verifies the
 authenticated dashboard, proves a second Organization is denied, and confirms anonymous MCP and
 dashboard requests fail closed.
 
@@ -90,7 +90,8 @@ enforced.
    npm install --global @odyshell/cli
    ```
 
-4. In **Machines**, select **Add Machine**, choose the Agent, and run the generated command:
+4. In **Machines**, select **Add Machine** and run the generated command. Selecting an initially
+   allowed Agent is optional:
 
    ```bash
    ods --server https://api.example.com up \

@@ -8,7 +8,8 @@ drives the Task and Commands.
 
 ## 1. Create the Organization
 
-Open Odyshell, create the first account, and create an Organization. Self-hosted deployments keep
+Open Odyshell and create the first account. Odyshell automatically creates and activates an
+Organization with the account name. Self-hosted deployments keep
 identity, policy, Task state, and audit data in their own PostgreSQL database.
 
 ## 2. Connect the Agent
@@ -33,17 +34,18 @@ npm install --global @odyshell/cli
 
 ## 4. Connect the Machine
 
-Open **Machines**, select **Add Machine**, enter a name, and choose the Agent. Odyshell shows one
-`ods up` command containing a single-use enrollment token and the selected Agent ID. Run it on the
+Open **Machines**, select **Add Machine**, and enter a name. Choosing an initially allowed Agent is
+optional. Odyshell shows one `ods up` command containing a single-use enrollment token. Run it on the
 target Linux host.
 
 The token expires after ten minutes, works once, and is not persisted. The Client creates an
 Ed25519 Machine identity, installs a restartable systemd user service, and keeps an authenticated
 outbound connection open. No inbound port, SSH credential, or VPN is required.
 
-The generated Local Policy initially allows only that Agent, one Task and one Command at a time, a
-one-hour Task, a ten-minute Command, and 1 MiB of output. Human approval is allowed. The Client
-enforces this policy independently of the Server.
+With no Agent selected, the generated Local Policy denies every Task while keeping the Machine
+registered and connected. If selected, it initially allows only that Agent. It also allows one
+Task and one Command at a time, a one-hour Task, a ten-minute Command, and 1 MiB of output. Human
+approval is allowed. The Client enforces this policy independently of the Server.
 
 ## 5. Run a Task
 

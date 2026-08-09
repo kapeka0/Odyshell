@@ -60,6 +60,13 @@ describe("web security boundaries", () => {
     expect(command).toContain("--token 'ods_enroll_'\"'\"'_synthetic'");
     expect(command).toContain("--name 'production; touch /tmp/pwned'");
     expect(command).toContain("--agent-id 'agent-'\"'\"'primary'");
+
+    const unassignedCommand = machineEnrollmentCommand({
+      serverUrl: "https://server.example",
+      token: "ods_enroll_safe",
+      machineName: "unassigned",
+    });
+    expect(unassignedCommand).not.toContain("--agent-id");
   });
 
   it("keeps documentation public while bounding its search input", () => {

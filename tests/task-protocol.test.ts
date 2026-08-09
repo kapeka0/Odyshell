@@ -25,6 +25,17 @@ const policy = localPolicySchema.parse({
 });
 
 describe("agent-native Task protocol", () => {
+  it("keeps a Machine with no allowed Agents connected but default-denied", () => {
+    const unassignedPolicy = localPolicySchema.parse({ ...policy, agentIds: [] });
+    expect(localTaskDecision(unassignedPolicy, {
+      organizationId: "org-a",
+      agentId: "agent-a",
+      durationSeconds: 600,
+      activeTasks: 0,
+      maxConcurrentCommands: 1,
+    })).toEqual({ allowed: false, code: "agent_denied" });
+  });
+
   it("accepts only one Machine per Task and only shell-native Command input", () => {
     expect(taskRequestSchema.parse({
       machineId: "7a354999-6a6c-42db-9467-e1416da255f1",

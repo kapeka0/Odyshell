@@ -31,7 +31,7 @@ protocol, and Client code.
 | --- | --- |
 | Platform | Linux Client running as a pre-existing operating-system user |
 | Identity | Better Auth Humans, OAuth Agents, and Ed25519 Machine identity |
-| Enrollment | Single-use, expiring, Organization-bound Machine enrollment |
+| Enrollment | Single-use, expiring, Organization-bound Machine enrollment; Agent optional |
 | Agent authority | One temporary Task binds one Agent to one Machine and OS user |
 | Execution | Asynchronous non-interactive shell Commands |
 | Policy | Machine-owned Local Policy ceiling and narrower Autonomy Policy |

@@ -78,8 +78,7 @@ describe("self-hosted distribution", () => {
     const smoke = source("scripts/self-host-smoke.mjs");
 
     expect(smoke).toContain("/api/auth/sign-up/email");
-    expect(smoke).toContain("/api/auth/organization/create");
-    expect(smoke).toContain("/api/auth/organization/set-active");
+    expect(smoke).toContain("Signup did not create and activate the named default Organization");
     expect(smoke).toContain("/api/dashboard/context");
     expect(smoke).toContain("Unauthenticated MCP denial");
     expect(smoke).toContain("Second Organization denial");

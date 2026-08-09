@@ -55,7 +55,7 @@ tokens expire after ten minutes, work once, and are never persisted.
 
 ## Quickstart
 
-1. Open the web app and create the first Organization.
+1. Open the web app and create an account; Odyshell creates and activates its Organization.
 2. Connect the Agent runtime to the Server's remote MCP endpoint and complete OAuth.
 3. Install `ods` on the target Linux Machine:
 
@@ -63,8 +63,8 @@ tokens expire after ten minutes, work once, and are never persisted.
    npm install --global @odyshell/cli
    ```
 
-4. In **Machines**, select **Add Machine**, choose the Agent, and run the generated `ods up`
-   command on the host.
+4. In **Machines**, select **Add Machine** and run the generated `ods up` command on the host.
+   Selecting an initially allowed Agent is optional.
 5. From the Agent, call `machines_list`, `task_request`, `command_run`, `command_get`,
    `command_output`, and `task_complete`. A Supervisor approves only when policy requires it.
 
@@ -88,7 +88,7 @@ pnpm test:self-host
 ```
 
 Fill every blank secret in the root `.env` before starting. Open
-`http://localhost:3000`, create the first local account and Organization, then follow the
+`http://localhost:3000`; the first local account automatically owns the deployment Organization. Then follow the
 Quickstart. Compose runs both application services in production mode, binds them to loopback by
 default, and rejects missing secrets.
 

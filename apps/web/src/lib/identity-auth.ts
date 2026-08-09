@@ -3,6 +3,7 @@ import { betterAuth } from "better-auth";
 import { nextCookies } from "better-auth/next-js";
 import { genericOAuth, jwt, organization } from "better-auth/plugins";
 import { Pool } from "pg";
+import { defaultOrganizationForUser } from "./default-organization";
 import { identityConfiguration } from "./identity-config";
 import {
   canAdministerOrganization,
@@ -36,7 +37,15 @@ export function createOdyshellAuth(
     return result.rows[0]?.role ?? null;
   }
 
-  return betterAuth({
+  let createDefaultOrganization: (input: {
+    userId: string;
+    name: string;
+    slug: string;
+  }) => Promise<{ id: string }> = async () => {
+    throw new Error("Odyshell Identity is not initialized");
+  };
+
+  const auth = betterAuth({
     appName: "Odyshell",
     baseURL: configuration.baseUrl,
     secret: configuration.secret,
@@ -53,6 +62,34 @@ export function createOdyshellAuth(
       maxPasswordLength: 128,
       autoSignIn: true,
       revokeSessionsOnPasswordReset: true,
+    },
+    databaseHooks: {
+      user: {
+        create: {
+          after: async (user) => {
+            await defaultOrganizationForUser({
+              database,
+              deploymentMode: configuration.deploymentMode,
+              userId: user.id,
+              createOrganization: createDefaultOrganization,
+            });
+          },
+        },
+      },
+      session: {
+        create: {
+          before: async (session) => {
+            if (typeof session.activeOrganizationId === "string") return;
+            const activeOrganizationId = await defaultOrganizationForUser({
+              database,
+              deploymentMode: configuration.deploymentMode,
+              userId: session.userId,
+              createOrganization: createDefaultOrganization,
+            });
+            return { data: { ...session, activeOrganizationId } };
+          },
+        },
+      },
     },
     ...(configuration.google
       ? { socialProviders: { google: configuration.google } }
@@ -141,4 +178,14 @@ export function createOdyshellAuth(
       nextCookies(),
     ],
   });
+
+  createDefaultOrganization = async ({ userId, name, slug }) => {
+    const organization = await auth.api.createOrganization({
+      body: { userId, name, slug },
+    });
+    if (!organization?.id) throw new Error("Default Organization creation failed");
+    return { id: organization.id };
+  };
+
+  return auth;
 }

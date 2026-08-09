@@ -79,7 +79,7 @@ export function AuthForm({
       setError(identityErrorMessage(result.error));
       return;
     }
-    router.replace(mode === "sign-up" ? "/onboarding" : destination);
+    router.replace(destination);
     router.refresh();
   }
 
@@ -89,7 +89,7 @@ export function AuthForm({
     const result = await authClient.signIn.social({
       provider: "google",
       callbackURL: destination,
-      newUserCallbackURL: "/onboarding",
+      newUserCallbackURL: destination,
       errorCallbackURL: `/sign-in?redirect_url=${encodeURIComponent(destination)}`,
     });
     if (result?.error) {
@@ -104,7 +104,7 @@ export function AuthForm({
     const result = await authClient.signIn.oauth2({
       providerId: process.env.NEXT_PUBLIC_OIDC_PROVIDER_ID ?? "oidc",
       callbackURL: destination,
-      newUserCallbackURL: "/onboarding",
+      newUserCallbackURL: destination,
       errorCallbackURL: `/sign-in?redirect_url=${encodeURIComponent(destination)}`,
     });
     if (result?.error) {

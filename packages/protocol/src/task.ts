@@ -135,7 +135,7 @@ export type Command = z.infer<typeof commandSchema>;
 export const localPolicySchema = z
   .object({
     organizationId: idSchema,
-    agentIds: z.array(idSchema).min(1).max(256),
+    agentIds: z.array(idSchema).max(256),
     maxTaskDurationSeconds: z
       .number()
       .int()

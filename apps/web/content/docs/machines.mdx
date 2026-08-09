@@ -15,19 +15,20 @@ Install the administration CLI on the target host:
 npm install --global @odyshell/cli
 ```
 
-Register the Agent first. Then open **Machines**, select **Add Machine**, and choose:
+Open **Machines**, select **Add Machine**, and choose:
 
 - a Machine name;
-- the first Agent allowed by Local Policy.
+- optionally, the first Agent allowed by Local Policy.
 
 Odyshell generates a command shaped like:
 
 ```bash
 ods --server https://api.example.com up \
   --token <single-use-token> \
-  --name production-api \
-  --agent-id <agent-id>
+  --name production-api
 ```
+
+The generated command adds `--agent-id <agent-id>` only when an Agent was selected.
 
 Run it as the Linux user whose authority Commands should receive. The token expires after ten
 minutes, can be consumed once, and is never written to Client configuration. Enrollment fails
@@ -46,7 +47,7 @@ ods up
 
 The generated Profile advertises a Task Local Policy on every authenticated connection:
 
-- exactly the selected Agent;
+- no Agents by default, or exactly the selected Agent;
 - Tasks up to one hour;
 - one concurrent Task;
 - one concurrent Command;
@@ -54,8 +55,9 @@ The generated Profile advertises a Task Local Policy on every authenticated conn
 - up to 1 MiB of transient output;
 - remote human approval allowed.
 
-The Server can grant less authority but cannot widen this ceiling. A mismatched Organization,
-Agent, duration, concurrency request, or Command bound is denied by the Client even if the Server
+An empty Agent list keeps the Machine online and visible but denies every Task. The Server can
+grant less authority but cannot widen this ceiling. A mismatched Organization, Agent, duration,
+concurrency request, or Command bound is denied by the Client even if the Server
 is compromised.
 
 The stored Client configuration is strict and Task-native. It contains one Machine identity and
