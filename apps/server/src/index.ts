@@ -270,6 +270,8 @@ registerControlHttp(app, {
   preHandler: requireWeb,
   webKey,
   webUrl,
+  managedBillingEnabled:
+    process.env.ODYSHELL_MANAGED_BILLING_ENABLED === "true",
   auditRetentionMilliseconds: retention.auditMilliseconds,
 });
 

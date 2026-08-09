@@ -22,8 +22,18 @@ describe("billing security policy", () => {
   });
 
   it("enables managed billing only for explicit cloud deployments", () => {
-    expect(managedBillingEnabled({ ODYSHELL_DEPLOYMENT_MODE: "cloud" })).toBe(true);
-    expect(managedBillingEnabled({ ODYSHELL_DEPLOYMENT_MODE: "self-hosted" })).toBe(false);
+    expect(managedBillingEnabled({
+      ODYSHELL_DEPLOYMENT_MODE: "cloud",
+      ODYSHELL_MANAGED_BILLING_ENABLED: "true",
+    })).toBe(true);
+    expect(managedBillingEnabled({
+      ODYSHELL_DEPLOYMENT_MODE: "cloud",
+      ODYSHELL_MANAGED_BILLING_ENABLED: "false",
+    })).toBe(false);
+    expect(managedBillingEnabled({
+      ODYSHELL_DEPLOYMENT_MODE: "self-hosted",
+      ODYSHELL_MANAGED_BILLING_ENABLED: "true",
+    })).toBe(false);
     expect(managedBillingEnabled({})).toBe(false);
   });
 });

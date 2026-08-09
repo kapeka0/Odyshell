@@ -46,10 +46,15 @@ ods login --server http://localhost:4100
 ```
 
 The CLI completes OAuth against Odyshell Identity. The dashboard can then issue single-use Machine
-enrollment commands, create persistent Agent identities, supervise Sessions, and inspect their
+enrollment commands, manage persistent Agent identities, supervise Sessions, and inspect their
 Commands. An Agent identity grants no Machine authority by itself: every Session is Organization- and
 Machine-bound, evaluated against the Agent role outside the Agent, and either starts immediately for an Operator
 or waits for optional Human approval.
+
+Managed Stripe billing is fail-closed. A Cloud deployment must set
+`ODYSHELL_MANAGED_BILLING_ENABLED=true` together with `STRIPE_SECRET_KEY`,
+`STRIPE_PRO_PRICE_ID`, and `STRIPE_WEBHOOK_SECRET`; self-hosted deployments leave
+the flag unset and do not expose subscription controls.
 
 ## Trust boundary
 

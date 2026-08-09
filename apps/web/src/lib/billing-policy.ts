@@ -3,7 +3,8 @@ export function planForStripeSubscriptionStatus(status: string): "free" | "pro" 
 }
 
 export function managedBillingEnabled(environment: NodeJS.ProcessEnv): boolean {
-  return environment.ODYSHELL_DEPLOYMENT_MODE === "cloud";
+  return environment.ODYSHELL_DEPLOYMENT_MODE === "cloud" &&
+    environment.ODYSHELL_MANAGED_BILLING_ENABLED === "true";
 }
 
 export function billingAppUrl(environment: NodeJS.ProcessEnv): string {

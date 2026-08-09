@@ -43,6 +43,7 @@ export function registerControlHttp(
     preHandler: WebPreHandler;
     webKey: string | undefined;
     webUrl: string | undefined;
+    managedBillingEnabled: boolean;
     auditRetentionMilliseconds: number;
   },
 ): void {
@@ -108,7 +109,8 @@ export function registerControlHttp(
         plan: {
           id: context.organization.plan,
           ...plan,
-          billingManaged: usage?.cloudManaged ?? false,
+          billingManaged:
+            (usage?.cloudManaged ?? false) && dependencies.managedBillingEnabled,
           controlEventRetentionDays: Math.round(
             dependencies.auditRetentionMilliseconds / (24 * 60 * 60 * 1_000),
           ),
