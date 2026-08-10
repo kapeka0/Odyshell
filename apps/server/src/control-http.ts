@@ -3,23 +3,21 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { createEnrollmentToken } from "./access.js";
 import {
-  CloudLiveTokenReplayGuard,
-  cloudBillingPlanUpdateSchema,
-  cloudIdentitySchema,
-  cloudLiveOriginDecision,
-  cloudUserSettingsSchema,
-  cloudOrganizationSettingsSchema,
-  createCloudLiveToken,
-  deleteCloudAgentSchema,
-  entitlementsFor,
+  ControlLiveTokenReplayGuard,
+  controlIdentitySchema,
+  controlLiveOriginDecision,
+  controlUserSettingsSchema,
+  controlOrganizationSettingsSchema,
+  createControlLiveToken,
+  deleteControlAgentSchema,
   privacySafeControlMetadata,
-  revokeCloudMachineSchema,
+  revokeControlMachineSchema,
   ScopedConcurrencyLimiter,
   ScopedRateLimiter,
-  updateCloudMachineSchema,
-  updateCloudAgentRoleSchema,
-  verifyCloudLiveToken,
-} from "./cloud.js";
+  updateControlMachineSchema,
+  updateControlAgentRoleSchema,
+  verifyControlLiveToken,
+} from "./control.js";
 import { audit, type AuditRecord, type Database } from "./control-database.js";
 import type { ClientGateway } from "./gateway.js";
 import type { PostgresSessionDatabase } from "./session-database.js";
@@ -29,7 +27,7 @@ type WebPreHandler = (
   reply: FastifyReply,
 ) => Promise<void>;
 
-const notificationSchema = cloudIdentitySchema.extend({
+const notificationSchema = controlIdentitySchema.extend({
   notificationId: z.string().uuid(),
   read: z.boolean().default(true),
 }).strict();
@@ -43,7 +41,6 @@ export function registerControlHttp(
     preHandler: WebPreHandler;
     webKey: string | undefined;
     webUrl: string | undefined;
-    managedBillingEnabled: boolean;
     auditRetentionMilliseconds: number;
   },
 ): void {
@@ -57,23 +54,23 @@ export function registerControlHttp(
   } = dependencies;
   const enrollmentLimiter = new ScopedRateLimiter(60, 20, 60 * 60_000);
   const liveTokenLimiter = new ScopedRateLimiter(300, 30, 60_000);
-  const liveReplayGuard = new CloudLiveTokenReplayGuard();
+  const liveReplayGuard = new ControlLiveTokenReplayGuard();
   const liveStreams = new ScopedConcurrencyLimiter(100, 4);
   const pingLimiter = new ScopedRateLimiter(120, 30, 60_000);
   const pingConcurrency = new ScopedConcurrencyLimiter(20, 3);
 
   app.post(
-    "/v1/internal/cloud/context",
+    "/v1/internal/control/context",
     { preHandler },
     async (request, reply) => {
-      const parsed = cloudIdentitySchema.safeParse(request.body);
+      const parsed = controlIdentitySchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({
           error: "invalid_request",
           details: parsed.error.issues,
         });
       }
-      const context = await database.ensureCloudContext({
+      const context = await database.ensureControlContext({
         externalId: parsed.data.organization.externalId,
         slug: parsed.data.organization.slug,
         name: parsed.data.organization.name,
@@ -90,7 +87,7 @@ export function registerControlHttp(
         userPreferences,
       ] = await Promise.all([
         database.listMachines(context.organization.id),
-        database.organizationPlan(context.organization.id),
+        database.organizationUsage(context.organization.id),
         database.listOrganizationAgents(context.organization.id),
         database.listRunnableAgentIds(context.organization.id),
         sessionDatabase.listSessions(parsed.data.organization.externalId, 100),
@@ -102,19 +99,12 @@ export function registerControlHttp(
       const onlineMachines = machines.filter((machine) =>
         gateway.isOnline(machine.id)
       );
-      const plan = entitlementsFor(context.organization.plan);
       return {
         organization: context.organization,
         userPreferences: { timeZone: userPreferences.timeZone },
-        plan: {
-          id: context.organization.plan,
-          ...plan,
-          billingManaged:
-            (usage?.cloudManaged ?? false) && dependencies.managedBillingEnabled,
-          controlEventRetentionDays: Math.round(
-            dependencies.auditRetentionMilliseconds / (24 * 60 * 60 * 1_000),
-          ),
-        },
+        auditRetentionDays: Math.round(
+          dependencies.auditRetentionMilliseconds / (24 * 60 * 60 * 1_000),
+        ),
         usage: {
           machines: usage?.activeMachines ?? machines.length,
           activeAgents: usage?.activeAgents ?? 0,
@@ -174,24 +164,10 @@ export function registerControlHttp(
   );
 
   app.post(
-    "/v1/internal/cloud/billing/plan",
+    "/v1/internal/control/user-settings/update",
     { preHandler },
     async (request, reply) => {
-      const parsed = cloudBillingPlanUpdateSchema.safeParse(request.body);
-      if (!parsed.success) return reply.code(400).send({ error: "invalid_billing_update" });
-      const status = await database.applyStripePlan(parsed.data);
-      if (status === "organization_not_found") {
-        return reply.code(404).send({ error: "organization_not_found" });
-      }
-      return { status };
-    },
-  );
-
-  app.post(
-    "/v1/internal/cloud/user-settings/update",
-    { preHandler },
-    async (request, reply) => {
-      const parsed = cloudUserSettingsSchema.safeParse(request.body);
+      const parsed = controlUserSettingsSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: "invalid_request" });
       }
@@ -205,10 +181,10 @@ export function registerControlHttp(
   );
 
   app.post(
-    "/v1/internal/cloud/organization/settings/update",
+    "/v1/internal/control/organization/settings/update",
     { preHandler },
     async (request, reply) => {
-      const parsed = cloudOrganizationSettingsSchema.safeParse(request.body);
+      const parsed = controlOrganizationSettingsSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: "invalid_request" });
       }
@@ -236,7 +212,7 @@ export function registerControlHttp(
   );
 
   app.post(
-    "/v1/internal/cloud/notifications/read",
+    "/v1/internal/control/notifications/read",
     { preHandler },
     async (request, reply) => {
       const parsed = notificationSchema.safeParse(request.body);
@@ -259,10 +235,10 @@ export function registerControlHttp(
   );
 
   app.post(
-    "/v1/internal/cloud/notifications/read-all",
+    "/v1/internal/control/notifications/read-all",
     { preHandler },
     async (request, reply) => {
-      const parsed = cloudIdentitySchema.safeParse(request.body);
+      const parsed = controlIdentitySchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: "invalid_request" });
       }
@@ -277,10 +253,10 @@ export function registerControlHttp(
   );
 
   app.post(
-    "/v1/internal/cloud/enrollment-token",
+    "/v1/internal/control/enrollment-token",
     { preHandler },
     async (request, reply) => {
-      const parsed = cloudIdentitySchema.safeParse(request.body);
+      const parsed = controlIdentitySchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({
           error: "invalid_request",
@@ -291,20 +267,6 @@ export function registerControlHttp(
       if (!enrollmentLimiter.allow(context.organization.id, parsed.data.userId)) {
         return reply.code(429).send({
           error: "enrollment_issuance_rate_limited",
-        });
-      }
-      const usage = await database.organizationPlan(context.organization.id);
-      const entitlement = entitlementsFor(context.organization.plan);
-      if (
-        usage?.cloudManaged &&
-        usage.activeMachines >= entitlement.machineLimit
-      ) {
-        return reply.code(409).send({
-          error: "machine_limit_reached",
-          details: {
-            machineLimit: entitlement.machineLimit,
-            plan: context.organization.plan,
-          },
         });
       }
       const token = createEnrollmentToken();
@@ -332,10 +294,10 @@ export function registerControlHttp(
   );
 
   app.post(
-    "/v1/internal/cloud/machines/update",
+    "/v1/internal/control/machines/update",
     { preHandler },
     async (request, reply) => {
-      const parsed = updateCloudMachineSchema.safeParse(request.body);
+      const parsed = updateControlMachineSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({
           error: "invalid_request",
@@ -370,10 +332,10 @@ export function registerControlHttp(
   );
 
   app.post(
-    "/v1/internal/cloud/machines/revoke",
+    "/v1/internal/control/machines/revoke",
     { preHandler },
     async (request, reply) => {
-      const parsed = revokeCloudMachineSchema.safeParse(request.body);
+      const parsed = revokeControlMachineSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: "invalid_request" });
       }
@@ -419,10 +381,10 @@ export function registerControlHttp(
   );
 
   app.post(
-    "/v1/internal/cloud/agents/role",
+    "/v1/internal/control/agents/role",
     { preHandler },
     async (request, reply) => {
-      const parsed = updateCloudAgentRoleSchema.safeParse(request.body);
+      const parsed = updateControlAgentRoleSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: "invalid_request" });
       }
@@ -464,10 +426,10 @@ export function registerControlHttp(
   );
 
   app.post(
-    "/v1/internal/cloud/agents/delete",
+    "/v1/internal/control/agents/delete",
     { preHandler },
     async (request, reply) => {
-      const parsed = deleteCloudAgentSchema.safeParse(request.body);
+      const parsed = deleteControlAgentSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: "invalid_request" });
       }
@@ -521,10 +483,10 @@ export function registerControlHttp(
   );
 
   app.post(
-    "/v1/internal/cloud/machines/ping",
+    "/v1/internal/control/machines/ping",
     { preHandler },
     async (request, reply) => {
-      const parsed = revokeCloudMachineSchema.safeParse(request.body);
+      const parsed = revokeControlMachineSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: "invalid_request" });
       }
@@ -557,15 +519,15 @@ export function registerControlHttp(
   );
 
   app.post(
-    "/v1/internal/cloud/live-token",
+    "/v1/internal/control/live-token",
     { preHandler },
     async (request, reply) => {
-      const parsed = cloudIdentitySchema.safeParse(request.body);
+      const parsed = controlIdentitySchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: "invalid_request" });
       }
       if (!webKey || !webUrl) {
-        return reply.code(503).send({ error: "cloud_authentication_disabled" });
+        return reply.code(503).send({ error: "control_authentication_disabled" });
       }
       const context = await ensureContext(database, parsed.data);
       if (!liveTokenLimiter.allow(context.organization.id, parsed.data.userId)) {
@@ -573,7 +535,7 @@ export function registerControlHttp(
       }
       const now = Date.now();
       return {
-        token: createCloudLiveToken(
+        token: createControlLiveToken(
           webKey,
           { organizationId: context.organization.id, userId: parsed.data.userId },
           now,
@@ -584,19 +546,19 @@ export function registerControlHttp(
     },
   );
 
-  app.post<{ Body: string }>("/v1/cloud/events", async (request, reply) => {
+  app.post<{ Body: string }>("/v1/control/events", async (request, reply) => {
     const origin = Array.isArray(request.headers.origin)
       ? request.headers.origin[0]
       : request.headers.origin;
-    const originDecision = cloudLiveOriginDecision(webUrl, origin);
+    const originDecision = controlLiveOriginDecision(webUrl, origin);
     if (originDecision === "disabled" || !webKey || !webUrl) {
-      return reply.code(503).send({ error: "cloud_authentication_disabled" });
+      return reply.code(503).send({ error: "control_authentication_disabled" });
     }
     if (originDecision === "denied") {
       return reply.code(403).send({ error: "origin_not_allowed" });
     }
     const claims = typeof request.body === "string"
-      ? verifyCloudLiveToken(webKey, request.body)
+      ? verifyControlLiveToken(webKey, request.body)
       : null;
     if (!claims) {
       return reply.code(401).send({ error: "invalid_or_expired_live_token" });
@@ -653,9 +615,9 @@ export function registerControlHttp(
 
 async function ensureContext(
   database: Database,
-  identity: z.infer<typeof cloudIdentitySchema>,
+  identity: z.infer<typeof controlIdentitySchema>,
 ) {
-  return await database.ensureCloudContext({
+  return await database.ensureControlContext({
     externalId: identity.organization.externalId,
     slug: identity.organization.slug,
     name: identity.organization.name,

@@ -9,7 +9,7 @@
 The web app is where Organization members approve CLI and Agent enrollment, connect or remove
 Machines, supervise Standard-Agent Sessions, manage persistent Agents and their roles,
 policies, and review privacy-minimal audit events. Organization administrators additionally manage
-Organization settings and billing. Member invitations are not enabled yet.
+Organization settings. Member invitations are not enabled yet.
 
 Agents are the primary operators. They use Organization-bound OAuth tokens through the canonical
 HTTP API or its remote MCP adapter to discover Machines and manage resumable Sessions and Commands;
@@ -51,11 +51,6 @@ Commands. An Agent identity grants no Machine authority by itself: every Session
 Machine-bound, evaluated against the Agent role outside the Agent, and either starts immediately for an Operator
 or waits for optional Human approval.
 
-Managed Stripe billing is fail-closed. A Cloud deployment must set
-`ODYSHELL_MANAGED_BILLING_ENABLED=true` together with `STRIPE_SECRET_KEY`,
-`STRIPE_PRO_PRICE_ID`, and `STRIPE_WEBHOOK_SECRET`; self-hosted deployments leave
-the flag unset and do not expose subscription controls.
-
 ## Trust boundary
 
 Odyshell Identity uses Better Auth and PostgreSQL for people, sessions, Organization membership,
@@ -63,8 +58,11 @@ OAuth clients, and signed Agent access tokens. The web app forwards only verifie
 Odyshell Server over a shared internal key. Machine credentials and execution policy remain owned
 by the Server.
 
-Self-hosted Web applies the identity schema automatically before accepting traffic. Cloud releases
-run `pnpm migrate:identity` once with the production identity environment before deploying Web;
-serverless cold starts never perform schema writes.
+Web applies the identity schema automatically before accepting traffic. Operators that manage
+schema changes separately can set `ODYSHELL_RUN_IDENTITY_MIGRATIONS=false` and run
+`pnpm migrate:identity` explicitly before deploying Web.
+
+Set `ODYSHELL_PUBLIC_SITE=true` only on the public `odyshell.com` deployment. That mode returns 404
+for authentication, dashboard, OAuth, and API routes while retaining landing and documentation.
 
 [Server](../server/README.md) · [Back to Odyshell](../../README.md)

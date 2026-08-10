@@ -1,11 +1,11 @@
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { cloudRequest, type CloudContext } from "@/lib/cloud-api";
+import { controlRequest, type ControlContext } from "@/lib/control-api";
 import {
-  cloudRouteError,
-  requireCloudAdminRouteIdentity,
-} from "@/lib/cloud-route";
+  controlRouteError,
+  requireControlAdminRouteIdentity,
+} from "@/lib/control-route";
 import { getAuth } from "@/lib/auth";
 
 const settingsSchema = z
@@ -17,17 +17,17 @@ const settingsSchema = z
   .strict();
 
 export async function PUT(request: Request) {
-  const authorization = await requireCloudAdminRouteIdentity();
+  const authorization = await requireControlAdminRouteIdentity();
   if (authorization.response) return authorization.response;
   const parsed = settingsSchema.safeParse(await request.json());
   if (!parsed.success) {
     return NextResponse.json({ error: "invalid_request" }, { status: 400 });
   }
   try {
-    const result = await cloudRequest<{
-      organization: CloudContext["organization"];
+    const result = await controlRequest<{
+      organization: ControlContext["organization"];
     }>(
-      "/v1/internal/cloud/organization/settings/update",
+      "/v1/internal/control/organization/settings/update",
       authorization.identity,
       { extraBody: parsed.data },
     );
@@ -42,6 +42,6 @@ export async function PUT(request: Request) {
       headers: { "cache-control": "no-store" },
     });
   } catch (error) {
-    return cloudRouteError(error);
+    return controlRouteError(error);
   }
 }

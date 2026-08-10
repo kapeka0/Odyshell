@@ -99,7 +99,7 @@ export function SidebarOrganizationSwitcher() {
                   variant="outline"
                   className="mt-0.5 h-4 w-fit px-1.5 text-[10px] capitalize"
                 >
-                  {state.context.plan.id}
+                  Self-hosted
                 </Badge>
               ) : null}
             </div>

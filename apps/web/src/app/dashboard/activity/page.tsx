@@ -17,7 +17,7 @@ export default function ActivityPage() {
         title="Activity"
         description={
           state.status === "ready"
-            ? `${planLabel(state.context.plan.id)} · ${state.context.plan.controlEventRetentionDays}-day retention`
+            ? `Self-hosted · ${state.context.auditRetentionDays}-day retention`
             : undefined
         }
       />
@@ -29,13 +29,9 @@ export default function ActivityPage() {
           machines={state.context.machines}
           agents={state.context.agents}
           members={state.context.members}
-          retentionDays={state.context.plan.controlEventRetentionDays}
+          retentionDays={state.context.auditRetentionDays}
         />
       )}
     </DashboardPage>
   );
-}
-
-function planLabel(planId: "free" | "pro" | "enterprise"): string {
-  return `${planId[0]!.toUpperCase()}${planId.slice(1)} plan`;
 }

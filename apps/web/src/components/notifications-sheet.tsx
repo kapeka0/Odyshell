@@ -14,7 +14,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { toast } from "@/components/ui/toast";
-import type { CloudNotification } from "@/lib/cloud-api";
+import type { ControlNotification } from "@/lib/control-api";
 import { cn } from "@/lib/utils";
 import { formatDashboardTimestamp } from "@/lib/date-time";
 
@@ -38,7 +38,7 @@ export function NotificationsSheet() {
     }));
   }
 
-  async function setRead(notification: CloudNotification, read: boolean) {
+  async function setRead(notification: ControlNotification, read: boolean) {
     if (Boolean(notification.readAt) === read || pending) return;
     const previousReadAt = notification.readAt;
     const nextReadAt = read ? new Date().toISOString() : null;
@@ -61,7 +61,7 @@ export function NotificationsSheet() {
     }
   }
 
-  function openNotification(notification: CloudNotification) {
+  function openNotification(notification: ControlNotification) {
     if (!notification.readAt) void setRead(notification, true);
     setOpen(false);
     router.push(notification.href);

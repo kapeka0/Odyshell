@@ -7,6 +7,8 @@ const migrationLockName = "odyshell:better-auth-schema";
 export function identityMigrationsEnabled(
   environment: NodeJS.ProcessEnv,
 ): boolean {
+  if (environment.ODYSHELL_PUBLIC_SITE === "true") return false;
+
   const configured = environment.ODYSHELL_RUN_IDENTITY_MIGRATIONS;
   if (
     configured !== undefined &&
@@ -16,7 +18,7 @@ export function identityMigrationsEnabled(
     throw new Error("ODYSHELL_RUN_IDENTITY_MIGRATIONS must be true or false");
   }
   if (configured !== undefined) return configured === "true";
-  return environment.ODYSHELL_DEPLOYMENT_MODE !== "cloud";
+  return true;
 }
 
 export async function runIdentityMigrations(

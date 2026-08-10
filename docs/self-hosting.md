@@ -1,9 +1,9 @@
 # Self-hosting Odyshell
 
-Self-hosted Odyshell runs the same agent-facing protocols, Server, Better Auth identity, dashboard,
-PostgreSQL schema, and Linux Client as Cloud. The deployment owner controls identity, policy,
-Session, Command, audit, and credential data. Clerk and third-party analytics are not runtime
-dependencies.
+Odyshell is distributed only as a self-hosted Docker stack containing the agent-facing protocols,
+Server, Better Auth identity, dashboard, PostgreSQL schema, and cross-platform Client. The deployment
+owner controls identity, policy, Session, Command, audit, and credential data. Hosted identity,
+billing, and third-party analytics are not runtime dependencies.
 
 ```mermaid
 flowchart LR

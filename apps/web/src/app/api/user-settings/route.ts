@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { cloudRequest } from "@/lib/cloud-api";
+import { controlRequest } from "@/lib/control-api";
 import {
-  cloudRouteError,
-  requireCloudRouteIdentity,
-} from "@/lib/cloud-route";
+  controlRouteError,
+  requireControlRouteIdentity,
+} from "@/lib/control-route";
 
 const settingsSchema = z.object({
   timeZone: z.string().trim().min(1).max(128).refine(
@@ -22,15 +22,15 @@ const settingsSchema = z.object({
 }).strict();
 
 export async function PUT(request: Request) {
-  const authorization = await requireCloudRouteIdentity();
+  const authorization = await requireControlRouteIdentity();
   if (authorization.response) return authorization.response;
   const parsed = settingsSchema.safeParse(await request.json());
   if (!parsed.success) {
     return NextResponse.json({ error: "invalid_request" }, { status: 400 });
   }
   try {
-    const result = await cloudRequest<{ timeZone: string }>(
-      "/v1/internal/cloud/user-settings/update",
+    const result = await controlRequest<{ timeZone: string }>(
+      "/v1/internal/control/user-settings/update",
       authorization.identity,
       { extraBody: parsed.data },
     );
@@ -38,6 +38,6 @@ export async function PUT(request: Request) {
       headers: { "cache-control": "no-store" },
     });
   } catch (error) {
-    return cloudRouteError(error);
+    return controlRouteError(error);
   }
 }

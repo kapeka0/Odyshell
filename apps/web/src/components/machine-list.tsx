@@ -55,7 +55,7 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
-import type { CloudMachine } from "@/lib/cloud-api";
+import type { ControlMachine } from "@/lib/control-api";
 import { formatDashboardTimestamp } from "@/lib/date-time";
 import {
   machinePlatform,
@@ -64,14 +64,12 @@ import {
 
 export function MachineList({
   machines,
-  atLimit,
 }: {
-  machines: CloudMachine[];
-  atLimit: boolean;
+  machines: ControlMachine[];
 }) {
   const { refresh, optimisticallyUpdate, state } = useDashboard();
   const timeZone = state.status === "ready" ? state.context.userPreferences.timeZone : "System";
-  const columns = useMemo<ColumnDef<CloudMachine>[]>(
+  const columns = useMemo<ColumnDef<ControlMachine>[]>(
     () => [
       {
         id: "search",
@@ -176,25 +174,13 @@ export function MachineList({
           : "No machines match these filters."
       }
       toolbarAction={
-        <div className="flex flex-col items-end gap-1">
-          {atLimit ? (
-            <Button type="button" disabled>
-              <PlusIcon aria-hidden="true" data-icon="inline-start" />
-              Add
-            </Button>
-          ) : (
-            <Link
-              href="/dashboard/machines/add"
-              className={buttonVariants()}
-            >
-              <PlusIcon aria-hidden="true" data-icon="inline-start" />
-              Add
-            </Link>
-          )}
-          {atLimit ? (
-            <p className="text-xs text-destructive">Machine limit reached</p>
-          ) : null}
-        </div>
+        <Link
+          href="/dashboard/machines/add"
+          className={buttonVariants()}
+        >
+          <PlusIcon aria-hidden="true" data-icon="inline-start" />
+          Add
+        </Link>
       }
     />
   );
@@ -206,9 +192,9 @@ function MachineActions({
   onUpdated,
   timeZone,
 }: {
-  machine: CloudMachine;
+  machine: ControlMachine;
   refresh: () => Promise<unknown>;
-  onUpdated: (machine: CloudMachine) => void;
+  onUpdated: (machine: ControlMachine) => void;
   timeZone: string;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);

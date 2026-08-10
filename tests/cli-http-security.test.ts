@@ -6,11 +6,11 @@ function appFor(identity: object | null) {
   const app = Fastify();
   const database = {
     organizationByExternalId: vi.fn(async (externalId: string) => ({
-      id: "control-org-a", externalId, name: "A", slug: "a", plan: "free",
+      id: "control-org-a", externalId, name: "A", slug: "a",
     })),
     listMachines: vi.fn(async () => []),
     listOrganizationAgents: vi.fn(async () => []),
-    organizationPlan: vi.fn(async () => null),
+    organizationUsage: vi.fn(async () => null),
     activeMachinesExist: vi.fn(async () => false),
     updateOrganizationAgentRole: vi.fn(),
     deleteOrganizationAgent: vi.fn(),

@@ -21,12 +21,7 @@ export default function AddMachinePage() {
       {state.status !== "ready" ? (
         <DashboardStateNotice state={state} />
       ) : (
-        <EnrollMachine
-          serverUrl={serverUrl}
-          atLimit={
-            state.context.usage.machines >= state.context.plan.machineLimit
-          }
-        />
+        <EnrollMachine serverUrl={serverUrl} />
       )}
     </DashboardPage>
   );

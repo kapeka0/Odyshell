@@ -24,7 +24,6 @@ services:
       dockerfile: apps/server/Dockerfile
     environment:
       NODE_ENV: production
-      ODYSHELL_DEPLOYMENT_MODE: self-hosted
       PORT: 4100
       HOST: 0.0.0.0
       DATABASE_URL: postgresql://odyshell:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD to a URL-safe random value}@postgres:5432/odyshell
@@ -70,7 +69,6 @@ services:
       DATABASE_URL: postgresql://odyshell:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD to a URL-safe random value}@postgres:5432/odyshell
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Set BETTER_AUTH_SECRET to at least 32 random characters}
-      ODYSHELL_DEPLOYMENT_MODE: self-hosted
       ODYSHELL_RUN_IDENTITY_MIGRATIONS: "true"
       ODYSHELL_MCP_URL: ${ODYSHELL_MCP_URL:-http://localhost:4100/mcp}
       NEXT_PUBLIC_ODYSHELL_SERVER_URL: ${NEXT_PUBLIC_ODYSHELL_SERVER_URL:-http://localhost:4100}
@@ -85,9 +83,6 @@ services:
       OIDC_PROVIDER_ID: ${OIDC_PROVIDER_ID:-oidc}
       NEXT_PUBLIC_OIDC_AUTH_ENABLED: ${NEXT_PUBLIC_OIDC_AUTH_ENABLED:-false}
       NEXT_PUBLIC_OIDC_PROVIDER_ID: ${NEXT_PUBLIC_OIDC_PROVIDER_ID:-oidc}
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-      STRIPE_PRO_PRICE_ID: ${STRIPE_PRO_PRICE_ID:-}
-      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
     ports:
       - "${ODYSHELL_BIND_ADDRESS:-127.0.0.1}:${ODYSHELL_WEB_PORT:-3000}:3000"
     depends_on:

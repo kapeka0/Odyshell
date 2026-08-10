@@ -4,14 +4,15 @@
 
 <h1 align="center">Odyshell CLI</h1>
 
-<p align="center"><strong>Install and operate an Odyshell Client on Linux.</strong></p>
+<p align="center"><strong>Install Machines and operate a self-hosted Odyshell control plane.</strong></p>
 
-`ods` is the Machine-side administration tool. Agents do not run it: they connect to the
-Odyshell Server through remote OAuth MCP or the canonical HTTP Session/Command protocol.
+`ods` is both the cross-platform Machine administration tool and a Human OAuth client for the
+Odyshell control plane. Agents normally connect through remote OAuth MCP or the canonical HTTP
+Session/Command protocol.
 
 ## Install
 
-Requires Linux and Node.js 24 or newer:
+Requires Windows, Linux, or macOS and Node.js 24 or newer:
 
 ```bash
 npm install --global @odyshell/cli
@@ -30,6 +31,25 @@ ods --server https://api.example.com up \
 `ods up` creates an Ed25519 Machine identity, saves a conservative Local Policy, verifies the
 Server, and installs a restartable systemd user service. The token expires after ten minutes,
 works once, and is never persisted.
+
+The CLI defaults to `http://localhost:4100`. Use `--server https://api.example.com` for a remote
+self-hosted installation; there is no managed Server fallback.
+
+## Human control
+
+Sign in through the browser, then inspect and supervise the same resources as the dashboard:
+
+```bash
+ods login
+ods machines list
+ods agents list
+ods agents role <agent-id> operator
+ods sessions list
+ods sessions approve <session-id>
+ods sessions timeline <session-id>
+ods commands run <session-id> --command "uname -a"
+ods logout
+```
 
 The Local Policy permits one Session and Command at a time, a one-hour Session, a ten-minute Command,
 and 1 MiB of output.
@@ -69,9 +89,9 @@ or Docker membership and grant only the files, credentials, network, and service
 The Client enforces Organization, Session identity, duration, concurrency, timeout, and output limits
 locally. Agents receive temporary Machine authority only through authorized Sessions.
 
-`ods` deliberately has no login, Agent, Session, Command, shell, filesystem, Docker, Session, or MCP
-runtime commands. Keeping remote authorization in the Server prevents a second policy path from
-appearing on every Machine.
+Human CLI commands use the same Server-side authorization and Session services as the web app.
+The CLI does not create a parallel Machine policy path: Agents still receive Machine authority only
+through an authorized, expiring Session.
 
 For monorepo development:
 

@@ -36,14 +36,14 @@ import {
 } from "@/components/ui/table";
 import { toast } from "@/components/ui/toast";
 import { formatDashboardTimestamp } from "@/lib/date-time";
-import type { CloudSession } from "@/lib/cloud-api";
+import type { ControlSession } from "@/lib/control-api";
 
-type Decision = { session: CloudSession; action: "approve" | "deny" };
+type Decision = { session: ControlSession; action: "approve" | "deny" };
 
 export function SessionList() {
   const { state } = useDashboard();
   const context = state.status === "ready" ? state.context : null;
-  const [sessions, setSessions] = useState<CloudSession[]>(context?.sessions ?? []);
+  const [sessions, setSessions] = useState<ControlSession[]>(context?.sessions ?? []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
   const [decision, setDecision] = useState<Decision>();
@@ -62,7 +62,7 @@ export function SessionList() {
     try {
       const response = await fetch("/api/sessions", { cache: "no-store" });
       const body = (await response.json().catch(() => ({}))) as {
-        data?: CloudSession[];
+        data?: ControlSession[];
         error?: string;
       };
       if (!response.ok || !body.data) throw new Error(body.error ?? "Could not load Sessions");
@@ -88,7 +88,7 @@ export function SessionList() {
         method: "POST",
       });
       const body = (await response.json().catch(() => ({}))) as {
-        session?: CloudSession;
+        session?: ControlSession;
         delivery?: "sent" | "pending";
         error?: string;
       };
@@ -288,14 +288,14 @@ export function SessionList() {
   );
 }
 
-function agentName(session: CloudSession, agents: Map<string, string>): string {
+function agentName(session: ControlSession, agents: Map<string, string>): string {
   return agents.get(session.agentId) ?? `Agent ${session.agentId.slice(0, 8)}`;
 }
 
-function machineName(session: CloudSession, machines: Map<string, string>): string {
+function machineName(session: ControlSession, machines: Map<string, string>): string {
   return machines.get(session.machineId) ?? `Machine ${session.machineId.slice(0, 8)}`;
 }
 
-function sessionStatusLabel(status: CloudSession["status"]): string {
+function sessionStatusLabel(status: ControlSession["status"]): string {
   return status.split("_").map((part) => part[0]?.toUpperCase() + part.slice(1)).join(" ");
 }

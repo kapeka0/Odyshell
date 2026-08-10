@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 import { DashboardLiveRefresh } from "@/components/dashboard-live-refresh";
-import type { CloudContext } from "@/lib/cloud-api";
+import type { ControlContext } from "@/lib/control-api";
 import type { DashboardState } from "@/lib/dashboard-context";
 
 type DashboardContextValue = {
@@ -16,7 +16,7 @@ type DashboardContextValue = {
   serverUrl: string;
   liveUpdatesDelayed: boolean;
   refresh: () => Promise<boolean>;
-  optimisticallyUpdate: (update: (context: CloudContext) => CloudContext) => void;
+  optimisticallyUpdate: (update: (context: ControlContext) => ControlContext) => void;
 };
 
 const DashboardContext = createContext<DashboardContextValue | null>(null);
@@ -32,7 +32,7 @@ export function DashboardProvider({
   const [liveUpdatesDelayed, setLiveUpdatesDelayed] = useState(false);
 
   const optimisticallyUpdate = useCallback(
-    (update: (context: CloudContext) => CloudContext) => {
+    (update: (context: ControlContext) => ControlContext) => {
       setState((current) =>
         current.status === "ready"
           ? { ...current, context: update(current.context) }

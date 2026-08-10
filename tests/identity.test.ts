@@ -47,7 +47,7 @@ describe("Odyshell Identity configuration", () => {
     expect(serverDatabase).not.toMatch(/BETTER_AUTH_SECRET|clientSecret\s*=|privateKey\s*=/u);
   });
 
-  it("migrates self-hosted identity on boot and exposes an explicit cloud runner", () => {
+  it("migrates self-hosted identity on boot", () => {
     const instrumentation = readFileSync("apps/web/src/instrumentation.ts", "utf8");
     const migrations = readFileSync(
       "apps/web/src/lib/identity-migrations.ts",
@@ -63,24 +63,27 @@ describe("Odyshell Identity configuration", () => {
     expect(rootPackage).toContain('"migrate:identity"');
   });
 
-  it("does not run schema writes in cloud serverless cold starts", () => {
-    expect(
-      identityMigrationsEnabled({ ODYSHELL_DEPLOYMENT_MODE: "cloud" }),
-    ).toBe(false);
-    expect(
-      identityMigrationsEnabled({ ODYSHELL_DEPLOYMENT_MODE: "self-hosted" }),
-    ).toBe(true);
-    expect(
-      identityMigrationsEnabled({
-        ODYSHELL_DEPLOYMENT_MODE: "cloud",
-        ODYSHELL_RUN_IDENTITY_MIGRATIONS: "true",
-      }),
-    ).toBe(true);
+  it("runs local schema migrations by default with an explicit operator override", () => {
+    expect(identityMigrationsEnabled({})).toBe(true);
+    expect(identityMigrationsEnabled({ ODYSHELL_RUN_IDENTITY_MIGRATIONS: "true" })).toBe(true);
+    expect(identityMigrationsEnabled({ ODYSHELL_RUN_IDENTITY_MIGRATIONS: "false" })).toBe(false);
     expect(() =>
       identityMigrationsEnabled({
         ODYSHELL_RUN_IDENTITY_MIGRATIONS: "yes",
       }),
     ).toThrow("must be true or false");
+  });
+
+  it("never opens the identity database from the public website", () => {
+    expect(
+      identityMigrationsEnabled({ ODYSHELL_PUBLIC_SITE: "true" }),
+    ).toBe(false);
+    expect(
+      identityMigrationsEnabled({
+        ODYSHELL_PUBLIC_SITE: "true",
+        ODYSHELL_RUN_IDENTITY_MIGRATIONS: "true",
+      }),
+    ).toBe(false);
   });
 
   it("does not let Compose start its identity boundary with default secrets", () => {
@@ -161,7 +164,7 @@ describe("Odyshell Identity configuration", () => {
       ODYSHELL_AUTH_TRUSTED_ORIGINS:
         "https://console.odyshell.test/path,https://app.odyshell.test/duplicate",
     });
-    expect(configuration.deploymentMode).toBe("self-hosted");
+    expect(configuration).not.toHaveProperty("deploymentMode");
     expect(configuration.trustedOrigins).toEqual([
       "https://app.odyshell.test",
       "https://console.odyshell.test",

@@ -1,11 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 
-type DeploymentMode = "cloud" | "self-hosted";
-
 export async function defaultOrganizationForUser(options: {
   database: Pool;
-  deploymentMode: DeploymentMode;
   userId: string;
   createOrganization: (input: {
     userId: string;
@@ -16,9 +13,7 @@ export async function defaultOrganizationForUser(options: {
   const client = await options.database.connect();
   try {
     await client.query("begin");
-    const lockKey = options.deploymentMode === "self-hosted"
-      ? "odyshell:self-hosted-organization"
-      : `odyshell:user:${options.userId}`;
+    const lockKey = "odyshell:self-hosted-organization";
     await client.query(
       "select pg_advisory_xact_lock(hashtextextended($1, 0))",
       [lockKey],
@@ -38,15 +33,13 @@ export async function defaultOrganizationForUser(options: {
       return existingOrganizationId;
     }
 
-    if (options.deploymentMode === "self-hosted") {
-      const existing = await client.query<{ exists: boolean }>(
-        "select exists(select 1 from organization) as exists",
+    const existing = await client.query<{ exists: boolean }>(
+      "select exists(select 1 from organization) as exists",
+    );
+    if (existing.rows[0]?.exists) {
+      throw new Error(
+        "This self-hosted deployment already has its sovereign Organization",
       );
-      if (existing.rows[0]?.exists) {
-        throw new Error(
-          "This self-hosted deployment already has its sovereign Organization",
-        );
-      }
     }
 
     const user = await client.query<{ name: string }>(

@@ -2,14 +2,12 @@
 
 import { useState } from "react";
 import { useDashboard } from "@/components/dashboard-provider";
-import { BillingCard } from "@/components/billing-card";
 import {
   DashboardPage,
   DashboardPageHeader,
   DashboardStateNotice,
 } from "@/components/dashboard-state";
 import { OrganizationIdentityAvatar } from "@/components/identity-avatar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -106,7 +104,7 @@ export default function OrganizationSettingsPage() {
       <section className="flex flex-col gap-4">
         <div>
           <h2 className="font-heading text-lg font-medium">Organization details</h2>
-          <p className="text-sm text-muted-foreground">Identity and plan.</p>
+          <p className="text-sm text-muted-foreground">Identity for this self-hosted installation.</p>
         </div>
         <Card>
           <CardContent className="p-0">
@@ -131,9 +129,9 @@ export default function OrganizationSettingsPage() {
                 <Input id="organization-name" name="organization-name" autoComplete="off" value={name} onChange={(event) => setName(event.target.value)} className="w-full @md/field-group:max-w-md" disabled={!admin} />
               </Field>
               <ReadOnlyRow label="Slug" description="Stable organization handle." value={organization.slug} />
-              <ReadOnlyRow label="Plan" description="Current plan and included limits." value={state.context.plan.id} badge />
-              <ReadOnlyRow label="Machines" description="Connected machine allowance." value={`${state.context.usage.machines} / ${state.context.plan.machineLimit}`} />
-              <ReadOnlyRow label="Agents" description="Active Agent allowance." value={`${state.context.usage.activeAgents} / ${state.context.plan.activeAgentLimit ?? "Unlimited"}`} />
+              <ReadOnlyRow label="Distribution" description="Odyshell runs on infrastructure you control." value="Self-hosted" />
+              <ReadOnlyRow label="Machines" description="Machines registered in this installation." value={String(state.context.usage.machines)} />
+              <ReadOnlyRow label="Agents" description="Active Agents in this installation." value={String(state.context.usage.activeAgents)} />
             </FieldGroup>
           </CardContent>
           {admin ? (
@@ -148,28 +146,18 @@ export default function OrganizationSettingsPage() {
         </Card>
       </section>
 
-      {state.context.plan.billingManaged ? (
-        <section className="flex flex-col gap-4">
-          <div>
-            <h2 className="font-heading text-lg font-medium">Subscription</h2>
-            <p className="text-sm text-muted-foreground">Allowances and Stripe billing.</p>
-          </div>
-          <BillingCard context={state.context} />
-        </section>
-      ) : null}
-
     </DashboardPage>
   );
 }
 
-function ReadOnlyRow({ label, description, value, badge = false }: { label: string; description: string; value: string; badge?: boolean }) {
+function ReadOnlyRow({ label, description, value }: { label: string; description: string; value: string }) {
   return (
     <Field orientation="responsive" className="p-4">
       <FieldContent>
         <FieldTitle>{label}</FieldTitle>
         <FieldDescription>{description}</FieldDescription>
       </FieldContent>
-      {badge ? <Badge variant="outline" className="capitalize">{value}</Badge> : <p className="font-mono text-sm tabular-nums text-muted-foreground">{value}</p>}
+      <p className="font-mono text-sm tabular-nums text-muted-foreground">{value}</p>
     </Field>
   );
 }

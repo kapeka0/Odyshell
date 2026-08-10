@@ -42,7 +42,7 @@ const privateResponse = await fetch(new URL("/dashboard", baseUrl), {
   redirect: "manual",
 });
 const redirectStatuses = new Set([302, 303, 307, 308]);
-const deniedStatuses = new Set([401, 403]);
+const deniedStatuses = new Set([401, 403, 404]);
 const location = privateResponse.headers.get("location");
 const securelyDenied =
   deniedStatuses.has(privateResponse.status) ||

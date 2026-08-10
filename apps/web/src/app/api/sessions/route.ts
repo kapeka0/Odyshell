@@ -1,20 +1,20 @@
 import { NextResponse } from "next/server";
-import { cloudRequest, type CloudSession } from "@/lib/cloud-api";
+import { controlRequest, type ControlSession } from "@/lib/control-api";
 import {
-  cloudRouteError,
-  requireCloudRouteIdentity,
-} from "@/lib/cloud-route";
+  controlRouteError,
+  requireControlRouteIdentity,
+} from "@/lib/control-route";
 
 export async function GET() {
-  const authorization = await requireCloudRouteIdentity();
+  const authorization = await requireControlRouteIdentity();
   if (authorization.response) return authorization.response;
   try {
-    const result = await cloudRequest<{ data: CloudSession[] }>(
+    const result = await controlRequest<{ data: ControlSession[] }>(
       "/v1/internal/sessions/query",
       authorization.identity,
     );
     return NextResponse.json(result);
   } catch (error) {
-    return cloudRouteError(error);
+    return controlRouteError(error);
   }
 }

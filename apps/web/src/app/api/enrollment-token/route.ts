@@ -1,16 +1,16 @@
 import { NextResponse } from "next/server";
-import { cloudRequest } from "@/lib/cloud-api";
+import { controlRequest } from "@/lib/control-api";
 import {
-  cloudRouteError,
-  requireCloudRouteIdentity,
-} from "@/lib/cloud-route";
+  controlRouteError,
+  requireControlRouteIdentity,
+} from "@/lib/control-route";
 
 export async function POST() {
-  const authorization = await requireCloudRouteIdentity();
+  const authorization = await requireControlRouteIdentity();
   if (authorization.response) return authorization.response;
   try {
-    const token = await cloudRequest<{ token: string; expiresAt: string }>(
-      "/v1/internal/cloud/enrollment-token",
+    const token = await controlRequest<{ token: string; expiresAt: string }>(
+      "/v1/internal/control/enrollment-token",
       authorization.identity,
     );
     return NextResponse.json(token, {
@@ -18,6 +18,6 @@ export async function POST() {
       headers: { "cache-control": "no-store" },
     });
   } catch (error) {
-    return cloudRouteError(error);
+    return controlRouteError(error);
   }
 }

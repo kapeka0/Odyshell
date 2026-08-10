@@ -8,33 +8,25 @@ const suite = connectionString ? describe : describe.skip;
 
 suite("PostgreSQL Organization control boundary", () => {
   const externalId = `org-${randomUUID()}`;
-  const secondExternalId = `org-${randomUUID()}`;
   let database: PostgresControlDatabase;
   let organizationId: string;
-  let secondOrganizationId: string;
 
   beforeAll(async () => {
-    database = new PostgresControlDatabase(connectionString!, "cloud");
+    database = new PostgresControlDatabase(connectionString!);
     await database.initialize();
-    const primary = await database.ensureCloudContext({
+    const primary = await database.ensureControlContext({
       externalId,
       slug: `org-${randomUUID()}`,
       name: "Control Test",
     });
     organizationId = primary.organization.id;
-    const second = await database.ensureCloudContext({
-      externalId: secondExternalId,
-      slug: `org-${randomUUID()}`,
-      name: "Other Control Test",
-    });
-    secondOrganizationId = second.organization.id;
   });
 
   afterAll(async () => {
     const pool = new pg.Pool({ connectionString });
     await pool.query(
-      "delete from odyshell.organizations where external_id = any($1::text[])",
-      [[externalId, secondExternalId]],
+      "delete from odyshell.organizations where external_id = $1",
+      [externalId],
     );
     await pool.end();
     await database.close();
@@ -58,7 +50,7 @@ suite("PostgreSQL Organization control boundary", () => {
   });
 
   it("maps each external identity to one Organization tenant", async () => {
-    const context = await database.ensureCloudContext({
+    const context = await database.ensureControlContext({
       externalId,
       slug: "renamed-control-test",
       name: "Renamed Control Test",
@@ -68,19 +60,17 @@ suite("PostgreSQL Organization control boundary", () => {
       slug: "renamed-control-test",
       name: "Renamed Control Test",
     });
-    expect(await database.mcpOrganizations([secondExternalId])).toEqual([
-      expect.objectContaining({ organizationId: secondOrganizationId }),
+    expect(await database.mcpOrganizations([externalId])).toEqual([
+      expect.objectContaining({ organizationId }),
     ]);
   });
 
   it("rejects a second self-hosted Organization", async () => {
-    const selfHosted = new PostgresControlDatabase(connectionString!, "self-hosted");
-    await expect(selfHosted.ensureCloudContext({
+    await expect(database.ensureControlContext({
       externalId: `forbidden-${randomUUID()}`,
       slug: `forbidden-${randomUUID()}`,
       name: "Forbidden tenant",
     })).rejects.toThrow("exactly one Organization");
-    await selfHosted.close();
   });
 
   it("consumes enrollment tokens once and fail-closes replacement races", async () => {
@@ -131,7 +121,7 @@ suite("PostgreSQL Organization control boundary", () => {
     })).resolves.toMatchObject({ status: "enrolled" });
   });
 
-  it("binds MCP Agents to OAuth and enforces Cloud limits", async () => {
+  it("binds unlimited MCP Agents to OAuth", async () => {
     const installations = [];
     for (let index = 0; index < 3; index += 1) {
       installations.push(await database.ensureMcpInstallation({
@@ -145,14 +135,10 @@ suite("PostgreSQL Organization control boundary", () => {
       organizationId,
       userId: "human-full",
       oauthClientId: "oauth-full",
-      agentName: "Blocked Agent",
-    })).resolves.toMatchObject({
-      status: "agent_limit_reached",
-      plan: "free",
-      activeAgentLimit: 2,
-    });
+      agentName: "Fourth Agent",
+    })).resolves.toMatchObject({ status: "active" });
     const first = installations[0];
-    if (!first || first.status === "agent_limit_reached") {
+    if (!first) {
       throw new Error("Agent was not installed");
     }
     expect(await database.deleteOrganizationAgent(
@@ -176,7 +162,7 @@ suite("PostgreSQL Organization control boundary", () => {
       "machine-a",
       { safe: true },
     );
-    expect(await database.listAudit(secondOrganizationId, 10)).toEqual([]);
+    expect(await database.listAudit(randomUUID(), 10)).toEqual([]);
     expect(await database.listAudit(organizationId, 10)).toEqual([
       expect.objectContaining({
         principalId: "human-a",

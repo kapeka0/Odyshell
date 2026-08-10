@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { PROTOCOL_VERSION } from "@odyshell/protocol";
+import { DEFAULT_SERVER_URL, PROTOCOL_VERSION } from "@odyshell/protocol";
 import { PendingCommand } from "../apps/client/src/command-control.js";
 import {
   adjustedSessionDeadline,
@@ -172,6 +172,10 @@ describe("Session-native Client boundary", () => {
 
   it("uses the Session-native wire protocol version", () => {
     expect(PROTOCOL_VERSION).toBe(5);
+  });
+
+  it("connects to the local self-hosted Server by default", () => {
+    expect(DEFAULT_SERVER_URL).toBe("http://localhost:4100");
   });
 
   it("serializes disconnect and reconnect state for one Machine", async () => {

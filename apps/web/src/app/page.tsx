@@ -15,7 +15,7 @@ export default function HomePage() {
         <section className="landing-shell flex min-h-[44rem] flex-col items-center px-4 pb-14 pt-24 text-center md:pt-32">
           <div className="inline-flex items-center gap-2 rounded-full border bg-card px-3 py-1.5 text-xs text-muted-foreground shadow-xs">
             <span className="size-1.5 rounded-full bg-status-success" />
-            Linux, macOS, and Windows
+            Free and self-hosted · Linux, macOS, and Windows
           </div>
           <h1 className="display-balance mt-8 max-w-[13ch] text-[clamp(3.4rem,8vw,7.5rem)] font-semibold leading-[0.9] tracking-[-0.065em]">
             Let agents work.<br />Keep the keys.
@@ -24,10 +24,10 @@ export default function HomePage() {
             Temporary, approved shell Sessions for AI agents on real Machines. No shared SSH credentials, no inbound ports, no VPN.
           </p>
           <div className="mt-9 flex flex-wrap justify-center gap-3">
-            <Link href="/sign-up" className={buttonVariants({ size: "lg" })}>Start free <ArrowRightIcon data-icon="inline-end" /></Link>
+            <a href="https://github.com/kapeka0/odyshell" className={buttonVariants({ size: "lg" })}>Deploy Odyshell <ArrowRightIcon data-icon="inline-end" /></a>
             <Link href="/docs" className={buttonVariants({ variant: "outline", size: "lg" })}>Read the docs</Link>
           </div>
-          <p className="mt-4 text-xs text-muted-foreground">2 Machines and 2 Agents free. No card required.</p>
+          <p className="mt-4 text-xs text-muted-foreground">One Docker Compose stack. Unlimited members, Machines, and Agents.</p>
         </section>
 
         <section id="product" className="landing-shell pb-24 md:pb-32">
@@ -93,16 +93,28 @@ odyshell.finish_session(session.id)`}</code></pre>
           </div>
         </section>
 
-        <section id="pricing" className="landing-shell py-24 md:py-32">
-          <div className="mx-auto max-w-3xl text-center">
-            <p className="font-mono text-xs uppercase tracking-[0.14em] text-muted-foreground">Simple pricing</p>
-            <h2 className="display-balance mt-5 text-4xl font-semibold tracking-[-0.045em] md:text-6xl">Start alone. Scale with the team.</h2>
+        <section id="self-hosting" className="landing-shell py-24 md:py-32">
+          <div className="grid gap-14 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
+            <div>
+              <p className="font-mono text-xs uppercase tracking-[0.14em] text-muted-foreground">Community infrastructure</p>
+              <h2 className="display-balance mt-5 max-w-[12ch] text-4xl font-semibold leading-[1.02] tracking-[-0.045em] md:text-6xl">Your control plane. Your data.</h2>
+              <p className="body-pretty mt-6 max-w-lg text-lg leading-8 text-muted-foreground">Run the complete product with Docker Compose on a workstation, homelab, private server, or VPS. Odyshell has no hosted tier, commercial limits, or required third-party services.</p>
+              <div className="mt-9 flex flex-wrap gap-3">
+                <a href="https://github.com/kapeka0/odyshell" className={buttonVariants({ size: "lg" })}>Deploy Odyshell <ArrowRightIcon data-icon="inline-end" /></a>
+                <Link href="/docs/self-hosting" className={buttonVariants({ variant: "outline", size: "lg" })}>Self-hosting guide</Link>
+              </div>
+            </div>
+            <div className="overflow-hidden rounded-2xl border bg-neutral-950 text-white shadow-2xl">
+              <div className="flex items-center justify-between border-b border-white/10 px-5 py-3 font-mono text-xs text-white/45"><span>odyshell · self-hosted</span><span>Apache-2.0</span></div>
+              <pre className="overflow-x-auto p-6 font-mono text-sm leading-7 text-white/80"><code>{`git clone https://github.com/kapeka0/odyshell.git
+cd odyshell
+cp .env.example .env
+docker compose up --build`}</code></pre>
+              <div className="grid gap-px border-t border-white/10 bg-white/10 sm:grid-cols-3">
+                {[["Members", "Unlimited"], ["Machines", "Unlimited"], ["Agents", "Unlimited"]].map(([label, value]) => <div key={label} className="bg-neutral-950 px-5 py-4"><p className="font-mono text-[11px] uppercase tracking-wider text-white/40">{label}</p><p className="mt-1 text-sm font-medium">{value}</p></div>)}
+              </div>
+            </div>
           </div>
-          <div className="mx-auto mt-14 grid max-w-4xl gap-4 md:grid-cols-2">
-            <PriceCard name="Free" price="$0" description="For one person connecting their first agents." items={["1 Organization member", "2 Machines", "2 Agents", "Session timelines"]} action="Start free" href="/sign-up" />
-            <PriceCard featured name="Pro" price="$30" suffix="per member / month" description="For teams operating agents across production Machines." items={["Up to 20 members", "20 Machines", "Unlimited Agents", "Operator role and billing portal"]} action="Choose Pro" href="/sign-up?plan=pro" />
-          </div>
-          <p className="mt-6 text-center text-sm text-muted-foreground">Enterprise with custom controls and support is planned for later.</p>
         </section>
 
         <section className="landing-shell pb-8">
@@ -110,8 +122,8 @@ odyshell.finish_session(session.id)`}</code></pre>
             <h2 className="display-balance mx-auto max-w-[15ch] text-4xl font-semibold leading-[1] tracking-[-0.05em] md:text-6xl">Give agents a shell, not your network.</h2>
             <p className="mx-auto mt-6 max-w-xl text-lg leading-8 text-white/60">Connect a Machine in minutes and keep every Session temporary, bounded, and visible.</p>
             <div className="mt-9 flex flex-wrap justify-center gap-3">
-              <Link href="/sign-up" className={buttonVariants({ size: "lg" })}>Start free <ArrowRightIcon data-icon="inline-end" /></Link>
-              <Link href="/sign-in" className="inline-flex h-11 items-center rounded-lg border border-white/20 px-4 text-sm font-medium hover:bg-white/10">Sign in</Link>
+              <a href="https://github.com/kapeka0/odyshell" className={buttonVariants({ size: "lg" })}>Deploy Odyshell <ArrowRightIcon data-icon="inline-end" /></a>
+              <Link href="/docs" className="inline-flex h-11 items-center rounded-lg border border-white/20 px-4 text-sm font-medium hover:bg-white/10">Read the docs</Link>
             </div>
           </div>
         </section>
@@ -119,7 +131,7 @@ odyshell.finish_session(session.id)`}</code></pre>
       <footer className="landing-shell py-10">
         <div className="flex flex-col gap-6 border-t pt-7 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           <span className="font-semibold text-foreground">Odyshell</span>
-          <div className="flex flex-wrap gap-5"><Link href="/#product">Product</Link><Link href="/#security">Security</Link><Link href="/#pricing">Pricing</Link><Link href="/docs">Docs</Link><a href="https://github.com/kapeka0/odyshell">GitHub</a></div>
+          <div className="flex flex-wrap gap-5"><Link href="/#product">Product</Link><Link href="/#security">Security</Link><Link href="/#self-hosting">Self-hosting</Link><Link href="/docs">Docs</Link><a href="https://github.com/kapeka0/odyshell">GitHub</a></div>
           <span>© 2026 Odyshell</span>
         </div>
       </footer>
@@ -151,8 +163,4 @@ function CheckLine({ children }: { children: React.ReactNode }) { return <li cla
 function TimelinePreview() {
   const entries = [["Session requested", "release-agent · Operator"], ["Machine opened", "production-api · user odyshell"], ["Command completed", "$ pnpm deploy · exit 0"]];
   return <div className="rounded-2xl border bg-card p-6 shadow-sm sm:p-8"><div className="flex items-center justify-between border-b pb-5"><div><p className="font-semibold">Deploy release 2.4.0</p><p className="mt-1 text-xs text-muted-foreground">Session 8d3f...2a9c</p></div><span className="rounded-md bg-status-success/10 px-2 py-1 text-xs text-status-success">Active</span></div><ol className="mt-6">{entries.map(([title, detail], index) => <li key={title} className="relative grid grid-cols-[1.5rem_1fr] gap-3 pb-7 last:pb-0"><span className="relative z-10 mt-1 size-3 rounded-full border-2 border-background bg-foreground ring-1 ring-border" />{index < entries.length - 1 ? <span className="absolute bottom-0 left-[5px] top-3 w-px bg-border" /> : null}<div><p className="text-sm font-medium">{title}</p><p className="mt-1 font-mono text-xs text-muted-foreground">{detail}</p></div></li>)}</ol></div>;
-}
-
-function PriceCard({ name, price, suffix = "", description, items, action, href, featured = false }: { name: string; price: string; suffix?: string; description: string; items: string[]; action: string; href: string; featured?: boolean }) {
-  return <article className={cn("flex flex-col rounded-2xl border p-7", featured ? "bg-neutral-950 text-white" : "bg-card")}><div className="flex items-center justify-between"><h3 className="text-lg font-semibold">{name}</h3>{featured ? <span className="rounded-full bg-white/10 px-2.5 py-1 text-xs text-white/70">Most capable</span> : null}</div><p className={cn("mt-3 text-sm leading-6", featured ? "text-white/55" : "text-muted-foreground")}>{description}</p><p className="mt-8 text-4xl font-semibold tracking-tight">{price} <span className={cn("text-sm font-normal", featured ? "text-white/50" : "text-muted-foreground")}>{suffix}</span></p><ul className="my-8 grid gap-3 text-sm">{items.map((item) => <li key={item} className="flex items-center gap-2"><CheckIcon className="size-4" />{item}</li>)}</ul><Link href={href} className={cn("mt-auto inline-flex h-10 items-center justify-center rounded-lg border px-4 text-sm font-medium", featured ? "border-white bg-white text-black hover:bg-white/90" : "border-border hover:bg-muted")}>{action}</Link></article>;
 }

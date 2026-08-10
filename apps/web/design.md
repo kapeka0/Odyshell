@@ -64,9 +64,9 @@ Agent→Session→Machine edges; inactive topology remains still.
 ## Landing
 
 The landing follows the structural rhythm of the provided T3 reference: centered oversized hero,
-credible product demonstration, alternating feature narratives, a dark technical section, direct
-pricing, and a final CTA. Odyshell's copy and visual assets remain original and demonstrate the real
-Session control plane.
+credible product demonstration, alternating feature narratives, a dark technical section, a concrete
+Docker self-hosting block, and a final CTA. Odyshell's copy and visual assets remain original and
+demonstrate the real Session control plane.
 
 ## Accessibility
 

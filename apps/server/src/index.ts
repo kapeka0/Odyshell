@@ -7,10 +7,10 @@ import {
   PROTOCOL_VERSION,
 } from "@odyshell/protocol";
 import {
-  cloudWebKey,
-  cloudWebRequestDecision,
-  cloudWebUrl,
-} from "./cloud.js";
+  controlWebKey,
+  controlWebRequestDecision,
+  controlWebUrl,
+} from "./control.js";
 import { registerCliHttp } from "./cli-http.js";
 import { registerControlHttp } from "./control-http.js";
 import { audit, createDatabase } from "./control-database.js";
@@ -30,8 +30,8 @@ import { SessionClientUnavailableError, SessionService } from "./sessions.js";
 
 const port = Number(process.env.PORT ?? 4100);
 const host = process.env.HOST ?? "127.0.0.1";
-const webKey = cloudWebKey(process.env);
-const webUrl = cloudWebUrl(process.env, webKey !== undefined);
+const webKey = controlWebKey(process.env);
+const webUrl = controlWebUrl(process.env, webKey !== undefined);
 const retention = dataRetentionPolicy(process.env);
 
 const enrollmentSchema = z.object({
@@ -56,12 +56,12 @@ async function requireWeb(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const decision = cloudWebRequestDecision(
+  const decision = controlWebRequestDecision(
     webKey,
     request.headers["x-odyshell-web-key"] as string | undefined,
   );
   if (decision === "disabled") {
-    await reply.code(503).send({ error: "cloud_authentication_disabled" });
+    await reply.code(503).send({ error: "control_authentication_disabled" });
     return;
   }
   if (decision === "unauthorized") {
@@ -233,7 +233,7 @@ registerSessionHttp(app, {
       oauthClientId: identity.clientId,
       agentName: "Agent",
     });
-    if (!installation || installation.status === "agent_limit_reached") {
+    if (!installation) {
       return null;
     }
     return {
@@ -270,8 +270,6 @@ registerControlHttp(app, {
   preHandler: requireWeb,
   webKey,
   webUrl,
-  managedBillingEnabled:
-    process.env.ODYSHELL_MANAGED_BILLING_ENABLED === "true",
   auditRetentionMilliseconds: retention.auditMilliseconds,
 });
 
@@ -318,12 +316,6 @@ app.post("/v1/clients/enroll", async (request, reply) => {
   if (!enrolled) {
     return reply.code(401).send({
       error: "invalid_or_expired_enrollment_token",
-    });
-  }
-  if (enrolled.status === "machine_limit_reached") {
-    return reply.code(409).send({
-      error: "machine_limit_reached",
-      details: { machineLimit: enrolled.machineLimit },
     });
   }
   if (enrolled.status === "previous_machine_active") {

@@ -5,7 +5,6 @@ const urlSchema = z.string().url();
 export type IdentityConfiguration = {
   baseUrl: string;
   databaseUrl: string;
-  deploymentMode: "cloud" | "self-hosted";
   google?: { clientId: string; clientSecret: string };
   oidc?: {
     clientId: string;
@@ -91,10 +90,6 @@ export function identityConfiguration(
   return {
     baseUrl: parsedBaseUrl.origin,
     databaseUrl,
-    deploymentMode:
-      environment.ODYSHELL_DEPLOYMENT_MODE === "cloud"
-        ? "cloud"
-        : "self-hosted",
     mcpAudience: mcpAudience.href,
     secret,
     trustedOrigins: [...new Set([parsedBaseUrl.origin, ...extraOrigins])],

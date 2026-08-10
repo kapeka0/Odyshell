@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import pc from "picocolors";
 import {
-  DEFAULT_CLOUD_SERVER_URL,
+  DEFAULT_SERVER_URL,
   PROTOCOL_VERSION,
   clientConfigSchema,
 } from "@odyshell/protocol";
@@ -42,7 +42,7 @@ const program = new Command();
 program
   .name("ods")
   .description("Install Machines and operate the Odyshell control plane")
-  .version("0.19.0")
+  .version("0.20.0")
   .option("-j, --json", "emit stable JSON output")
   .option("--server <url>", "override the Odyshell Server URL")
   .showSuggestionAfterError()
@@ -83,7 +83,7 @@ function selectedServerUrl(options: GlobalOptions): string {
   return options.server ??
     process.env.ODYSHELL_SERVER_URL ??
     process.env.ODYSHELL_URL ??
-    DEFAULT_CLOUD_SERVER_URL;
+    DEFAULT_SERVER_URL;
 }
 
 function selectedServerOverride(options: GlobalOptions): string | undefined {

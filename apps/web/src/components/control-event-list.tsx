@@ -36,11 +36,11 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import type {
-  CloudAgent,
-  CloudMachine,
-  CloudMember,
+  ControlAgent,
+  ControlMachine,
+  ControlMember,
   ControlEvent,
-} from "@/lib/cloud-api";
+} from "@/lib/control-api";
 import { formatDashboardTimestamp } from "@/lib/date-time";
 
 type ActivityActor = {
@@ -67,9 +67,9 @@ export function ControlEventList({
   retentionDays,
 }: {
   events: ControlEvent[];
-  machines: CloudMachine[];
-  agents: CloudAgent[];
-  members: CloudMember[];
+  machines: ControlMachine[];
+  agents: ControlAgent[];
+  members: ControlMember[];
   retentionDays: number;
 }) {
   const { state } = useDashboard();
@@ -305,9 +305,9 @@ function Detail({
 
 function activityRows(
   events: ControlEvent[],
-  machines: CloudMachine[],
-  agents: CloudAgent[],
-  members: CloudMember[],
+  machines: ControlMachine[],
+  agents: ControlAgent[],
+  members: ControlMember[],
 ): ActivityRow[] {
   const machineNames = new Map(
     machines.map((machine) => [machine.id, machine.name]),
@@ -337,8 +337,8 @@ function activityRows(
 
 function actorIdentity(
   principalId: string,
-  agents: Map<string, CloudAgent>,
-  members: Map<string, CloudMember>,
+  agents: Map<string, ControlAgent>,
+  members: Map<string, ControlMember>,
 ): ActivityActor {
   const agent = agents.get(principalId);
   if (agent) {

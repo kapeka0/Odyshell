@@ -8,6 +8,7 @@ import {
 } from "../apps/web/src/lib/enrollment-command.js";
 import { isPublicDocumentationPath } from "../apps/web/src/lib/public-documentation.js";
 import { validDocumentationSearchQuery } from "../apps/web/src/lib/documentation-search.js";
+import { publicSiteRequestDecision } from "../apps/web/src/lib/public-site.js";
 
 const root = process.cwd();
 const webRoot = resolve(root, "apps/web");
@@ -34,10 +35,10 @@ describe("web security boundaries", () => {
     expect(authRoute).toContain("toNextJsHandler(getAuth())");
     expect(authorizationMetadata).toContain("oauthProviderAuthServerMetadata(getAuth()");
     expect(openIdMetadata).toContain("oauthProviderOpenIdConfigMetadata(getAuth()");
-    expect(organizationRoute).toContain("requireCloudAdminRouteIdentity");
+    expect(organizationRoute).toContain("requireControlAdminRouteIdentity");
     expect(organizationRoute).toContain("getAuth().api.updateOrganization");
     expect(organizationRoute).not.toContain('z.literal("logging")');
-    expect(sessionRoute).toContain("requireCloudRouteIdentity");
+    expect(sessionRoute).toContain("requireControlRouteIdentity");
     expect(sessionRoute).not.toContain("role:");
   });
 
@@ -87,6 +88,24 @@ describe("web security boundaries", () => {
     expect(validDocumentationSearchQuery("a".repeat(201))).toBe(false);
   });
 
+  it("exposes only landing and documentation in public-site mode", () => {
+    for (const path of ["/", "/docs", "/docs/self-hosting", "/llms.txt", "/robots.txt", "/api/search"]) {
+      expect(publicSiteRequestDecision(true, path)).toBe("allow");
+    }
+    for (const path of [
+      "/dashboard",
+      "/sign-in",
+      "/sign-up",
+      "/onboarding",
+      "/oauth/consent",
+      "/api/auth/session",
+      "/.well-known/openid-configuration",
+    ]) {
+      expect(publicSiteRequestDecision(true, path)).toBe("not_found");
+      expect(publicSiteRequestDecision(false, path)).toBe("allow");
+    }
+  });
+
   it("publishes only Session and Command operational documentation", () => {
     const meta = readFileSync(resolve(webRoot, "content/docs/meta.json"), "utf8");
     expect(meta).toContain('"sessions"');
@@ -118,7 +137,7 @@ describe("web security boundaries", () => {
       resolve(root, "apps/server/src/session-database.ts"),
       "utf8",
     );
-    const cloudApi = source("lib/cloud-api.ts");
+    const controlApi = source("lib/control-api.ts");
 
     expect(server).toContain("sessionDatabase.listSessions(parsed.data.organization.externalId, 100)");
     expect(server).toContain("sessionDatabase.listAuditEvents(parsed.data.organization.externalId, 100)");
@@ -126,8 +145,8 @@ describe("web security boundaries", () => {
     expect(server).not.toContain('notification.kind.startsWith("session.")');
     expect(database).toContain('selectFrom("sessionAuditEvents")');
     expect(database).toContain('orderBy("createdAt", "desc")');
-    expect(cloudApi).toContain("sessions: CloudSession[]");
-    expect(cloudApi).not.toContain("CloudTask");
+    expect(controlApi).toContain("sessions: ControlSession[]");
+    expect(controlApi).not.toContain("ControlTask");
   });
 
   it("keeps Session approval role checks and Local Policy enforcement server-side", () => {
@@ -136,7 +155,7 @@ describe("web security boundaries", () => {
       "utf8",
     );
     const sessions = readFileSync(resolve(root, "apps/server/src/sessions.ts"), "utf8");
-    expect(supervision).toContain("cloudIdentitySchema");
+    expect(supervision).toContain("controlIdentitySchema");
     expect(supervision).toContain("humanId: identity.data.userId");
     expect(supervision).toContain("role: identity.data.role");
     expect(sessions).toContain("commandDecision");
@@ -160,15 +179,24 @@ describe("web security boundaries", () => {
     expect(activity).toContain("event.metadata.command");
   });
 
-  it("keeps Operator and billing elevation behind confirmed server authorization", () => {
+  it("keeps Operator elevation behind confirmed server authorization", () => {
     const agentRoute = source("app/api/agents/[agentId]/route.ts");
-    const billingRoute = source("app/api/billing/checkout/route.ts");
-    const webhook = source("app/api/billing/webhook/route.ts");
-    expect(agentRoute).toContain("requireCloudAdminRouteIdentity");
+    expect(agentRoute).toContain("requireControlAdminRouteIdentity");
     expect(agentRoute).toContain("export async function PATCH");
-    expect(billingRoute).toContain("requireCloudOwnerRouteIdentity");
-    expect(webhook).toContain("constructEvent");
-    expect(webhook).toContain("stripe-signature");
+  });
+
+  it("ships no billing endpoints or payment credentials", () => {
+    for (const path of [
+      "app/api/billing/checkout/route.ts",
+      "app/api/billing/portal/route.ts",
+      "app/api/billing/webhook/route.ts",
+      "components/billing-card.tsx",
+      "lib/billing-policy.ts",
+      "lib/stripe.ts",
+    ]) {
+      expect(existsSync(resolve(webSource, path))).toBe(false);
+    }
+    expect(readFileSync(resolve(webRoot, "package.json"), "utf8")).not.toContain('"stripe"');
   });
 });
 

@@ -18,9 +18,9 @@ and protocol package.
 2. Run `pnpm release:check`, push the commit, and wait for the cross-platform CI workflow.
 3. Deploy the Server first. Confirm its control and Session migrations and health before deploying
    the web app.
-4. Run `pnpm migrate:identity` with the production Web identity environment. The command is
-   idempotent and takes a PostgreSQL advisory lock. Cloud Web instances never migrate from a
-   serverless cold start; self-hosted Web still migrates automatically before accepting traffic.
+4. Web migrates identity automatically before accepting traffic. Operators that set
+   `ODYSHELL_RUN_IDENTITY_MIGRATIONS=false` must run `pnpm migrate:identity` first; the command is
+   idempotent and takes a PostgreSQL advisory lock.
 5. From the GitHub Actions page, run the `Release` workflow from `main` with the version number
    and approve its protected `Production` environment.
 6. The workflow audits production dependencies, repeats type checking, tests, lint, build,

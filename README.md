@@ -59,7 +59,8 @@ tokens expire after ten minutes, work once, and are never persisted.
 
 ## Quickstart
 
-1. Open the web app and create an account; Odyshell creates and activates its Organization.
+1. Deploy Odyshell with Docker Compose and open the local web app. The first account creates the
+   installation's sovereign Organization.
 2. Connect the Agent runtime to the Server's remote MCP endpoint and complete OAuth.
 3. Install `ods` on the target Windows, Linux, or macOS Machine:
 
@@ -102,9 +103,9 @@ Fill every blank secret in the root `.env` before starting. Open
 Quickstart. Compose runs both application services in production mode, binds them to loopback by
 default, and rejects missing secrets.
 
-Self-hosting uses the same Server, web app, PostgreSQL schema, identity architecture, protocols,
-dashboard, and Client as Cloud. The deployment owner keeps identity, policy, Session, audit, and
-credential data in its own PostgreSQL database. See the [self-hosting guide](./docs/self-hosting.md).
+This is Odyshell's only distribution: free, Apache-2.0, and without commercial limits on members,
+Machines, or Agents. The deployment owner keeps identity, policy, Session, audit, and credential
+data in its own PostgreSQL database. See the [self-hosting guide](./docs/self-hosting.md).
 
 ## Development
 
@@ -124,4 +125,5 @@ Repository packages:
 - `packages/mcp`: agent-native MCP tools over the canonical Session module.
 
 Accepted target architecture is recorded in [`docs/design`](./docs/design). Product terminology and
-commercial limits are defined in [`CONTEXT.md`](./CONTEXT.md) and [`docs/business-model.md`](./docs/business-model.md).
+the community distribution model are defined in [`CONTEXT.md`](./CONTEXT.md) and
+[`docs/business-model.md`](./docs/business-model.md).
