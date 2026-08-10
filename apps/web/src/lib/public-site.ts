@@ -1,6 +1,7 @@
 const publicPaths = new Set([
   "/",
   "/api/search",
+  "/docs.md",
   "/llms-full.txt",
   "/llms.txt",
   "/robots.txt",

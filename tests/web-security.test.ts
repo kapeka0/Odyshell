@@ -98,6 +98,7 @@ describe("web security boundaries", () => {
     for (const path of [
       "/",
       "/docs",
+      "/docs.md",
       "/docs/self-hosting",
       "/llms.txt",
       "/llms-full.txt",
