@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
-import { CloudApiError, type CloudIdentity } from "@/lib/cloud-api";
+import { ControlApiError, type ControlIdentity } from "@/lib/control-api";
 import { currentHumanIdentity, currentHumanSession } from "@/lib/identity";
 import { canAdministerOrganization } from "@/lib/identity-permissions";
 
-type CloudRouteIdentity =
-  | { identity: CloudIdentity; response?: never }
+type ControlRouteIdentity =
+  | { identity: ControlIdentity; response?: never }
   | { identity?: never; response: NextResponse };
 
-export async function requireCloudRouteIdentity(): Promise<CloudRouteIdentity> {
+export async function requireControlRouteIdentity(): Promise<ControlRouteIdentity> {
   const session = await currentHumanSession();
   if (!session) {
     return {
@@ -39,8 +39,8 @@ export async function requireCloudRouteIdentity(): Promise<CloudRouteIdentity> {
   };
 }
 
-export async function requireCloudAdminRouteIdentity(): Promise<CloudRouteIdentity> {
-  const authorization = await requireCloudRouteIdentity();
+export async function requireControlAdminRouteIdentity(): Promise<ControlRouteIdentity> {
+  const authorization = await requireControlRouteIdentity();
   if (authorization.response) return authorization;
   const humanIdentity = await currentHumanIdentity();
   if (!humanIdentity || !canAdministerOrganization(humanIdentity.role)) {
@@ -54,8 +54,8 @@ export async function requireCloudAdminRouteIdentity(): Promise<CloudRouteIdenti
   return authorization;
 }
 
-export async function requireCloudOwnerRouteIdentity(): Promise<CloudRouteIdentity> {
-  const authorization = await requireCloudRouteIdentity();
+export async function requireControlOwnerRouteIdentity(): Promise<ControlRouteIdentity> {
+  const authorization = await requireControlRouteIdentity();
   if (authorization.response) return authorization;
   const humanIdentity = await currentHumanIdentity();
   if (!humanIdentity || humanIdentity.role !== "owner") {
@@ -66,8 +66,8 @@ export async function requireCloudOwnerRouteIdentity(): Promise<CloudRouteIdenti
   return authorization;
 }
 
-export function cloudRouteError(error: unknown): NextResponse {
-  if (error instanceof CloudApiError) {
+export function controlRouteError(error: unknown): NextResponse {
+  if (error instanceof ControlApiError) {
     return NextResponse.json(
       { error: error.code, details: error.details },
       { status: error.status },

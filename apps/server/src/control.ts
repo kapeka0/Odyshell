@@ -7,44 +7,13 @@ import {
 import { performance } from "node:perf_hooks";
 import { z } from "zod";
 
-export const cloudPlanIds = ["free", "pro", "enterprise"] as const;
 export const organizationLoggingLevels = [
   "privacy-minimal",
   "operational",
   "diagnostic",
 ] as const;
 export type OrganizationLoggingLevel = (typeof organizationLoggingLevels)[number];
-export type CloudPlanId = (typeof cloudPlanIds)[number];
-
-export type PlanEntitlements = {
-  memberLimit: number | null;
-  machineLimit: number;
-  activeAgentLimit: number | null;
-  monthlyPricePerMemberCents: number | null;
-};
-
-export const planEntitlements: Record<CloudPlanId, PlanEntitlements> = {
-  free: {
-    memberLimit: 1,
-    machineLimit: 2,
-    activeAgentLimit: 2,
-    monthlyPricePerMemberCents: 0,
-  },
-  pro: {
-    memberLimit: 20,
-    machineLimit: 20,
-    activeAgentLimit: null,
-    monthlyPricePerMemberCents: 3_000,
-  },
-  enterprise: {
-    memberLimit: null,
-    machineLimit: 1_000,
-    activeAgentLimit: null,
-    monthlyPricePerMemberCents: null,
-  },
-};
-
-export const cloudIdentitySchema = z.object({
+export const controlIdentitySchema = z.object({
   userId: z.string().min(1).max(256),
   role: z.enum(["owner", "admin", "supervisor"]),
   organization: z.object({
@@ -54,7 +23,7 @@ export const cloudIdentitySchema = z.object({
   }).strict(),
 }).strict();
 
-export const cloudUserSettingsSchema = cloudIdentitySchema.extend({
+export const controlUserSettingsSchema = controlIdentitySchema.extend({
   timeZone: z.string().trim().min(1).max(128).refine(
     (timeZone) => {
       if (timeZone === "System") return true;
@@ -69,23 +38,23 @@ export const cloudUserSettingsSchema = cloudIdentitySchema.extend({
   ),
 }).strict();
 
-export const cloudOrganizationSettingsSchema = z.discriminatedUnion("section", [
-  cloudIdentitySchema.extend({
+export const controlOrganizationSettingsSchema = z.discriminatedUnion("section", [
+  controlIdentitySchema.extend({
     section: z.literal("details"),
     name: z.string().trim().min(1).max(96),
     avatarSeed: z.string().trim().min(1).max(128),
   }).strict(),
-  cloudIdentitySchema.extend({
+  controlIdentitySchema.extend({
     section: z.literal("logging"),
     loggingLevel: z.enum(organizationLoggingLevels),
   }).strict(),
 ]);
 
-export const revokeCloudMachineSchema = cloudIdentitySchema.extend({
+export const revokeControlMachineSchema = controlIdentitySchema.extend({
   machineId: z.string().uuid(),
 });
 
-export const updateCloudMachineSchema = cloudIdentitySchema
+export const updateControlMachineSchema = controlIdentitySchema
   .extend({
     machineId: z.string().uuid(),
     name: z.string().trim().min(1).max(128),
@@ -93,38 +62,30 @@ export const updateCloudMachineSchema = cloudIdentitySchema
   })
   .strict();
 
-export const deleteCloudAgentSchema = cloudIdentitySchema.extend({
+export const deleteControlAgentSchema = controlIdentitySchema.extend({
   agentId: z.string().uuid(),
 });
 
-export const updateCloudAgentRoleSchema = cloudIdentitySchema.extend({
+export const updateControlAgentRoleSchema = controlIdentitySchema.extend({
   agentId: z.string().uuid(),
   agentRole: z.enum(["standard", "operator"]),
 });
 
-export const cloudBillingPlanUpdateSchema = z.object({
-  eventId: z.string().trim().min(1).max(256),
-  externalOrganizationId: z.string().trim().min(1).max(256),
-  plan: z.enum(["free", "pro"]),
-  stripeCustomerId: z.string().regex(/^cus_[A-Za-z0-9]+$/u),
-  stripeSubscriptionId: z.string().regex(/^sub_[A-Za-z0-9]+$/u).nullable(),
-}).strict();
-
-const cloudLiveClaimsSchema = z.object({
+const controlLiveClaimsSchema = z.object({
   organizationId: z.string().min(1).max(128),
   userId: z.string().min(1).max(256),
   nonce: z.string().regex(/^[A-Za-z0-9_-]{16,64}$/u),
   expiresAt: z.number().int().positive(),
 }).strict();
 
-export type CloudLiveClaims = z.infer<typeof cloudLiveClaimsSchema>;
+export type ControlLiveClaims = z.infer<typeof controlLiveClaimsSchema>;
 
-const CLOUD_LIVE_TOKEN_PREFIX = "ods_live_";
-const MAX_CLOUD_LIVE_TOKEN_LENGTH = 2_048;
+const CONTROL_LIVE_TOKEN_PREFIX = "ods_live_";
+const MAX_CONTROL_LIVE_TOKEN_LENGTH = 2_048;
 
-export function createCloudLiveToken(
+export function createControlLiveToken(
   secret: string,
-  claims: Omit<CloudLiveClaims, "expiresAt" | "nonce">,
+  claims: Omit<ControlLiveClaims, "expiresAt" | "nonce">,
   now = Date.now(),
   lifetimeMilliseconds = 60_000,
 ): string {
@@ -138,22 +99,22 @@ export function createCloudLiveToken(
   const signature = createHmac("sha256", secret)
     .update(payload)
     .digest("base64url");
-  return `${CLOUD_LIVE_TOKEN_PREFIX}${payload}.${signature}`;
+  return `${CONTROL_LIVE_TOKEN_PREFIX}${payload}.${signature}`;
 }
 
-export function verifyCloudLiveToken(
+export function verifyControlLiveToken(
   secret: string,
   token: string,
   now = Date.now(),
-): CloudLiveClaims | null {
+): ControlLiveClaims | null {
   if (
-    token.length > MAX_CLOUD_LIVE_TOKEN_LENGTH ||
-    !token.startsWith(CLOUD_LIVE_TOKEN_PREFIX)
+    token.length > MAX_CONTROL_LIVE_TOKEN_LENGTH ||
+    !token.startsWith(CONTROL_LIVE_TOKEN_PREFIX)
   ) {
     return null;
   }
   const [payload, signature, extra] = token
-    .slice(CLOUD_LIVE_TOKEN_PREFIX.length)
+    .slice(CONTROL_LIVE_TOKEN_PREFIX.length)
     .split(".");
   if (!payload || !signature || extra !== undefined) return null;
   const expected = createHmac("sha256", secret).update(payload).digest();
@@ -170,7 +131,7 @@ export function verifyCloudLiveToken(
     return null;
   }
   try {
-    const claims = cloudLiveClaimsSchema.parse(
+    const claims = controlLiveClaimsSchema.parse(
       JSON.parse(Buffer.from(payload, "base64url").toString("utf8")),
     );
     return claims.expiresAt > now ? claims : null;
@@ -179,7 +140,7 @@ export function verifyCloudLiveToken(
   }
 }
 
-export function cloudLiveOriginDecision(
+export function controlLiveOriginDecision(
   configuredOrigin: string | undefined,
   requestOrigin: string | undefined,
 ): "allowed" | "denied" | "disabled" {
@@ -187,7 +148,7 @@ export function cloudLiveOriginDecision(
   return requestOrigin === configuredOrigin ? "allowed" : "denied";
 }
 
-export class CloudLiveTokenReplayGuard {
+export class ControlLiveTokenReplayGuard {
   private readonly usedUntil = new Map<string, number>();
 
   consume(token: string, expiresAt: number, now = Date.now()): boolean {
@@ -260,12 +221,7 @@ export function privacySafeControlMetadata(
   return safe;
 }
 
-export function entitlementsFor(plan: string): PlanEntitlements {
-  return planEntitlements[cloudPlanIds.includes(plan as CloudPlanId) ? plan as CloudPlanId : "free"];
-}
-
-
-export function cloudWebKey(environment: NodeJS.ProcessEnv): string | undefined {
+export function controlWebKey(environment: NodeJS.ProcessEnv): string | undefined {
   const value = environment.ODYSHELL_WEB_KEY;
   if (!value) return undefined;
   if (environment.NODE_ENV === "production" && value.length < 32) {
@@ -274,7 +230,7 @@ export function cloudWebKey(environment: NodeJS.ProcessEnv): string | undefined 
   return value;
 }
 
-export function cloudWebRequestDecision(
+export function controlWebRequestDecision(
   expected: string | undefined,
   provided: string | undefined,
 ): "authorized" | "disabled" | "unauthorized" {
@@ -287,15 +243,15 @@ export function cloudWebRequestDecision(
     : "unauthorized";
 }
 
-export function cloudWebUrl(
+export function controlWebUrl(
   environment: NodeJS.ProcessEnv,
-  cloudEnabled: boolean,
+  controlEnabled: boolean,
 ): string | undefined {
-  if (!cloudEnabled) return undefined;
+  if (!controlEnabled) return undefined;
   const value = environment.ODYSHELL_WEB_URL ??
     (environment.NODE_ENV === "production" ? undefined : "http://localhost:3000");
   if (!value) {
-    throw new Error("ODYSHELL_WEB_URL is required when cloud authentication is enabled");
+    throw new Error("ODYSHELL_WEB_URL is required when control authentication is enabled");
   }
   const url = new URL(value);
   if (

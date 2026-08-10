@@ -1,5 +1,16 @@
 # Releasing Odyshell
 
+Before retiring a managed Railway installation, run
+`powershell -File scripts/backup-railway.ps1`. The tool creates a CMS-encrypted PostgreSQL dump,
+keeps its private key in the current Windows user's certificate store, verifies a decrypt hash,
+and requires `pg_restore --list` to parse the decrypted temporary before reporting success.
+Use `scripts/transfer-cms-backup.ps1` with the manifest's decrypted SHA-256 when a verified dump
+must be restored on another host. The transfer tool validates its destination, applies mode `600`,
+and always deletes the local decrypted temporary.
+On the destination, `scripts/restore-postgres.sh` accepts only a regular mode-`600` custom dump,
+restores it into the Compose PostgreSQL service with `--exit-on-error`, reports Organization and
+Machine counts, and removes both host and container plaintext copies through an exit trap.
+
 Odyshell uses one coordinated pre-1.0 version for the Server, Client, web app, CLI, MCP runtime,
 and protocol package.
 
@@ -18,9 +29,9 @@ and protocol package.
 2. Run `pnpm release:check`, push the commit, and wait for the cross-platform CI workflow.
 3. Deploy the Server first. Confirm its control and Session migrations and health before deploying
    the web app.
-4. Run `pnpm migrate:identity` with the production Web identity environment. The command is
-   idempotent and takes a PostgreSQL advisory lock. Cloud Web instances never migrate from a
-   serverless cold start; self-hosted Web still migrates automatically before accepting traffic.
+4. Web migrates identity automatically before accepting traffic. Operators that set
+   `ODYSHELL_RUN_IDENTITY_MIGRATIONS=false` must run `pnpm migrate:identity` first; the command is
+   idempotent and takes a PostgreSQL advisory lock.
 5. From the GitHub Actions page, run the `Release` workflow from `main` with the version number
    and approve its protected `Production` environment.
 6. The workflow audits production dependencies, repeats type checking, tests, lint, build,

@@ -2,7 +2,7 @@ import "server-only";
 
 import { cache } from "react";
 import { headers } from "next/headers";
-import type { CloudIdentity, CloudMember } from "@/lib/cloud-api";
+import type { ControlIdentity, ControlMember } from "@/lib/control-api";
 import { getAuth } from "@/lib/auth";
 import {
   identityRole,
@@ -64,7 +64,7 @@ export const currentHumanIdentity = cache(
   },
 );
 
-export async function currentCloudIdentity(): Promise<CloudIdentity | null> {
+export async function currentControlIdentity(): Promise<ControlIdentity | null> {
   const identity = await currentHumanIdentity();
   if (!identity) return null;
   return {
@@ -78,7 +78,7 @@ export async function currentCloudIdentity(): Promise<CloudIdentity | null> {
   };
 }
 
-export async function organizationMembers(): Promise<CloudMember[]> {
+export async function organizationMembers(): Promise<ControlMember[]> {
   const requestHeaders = await headers();
   const identity = await currentHumanIdentity();
   if (!identity) return [];

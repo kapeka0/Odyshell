@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { cloudRequest } from "@/lib/cloud-api";
+import { controlRequest } from "@/lib/control-api";
 import {
-  cloudRouteError,
-  requireCloudRouteIdentity,
-} from "@/lib/cloud-route";
+  controlRouteError,
+  requireControlRouteIdentity,
+} from "@/lib/control-route";
 
 const notificationIdSchema = z.string().uuid();
 
@@ -12,7 +12,7 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ notificationId: string }> },
 ) {
-  const authorization = await requireCloudRouteIdentity();
+  const authorization = await requireControlRouteIdentity();
   if (authorization.response) return authorization.response;
   const parsed = notificationIdSchema.safeParse((await params).notificationId);
   if (!parsed.success) {
@@ -24,8 +24,8 @@ export async function POST(
   try {
     const body = (await request.json().catch(() => ({}))) as { read?: unknown };
     const read = typeof body.read === "boolean" ? body.read : true;
-    const result = await cloudRequest<{ read: boolean }>(
-      "/v1/internal/cloud/notifications/read",
+    const result = await controlRequest<{ read: boolean }>(
+      "/v1/internal/control/notifications/read",
       authorization.identity,
       { extraBody: { notificationId: parsed.data, read } },
     );
@@ -33,6 +33,6 @@ export async function POST(
       headers: { "cache-control": "no-store" },
     });
   } catch (error) {
-    return cloudRouteError(error);
+    return controlRouteError(error);
   }
 }

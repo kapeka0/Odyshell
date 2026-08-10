@@ -1,4 +1,4 @@
-import { DEFAULT_CLOUD_SERVER_URL } from "@odyshell/protocol";
+import { DEFAULT_SERVER_URL } from "@odyshell/protocol";
 
 export function machineEnrollmentCommand(options: {
   serverUrl: string;
@@ -6,7 +6,7 @@ export function machineEnrollmentCommand(options: {
   machineName: string;
 }): string {
   const args = ["ods"];
-  if (options.serverUrl !== DEFAULT_CLOUD_SERVER_URL) {
+  if (options.serverUrl !== DEFAULT_SERVER_URL) {
     args.push("--server", options.serverUrl);
   }
   args.push("up", "--token", options.token, "--name", options.machineName);

@@ -1,4 +1,4 @@
-export function cloudRouteIdentityDecision(
+export function controlRouteIdentityDecision(
   userId: string | null | undefined,
   organizationId: string | null | undefined,
 ): "authorized" | "not_authenticated" | "organization_required" {

@@ -190,6 +190,6 @@ describe("public documentation corpus", () => {
     expect(markdownRoute).toContain("dynamicParams = false");
     expect(docsPage).toContain("dynamicParams = false");
     expect(markdownRoute).not.toContain("dashboard");
-    expect(markdownRoute).not.toContain("cloudRequest");
+    expect(markdownRoute).not.toContain("controlRequest");
   });
 });

@@ -1,25 +1,24 @@
 import { describe, expect, it } from "vitest";
 import {
-  CloudLiveTokenReplayGuard,
-  createCloudLiveToken,
-  cloudLiveOriginDecision,
-  cloudIdentitySchema,
-  cloudUserSettingsSchema,
-  cloudOrganizationSettingsSchema,
-  cloudWebRequestDecision,
-  cloudWebKey,
-  cloudWebUrl,
-  deleteCloudAgentSchema,
-  entitlementsFor,
+  ControlLiveTokenReplayGuard,
+  createControlLiveToken,
+  controlLiveOriginDecision,
+  controlIdentitySchema,
+  controlUserSettingsSchema,
+  controlOrganizationSettingsSchema,
+  controlWebRequestDecision,
+  controlWebKey,
+  controlWebUrl,
+  deleteControlAgentSchema,
   FixedWindowRateLimiter,
   privacySafeControlMetadata,
-  revokeCloudMachineSchema,
+  revokeControlMachineSchema,
   ScopedConcurrencyLimiter,
   ScopedRateLimiter,
-  updateCloudMachineSchema,
-  verifyCloudLiveToken,
-} from "../apps/server/src/cloud.js";
-import { cloudRouteIdentityDecision } from "../apps/web/src/lib/cloud-route-policy.js";
+  updateControlMachineSchema,
+  verifyControlLiveToken,
+} from "../apps/server/src/control.js";
+import { controlRouteIdentityDecision } from "../apps/web/src/lib/control-route-policy.js";
 
 const identity = {
   userId: "user_123",
@@ -27,23 +26,23 @@ const identity = {
   organization: { externalId: "org_123", slug: "acme", name: "Acme" },
 };
 
-describe("cloud control boundaries", () => {
+describe("control control boundaries", () => {
   it("validates identity-bound settings without accepting tenant input", () => {
-    expect(cloudUserSettingsSchema.safeParse({
+    expect(controlUserSettingsSchema.safeParse({
       ...identity,
       timeZone: "Europe/Madrid",
     }).success).toBe(true);
-    expect(cloudUserSettingsSchema.safeParse({
+    expect(controlUserSettingsSchema.safeParse({
       ...identity,
       timeZone: "Mars/Olympus",
     }).success).toBe(false);
-    expect(cloudOrganizationSettingsSchema.safeParse({
+    expect(controlOrganizationSettingsSchema.safeParse({
       ...identity,
       section: "details",
       name: "Production",
       avatarSeed: "seed",
     }).success).toBe(true);
-    expect(cloudOrganizationSettingsSchema.safeParse({
+    expect(controlOrganizationSettingsSchema.safeParse({
       ...identity,
       section: "logging",
       loggingLevel: "operational",
@@ -52,26 +51,26 @@ describe("cloud control boundaries", () => {
   });
 
   it("requires a signed-in Organization member for every web mutation", () => {
-    expect(cloudRouteIdentityDecision(null, null)).toBe("not_authenticated");
-    expect(cloudRouteIdentityDecision("user_123", null)).toBe(
+    expect(controlRouteIdentityDecision(null, null)).toBe("not_authenticated");
+    expect(controlRouteIdentityDecision("user_123", null)).toBe(
       "organization_required",
     );
-    expect(cloudRouteIdentityDecision("user_123", "org_123")).toBe(
+    expect(controlRouteIdentityDecision("user_123", "org_123")).toBe(
       "authorized",
     );
   });
 
-  it("rejects malformed, incomplete, and overlong cloud identities", () => {
-    expect(cloudIdentitySchema.safeParse({
+  it("rejects malformed, incomplete, and overlong control identities", () => {
+    expect(controlIdentitySchema.safeParse({
       userId: "user",
       role: "member",
       organization: { externalId: "org", slug: "acme", name: "Acme" },
     }).success).toBe(false);
-    expect(cloudIdentitySchema.safeParse({
+    expect(controlIdentitySchema.safeParse({
       userId: "user",
       organization: { externalId: "org", slug: "acme", name: "Acme" },
     }).success).toBe(false);
-    expect(cloudIdentitySchema.safeParse({
+    expect(controlIdentitySchema.safeParse({
       ...identity,
       organization: { ...identity.organization, slug: "../escape" },
     }).success).toBe(false);
@@ -84,16 +83,16 @@ describe("cloud control boundaries", () => {
       name: "Build server",
       description: "Linux builder",
     };
-    expect(updateCloudMachineSchema.safeParse(machineUpdate).success).toBe(true);
-    expect(updateCloudMachineSchema.safeParse({
+    expect(updateControlMachineSchema.safeParse(machineUpdate).success).toBe(true);
+    expect(updateControlMachineSchema.safeParse({
       ...machineUpdate,
       organizationId: "attacker-organization",
     }).success).toBe(false);
-    expect(revokeCloudMachineSchema.safeParse({
+    expect(revokeControlMachineSchema.safeParse({
       ...identity,
       machineId: machineUpdate.machineId,
     }).success).toBe(true);
-    expect(deleteCloudAgentSchema.safeParse({
+    expect(deleteControlAgentSchema.safeParse({
       ...identity,
       agentId: "21a970a0-d42a-44ab-bf3f-f0a5f2ada248",
       capabilities: ["host.shell"],
@@ -122,68 +121,56 @@ describe("cloud control boundaries", () => {
 
   it("fails closed on weak production web credentials and insecure origins", () => {
     expect(() =>
-      cloudWebKey({ NODE_ENV: "production", ODYSHELL_WEB_KEY: "short" }),
+      controlWebKey({ NODE_ENV: "production", ODYSHELL_WEB_KEY: "short" }),
     ).toThrow(/32 characters/);
-    expect(() => cloudWebUrl({
+    expect(() => controlWebUrl({
       NODE_ENV: "production",
       ODYSHELL_WEB_URL: "http://app.example",
     }, true)).toThrow(/HTTPS/);
-    expect(cloudWebUrl({
+    expect(controlWebUrl({
       NODE_ENV: "production",
       ODYSHELL_WEB_URL: "https://app.example/ignored",
     }, true)).toBe("https://app.example");
-    expect(cloudWebUrl({
+    expect(controlWebUrl({
       NODE_ENV: "production",
       ODYSHELL_WEB_URL: "http://localhost:3000",
     }, true)).toBe("http://localhost:3000");
   });
 
-  it("denies cloud mutations when the internal web credential is absent or wrong", () => {
+  it("denies control mutations when the internal web credential is absent or wrong", () => {
     const key = "a-secure-internal-web-key-with-32-characters";
-    expect(cloudWebRequestDecision(undefined, key)).toBe("disabled");
-    expect(cloudWebRequestDecision(key, undefined)).toBe("unauthorized");
-    expect(cloudWebRequestDecision(key, "wrong-key")).toBe("unauthorized");
-    expect(cloudWebRequestDecision(key, key)).toBe("authorized");
+    expect(controlWebRequestDecision(undefined, key)).toBe("disabled");
+    expect(controlWebRequestDecision(key, undefined)).toBe("unauthorized");
+    expect(controlWebRequestDecision(key, "wrong-key")).toBe("unauthorized");
+    expect(controlWebRequestDecision(key, key)).toBe("authorized");
   });
 
   it("keeps hosted credentials optional for self-hosted deployments", () => {
-    expect(cloudWebKey({ NODE_ENV: "production" })).toBeUndefined();
-    expect(cloudWebUrl({ NODE_ENV: "production" }, false)).toBeUndefined();
-    expect(entitlementsFor("unknown")).toEqual({
-      memberLimit: 1,
-      machineLimit: 2,
-      activeAgentLimit: 2,
-      monthlyPricePerMemberCents: 0,
-    });
-    expect(entitlementsFor("pro")).toEqual({
-      memberLimit: 20,
-      machineLimit: 20,
-      activeAgentLimit: null,
-      monthlyPricePerMemberCents: 3_000,
-    });
+    expect(controlWebKey({ NODE_ENV: "production" })).toBeUndefined();
+    expect(controlWebUrl({ NODE_ENV: "production" }, false)).toBeUndefined();
   });
 
   it("binds short-lived live streams and rejects expiry or signature changes", () => {
     const secret = "a-secure-internal-web-key-with-32-characters";
-    const token = createCloudLiveToken(
+    const token = createControlLiveToken(
       secret,
       { organizationId: "organization-a", userId: "user-a" },
       1_000,
       60_000,
     );
 
-    expect(verifyCloudLiveToken(secret, token, 60_999)).toEqual({
+    expect(verifyControlLiveToken(secret, token, 60_999)).toEqual({
       organizationId: "organization-a",
       userId: "user-a",
       expiresAt: 61_000,
       nonce: expect.stringMatching(/^[A-Za-z0-9_-]+$/u),
     });
-    expect(verifyCloudLiveToken(secret, token, 61_000)).toBeNull();
-    expect(verifyCloudLiveToken("different-key-with-at-least-32-characters", token, 2_000)).toBeNull();
+    expect(verifyControlLiveToken(secret, token, 61_000)).toBeNull();
+    expect(verifyControlLiveToken("different-key-with-at-least-32-characters", token, 2_000)).toBeNull();
 
     const [payload, signature] = token.slice("ods_live_".length).split(".");
     const changedSignature = `${signature![0] === "A" ? "B" : "A"}${signature!.slice(1)}`;
-    expect(verifyCloudLiveToken(
+    expect(verifyControlLiveToken(
       secret,
       `ods_live_${payload}.${changedSignature}`,
       2_000,
@@ -195,7 +182,7 @@ describe("cloud control boundaries", () => {
     expect(Buffer.from(nonCanonicalSignature, "base64url")).toEqual(
       Buffer.from(signature!, "base64url"),
     );
-    expect(verifyCloudLiveToken(
+    expect(verifyControlLiveToken(
       secret,
       `ods_live_${payload}.${nonCanonicalSignature}`,
       2_000,
@@ -203,7 +190,7 @@ describe("cloud control boundaries", () => {
   });
 
   it("rejects replayed live-stream tokens and releases expired replay state", () => {
-    const guard = new CloudLiveTokenReplayGuard();
+    const guard = new ControlLiveTokenReplayGuard();
     const token = "ods_live_payload.signature";
     expect(guard.consume(token, 61_000, 1_000)).toBe(true);
     expect(guard.consume(token, 61_000, 1_001)).toBe(false);
@@ -223,16 +210,16 @@ describe("cloud control boundaries", () => {
   });
 
   it("accepts live streams only from the exact configured web origin", () => {
-    expect(cloudLiveOriginDecision(
+    expect(controlLiveOriginDecision(
       "https://odyshell.com",
       "https://odyshell.com",
     )).toBe("allowed");
-    expect(cloudLiveOriginDecision(
+    expect(controlLiveOriginDecision(
       "https://odyshell.com",
       "https://odyshell.com.attacker.test",
     )).toBe("denied");
-    expect(cloudLiveOriginDecision("https://odyshell.com", undefined)).toBe("denied");
-    expect(cloudLiveOriginDecision(undefined, "https://odyshell.com")).toBe("disabled");
+    expect(controlLiveOriginDecision("https://odyshell.com", undefined)).toBe("denied");
+    expect(controlLiveOriginDecision(undefined, "https://odyshell.com")).toBe("disabled");
   });
 
   it("bounds rate-limit state and releases expired keys", () => {

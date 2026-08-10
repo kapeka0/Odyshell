@@ -28,7 +28,6 @@ jobs:
       RELEASE_VERSION: ${{ inputs.version }}
       BETTER_AUTH_URL: http://localhost:3000
       BETTER_AUTH_SECRET: release-check-identity-secret-00000000
-      ODYSHELL_DEPLOYMENT_MODE: cloud
       ODYSHELL_MCP_URL: http://localhost:4100/mcp
 
     steps:

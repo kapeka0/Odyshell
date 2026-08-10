@@ -1,11 +1,11 @@
 import {
-  DEFAULT_CLOUD_SERVER_URL,
+  DEFAULT_SERVER_URL,
 } from "@odyshell/protocol";
 import { z } from "zod";
 
-export { DEFAULT_CLOUD_SERVER_URL };
+export { DEFAULT_SERVER_URL };
 
-const cloudIdentitySchema = z.object({
+const controlIdentitySchema = z.object({
   userId: z.string().min(1),
   role: z.enum(["owner", "admin", "supervisor"]),
   organization: z.object({
@@ -15,9 +15,9 @@ const cloudIdentitySchema = z.object({
   }),
 });
 
-export type CloudIdentity = z.infer<typeof cloudIdentitySchema>;
+export type ControlIdentity = z.infer<typeof controlIdentitySchema>;
 
-export type CloudMachine = {
+export type ControlMachine = {
   id: string;
   name: string;
   description: string | null;
@@ -28,7 +28,7 @@ export type CloudMachine = {
   online: boolean;
 };
 
-export type CloudAgent = {
+export type ControlAgent = {
   id: string;
   name: string;
   role: "standard" | "operator";
@@ -37,13 +37,13 @@ export type CloudAgent = {
   createdAt: string;
 };
 
-export type CloudMember = {
+export type ControlMember = {
   id: string;
   name: string;
   imageUrl?: string;
 };
 
-export type CloudSession = {
+export type ControlSession = {
   id: string;
   organizationId: string;
   agentId: string;
@@ -69,7 +69,7 @@ export type CloudSession = {
   finishedAt: string | null;
 };
 
-export type CloudCommand = {
+export type ControlCommand = {
   id: string;
   sessionId: string;
   organizationId: string;
@@ -90,9 +90,9 @@ export type CloudCommand = {
   output: Array<{ sequence: number; stream: "stdout" | "stderr"; dataBase64: string }>;
 };
 
-export type CloudSessionTimeline = {
-  session: CloudSession;
-  commands: CloudCommand[];
+export type ControlSessionTimeline = {
+  session: ControlSession;
+  commands: ControlCommand[];
   events: Array<{
     id: string;
     agentId: string;
@@ -128,7 +128,7 @@ export type ControlEvent = {
   createdAt: string | null;
 };
 
-export type CloudNotification = {
+export type ControlNotification = {
   id: string;
   kind:
     | "machine.enrolled"
@@ -141,29 +141,18 @@ export type CloudNotification = {
   createdAt: string;
 };
 
-export type CloudContext = {
+export type ControlContext = {
   currentMemberRole: "owner" | "admin" | "supervisor";
   organization: {
     id: string;
     slug: string;
     name: string;
-    plan: "free" | "pro" | "enterprise";
     avatarSeed: string;
-    stripeCustomerId?: string;
-    stripeSubscriptionId?: string;
   };
   userPreferences: {
     timeZone: string;
   };
-  plan: {
-    id: "free" | "pro" | "enterprise";
-    billingManaged: boolean;
-    memberLimit: number | null;
-    machineLimit: number;
-    activeAgentLimit: number | null;
-    monthlyPricePerMemberCents: number | null;
-    controlEventRetentionDays: number;
-  };
+  auditRetentionDays: number;
   usage: {
     machines: number;
     activeAgents: number;
@@ -179,38 +168,38 @@ export type CloudContext = {
       status: string;
     }>;
   };
-  machines: CloudMachine[];
-  agents: CloudAgent[];
-  sessions: CloudSession[];
-  members: CloudMember[];
+  machines: ControlMachine[];
+  agents: ControlAgent[];
+  sessions: ControlSession[];
+  members: ControlMember[];
   controlEvents: ControlEvent[];
-  notifications: CloudNotification[];
+  notifications: ControlNotification[];
 };
 
-export class CloudApiError extends Error {
+export class ControlApiError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
     readonly details?: unknown,
   ) {
     super(code);
-    this.name = "CloudApiError";
+    this.name = "ControlApiError";
   }
 }
 
-export async function cloudRequest<T>(
+export async function controlRequest<T>(
   path: string,
-  identity: CloudIdentity,
+  identity: ControlIdentity,
   options: { extraBody?: Record<string, unknown> } = {},
 ): Promise<T> {
-  const parsedIdentity = cloudIdentitySchema.parse(identity);
+  const parsedIdentity = controlIdentitySchema.parse(identity);
   const serverUrl =
     process.env.ODYSHELL_SERVER_URL ??
     process.env.NEXT_PUBLIC_ODYSHELL_SERVER_URL ??
-    DEFAULT_CLOUD_SERVER_URL;
+    DEFAULT_SERVER_URL;
   const webKey = process.env.ODYSHELL_WEB_KEY;
   if (!webKey) {
-    throw new CloudApiError(503, "web_key_not_configured");
+    throw new ControlApiError(503, "web_key_not_configured");
   }
 
   const response = await fetch(new URL(path, serverUrl), {
@@ -233,10 +222,10 @@ export async function cloudRequest<T>(
       details?: unknown;
     };
   } catch {
-    throw new CloudApiError(response.status || 502, "invalid_cloud_response");
+    throw new ControlApiError(response.status || 502, "invalid_control_response");
   }
   if (!response.ok) {
-    throw new CloudApiError(response.status, body.error ?? "cloud_request_failed", body.details);
+    throw new ControlApiError(response.status, body.error ?? "control_request_failed", body.details);
   }
   return body;
 }
@@ -244,6 +233,6 @@ export async function cloudRequest<T>(
 export function publicServerUrl(): string {
   return (
     process.env.NEXT_PUBLIC_ODYSHELL_SERVER_URL ??
-    DEFAULT_CLOUD_SERVER_URL
+    DEFAULT_SERVER_URL
   );
 }

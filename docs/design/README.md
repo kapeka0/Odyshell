@@ -5,7 +5,7 @@ Shipped behavior remains documented in the root and package READMEs and in the p
 site.
 
 - [Session control plane](./session-control-plane.md) defines the product, domain, trust boundaries,
-  protocol, roles, retention, and plans.
+  protocol, roles, retention, and self-hosted distribution.
 
 Relevant architecture decisions:
 

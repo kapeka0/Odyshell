@@ -22,8 +22,8 @@ orchestrator. Commands run with the privileges of the operating-system user that
 
 ## Canonical domain
 
-An **Organization** owns its Humans, Agents, Machines, Sessions, Commands, timeline, plan, and
-billing relationship. It is the tenant boundary.
+An **Organization** owns its Humans, Agents, Machines, Sessions, Commands, and timeline. It is the
+sovereign Organization boundary of one self-hosted installation.
 
 An **Agent** is a durable OAuth identity with one role:
 
@@ -91,10 +91,10 @@ Security verification covers expiry and revocation, replay, cross-Organization a
 access, confused-deputy routing, command injection at service boundaries, path validation, process
 tree termination, reconnect, output bounds, and credential leakage.
 
-## Plans
+## Distribution
 
-- **Free:** one-member Organization, two Machines, two Agents.
-- **Pro:** $30 USD per member per month, up to 20 members, 20 Machines, unlimited Agents.
-- **Enterprise:** future plan; not currently sold.
+Odyshell is free, Apache-2.0, and self-hosted through Docker. It has no managed SaaS tier or
+commercial member, Machine, or Agent limits. Technical resource ceilings and Machine Local Policy
+remain mandatory security controls.
 
 Member invitations remain intentionally disabled until transactional email delivery is configured.

@@ -9,17 +9,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { Timeline, TimelineConnector, TimelineContent, TimelineItem, TimelineMarker } from "@/components/ui/timeline";
 import { formatDashboardTimestamp } from "@/lib/date-time";
-import type { CloudCommand, CloudSessionTimeline } from "@/lib/cloud-api";
+import type { ControlCommand, ControlSessionTimeline } from "@/lib/control-api";
 
 export function SessionTimeline({ sessionId, timeZone }: { sessionId: string; timeZone: string }) {
-  const [timeline, setTimeline] = useState<CloudSessionTimeline>();
+  const [timeline, setTimeline] = useState<ControlSessionTimeline>();
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     try {
       const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, { cache: "no-store" });
-      const body = (await response.json().catch(() => ({}))) as CloudSessionTimeline & { error?: string };
+      const body = (await response.json().catch(() => ({}))) as ControlSessionTimeline & { error?: string };
       if (!response.ok || !body.session) throw new Error(body.error ?? "Could not load Session timeline");
       setTimeline(body);
       setError(undefined);
@@ -111,7 +111,7 @@ export function SessionTimeline({ sessionId, timeZone }: { sessionId: string; ti
   );
 }
 
-function CommandTrace({ command }: { command: CloudCommand }) {
+function CommandTrace({ command }: { command: ControlCommand }) {
   const output = decodeOutput(command);
   return (
     <div className="mt-3 overflow-hidden rounded-lg border bg-neutral-950 text-neutral-100">
@@ -127,7 +127,7 @@ function CommandTrace({ command }: { command: CloudCommand }) {
   );
 }
 
-function decodeOutput(command: CloudCommand): string {
+function decodeOutput(command: ControlCommand): string {
   const decoder = new TextDecoder();
   return command.output
     .slice()

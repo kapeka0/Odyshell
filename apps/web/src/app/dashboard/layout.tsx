@@ -1,6 +1,6 @@
 import { AppShell } from "@/components/app-shell";
 import { DashboardProvider } from "@/components/dashboard-provider";
-import { publicServerUrl } from "@/lib/cloud-api";
+import { publicServerUrl } from "@/lib/control-api";
 import { dashboardState } from "@/lib/dashboard-context";
 
 export default async function DashboardLayout({

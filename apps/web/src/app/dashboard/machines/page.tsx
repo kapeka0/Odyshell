@@ -10,9 +10,6 @@ import { useDashboard } from "@/components/dashboard-provider";
 
 export default function MachinesPage() {
   const { state } = useDashboard();
-  const atLimit =
-    state.status === "ready" &&
-    state.context.usage.machines >= state.context.plan.machineLimit;
 
   return (
     <DashboardPage>
@@ -20,7 +17,7 @@ export default function MachinesPage() {
       {state.status !== "ready" ? (
         <DashboardStateNotice state={state} />
       ) : (
-        <MachineList machines={state.context.machines} atLimit={atLimit} />
+        <MachineList machines={state.context.machines} />
       )}
     </DashboardPage>
   );

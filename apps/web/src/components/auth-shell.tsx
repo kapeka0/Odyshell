@@ -30,7 +30,7 @@ export function AuthShell({
         className="mx-auto grid min-h-[calc(100svh-4rem)] w-full max-w-6xl items-center gap-12 px-4 py-12 lg:grid-cols-[minmax(0,1fr)_28rem] lg:px-8"
       >
         <section className="hidden max-w-xl lg:block">
-          <p className="text-sm text-muted-foreground">Odyshell Cloud</p>
+          <p className="text-sm text-muted-foreground">Self-hosted Odyshell</p>
           <h1 className="mt-3 text-5xl leading-[1.02] font-semibold tracking-[-0.04em]">
             Govern agents acting on real machines.
           </h1>

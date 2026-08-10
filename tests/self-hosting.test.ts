@@ -15,7 +15,7 @@ describe("self-hosted distribution", () => {
     const example = source(".env.example").replace(/\r\n/gu, "\n");
 
     expect(compose.match(/NODE_ENV: production/g)).toHaveLength(2);
-    expect(compose.match(/ODYSHELL_DEPLOYMENT_MODE: self-hosted/g)).toHaveLength(2);
+    expect(compose).not.toContain("ODYSHELL_DEPLOYMENT_MODE");
     expect(compose).toContain('ODYSHELL_RUN_IDENTITY_MIGRATIONS: "true"');
     for (const secret of [
       "POSTGRES_PASSWORD",
@@ -29,6 +29,8 @@ describe("self-hosted distribution", () => {
     expect(compose).toContain("ODYSHELL_IDENTITY_JWKS_URL: http://web:3000/api/auth/jwks");
     expect(compose).not.toContain("ODYSHELL_ALLOW_DEV_CREDENTIALS");
     expect(compose).not.toContain("ODYSHELL_AGENT_KEY");
+    expect(compose).not.toContain("STRIPE_");
+    expect(compose).not.toContain("ODYSHELL_MANAGED_BILLING");
     expect(compose).not.toContain("dev-admin-key");
     expect(compose).not.toContain("dev-agent-key");
     expect(compose).not.toMatch(/POSTGRES_PASSWORD:\s+odyshell/u);
@@ -70,7 +72,7 @@ describe("self-hosted distribution", () => {
     expect(avatars).toContain("facehashAvatarPath(identity)");
     expect(avatars).not.toContain("avatar.vercel.sh");
     expect(auth).toContain("emailAndPassword:");
-    expect(auth).toContain('deploymentMode === "cloud"');
+    expect(auth).not.toContain("deploymentMode");
     expect(auth).toContain("select exists(select 1 from organization)");
   });
 

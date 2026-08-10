@@ -125,9 +125,10 @@ particular component, library or interaction pattern.
 - The public landing uses restrained neutral surfaces, medium-weight typography, compact radii and
   generous page gutters. Its signature product visual is a real Session and Command crossing Server
   and Local Policy, not decorative illustration.
-- Publish the current Free and $30/member/month Pro limits exactly. Enterprise and invitations are
-  labeled future work. Public copy covers Windows, Linux, macOS, Session, Command, MCP, HTTP, Cloud,
-  and self-hosted behavior available in the current release.
+- Present Odyshell as free, self-hosted, and unlimited. The public site sends users to the Docker
+  distribution and documentation; authentication and the dashboard belong only to each installation.
+  Public copy covers Windows, Linux, macOS, Session, Command, MCP, HTTP, and self-hosted behavior
+  available in the current release.
 - Machine enrollment gets a dedicated, uncluttered view. The one-time command
   must remain fully visible and must not be clipped by an overlay.
 - Short creation flows preserve context and remain comfortable at narrow
@@ -157,7 +158,7 @@ particular component, library or interaction pattern.
   Workspace.
 - Tables place the filtered result count above the table, show optional context
   on the right and center pagination below. Activity uses that context for the
-  Organization plan retention. Table skeletons preserve this same order.
+  configured audit retention. Table skeletons preserve this same order.
 - Collection creation actions live in the table toolbar, never in the page
   header. Search and filters form the left group; the concise Add or New action
   forms the right group. Table skeletons preserve both groups.
@@ -265,7 +266,7 @@ particular component, library or interaction pattern.
   audit or user-facing error feedback. Bounded stdout/stderr belong only to the retained timeline.
 - Keep public documentation outside the authenticated workspace and make it usable
   without an authenticated product session.
-- Documentation starts with the Cloud workflow, uses progressive disclosure and
+- Documentation starts with the Docker self-hosting workflow, uses progressive disclosure and
   describes only behavior available in the current release.
 - Documentation must serve people and agents from one reviewed source. Keep
   Markdown pages and LLM indexes discoverable without adding provider-specific

@@ -187,7 +187,7 @@ describe("remote MCP security boundary", () => {
     expect(ensureMcpInstallation).not.toHaveBeenCalled();
   });
 
-  it("denies revoked installations and reports Agent entitlement limits", async () => {
+  it("denies revoked installations", async () => {
     const revoked = remoteMcpApp({
       database: { ensureMcpInstallation: vi.fn(async () => null) },
     });
@@ -200,26 +200,6 @@ describe("remote MCP security boundary", () => {
     expect(revokedResponse.statusCode).toBe(403);
     expect(revokedResponse.json()).toEqual({ error: "mcp_installation_revoked" });
 
-    const full = remoteMcpApp({
-      database: {
-        ensureMcpInstallation: vi.fn(async () => ({
-          status: "agent_limit_reached" as const,
-          plan: "free" as const,
-          activeAgentLimit: 2,
-        })),
-      },
-    });
-    const fullResponse = await full.inject({
-      method: "POST",
-      url: "/mcp",
-      headers: { authorization: "Bearer safe-oauth-token" },
-      payload: initializeRequest(),
-    });
-    expect(fullResponse.statusCode).toBe(409);
-    expect(fullResponse.json()).toEqual({
-      error: "agent_limit_reached",
-      details: { activeAgentLimit: 2, plan: "free" },
-    });
   });
 });
 

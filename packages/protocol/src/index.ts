@@ -14,7 +14,7 @@ import type {
 export * from "./session.js";
 
 export const PROTOCOL_VERSION = 5;
-export const DEFAULT_CLOUD_SERVER_URL = "https://server.odyshell.com";
+export const DEFAULT_SERVER_URL = "http://localhost:4100";
 export const MAX_CLIENT_CLOCK_SKEW_MILLISECONDS = 30_000;
 
 export type HostPlatform = "linux" | "macos" | "windows";

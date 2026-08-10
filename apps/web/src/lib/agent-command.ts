@@ -1,4 +1,4 @@
-import { DEFAULT_CLOUD_SERVER_URL } from "@odyshell/protocol";
+import { DEFAULT_SERVER_URL } from "@odyshell/protocol";
 import { posixShellArgument } from "./enrollment-command";
 
 export function agentLoginCommand(options: {
@@ -6,7 +6,7 @@ export function agentLoginCommand(options: {
   token: string;
 }): string {
   const args = ["ods"];
-  if (options.serverUrl !== DEFAULT_CLOUD_SERVER_URL) {
+  if (options.serverUrl !== DEFAULT_SERVER_URL) {
     args.push("--server", options.serverUrl);
   }
   args.push("login", "--agent-token", options.token);

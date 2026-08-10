@@ -15,7 +15,7 @@ type PackageManifest = {
   exports?: unknown;
 };
 
-const releaseVersion = "0.19.0";
+const releaseVersion = "0.20.0";
 const manifests = [
   "apps/cli/package.json",
   "apps/client/package.json",
@@ -25,7 +25,32 @@ const manifests = [
   "packages/protocol/package.json",
 ].map(readManifest);
 
-describe("0.19.0 release contract", () => {
+describe("0.20.0 release contract", () => {
+  it("licenses the complete repository under Apache-2.0", () => {
+    const license = readFileSync("LICENSE", "utf8");
+    expect(license).toContain("Apache License");
+    expect(license).toContain("Version 2.0");
+  });
+
+  it("ships a verifiable encrypted Railway evacuation tool", () => {
+    const backup = readFileSync("scripts/backup-railway.ps1", "utf8");
+    expect(backup).toContain("Protect-CmsMessage");
+    expect(backup).toContain("Unprotect-CmsMessage");
+    expect(backup).toContain("pg_restore");
+    expect(backup).toContain("Get-FileHash");
+    expect(backup).not.toContain("Write-Output $railwayVariables");
+    const transfer = readFileSync("scripts/transfer-cms-backup.ps1", "utf8");
+    expect(transfer).toContain("Unprotect-CmsMessage");
+    expect(transfer).toContain("ExpectedDecryptedSha256");
+    expect(transfer).toContain("Remove-Item -LiteralPath $temporaryRestore");
+    expect(transfer).toContain("DestinationHost -notmatch");
+    const restore = readFileSync("scripts/restore-postgres.sh", "utf8");
+    expect(restore).toContain("pg_restore --exit-on-error");
+    expect(restore).toContain("trap cleanup_restore EXIT");
+    expect(restore).toContain('test ! -L "$backup_path"');
+    expect(restore).not.toContain("eval ");
+  });
+
   it("exposes the built Server as the root production entrypoint", () => {
     const rootPackage = JSON.parse(
       readFileSync(resolve(process.cwd(), "package.json"), "utf8"),
@@ -183,7 +208,7 @@ describe("0.19.0 release contract", () => {
       expect(workflow).toContain(
         "BETTER_AUTH_SECRET: release-check-identity-secret-00000000",
       );
-      expect(workflow).toContain("ODYSHELL_DEPLOYMENT_MODE: cloud");
+      expect(workflow).not.toContain("ODYSHELL_DEPLOYMENT_MODE");
       expect(workflow.match(/DATABASE_URL: postgresql:\/\/build:build@127\.0\.0\.1:5432\/build/g)).toHaveLength(2);
       expect(workflow).not.toContain("CLERK_SECRET_KEY");
     expect(workflow.indexOf("Publish verified npm packages")).toBeLessThan(

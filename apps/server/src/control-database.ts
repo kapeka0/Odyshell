@@ -1,10 +1,6 @@
 import { randomUUID } from "node:crypto";
 import pg, { type PoolClient, type QueryResultRow } from "pg";
-import {
-  entitlementsFor,
-  type CloudPlanId,
-  type OrganizationLoggingLevel,
-} from "./cloud.js";
+import { type OrganizationLoggingLevel } from "./control.js";
 
 const { Pool } = pg;
 const CONTROL_MIGRATION_LOCK = 1_781_239_411;
@@ -14,11 +10,8 @@ export type OrganizationRecord = {
   slug: string;
   name: string;
   externalId: string;
-  plan: CloudPlanId;
   avatarSeed: string;
   loggingLevel: OrganizationLoggingLevel;
-  stripeCustomerId?: string;
-  stripeSubscriptionId?: string;
   createdAt: number;
 };
 
@@ -62,12 +55,6 @@ export type AgentIdentityRecord = {
   updatedAt: number;
 };
 
-export type ActiveAgentLimitReached = {
-  status: "agent_limit_reached";
-  plan: CloudPlanId;
-  activeAgentLimit: number;
-};
-
 export type McpInstallationRecord = {
   organizationId: string;
   id: string;
@@ -102,11 +89,8 @@ type OrganizationRow = QueryResultRow & {
   slug: string;
   name: string;
   external_id: string;
-  plan: CloudPlanId;
   avatar_seed: string;
   logging_level: OrganizationLoggingLevel;
-  stripe_customer_id: string | null;
-  stripe_subscription_id: string | null;
   created_at: Date;
 };
 
@@ -137,10 +121,7 @@ type AgentRow = QueryResultRow & {
 export class PostgresControlDatabase {
   private readonly pool: pg.Pool;
 
-  constructor(
-    connectionString: string,
-    private readonly deploymentMode: "cloud" | "self-hosted" = "self-hosted",
-  ) {
+  constructor(connectionString: string) {
     this.pool = new Pool({
       connectionString,
       max: 10,
@@ -166,7 +147,7 @@ export class PostgresControlDatabase {
     await this.pool.query("select 1");
   }
 
-  async ensureCloudContext(input: {
+  async ensureControlContext(input: {
     externalId: string;
     slug: string;
     name: string;
@@ -177,15 +158,15 @@ export class PostgresControlDatabase {
         "select * from odyshell.organizations where external_id = $1",
         [input.externalId],
       );
-      if (existingOrganization.rows.length === 0 && this.deploymentMode === "self-hosted") {
+      if (existingOrganization.rows.length === 0) {
         const existingTenant = await client.query("select 1 from odyshell.organizations limit 1");
         if ((existingTenant.rowCount ?? 0) > 0) {
           throw new Error("Self-hosted Odyshell permits exactly one Organization");
         }
       }
       const organizationResult = await client.query<OrganizationRow>(`
-        insert into odyshell.organizations (id, slug, name, external_id, plan)
-        values ($1, $2, $3, $4, 'free')
+        insert into odyshell.organizations (id, slug, name, external_id)
+        values ($1, $2, $3, $4)
         on conflict (external_id) do update set
           slug = excluded.slug,
           name = excluded.name
@@ -197,19 +178,15 @@ export class PostgresControlDatabase {
     });
   }
 
-  async organizationPlan(organizationId: string): Promise<{
-    plan: CloudPlanId;
+  async organizationUsage(organizationId: string): Promise<{
     activeMachines: number;
     activeAgents: number;
-    cloudManaged: boolean;
   } | null> {
     const result = await this.pool.query<{
-      plan: CloudPlanId;
       active_machines: string;
       active_agents: string;
     }>(`
-      select organization.plan,
-        (select count(*) from odyshell.machines machine
+      select (select count(*) from odyshell.machines machine
           where machine.organization_id = organization.id and machine.revoked_at is null) as active_machines,
         (select count(*) from odyshell.agents agent
           where agent.organization_id = organization.id and agent.deleted_at is null
@@ -219,49 +196,9 @@ export class PostgresControlDatabase {
     `, [organizationId]);
     const row = result.rows[0];
     return row ? {
-      plan: row.plan,
       activeMachines: Number(row.active_machines),
       activeAgents: Number(row.active_agents),
-      cloudManaged: this.deploymentMode === "cloud",
     } : null;
-  }
-
-  async applyStripePlan(input: {
-    eventId: string;
-    externalOrganizationId: string;
-    plan: "free" | "pro";
-    stripeCustomerId: string;
-    stripeSubscriptionId: string | null;
-  }): Promise<"applied" | "replayed" | "organization_not_found"> {
-    return await this.transaction(async (client) => {
-      const event = await client.query(`
-        insert into odyshell.stripe_events (event_id) values ($1)
-        on conflict (event_id) do nothing returning event_id
-      `, [input.eventId]);
-      if ((event.rowCount ?? 0) === 0) return "replayed";
-      const updated = await client.query(`
-        update odyshell.organizations set
-          plan = $2,
-          stripe_customer_id = $3,
-          stripe_subscription_id = $4
-        where external_id = $1
-        returning id
-      `, [
-        input.externalOrganizationId,
-        input.plan,
-        input.stripeCustomerId,
-        input.stripeSubscriptionId,
-      ]);
-      if ((updated.rowCount ?? 0) === 0) {
-        throw new Error("Stripe event references an unknown Organization");
-      }
-      return "applied";
-    }).catch((error: unknown) => {
-      if (error instanceof Error && error.message.includes("unknown Organization")) {
-        return "organization_not_found" as const;
-      }
-      throw error;
-    });
   }
 
   async mcpOrganization(organizationId: string): Promise<McpOrganizationRecord | null> {
@@ -414,7 +351,7 @@ export class PostgresControlDatabase {
     userId: string;
     oauthClientId: string;
     agentName: string;
-  }): Promise<McpInstallationRecord | ActiveAgentLimitReached | null> {
+  }): Promise<McpInstallationRecord | null> {
     return await this.transaction(async (client) => {
       await client.query("select pg_advisory_xact_lock(hashtext($1))", [input.organizationId]);
       const existing = await activeInstallation(client, input);
@@ -425,24 +362,6 @@ export class PostgresControlDatabase {
           and user_id = $2 and oauth_client_id = $3
       `, [input.organizationId, input.userId, input.oauthClientId]);
       if ((revoked.rowCount ?? 0) > 0) return null;
-      const usage = await client.query<{ plan: CloudPlanId; active_agents: string }>(`
-        select organization.plan,
-          (select count(*) from odyshell.agents agent
-            where agent.organization_id = organization.id and agent.status = 'active'
-              and agent.deleted_at is null) as active_agents
-        from odyshell.organizations organization
-        where organization.id = $1
-      `, [input.organizationId]);
-      const entitlement = usage.rows[0];
-      if (!entitlement) return null;
-      const limit = entitlementsFor(entitlement.plan).activeAgentLimit;
-      if (
-        this.deploymentMode === "cloud" &&
-        limit !== null &&
-        Number(entitlement.active_agents) >= limit
-      ) {
-        return { status: "agent_limit_reached", plan: entitlement.plan, activeAgentLimit: limit };
-      }
       const now = new Date();
       const agentId = randomUUID();
       await client.query(`
@@ -539,7 +458,6 @@ export class PostgresControlDatabase {
     | { status: "enrolled"; machineId: string; name: string;
         controlOrganizationId: string; organizationId: string; createdByHumanId?: string }
     | { status: "previous_machine_active" }
-    | { status: "machine_limit_reached"; machineLimit: number }
     | null
   > {
     return await this.transaction(async (client) => {
@@ -560,21 +478,13 @@ export class PostgresControlDatabase {
           return { status: "previous_machine_active" };
         }
       }
-      const organization = await client.query<{
-        plan: CloudPlanId; external_id: string; active_machines: string;
-      }>(`
-        select organization.plan, organization.external_id,
-          (select count(*) from odyshell.machines machine
-            where machine.organization_id = organization.id and machine.revoked_at is null) as active_machines
+      const organization = await client.query<{ external_id: string }>(`
+        select organization.external_id
         from odyshell.organizations organization
         where organization.id = $1
       `, [token.organization_id]);
       const owner = organization.rows[0];
       if (!owner) return null;
-      const machineLimit = entitlementsFor(owner.plan).machineLimit;
-      if (this.deploymentMode === "cloud" && Number(owner.active_machines) >= machineLimit) {
-        return { status: "machine_limit_reached", machineLimit };
-      }
       await client.query(
         "update odyshell.enrollment_tokens set used_at = now() where token_hash = $1",
         [input.tokenHash],
@@ -740,10 +650,7 @@ export type Database = PostgresControlDatabase;
 export function createDatabase(environment: NodeJS.ProcessEnv): Database {
   const connectionString = environment.DATABASE_URL;
   if (!connectionString) throw new Error("DATABASE_URL is required");
-  return new PostgresControlDatabase(
-    connectionString,
-    environment.ODYSHELL_DEPLOYMENT_MODE === "cloud" ? "cloud" : "self-hosted",
-  );
+  return new PostgresControlDatabase(connectionString);
 }
 
 export async function audit(
@@ -791,9 +698,7 @@ async function activeInstallation(
 function organizationRecord(row: OrganizationRow): OrganizationRecord {
   return {
     id: row.id, slug: row.slug, name: row.name, externalId: row.external_id,
-    plan: row.plan, avatarSeed: row.avatar_seed, loggingLevel: row.logging_level,
-    ...(row.stripe_customer_id ? { stripeCustomerId: row.stripe_customer_id } : {}),
-    ...(row.stripe_subscription_id ? { stripeSubscriptionId: row.stripe_subscription_id } : {}),
+    avatarSeed: row.avatar_seed, loggingLevel: row.logging_level,
     createdAt: timestamp(row.created_at),
   };
 }
@@ -852,27 +757,10 @@ const controlSchemaSql = `
     slug text not null,
     name text not null,
     external_id text not null unique,
-    plan text not null default 'free' check (plan in ('free', 'pro', 'enterprise')),
     avatar_seed text not null default 'default',
     logging_level text not null default 'privacy-minimal'
       check (logging_level in ('privacy-minimal', 'operational', 'diagnostic')),
-    stripe_customer_id text unique,
-    stripe_subscription_id text unique,
     created_at timestamptz not null default now()
-  );
-  alter table odyshell.organizations drop constraint if exists organizations_plan_check;
-  alter table odyshell.organizations add constraint organizations_plan_check
-    check (plan in ('free', 'pro', 'enterprise'));
-  alter table odyshell.organizations add column if not exists stripe_customer_id text;
-  alter table odyshell.organizations add column if not exists stripe_subscription_id text;
-  create unique index if not exists organizations_stripe_customer_idx
-    on odyshell.organizations (stripe_customer_id) where stripe_customer_id is not null;
-  create unique index if not exists organizations_stripe_subscription_idx
-    on odyshell.organizations (stripe_subscription_id) where stripe_subscription_id is not null;
-
-  create table if not exists odyshell.stripe_events (
-    event_id text primary key,
-    processed_at timestamptz not null default now()
   );
 
   create table if not exists odyshell.user_preferences (

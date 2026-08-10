@@ -33,19 +33,19 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "@/components/ui/toast";
-import type { CloudAgent } from "@/lib/cloud-api";
+import type { ControlAgent } from "@/lib/control-api";
 import { formatDashboardTimestamp } from "@/lib/date-time";
 
 export function AgentList({
   agents,
   canManage,
 }: {
-  agents: CloudAgent[];
+  agents: ControlAgent[];
   canManage: boolean;
 }) {
   const { refresh, state } = useDashboard();
   const timeZone = state.status === "ready" ? state.context.userPreferences.timeZone : "System";
-  const columns = useMemo<ColumnDef<CloudAgent>[]>(
+  const columns = useMemo<ColumnDef<ControlAgent>[]>(
     () => [
       {
         id: "search",
@@ -112,10 +112,10 @@ export function AgentList({
             id: "actions",
             enableSorting: false,
             header: () => <span className="sr-only">Actions</span>,
-            cell: ({ row }: { row: { original: CloudAgent } }) => (
+            cell: ({ row }: { row: { original: ControlAgent } }) => (
               <AgentActions agent={row.original} refresh={refresh} />
             ),
-          } satisfies ColumnDef<CloudAgent>]
+          } satisfies ColumnDef<ControlAgent>]
         : []),
     ],
     [canManage, refresh, timeZone],
@@ -154,7 +154,7 @@ function AgentActions({
   agent,
   refresh,
 }: {
-  agent: CloudAgent;
+  agent: ControlAgent;
   refresh: () => Promise<unknown>;
 }) {
   const [open, setOpen] = useState(false);

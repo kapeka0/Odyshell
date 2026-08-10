@@ -69,7 +69,6 @@ export function createOdyshellAuth(
           after: async (user) => {
             await defaultOrganizationForUser({
               database,
-              deploymentMode: configuration.deploymentMode,
               userId: user.id,
               createOrganization: createDefaultOrganization,
             });
@@ -82,7 +81,6 @@ export function createOdyshellAuth(
             if (typeof session.activeOrganizationId === "string") return;
             const activeOrganizationId = await defaultOrganizationForUser({
               database,
-              deploymentMode: configuration.deploymentMode,
               userId: session.userId,
               createOrganization: createDefaultOrganization,
             });
@@ -100,7 +98,6 @@ export function createOdyshellAuth(
         roles: identityRoles,
         creatorRole: "owner",
         allowUserToCreateOrganization: async () => {
-          if (configuration.deploymentMode === "cloud") return true;
           const result = await database.query<{ exists: boolean }>(
             "select exists(select 1 from organization) as exists",
           );

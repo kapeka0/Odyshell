@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { cloudRequest } from "@/lib/cloud-api";
+import { controlRequest } from "@/lib/control-api";
 import {
-  cloudRouteError,
-  requireCloudRouteIdentity,
-} from "@/lib/cloud-route";
+  controlRouteError,
+  requireControlRouteIdentity,
+} from "@/lib/control-route";
 
 const machineIdSchema = z.string().uuid();
 const updateMachineSchema = z.object({
@@ -16,7 +16,7 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ machineId: string }> },
 ) {
-  const authorization = await requireCloudRouteIdentity();
+  const authorization = await requireControlRouteIdentity();
   if (authorization.response) return authorization.response;
   const machineId = machineIdSchema.safeParse((await params).machineId);
   const input = updateMachineSchema.safeParse(
@@ -26,18 +26,18 @@ export async function PATCH(
     return NextResponse.json({ error: "invalid_request" }, { status: 400 });
   }
   try {
-    const result = await cloudRequest<{
+    const result = await controlRequest<{
       id: string;
       name: string;
       description: string | null;
-    }>("/v1/internal/cloud/machines/update", authorization.identity, {
+    }>("/v1/internal/control/machines/update", authorization.identity, {
       extraBody: { machineId: machineId.data, ...input.data },
     });
     return NextResponse.json(result, {
       headers: { "cache-control": "no-store" },
     });
   } catch (error) {
-    return cloudRouteError(error);
+    return controlRouteError(error);
   }
 }
 
@@ -45,24 +45,24 @@ export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ machineId: string }> },
 ) {
-  const authorization = await requireCloudRouteIdentity();
+  const authorization = await requireControlRouteIdentity();
   if (authorization.response) return authorization.response;
   const parsed = machineIdSchema.safeParse((await params).machineId);
   if (!parsed.success) {
     return NextResponse.json({ error: "invalid_machine_id" }, { status: 400 });
   }
   try {
-    const result = await cloudRequest<{
+    const result = await controlRequest<{
       id: string;
       name: string;
       status: "revoked";
-    }>("/v1/internal/cloud/machines/revoke", authorization.identity, {
+    }>("/v1/internal/control/machines/revoke", authorization.identity, {
       extraBody: { machineId: parsed.data },
     });
     return NextResponse.json(result, {
       headers: { "cache-control": "no-store" },
     });
   } catch (error) {
-    return cloudRouteError(error);
+    return controlRouteError(error);
   }
 }

@@ -1,18 +1,18 @@
 import { NextResponse } from "next/server";
-import { cloudRequest, type CloudContext } from "@/lib/cloud-api";
+import { controlRequest, type ControlContext } from "@/lib/control-api";
 import {
-  cloudRouteError,
-  requireCloudRouteIdentity,
-} from "@/lib/cloud-route";
+  controlRouteError,
+  requireControlRouteIdentity,
+} from "@/lib/control-route";
 import { currentHumanIdentity, organizationMembers } from "@/lib/identity";
 
 export async function GET() {
-  const authorization = await requireCloudRouteIdentity();
+  const authorization = await requireControlRouteIdentity();
   if (authorization.response) return authorization.response;
   try {
     const [context, members] = await Promise.all([
-      cloudRequest<Omit<CloudContext, "members" | "currentMemberRole">>(
-        "/v1/internal/cloud/context",
+      controlRequest<Omit<ControlContext, "members" | "currentMemberRole">>(
+        "/v1/internal/control/context",
         authorization.identity,
       ),
       organizationMembers(),
@@ -31,6 +31,6 @@ export async function GET() {
       { headers: { "cache-control": "no-store" } },
     );
   } catch (error) {
-    return cloudRouteError(error);
+    return controlRouteError(error);
   }
 }

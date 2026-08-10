@@ -55,7 +55,7 @@ export function registerCliHttp(
       database.listMachines(principal.organization.id),
       database.listOrganizationAgents(principal.organization.id),
       sessionDatabase.listSessions(principal.identity.organizationId, 200),
-      database.organizationPlan(principal.organization.id),
+      database.organizationUsage(principal.organization.id),
     ]);
     return {
       organization: {
@@ -63,7 +63,6 @@ export function registerCliHttp(
         externalId: principal.organization.externalId,
         slug: principal.organization.slug,
         name: principal.organization.name,
-        plan: principal.organization.plan,
       },
       usage,
       machines: machines.map((machine) => ({ ...machine, online: gateway.isOnline(machine.id) })),

@@ -38,10 +38,8 @@ type EnrollmentToken = { token: string; expiresAt: string };
 
 export function EnrollMachine({
   serverUrl,
-  atLimit,
 }: {
   serverUrl: string;
-  atLimit: boolean;
 }) {
   const { state } = useDashboard();
   const [machineName, setMachineName] = useState("my-machine");
@@ -178,7 +176,7 @@ export function EnrollMachine({
               <Link href="/dashboard/machines" className={buttonVariants({ variant: "outline" })}>
                 Cancel
               </Link>
-              <Button type="submit" disabled={pending || atLimit}>
+              <Button type="submit" disabled={pending}>
                 {pending ? <Spinner /> : null}
                 Add
               </Button>

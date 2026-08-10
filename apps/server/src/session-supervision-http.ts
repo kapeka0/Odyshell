@@ -1,11 +1,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { cloudIdentitySchema } from "./cloud.js";
+import { controlIdentitySchema } from "./control.js";
 import type { PostgresSessionDatabase } from "./session-database.js";
 import type { SessionService } from "./sessions.js";
 
 const sessionIdSchema = z.string().uuid();
-const sessionQuerySchema = cloudIdentitySchema.extend({
+const sessionQuerySchema = controlIdentitySchema.extend({
   limit: z.number().int().min(1).max(200).default(100),
 }).strict();
 
@@ -41,7 +41,7 @@ export function registerSessionSupervisionHttp(
     { preHandler: dependencies.preHandler },
     async (request, reply) => {
       const sessionId = sessionIdSchema.safeParse(request.params.sessionId);
-      const identity = cloudIdentitySchema.safeParse(request.body);
+      const identity = controlIdentitySchema.safeParse(request.body);
       if (!sessionId.success || !identity.success) {
         return reply.code(400).send({ error: "invalid_session_timeline" });
       }
@@ -59,7 +59,7 @@ export function registerSessionSupervisionHttp(
       { preHandler: dependencies.preHandler },
       async (request, reply) => {
         const sessionId = sessionIdSchema.safeParse(request.params.sessionId);
-        const identity = cloudIdentitySchema.safeParse(request.body);
+        const identity = controlIdentitySchema.safeParse(request.body);
         if (!sessionId.success || !identity.success) {
           return reply.code(400).send({ error: "invalid_session_decision" });
         }

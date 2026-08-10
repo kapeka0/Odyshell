@@ -238,15 +238,6 @@ export function registerRemoteMcp(
           oauthClientId: identity.clientId,
           agentName,
         });
-        if (installation?.status === "agent_limit_reached") {
-          return reply.code(409).send({
-            error: "agent_limit_reached",
-            details: {
-              activeAgentLimit: installation.activeAgentLimit,
-              plan: installation.plan,
-            },
-          });
-        }
         if (!installation) {
           return reply.code(403).send({ error: "mcp_installation_revoked" });
         }

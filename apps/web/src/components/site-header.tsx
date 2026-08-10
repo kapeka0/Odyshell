@@ -1,8 +1,11 @@
 import Link from "next/link";
 import { Brand } from "@/components/brand";
 import { SiteSessionActions } from "@/components/site-session-actions";
+import { buttonVariants } from "@/components/ui/button";
+import { publicSiteEnabled } from "@/lib/public-site";
 
 export function SiteHeader() {
+  const publicSite = publicSiteEnabled(process.env);
   return (
     <>
       <a className="skip-link" href="#main-content">
@@ -18,12 +21,18 @@ export function SiteHeader() {
             <Link className="text-muted-foreground transition-colors hover:text-foreground" href="/#security">
               Security
             </Link>
-            <Link className="text-muted-foreground transition-colors hover:text-foreground" href="/#pricing">
-              Pricing
+            <Link className="text-muted-foreground transition-colors hover:text-foreground" href="/#self-hosting">
+              Self-hosting
             </Link>
           </nav>
           <div className="ml-auto flex items-center gap-2">
-            <SiteSessionActions />
+            {publicSite ? (
+              <a className={buttonVariants({ size: "lg" })} href="https://github.com/kapeka0/odyshell">
+                Deploy Odyshell
+              </a>
+            ) : (
+              <SiteSessionActions />
+            )}
           </div>
         </div>
       </header>

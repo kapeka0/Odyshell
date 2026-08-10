@@ -29,7 +29,7 @@ async function consumeOrganizationEvents(
   connected: () => void,
   delayed: () => void,
 ): Promise<void> {
-  const response = await fetch(new URL("/v1/cloud/events", serverUrl), {
+  const response = await fetch(new URL("/v1/control/events", serverUrl), {
     method: "POST",
     body: token,
     headers: { "content-type": "text/plain" },

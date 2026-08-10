@@ -24,7 +24,7 @@ import { AgentIdentityAvatar } from "@/components/identity-avatar";
 import { StatusDot } from "@/components/status-dot";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
-import type { CloudContext, CloudSession } from "@/lib/cloud-api";
+import type { ControlContext, ControlSession } from "@/lib/control-api";
 import { cn } from "@/lib/utils";
 
 type MachineNode = Node<{
@@ -42,7 +42,7 @@ type AgentNode = Node<{
 type SessionNode = Node<{
   id: string;
   title: string;
-  status: CloudSession["status"];
+  status: ControlSession["status"];
   expiresAt: string;
 }, "session">;
 
@@ -54,7 +54,7 @@ const nodeTypes = {
   session: SessionCard,
 };
 
-export function WorkspaceCanvas({ context }: { context: CloudContext }) {
+export function WorkspaceCanvas({ context }: { context: ControlContext }) {
   const { resolvedTheme } = useTheme();
   const reduceMotion = useReducedMotion();
   const mounted = useSyncExternalStore(emptySubscribe, () => true, () => false);
@@ -192,7 +192,7 @@ function CanvasMetric({ icon, label, className }: { icon: React.ReactNode; label
   );
 }
 
-function topologyFor(context: CloudContext, animated: boolean): { nodes: TopologyNode[]; edges: Edge[] } {
+function topologyFor(context: ControlContext, animated: boolean): { nodes: TopologyNode[]; edges: Edge[] } {
   const sessions = liveSessionsFor(context.sessions);
   const agents = context.agents.filter((agent) => agent.status === "active");
   const agentNodes: AgentNode[] = agents.map((agent, index) => ({
@@ -246,7 +246,7 @@ function topologyFor(context: CloudContext, animated: boolean): { nodes: Topolog
   return { nodes: [...agentNodes, ...sessionNodes, ...machineNodes], edges };
 }
 
-function liveSessionsFor(sessions: CloudSession[]): CloudSession[] {
+function liveSessionsFor(sessions: ControlSession[]): ControlSession[] {
   return sessions.filter((session) => ["opening", "active", "cancellation_requested"].includes(session.status));
 }
 
