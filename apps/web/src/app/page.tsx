@@ -25,7 +25,6 @@ export default function HomePage() {
           </p>
           <div className="mt-9 flex flex-wrap justify-center gap-3">
             <a href="https://github.com/kapeka0/odyshell" className={buttonVariants({ size: "lg" })}>Deploy Odyshell <ArrowRightIcon data-icon="inline-end" /></a>
-            <Link href="/docs" className={buttonVariants({ variant: "outline", size: "lg" })}>Read the docs</Link>
           </div>
           <p className="mt-4 text-xs text-muted-foreground">One Docker Compose stack. Unlimited members, Machines, and Agents.</p>
         </section>
@@ -123,7 +122,6 @@ docker compose up --build`}</code></pre>
             <p className="mx-auto mt-6 max-w-xl text-lg leading-8 text-white/60">Connect a Machine in minutes and keep every Session temporary, bounded, and visible.</p>
             <div className="mt-9 flex flex-wrap justify-center gap-3">
               <a href="https://github.com/kapeka0/odyshell" className={buttonVariants({ size: "lg" })}>Deploy Odyshell <ArrowRightIcon data-icon="inline-end" /></a>
-              <Link href="/docs" className="inline-flex h-11 items-center rounded-lg border border-white/20 px-4 text-sm font-medium hover:bg-white/10">Read the docs</Link>
             </div>
           </div>
         </section>
@@ -131,7 +129,7 @@ docker compose up --build`}</code></pre>
       <footer className="landing-shell py-10">
         <div className="flex flex-col gap-6 border-t pt-7 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           <span className="font-semibold text-foreground">Odyshell</span>
-          <div className="flex flex-wrap gap-5"><Link href="/#product">Product</Link><Link href="/#security">Security</Link><Link href="/#self-hosting">Self-hosting</Link><Link href="/docs">Docs</Link><a href="https://github.com/kapeka0/odyshell">GitHub</a></div>
+          <div className="flex flex-wrap gap-5"><Link href="/#product">Product</Link><Link href="/#security">Security</Link><Link href="/#self-hosting">Self-hosting</Link><a href="https://github.com/kapeka0/odyshell">GitHub</a></div>
           <span>© 2026 Odyshell</span>
         </div>
       </footer>

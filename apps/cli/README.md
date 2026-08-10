@@ -29,7 +29,7 @@ ods --server https://api.example.com up \
 ```
 
 `ods up` creates an Ed25519 Machine identity, saves a conservative Local Policy, verifies the
-Server, and installs a restartable systemd user service. The token expires after ten minutes,
+Server, and installs a restartable background service for the host platform. The token expires after ten minutes,
 works once, and is never persisted.
 
 The CLI defaults to `http://localhost:4100`. Use `--server https://api.example.com` for a remote
@@ -69,7 +69,7 @@ ods up --profile default
 ```
 
 Use another Profile name when one host connects to another Server or customer Organization.
-Profiles keep independent Machine keys, policies, state directories, and systemd services.
+Profiles keep independent Machine keys, policies, state directories, and background services.
 `--profile` and `--config` cannot be combined.
 
 Remove one local identity or all of them:
@@ -84,8 +84,8 @@ automation.
 
 ## Security boundary
 
-Commands execute as the Linux user running the Client. Use a dedicated user with no root, sudo,
-or Docker membership and grant only the files, credentials, network, and services the Agent needs.
+Commands execute as the operating-system user running the Client. Use a dedicated account without
+administrator, root, sudo, or Docker authority and grant only the files, credentials, network, and services the Agent needs.
 The Client enforces Organization, Session identity, duration, concurrency, timeout, and output limits
 locally. Agents receive temporary Machine authority only through authorized Sessions.
 

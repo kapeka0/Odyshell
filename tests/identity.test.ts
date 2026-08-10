@@ -84,6 +84,7 @@ describe("Odyshell Identity configuration", () => {
         ODYSHELL_RUN_IDENTITY_MIGRATIONS: "true",
       }),
     ).toBe(false);
+    expect(identityMigrationsEnabled({ VERCEL: "1" })).toBe(false);
   });
 
   it("does not let Compose start its identity boundary with default secrets", () => {

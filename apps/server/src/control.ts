@@ -80,8 +80,8 @@ const controlLiveClaimsSchema = z.object({
 
 export type ControlLiveClaims = z.infer<typeof controlLiveClaimsSchema>;
 
-const CLOUD_LIVE_TOKEN_PREFIX = "ods_live_";
-const MAX_CLOUD_LIVE_TOKEN_LENGTH = 2_048;
+const CONTROL_LIVE_TOKEN_PREFIX = "ods_live_";
+const MAX_CONTROL_LIVE_TOKEN_LENGTH = 2_048;
 
 export function createControlLiveToken(
   secret: string,
@@ -99,7 +99,7 @@ export function createControlLiveToken(
   const signature = createHmac("sha256", secret)
     .update(payload)
     .digest("base64url");
-  return `${CLOUD_LIVE_TOKEN_PREFIX}${payload}.${signature}`;
+  return `${CONTROL_LIVE_TOKEN_PREFIX}${payload}.${signature}`;
 }
 
 export function verifyControlLiveToken(
@@ -108,13 +108,13 @@ export function verifyControlLiveToken(
   now = Date.now(),
 ): ControlLiveClaims | null {
   if (
-    token.length > MAX_CLOUD_LIVE_TOKEN_LENGTH ||
-    !token.startsWith(CLOUD_LIVE_TOKEN_PREFIX)
+    token.length > MAX_CONTROL_LIVE_TOKEN_LENGTH ||
+    !token.startsWith(CONTROL_LIVE_TOKEN_PREFIX)
   ) {
     return null;
   }
   const [payload, signature, extra] = token
-    .slice(CLOUD_LIVE_TOKEN_PREFIX.length)
+    .slice(CONTROL_LIVE_TOKEN_PREFIX.length)
     .split(".");
   if (!payload || !signature || extra !== undefined) return null;
   const expected = createHmac("sha256", secret).update(payload).digest();

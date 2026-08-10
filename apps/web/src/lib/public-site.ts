@@ -1,22 +1,28 @@
-const privatePrefixes = [
-  "/dashboard",
-  "/sign-in",
-  "/sign-up",
-  "/onboarding",
-  "/oauth",
-  "/api",
-  "/.well-known",
+const publicPaths = new Set([
+  "/",
+  "/api/search",
+  "/llms-full.txt",
+  "/llms.txt",
+  "/robots.txt",
+]);
+const publicPrefixes = [
+  "/docs",
+  "/llms.mdx/docs",
 ] as const;
+
+export function publicSiteEnabled(environment: NodeJS.ProcessEnv): boolean {
+  return environment.VERCEL === "1" || environment.ODYSHELL_PUBLIC_SITE === "true";
+}
 
 export function publicSiteRequestDecision(
   enabled: boolean,
   pathname: string,
 ): "allow" | "not_found" {
   if (!enabled) return "allow";
-  if (pathname === "/api/search") return "allow";
-  return privatePrefixes.some(
+  if (publicPaths.has(pathname)) return "allow";
+  return publicPrefixes.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
   )
-    ? "not_found"
-    : "allow";
+    ? "allow"
+    : "not_found";
 }

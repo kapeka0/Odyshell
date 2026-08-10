@@ -762,13 +762,6 @@ const controlSchemaSql = `
       check (logging_level in ('privacy-minimal', 'operational', 'diagnostic')),
     created_at timestamptz not null default now()
   );
-  drop table if exists odyshell.stripe_events;
-  drop index if exists odyshell.organizations_stripe_customer_idx;
-  drop index if exists odyshell.organizations_stripe_subscription_idx;
-  alter table odyshell.organizations drop constraint if exists organizations_plan_check;
-  alter table odyshell.organizations drop column if exists plan;
-  alter table odyshell.organizations drop column if exists stripe_customer_id;
-  alter table odyshell.organizations drop column if exists stripe_subscription_id;
 
   create table if not exists odyshell.user_preferences (
     external_id text primary key,

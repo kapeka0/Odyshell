@@ -176,6 +176,9 @@ describe("Session-native Client boundary", () => {
 
   it("connects to the local self-hosted Server by default", () => {
     expect(DEFAULT_SERVER_URL).toBe("http://localhost:4100");
+    const cli = readFileSync(resolve("apps/cli/src/index.ts"), "utf8");
+    expect(cli).not.toContain("process.env.ODYSHELL_SERVER_URL");
+    expect(cli).not.toContain("process.env.ODYSHELL_URL");
   });
 
   it("serializes disconnect and reconnect state for one Machine", async () => {

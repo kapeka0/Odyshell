@@ -80,14 +80,11 @@ function normalizeGlobalOptions(argv: string[]): string[] {
 }
 
 function selectedServerUrl(options: GlobalOptions): string {
-  return options.server ??
-    process.env.ODYSHELL_SERVER_URL ??
-    process.env.ODYSHELL_URL ??
-    DEFAULT_SERVER_URL;
+  return options.server ?? DEFAULT_SERVER_URL;
 }
 
 function selectedServerOverride(options: GlobalOptions): string | undefined {
-  return options.server ?? process.env.ODYSHELL_SERVER_URL ?? process.env.ODYSHELL_URL;
+  return options.server;
 }
 
 async function cliJson(

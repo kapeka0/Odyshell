@@ -2,9 +2,10 @@ import Link from "next/link";
 import { Brand } from "@/components/brand";
 import { SiteSessionActions } from "@/components/site-session-actions";
 import { buttonVariants } from "@/components/ui/button";
+import { publicSiteEnabled } from "@/lib/public-site";
 
 export function SiteHeader() {
-  const publicSite = process.env.ODYSHELL_PUBLIC_SITE === "true";
+  const publicSite = publicSiteEnabled(process.env);
   return (
     <>
       <a className="skip-link" href="#main-content">

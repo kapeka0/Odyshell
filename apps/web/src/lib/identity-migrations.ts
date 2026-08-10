@@ -1,13 +1,14 @@
 import { getMigrations } from "better-auth/db/migration";
 import { Pool } from "pg";
 import { createOdyshellAuth } from "./identity-auth";
+import { publicSiteEnabled } from "./public-site";
 
 const migrationLockName = "odyshell:better-auth-schema";
 
 export function identityMigrationsEnabled(
   environment: NodeJS.ProcessEnv,
 ): boolean {
-  if (environment.ODYSHELL_PUBLIC_SITE === "true") return false;
+  if (publicSiteEnabled(environment)) return false;
 
   const configured = environment.ODYSHELL_RUN_IDENTITY_MIGRATIONS;
   if (

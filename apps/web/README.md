@@ -62,7 +62,9 @@ Web applies the identity schema automatically before accepting traffic. Operator
 schema changes separately can set `ODYSHELL_RUN_IDENTITY_MIGRATIONS=false` and run
 `pnpm migrate:identity` explicitly before deploying Web.
 
-Set `ODYSHELL_PUBLIC_SITE=true` only on the public `odyshell.com` deployment. That mode returns 404
-for authentication, dashboard, OAuth, and API routes while retaining landing and documentation.
+Vercel deployments automatically run as the public `odyshell.com` site. Set
+`ODYSHELL_PUBLIC_SITE=true` for the same mode on another host. Public mode uses a strict allowlist:
+only the landing, docs, LLM indexes, static brand assets, and bounded documentation search are
+reachable; every product, identity, OAuth, API, and unknown future route returns 404.
 
 [Server](../server/README.md) · [Back to Odyshell](../../README.md)

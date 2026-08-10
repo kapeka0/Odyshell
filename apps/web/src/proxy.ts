@@ -1,10 +1,13 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
-import { publicSiteRequestDecision } from "@/lib/public-site";
+import {
+  publicSiteEnabled,
+  publicSiteRequestDecision,
+} from "@/lib/public-site";
 
 export function proxy(request: NextRequest): NextResponse {
   const decision = publicSiteRequestDecision(
-    process.env.ODYSHELL_PUBLIC_SITE === "true",
+    publicSiteEnabled(process.env),
     request.nextUrl.pathname,
   );
   return decision === "not_found"
@@ -13,13 +16,5 @@ export function proxy(request: NextRequest): NextResponse {
 }
 
 export const config = {
-  matcher: [
-    "/dashboard/:path*",
-    "/sign-in/:path*",
-    "/sign-up/:path*",
-    "/onboarding/:path*",
-    "/oauth/:path*",
-    "/api/:path*",
-    "/.well-known/:path*",
-  ],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|brand/).*)"],
 };

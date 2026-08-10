@@ -127,3 +127,5 @@ Repository packages:
 Accepted target architecture is recorded in [`docs/design`](./docs/design). Product terminology and
 the community distribution model are defined in [`CONTEXT.md`](./CONTEXT.md) and
 [`docs/business-model.md`](./docs/business-model.md).
+
+[Apache-2.0 license](./LICENSE)

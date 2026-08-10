@@ -26,6 +26,21 @@ const manifests = [
 ].map(readManifest);
 
 describe("0.20.0 release contract", () => {
+  it("licenses the complete repository under Apache-2.0", () => {
+    const license = readFileSync("LICENSE", "utf8");
+    expect(license).toContain("Apache License");
+    expect(license).toContain("Version 2.0");
+  });
+
+  it("ships a verifiable encrypted Railway evacuation tool", () => {
+    const backup = readFileSync("scripts/backup-railway.ps1", "utf8");
+    expect(backup).toContain("Protect-CmsMessage");
+    expect(backup).toContain("Unprotect-CmsMessage");
+    expect(backup).toContain("pg_restore");
+    expect(backup).toContain("Get-FileHash");
+    expect(backup).not.toContain("Write-Output $railwayVariables");
+  });
+
   it("exposes the built Server as the root production entrypoint", () => {
     const rootPackage = JSON.parse(
       readFileSync(resolve(process.cwd(), "package.json"), "utf8"),

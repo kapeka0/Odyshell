@@ -8,7 +8,10 @@ import {
 } from "../apps/web/src/lib/enrollment-command.js";
 import { isPublicDocumentationPath } from "../apps/web/src/lib/public-documentation.js";
 import { validDocumentationSearchQuery } from "../apps/web/src/lib/documentation-search.js";
-import { publicSiteRequestDecision } from "../apps/web/src/lib/public-site.js";
+import {
+  publicSiteEnabled,
+  publicSiteRequestDecision,
+} from "../apps/web/src/lib/public-site.js";
 
 const root = process.cwd();
 const webRoot = resolve(root, "apps/web");
@@ -89,7 +92,19 @@ describe("web security boundaries", () => {
   });
 
   it("exposes only landing and documentation in public-site mode", () => {
-    for (const path of ["/", "/docs", "/docs/self-hosting", "/llms.txt", "/robots.txt", "/api/search"]) {
+    expect(publicSiteEnabled({ VERCEL: "1" })).toBe(true);
+    expect(publicSiteEnabled({ ODYSHELL_PUBLIC_SITE: "true" })).toBe(true);
+    expect(publicSiteEnabled({})).toBe(false);
+    for (const path of [
+      "/",
+      "/docs",
+      "/docs/self-hosting",
+      "/llms.txt",
+      "/llms-full.txt",
+      "/llms.mdx/docs/agents",
+      "/robots.txt",
+      "/api/search",
+    ]) {
       expect(publicSiteRequestDecision(true, path)).toBe("allow");
     }
     for (const path of [
@@ -100,10 +115,15 @@ describe("web security boundaries", () => {
       "/oauth/consent",
       "/api/auth/session",
       "/.well-known/openid-configuration",
+      "/future-product-route",
+      "/api/future-route",
     ]) {
       expect(publicSiteRequestDecision(true, path)).toBe("not_found");
       expect(publicSiteRequestDecision(false, path)).toBe("allow");
     }
+    const proxy = source("proxy.ts");
+    expect(proxy).toContain('"/((?!_next/static|_next/image|favicon.ico|brand/).*)"');
+    expect(proxy).not.toContain('"/dashboard/:path*"');
   });
 
   it("publishes only Session and Command operational documentation", () => {

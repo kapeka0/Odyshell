@@ -23,7 +23,7 @@ orchestrator. Commands run with the privileges of the operating-system user that
 ## Canonical domain
 
 An **Organization** owns its Humans, Agents, Machines, Sessions, Commands, and timeline. It is the
-sovereign tenant boundary of one self-hosted installation.
+sovereign Organization boundary of one self-hosted installation.
 
 An **Agent** is a durable OAuth identity with one role:
 
