@@ -39,6 +39,16 @@ describe("0.20.0 release contract", () => {
     expect(backup).toContain("pg_restore");
     expect(backup).toContain("Get-FileHash");
     expect(backup).not.toContain("Write-Output $railwayVariables");
+    const transfer = readFileSync("scripts/transfer-cms-backup.ps1", "utf8");
+    expect(transfer).toContain("Unprotect-CmsMessage");
+    expect(transfer).toContain("ExpectedDecryptedSha256");
+    expect(transfer).toContain("Remove-Item -LiteralPath $temporaryRestore");
+    expect(transfer).toContain("DestinationHost -notmatch");
+    const restore = readFileSync("scripts/restore-postgres.sh", "utf8");
+    expect(restore).toContain("pg_restore --exit-on-error");
+    expect(restore).toContain("trap cleanup_restore EXIT");
+    expect(restore).toContain('test ! -L "$backup_path"');
+    expect(restore).not.toContain("eval ");
   });
 
   it("exposes the built Server as the root production entrypoint", () => {

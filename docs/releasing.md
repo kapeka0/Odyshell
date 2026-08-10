@@ -4,6 +4,12 @@ Before retiring a managed Railway installation, run
 `powershell -File scripts/backup-railway.ps1`. The tool creates a CMS-encrypted PostgreSQL dump,
 keeps its private key in the current Windows user's certificate store, verifies a decrypt hash,
 and requires `pg_restore --list` to parse the decrypted temporary before reporting success.
+Use `scripts/transfer-cms-backup.ps1` with the manifest's decrypted SHA-256 when a verified dump
+must be restored on another host. The transfer tool validates its destination, applies mode `600`,
+and always deletes the local decrypted temporary.
+On the destination, `scripts/restore-postgres.sh` accepts only a regular mode-`600` custom dump,
+restores it into the Compose PostgreSQL service with `--exit-on-error`, reports Organization and
+Machine counts, and removes both host and container plaintext copies through an exit trap.
 
 Odyshell uses one coordinated pre-1.0 version for the Server, Client, web app, CLI, MCP runtime,
 and protocol package.

@@ -5,6 +5,10 @@ Server, Better Auth identity, dashboard, PostgreSQL schema, and cross-platform C
 owner controls identity, policy, Session, Command, audit, and credential data. Hosted identity,
 billing, and third-party analytics are not runtime dependencies.
 
+The reference stack is verified on `linux/arm64` with a Raspberry Pi 5. All published ports bind
+to loopback by default; if another local service owns port `3000`, set `ODYSHELL_WEB_PORT` to a free
+loopback port and use the same origin in `BETTER_AUTH_URL`.
+
 ```mermaid
 flowchart LR
   A["External Agent"] -->|"OAuth MCP or HTTP"| S["Odyshell Server"]
